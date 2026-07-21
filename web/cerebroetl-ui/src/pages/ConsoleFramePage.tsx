@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Result, Spin } from "antd";
 import { ExportOutlined, ReloadOutlined } from "@ant-design/icons";
+import { useLocation } from "react-router-dom";
 
 interface ConsoleFramePageProps {
   kicker: string;
@@ -12,8 +13,15 @@ interface ConsoleFramePageProps {
 }
 
 export function ConsoleFramePage({ kicker, title, src, externalSrc, healthcheckSrc, waitMessage }: ConsoleFramePageProps) {
+  const location = useLocation();
   const [isReady, setIsReady] = useState(!healthcheckSrc);
   const [frameKey, setFrameKey] = useState(0);
+  const processGroupId = new URLSearchParams(location.search).get("processGroupId");
+  const frameSrc = processGroupId ? `${src}?processGroupId=${encodeURIComponent(processGroupId)}` : src;
+  const openSrc =
+    processGroupId && externalSrc
+      ? `${externalSrc}?processGroupId=${encodeURIComponent(processGroupId)}`
+      : (externalSrc ?? frameSrc);
 
   useEffect(() => {
     if (!healthcheckSrc) {
@@ -68,13 +76,13 @@ export function ConsoleFramePage({ kicker, title, src, externalSrc, healthcheckS
           <div className="page-kicker">{kicker}</div>
           <h2 className="page-title">{title}</h2>
         </div>
-        <Button icon={<ExportOutlined />} href={externalSrc ?? src} target="_blank" rel="noreferrer">
+        <Button icon={<ExportOutlined />} href={openSrc} target="_blank" rel="noreferrer">
           새 창
         </Button>
       </div>
       <div className="console-frame-shell">
         {isReady ? (
-          <iframe key={frameKey} className="console-frame" title={title} src={src} />
+          <iframe key={frameKey} className="console-frame" title={title} src={frameSrc} />
         ) : (
           <Result
             className="console-wait"

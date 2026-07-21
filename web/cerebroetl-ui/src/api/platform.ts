@@ -13,6 +13,52 @@ export interface KafkaConnectInfoResponse {
   kafka_cluster_id?: string;
 }
 
+export interface NifiRootStatusResponse {
+  processGroupStatus?: {
+    id?: string;
+    name?: string;
+    statsLastRefreshed?: string;
+    aggregateSnapshot?: {
+      activeThreadCount?: number;
+      flowFilesQueued?: number;
+      bytesQueued?: number;
+      flowFilesSent?: number;
+      bytesSent?: number;
+      flowFilesReceived?: number;
+      bytesReceived?: number;
+      processorStatusSnapshots?: NifiProcessorStatusSnapshot[];
+      processGroupStatusSnapshots?: NifiProcessGroupStatusSnapshot[];
+    };
+  };
+}
+
+export interface NifiProcessorStatusSnapshot {
+  id?: string;
+  canRead?: boolean;
+  processorStatusSnapshot?: {
+    id?: string;
+    groupId?: string;
+    name?: string;
+    type?: string;
+    runStatus?: string;
+    activeThreadCount?: number;
+  };
+}
+
+export interface NifiProcessGroupStatusSnapshot {
+  id?: string;
+  canRead?: boolean;
+  processGroupStatusSnapshot?: {
+    id?: string;
+    name?: string;
+    flowFilesQueued?: number;
+    queued?: string;
+    activeThreadCount?: number;
+    processorStatusSnapshots?: NifiProcessorStatusSnapshot[];
+    processGroupStatusSnapshots?: NifiProcessGroupStatusSnapshot[];
+  };
+}
+
 export async function getAirflowHealth(): Promise<AirflowHealthResponse> {
   const res = await axios.get<AirflowHealthResponse>("/airflow-api/monitor/health");
   return res.data;
@@ -28,3 +74,9 @@ export async function listKafkaConnectors(): Promise<string[]> {
   return res.data;
 }
 
+export async function getNifiRootStatus(): Promise<NifiRootStatusResponse> {
+  const res = await axios.get<NifiRootStatusResponse>("/nifi-api/flow/process-groups/root/status", {
+    params: { recursive: true },
+  });
+  return res.data;
+}

@@ -184,6 +184,77 @@ body {
   font-weight: 800;
 }
 
+.dashboard-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.dashboard-section {
+  padding: 18px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.section-heading {
+  margin-bottom: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.section-heading h3 {
+  margin: 5px 0 0;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.section-kicker {
+  color: #d40000;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 1.6px;
+}
+
+.section-statuses {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.dashboard-metrics {
+  margin-bottom: 16px;
+}
+
+.dashboard-section .ant-card {
+  height: 100%;
+  background: #fbfcfd;
+}
+
+.metric-card {
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.metric-card:hover {
+  border-color: #d40000;
+  box-shadow: 0 8px 18px rgba(17, 24, 39, 0.08);
+  transform: translateY(-1px);
+}
+
+.metric-card.active {
+  border-color: #d40000;
+  box-shadow: inset 0 3px 0 #d40000;
+}
+
 .ant-card {
   border-radius: 8px;
   border-color: #e5e7eb;
@@ -248,5 +319,17 @@ body {
 
   .page-toolbar {
     flex-direction: column;
+  }
+
+  .dashboard-section {
+    padding: 14px;
+  }
+
+  .section-heading {
+    flex-direction: column;
+  }
+
+  .section-statuses {
+    justify-content: flex-start;
   }
 }
