@@ -2,7 +2,7 @@ from datetime import datetime
 
 import requests
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 
 # Kafka 웹 API에 Airflow가 네트워크로 닿는지 확인하는 읽기 전용 스파이크 검증.
 # 실제 start/stop/restart를 호출하는 운영 DAG는 이번 범위 밖 (계획 파일 9차 증분 참고).

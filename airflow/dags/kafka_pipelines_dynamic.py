@@ -16,8 +16,8 @@ from datetime import datetime
 
 import requests
 from airflow import DAG
-from airflow.models.param import Param
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
+from airflow.sdk import Param
 
 PIPELINE_API_BASE_URL = "http://pipeline-api:8081"
 ACTIONS = ["start", "stop", "restart"]

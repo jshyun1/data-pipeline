@@ -15,6 +15,10 @@ Host 헤더 관련 주의: NiFi(Jetty)는 HTTPS 요청의 Host 헤더를 nifi.we
 거부되는 게 확인돼서(원인 미상), Host 헤더를 이미 허용된 "localhost:8443"으로
 명시적으로 덮어써서 우회한다(TCP 연결 자체는 nifi 컨테이너로 정상적으로 감 -
 Host 헤더만 바꾸는 것이라 안전).
+각 DAG의 스케줄은 코드에 고정하지 않고 Airflow Variable로 뺐다 - Admin > Variables
+화면에서 "{dag_id}__schedule" 키에 크론 표현식/프리셋(예: "@hourly", "0 */6 * * *")을
+넣으면 다음 DAG 파싱 주기(최대 5분)에 반영된다. Variable이 없으면 기존과 동일하게
+schedule=None(수동 트리거 전용)으로 동작한다.
 """
 import os
 from datetime import datetime
@@ -22,8 +26,9 @@ from datetime import datetime
 import requests
 import urllib3
 from airflow import DAG
-from airflow.models.param import Param
-from airflow.operators.python import PythonOperator
+from airflow.models import Variable
+from airflow.providers.standard.operators.python import PythonOperator
+from airflow.sdk import Param
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)  # 자체 서명 인증서
 
@@ -70,10 +75,16 @@ def sanitize(name: str) -> str:
 
 def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str, username: str, password: str) -> DAG:
     dag_id = f"nifi_pipeline_{sanitize(pg_name)}_{pg_id[:8]}_control"
+    # 스케줄은 코드가 아니라 Airflow Variable로 설정한다 - Admin > Variables에서
+    # "{dag_id}__schedule" 키에 크론/프리셋을 넣으면 다음 파싱 주기에 반영됨.
+    # Variable이 없으면 기존과 동일하게 수동 트리거 전용(schedule=None)으로 동작.
+    # 자동(스케줄) 실행 시엔 params가 없어 action은 항상 Param 기본값("start")으로 동작한다.
+    schedule = Variable.get(f"{dag_id}__schedule", default_var=None)
     with DAG(
         dag_id=dag_id,
-        description=f'NiFi 프로세스 그룹 "{pg_name}"({pg_id}) 시작/중지 제어',
-        schedule=None,
+        description=f'NiFi 프로세스 그룹 "{pg_name}"({pg_id}) 시작/중지 제어'
+        + (f" (스케줄: {schedule})" if schedule else " (수동 트리거 전용)"),
+        schedule=schedule,
         start_date=datetime(2026, 1, 1),
         catchup=False,
         tags=["nifi", "pipeline-control"],
