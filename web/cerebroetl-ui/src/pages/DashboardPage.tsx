@@ -25,7 +25,7 @@ const historyColumns = [
   { title: "요청 시각", dataIndex: "requestedAt" },
 ];
 
-type EtlJobFilter = "all" | "running" | "failed";
+type EtlJobFilter = "all" | "running" | "failed" | "stopped";
 
 interface NifiJob {
   id: string;
@@ -118,10 +118,23 @@ export function DashboardPage() {
   );
   const runningNifiJobs = nifiJobs.filter((job) => job.status === "RUNNING");
   const failedNifiJobs = nifiJobs.filter((job) => job.status === "FAILED");
+  const stoppedNifiJobs = nifiJobs.filter((job) => job.status === "STOPPED");
   const filteredNifiJobs =
-    etlJobFilter === "running" ? runningNifiJobs : etlJobFilter === "failed" ? failedNifiJobs : nifiJobs;
+    etlJobFilter === "running"
+      ? runningNifiJobs
+      : etlJobFilter === "failed"
+        ? failedNifiJobs
+        : etlJobFilter === "stopped"
+          ? stoppedNifiJobs
+          : nifiJobs;
   const etlJobFilterLabel =
-    etlJobFilter === "running" ? "실행중 JOB" : etlJobFilter === "failed" ? "실패 JOB" : "전체 JOB";
+    etlJobFilter === "running"
+      ? "실행중 JOB"
+      : etlJobFilter === "failed"
+        ? "실패 JOB"
+        : etlJobFilter === "stopped"
+          ? "중지 JOB"
+          : "전체 JOB";
   const airflowServices = [
     { label: "Metadatabase", status: airflowHealth.data?.metadatabase?.status },
     { label: "Scheduler", status: airflowHealth.data?.scheduler?.status },
@@ -183,7 +196,7 @@ export function DashboardPage() {
             <Badge status={nifiStatus.isError ? "error" : "success"} text={nifiStatus.isError ? "응답 없음" : "정상"} />
           </div>
           <Row gutter={[16, 16]}>
-            <Col xs={24} md={8}>
+            <Col xs={12} xl={6}>
               <Card
                 className={etlJobFilter === "all" ? "metric-card active" : "metric-card"}
                 loading={showNifiInitialLoading}
@@ -192,7 +205,7 @@ export function DashboardPage() {
                 <Statistic title="전체 JOB 수" value={nifiJobs.length} />
               </Card>
             </Col>
-            <Col xs={24} md={8}>
+            <Col xs={12} xl={6}>
               <Card
                 className={etlJobFilter === "running" ? "metric-card active" : "metric-card"}
                 loading={showNifiInitialLoading}
@@ -201,7 +214,7 @@ export function DashboardPage() {
                 <Statistic title="실행중 JOB" value={runningNifiJobs.length} valueStyle={{ color: "#2f7d32" }} />
               </Card>
             </Col>
-            <Col xs={24} md={8}>
+            <Col xs={12} xl={6}>
               <Card
                 className={etlJobFilter === "failed" ? "metric-card active" : "metric-card"}
                 loading={showNifiInitialLoading}
@@ -210,19 +223,13 @@ export function DashboardPage() {
                 <Statistic title="실패 JOB" value={failedNifiJobs.length} valueStyle={{ color: "#c62828" }} />
               </Card>
             </Col>
-            <Col xs={24} lg={8}>
-              <Card loading={showNifiInitialLoading}>
-                <Statistic title="대기 FlowFile" value={nifiSnapshot?.flowFilesQueued ?? 0} />
-              </Card>
-            </Col>
-            <Col xs={24} lg={8}>
-              <Card loading={showNifiInitialLoading}>
-                <Statistic title="활성 Thread" value={nifiSnapshot?.activeThreadCount ?? 0} />
-              </Card>
-            </Col>
-            <Col xs={24} lg={8}>
-              <Card loading={showNifiInitialLoading}>
-                <Statistic title="중지 JOB" value={nifiJobs.filter((job) => job.status === "STOPPED").length} />
+            <Col xs={12} xl={6}>
+              <Card
+                className={etlJobFilter === "stopped" ? "metric-card active" : "metric-card"}
+                loading={showNifiInitialLoading}
+                onClick={() => setEtlJobFilter("stopped")}
+              >
+                <Statistic title="중지 JOB" value={stoppedNifiJobs.length} />
               </Card>
             </Col>
             <Col xs={24}>

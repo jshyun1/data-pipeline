@@ -12,16 +12,18 @@ interface ConsoleFramePageProps {
   waitMessage?: string;
 }
 
+function withProcessGroupId(url: string, processGroupId: string) {
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}processGroupId=${encodeURIComponent(processGroupId)}`;
+}
+
 export function ConsoleFramePage({ kicker, title, src, externalSrc, healthcheckSrc, waitMessage }: ConsoleFramePageProps) {
   const location = useLocation();
   const [isReady, setIsReady] = useState(!healthcheckSrc);
   const [frameKey, setFrameKey] = useState(0);
   const processGroupId = new URLSearchParams(location.search).get("processGroupId");
-  const frameSrc = processGroupId ? `${src}?processGroupId=${encodeURIComponent(processGroupId)}` : src;
-  const openSrc =
-    processGroupId && externalSrc
-      ? `${externalSrc}?processGroupId=${encodeURIComponent(processGroupId)}`
-      : (externalSrc ?? frameSrc);
+  const frameSrc = processGroupId ? withProcessGroupId(src, processGroupId) : src;
+  const openSrc = processGroupId ? withProcessGroupId(externalSrc ?? src, processGroupId) : (externalSrc ?? src);
 
   useEffect(() => {
     if (!healthcheckSrc) {
