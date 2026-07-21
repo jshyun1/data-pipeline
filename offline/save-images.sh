@@ -37,7 +37,7 @@ IMAGE_TAR="${IMAGE_DIR}/data-pipeline-images-${APP_VERSION}.tar"
 mkdir -p "${IMAGE_DIR}"
 
 echo "== 자체 빌드 이미지 빌드 (APP_VERSION=${APP_VERSION}) =="
-APP_VERSION="${APP_VERSION}" docker compose build kafka-connect connect-init nifi pipeline-api pipeline-ui
+APP_VERSION="${APP_VERSION}" docker compose build kafka-connect connect-init nifi pipeline-api pipeline-ui cerebroetl-ui
 
 IMAGES=(
   "data-pipeline-kafka-connect:${APP_VERSION}"
@@ -45,6 +45,7 @@ IMAGES=(
   "data-pipeline-nifi:${APP_VERSION}"
   "data-pipeline-pipeline-api:${APP_VERSION}"
   "data-pipeline-pipeline-ui:${APP_VERSION}"
+  "data-pipeline-cerebroetl-ui:${APP_VERSION}"
   "apache/kafka:3.8.0"
   "postgres:16-alpine"
   "docker.elastic.co/beats/filebeat:8.15.3"

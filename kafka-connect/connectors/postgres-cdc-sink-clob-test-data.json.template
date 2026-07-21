@@ -1,8 +1,8 @@
 {
   "connector.class": "io.debezium.connector.jdbc.JdbcSinkConnector",
   "tasks.max": "1",
-  "topics": "oracle-cdc.APPUSER.CLOB_TEST_DATA",
-  "connection.url": "jdbc:postgresql://target-db:5432/${TARGET_DB_NAME}",
+  "topics": "${ORACLE_CLOB_TOPIC}",
+  "connection.url": "jdbc:postgresql://${TARGET_DB_HOST}:${TARGET_DB_PORT}/${TARGET_DB_NAME}",
   "connection.username": "${TARGET_DB_USER}",
   "connection.password": "${TARGET_DB_PASSWORD}",
   "insert.mode": "upsert",

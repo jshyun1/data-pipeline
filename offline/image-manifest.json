@@ -1,12 +1,13 @@
 {
   "releaseVersion": "0.1.0",
-  "note": "releaseVersion은 APP_VERSION과 같은 값이어야 한다 (docker-compose.yml의 kafka-connect/connect-init/nifi/pipeline-api/pipeline-ui 이미지 태그가 APP_VERSION을 따름). save-images.sh를 실행하기 전에 이 파일과 .env의 APP_VERSION을 함께 갱신할 것.",
+  "note": "releaseVersion은 APP_VERSION과 같은 값이어야 한다 (docker-compose.yml의 kafka-connect/connect-init/nifi/pipeline-api/pipeline-ui/cerebroetl-ui 이미지 태그가 APP_VERSION을 따름). save-images.sh를 실행하기 전에 이 파일과 .env의 APP_VERSION을 함께 갱신할 것.",
   "coreImages": [
     "data-pipeline-kafka-connect:0.1.0",
     "data-pipeline-connect-init:0.1.0",
     "data-pipeline-nifi:0.1.0",
     "data-pipeline-pipeline-api:0.1.0",
     "data-pipeline-pipeline-ui:0.1.0",
+    "data-pipeline-cerebroetl-ui:0.1.0",
     "apache/kafka:3.8.0",
     "postgres:16-alpine",
     "docker.elastic.co/beats/filebeat:8.15.3",

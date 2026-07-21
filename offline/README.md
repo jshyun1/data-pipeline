@@ -22,7 +22,7 @@
 # 릴리스 버전을 정하고 (latest 금지 - §13.7)
 export APP_VERSION=1.0.0
 
-# 빌드 + docker save를 한 번에 (kafka-connect/connect-init/nifi/pipeline-api/pipeline-ui를
+# 빌드 + docker save를 한 번에 (kafka-connect/connect-init/nifi/pipeline-api/pipeline-ui/cerebroetl-ui를
 # APP_VERSION 태그로 빌드하고, apache/kafka·postgres·filebeat까지 포함해서 tar 하나로 묶음)
 ./offline/save-images.sh
 

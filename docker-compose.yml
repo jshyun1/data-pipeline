@@ -188,6 +188,12 @@ services:
       ORACLE_SERVICE_NAME: ${ORACLE_SERVICE_NAME}
       ORACLE_CDC_USER: ${ORACLE_CDC_USER}
       ORACLE_CDC_USER_PASSWORD: ${ORACLE_CDC_USER_PASSWORD}
+      ORACLE_SCHEMA: ${ORACLE_SCHEMA}
+      ORACLE_TABLE_INCLUDE_LIST: ${ORACLE_TABLE_INCLUDE_LIST}
+      ORACLE_CUSTOMERS_TOPIC: ${ORACLE_CUSTOMERS_TOPIC}
+      ORACLE_CLOB_TOPIC: ${ORACLE_CLOB_TOPIC}
+      TARGET_DB_HOST: ${TARGET_DB_HOST}
+      TARGET_DB_PORT: ${TARGET_DB_PORT}
       TARGET_DB_NAME: ${TARGET_DB_NAME}
       TARGET_DB_USER: ${TARGET_DB_USER}
       TARGET_DB_PASSWORD: ${TARGET_DB_PASSWORD}
@@ -336,6 +342,28 @@ services:
       # localhost가 컨테이너 안에서 ::1(IPv6)로만 풀려서 nginx(IPv4만 바인딩)에
       # 연결 거부가 나는 문제가 있었음 - 127.0.0.1로 명시해서 회피.
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [pipeline-net]
+
+  # ---------------------------------------------------------------------
+  # Cerebro ETL UI: Airflow/NiFi/Kafka Connect/CDC/연결정보 통합 조회 콘솔.
+  # 기존 pipeline-ui는 그대로 두고, 별도 프론트엔드 이미지로 운영한다.
+  # Airflow는 선택 실행 대상으로 둔다. Airflow를 올리지 않아도 UI 자체는
+  # 기동되고, Airflow 화면의 상태 조회만 연결 실패로 표시된다.
+  # ---------------------------------------------------------------------
+  cerebroetl-ui:
+    image: data-pipeline-cerebroetl-ui:${APP_VERSION:-latest}
+    build:
+      context: ./web/cerebroetl-ui
+    container_name: cerebroetl-ui
+    restart: unless-stopped
+    ports:
+      - "${CEREBROETL_UI_PORT}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
