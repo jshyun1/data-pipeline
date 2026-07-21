@@ -1,6 +1,6 @@
 # WORK LOG — Kafka 파이프라인 웹서비스 구축
 
-> 갱신: 2026-07-14 (7차 증분 + 로그 파이프라인 생성 UI + 대시보드/Connector 상세 탭 + Postgres publication 정리 로직 + filebeat healthcheck + 폐쇄망 배포 패키징 + gitlab-ci test:backend 스테이지 + NiFi 볼륨 영속화 버그 수정 + Kafka Broker 헬스체크 + Airflow 설치(9차 증분) 완료 시점 — 13절 참고)
+> 갱신: 2026-07-21 (NiFi 유실/미완성 플로우 3건 복구 + WSL2 메모리 부족 이슈 진단 — 15절 참고. 그 이전 갱신: 2026-07-14, 7차 증분 + 로그 파이프라인 생성 UI + 대시보드/Connector 상세 탭 + Postgres publication 정리 로직 + filebeat healthcheck + 폐쇄망 배포 패키징 + gitlab-ci test:backend 스테이지 + NiFi 볼륨 영속화 버그 수정 + Kafka Broker 헬스체크 + Airflow 설치(9차 증분) 완료 시점 — 13절 참고)
 > 상세 증분 이력/검증 로그의 원본은 `/home/user/.claude/plans/peppy-plotting-quasar.md` (계속 갱신됨, 이 파일과 같이 볼 것).
 > 설계서 원문: `docs/kafka-webservice-design.md`
 
@@ -168,16 +168,20 @@ Debezium Postgres 소스 커넥터를 등록하면 소스 DB에 replication slot
 - WSL2 docker 네트워크에서 가끔/때로 지속적으로 `error getting credentials`/`UtilAcceptVsock` 오류 발생. 재시도로 안 풀리면 `~/.docker/config.json`의 `credsStore`를 임시로 `{}`로 비우면 우회됨(원본은 `.bak`으로 백업해둘 것) — 공개 이미지만 받으므로 인증 자체가 불필요.
 - Filebeat 컨테이너는 바인드 마운트된 config 파일의 소유권 검사 때문에 `command: ["--strict.perms=false"]` 필요(5절 참고). 이미지에 `wget`이 없고 `curl`은 있음(다른 서비스들과 반대) — 헬스체크 작성 시 주의.
 - WSL2 docker 네트워크 문제가 이번엔 credsStore 우회로도 안 풀리고 아예 `docker version`까지 완전히 응답 없어지는 상태까지 간 적이 있었음 — 이땐 재시도/우회로 해결 안 되고 **Windows에서 Docker Desktop을 직접 재시작**해야 했음(재시작 후 `restart: unless-stopped`인 컨테이너들은 자동으로 다시 떴음).
+- **WSL2 VM 메모리가 7.6GiB로 부족**(호스트 16GB인데 `.wslconfig`에 `memory` 미지정 → WSL2 기본값 50% 적용). 컨테이너 13개(다수 JVM) 동시 기동 시 스왑 압박으로 응답 없음 현상 발생 — 15.3절 참고. `.wslconfig`에 `memory=11GB` 이상 명시 권장(아직 미적용). 임시 완화책: 안 쓸 때 `oracle-db`/`target-db`를 `docker compose stop`으로 내려두기.
 
 ## 10. 남은 작업 (다음에 이어서 할 것들, 우선순위 순서 아님 — 사용자가 고를 것)
 
-1. `git push` — 로컬 커밋(2절)만 있고 원격에는 안 올라감. 사용자가 요청하면 진행.
-2. 로그 `parse_type` JSON/REGEX/DELIMITER 지원 (지금은 PLAIN만).
-3. 사용자가 브라우저로 `http://localhost:13000` 직접 열어서 프론트엔드 시각 확인 (대시보드/로그 파이프라인 생성 모달/상세 Drawer 포함 — 클릭 인터랙션은 이 세션에서 검증 못 함).
-4. 컨슈머 랙 기반 "지연 발생 수"/Kafka Topic 탭 — 5.2절과 같은 AdminClient를 재사용할 수 있음(Broker 헬스체크는 완료, 5.2절 참고).
-5. (완료됨) ~~폐쇄망 패키징 스크립트(`offline/` 디렉터리, 설계서 §13)~~ — 커밋 `ef2a338`, 7절 참고.
-6. (완료됨, **미검증**) ~~`.gitlab-ci.yml`에 `test:backend` 스테이지 추가~~ — 커밋 `8b96ccb`. `.gitlab-ci.yml`이 이미 `validate`/`build` 스테이지로 존재하고 있어서(이전 세션 작업) 거기에 `test` 스테이지 + `test:backend` job 추가(기존 `docker:26-dind`/rules 패턴 그대로 맞춤). YAML 문법은 검증했지만 **실제 GitLab 러너에서 돌려본 적은 없음** — `git push` 안 해서 실제로 파이프라인이 도는지, Testcontainers가 CI dind 환경에서 정말 통과하는지는 아직 미확인. push 후 GitLab에서 파이프라인 결과 확인 필요.
-7. (완료됨) ~~`filebeat` 서비스에 healthcheck 추가~~ — 커밋 `3bc0f95`. `filebeat.yml`에 `http.enabled` 내장 모니터링 엔드포인트(포트 5066, 컨테이너 내부 전용) 켜고 `curl`로 헬스체크(이 이미지엔 wget이 없어서 다른 서비스와 다르게 curl 사용).
+1. (완료됨) ~~`git push`~~ — dev에 푸시 완료. **2026-07-21에 dev 히스토리 전체를 단일 커밋(`ea7ac2c`)으로 재구성**해서 원격에 강제 푸시했음(사용자 요청, 협업자 없는 개인 저장소라 영향 없음 확인 후 진행) — 이 문서의 2/4~7/이 절에서 언급하는 이전 커밋 해시(`242f280` 등)는 더 이상 dev 히스토리에 존재하지 않으니 `git show`로 찾으려 하지 말 것. 코드 자체는 `ea7ac2c`에 전부 반영돼 있음.
+2. **`QueryDatabaseTable-employees → batch_landing.employees` e2e 최종 검증** — 15.2절 참고, `oracle-db`/`target-db` 재기동 후 Oracle에 테스트 행 삽입 → Postgres UPSERT 반영 확인 필요.
+3. WSL2 `.wslconfig`에 `memory` 값 상향 적용 — 15.3절 참고, 권장값(`memory=11GB`)만 전달했고 사용자가 아직 적용 여부 결정 안 함.
+4. 로그 `parse_type` JSON/REGEX/DELIMITER 지원 (지금은 PLAIN만).
+5. 사용자가 브라우저로 `http://localhost:13000` 직접 열어서 프론트엔드 시각 확인 (대시보드/로그 파이프라인 생성 모달/상세 Drawer 포함 — 클릭 인터랙션은 이 세션에서 검증 못 함).
+6. 컨슈머 랙 기반 "지연 발생 수"/Kafka Topic 탭 — 5.2절과 같은 AdminClient를 재사용할 수 있음(Broker 헬스체크는 완료, 5.2절 참고).
+7. 통합 셸 앱(사이드바 대시보드/Airflow/NiFi/Kafka 4개 메뉴, 중앙 패널 전환) — 13.3절 다음 단계, 아직 착수 안 함.
+8. (완료됨) ~~폐쇄망 패키징 스크립트(`offline/` 디렉터리, 설계서 §13)~~ — 7절 참고.
+9. (완료됨, **미검증**) ~~`.gitlab-ci.yml`에 `test:backend` 스테이지 추가~~ — `.gitlab-ci.yml`이 이미 `validate`/`build` 스테이지로 존재하고 있어서(이전 세션 작업) 거기에 `test` 스테이지 + `test:backend` job 추가(기존 `docker:26-dind`/rules 패턴 그대로 맞춤). YAML 문법은 검증했지만 **실제 GitLab 러너에서 돌려본 적은 없음** — 실제로 파이프라인이 도는지, Testcontainers가 CI dind 환경에서 정말 통과하는지는 아직 미확인.
+10. (완료됨) ~~`filebeat` 서비스에 healthcheck 추가~~ — `filebeat.yml`에 `http.enabled` 내장 모니터링 엔드포인트(포트 5066, 컨테이너 내부 전용) 켜고 `curl`로 헬스체크(이 이미지엔 wget이 없어서 다른 서비스와 다르게 curl 사용).
 
 ## 11. 재개 시 바로 쓸 수 있는 명령어
 
@@ -274,7 +278,34 @@ cd web/backend && ./gradlew test   # ConnectionRepositoryIT만 실패하면 정�
 - Airflow 웹 화면에서 실제로 한국어 UI가 브라우저상 정상 표시되는지 시각 확인(이 세션은 도구 한계로 API/파일 레벨까지만 확인, 화면 클릭 확인은 사용자 몫).
 - DAG 코드의 deprecation 경고 정리(`airflow.models.param.Param` → `airflow.sdk.Param`, `airflow.operators.python.PythonOperator` → `airflow.providers.standard.operators.python.PythonOperator`) — 지금은 동작에 지장 없어 방치.
 
+주간보고 작성 과정에서 "NiFi/Kafka 수집 파이프라인이 정합성 검증까지 끝났다고 봐도 되냐"는 질문을 계기로 NiFi 플로우 상태를 재점검. 13.3절에서 발견했던 "logfile" 프로세스 그룹 결함(FetchFile invalid 고착)을 실제로 조사해보니, 원인이 하나가 아니라 **서로 다른 세 가지 문제**가 겹쳐 있었음이 드러남.
+
+### 15.1. 근본 원인 조사
+
+- DB 각 테이블의 타임스탬프 컬럼(`ingested_at`/`synced_at`)을 NiFi 볼륨 영속화 버그 수정일(10절 참고, 해당 커밋 시점)과 교차 대조하는 방식으로 원인을 특정:
+  - `ListenHTTP → unstructured_landing.file_objects` 플로우와 `QueryDatabaseTable-employees → batch_landing.employees` 플로우(둘 다 FLOW_RUNBOOK.md에 "테스트 완료"로 기록돼 있던 것)는 **볼륨 영속화 버그로 인해 NiFi 재기동 시 플로우 정의 자체가 유실**된 것으로 확인(버그 수정 이전엔 있었고, 이후 사라짐).
+  - "logfile" 프로세스 그룹은 반대로 **애초에 끝까지 배선된 적이 없는 미완성 스켈레톤**이었음(ListFile은 있으나 이후 단계가 연결 안 됨) — 13.3절에서 관찰한 "FetchFile invalid"는 유실이 아니라 원래부터 미완성이었던 것.
+
+### 15.2. 복구한 것
+
+1. **"logfile" 플로우 신규 완성**: 로그 포맷(예: access log/error log)별로 파싱하지 않고 "한 줄 = 한 필드"로 통째로 적재하는 **단일 리딩 통합 방식**(사용자 선택)으로 구성. `GrokReader`(패턴 `%{GREEDYDATA:message}`) 사용. 착지 테이블 신규 생성: `unstructured_landing.log_file_lines(id, message, source_file, ingested_at)` — DDL은 `db/target-init/01_schema.sql`에 추가, 커밋 완료(현재 dev 히스토리 재구성으로 `ea7ac2c`에 포함).
+   - `ListFile → FetchFile → GrokReader/QueryRecord → PutDatabaseRecord(cp-target-db)` 로 구성, 실 로그 라인 투입 → `log_file_lines`에 정확히 적재되는 것까지 e2e 검증 완료.
+   - **알려진 한계(수정 안 함, 문서화만)**: NiFi의 `ListFile`+`FetchFile` 조합은 파일을 바이트 오프셋 기준으로 tail하지 않는다. 이미 처리한 파일이 수정(줄 추가)되면 **파일 전체를 처음부터 다시 읽어서 중복 적재**된다(Filebeat의 진짜 tailing과 다른 점). 운영 수준 증분 처리가 필요해지면 `TailFile` 프로세서로 교체하거나 DB 레벨 dedup 제약이 필요 — 이번 범위에서는 우회하지 않고 알려진 제약으로만 남김.
+2. **`ListenHTTP → file_objects` 복구**: FLOW_RUNBOOK.md 0-1절 그대로 재구성, `curl -X POST http://localhost:${NIFI_LISTENHTTP_PORT}/contentListener`로 e2e 재검증(row landed).
+3. **`QueryDatabaseTable-employees → batch_landing.employees` 복구(부분)**: FLOW_RUNBOOK.md 0-2절 그대로 재구성, 두 프로세서 모두 VALID/RUNNING까지 확인. **다만 Oracle에 테스트 행을 넣어 실제 UPSERT 전파까지 확인하는 마지막 단계는 미완료** — 아래 15.3절 WSL2 이슈로 중단됨. `oracle-db`/`target-db`는 현재 정지된 상태라, 재기동 후 이어서 검증 필요(11절 "남은 작업" 참고).
+
+### 15.3. WSL2 불안정 현상 진단 (별개 이슈, 수정 아님 — 진단만)
+
+작업 중 WSL2가 반복적으로 응답 없어지는 현상 발생(`sqlplus` 로컬 SYSDBA 연결조차 멈춤 등). `free -h`/`docker stats`로 조사한 결과:
+
+- 이 WSL2 VM의 총 메모리는 7.6GiB뿐이었음(호스트 PC 실제 RAM은 16GB — `.wslconfig`에 `memory` 값이 없어 WSL2 기본값인 "호스트의 50%"가 적용된 상태였음).
+- `oracle-db`/`target-db`를 뺀 상태에서도 이미 5.6GiB 사용 중, 여유 109MiB, 스왑 75%(1.5/2.0GiB) 사용 — Oracle까지 얹으면 항상 스왑에 크게 의존하게 되는 구조.
+- 컨테이너별 메모리: kafka-connect 1.01GiB, nifi 871MiB, kafka 349MiB, airflow 4개 컴포넌트 합계 ~480MiB, pipeline-api 214MiB 등 — 이 프로젝트가 커지면서 동시 기동 컨테이너 수(13개, 다수가 JVM 기반)가 7.6GiB VM의 한계를 넘어선 것으로 결론.
+- **조치**: 사용자 요청으로 `oracle-db`/`target-db`를 `docker compose stop`(볼륨은 보존)으로 정지. `.wslconfig`에 `memory=11GB` 등으로 상향할 것을 권장했으나 **아직 사용자가 직접 적용 여부를 결정하지 않음** — 이 리포 밖(Windows 호스트 설정)이라 자동 반영 안 됨.
+
 ## 14. 프론트엔드 버그 수정: 파이프라인 삭제 성공인데 오류 알람 뜸 (2026-07-14) — ✅ 완료
+
+## 15. NiFi 유실/미완성 플로우 3건 복구 + WSL2 안정성 이슈 진단 (2026-07-21)
 
 사용자가 화면에서 파이프라인 7을 삭제했는데 "실제로는 삭제됐지만 오류 알람이 떴다"고 보고. 백엔드 로그/Kafka Connect 커넥터 상태/파이프라인 목록을 확인해보니 **서버 쪽은 완전히 정상**이었음(커넥터 2개 정상 삭제, 로그에 에러 없음) — 프론트엔드만의 버그였다.
 
