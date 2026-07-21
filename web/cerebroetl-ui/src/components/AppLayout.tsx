@@ -54,11 +54,10 @@ export function AppLayout() {
       <Header className="app-header">
         <div className="brand-mark">dw</div>
         <div className="brand-divider" />
-        <div className="brand-title">Data Pipeline Console</div>
+        <div className="brand-title">Cerebro ETL</div>
       </Header>
       <Layout>
         <Sider width={270} theme="light" className="app-sidebar">
-          <div className="sidebar-section-kicker">DATA PLATFORM</div>
           <div className="sidebar-title">메뉴</div>
           <nav className="sidebar-nav" aria-label="주요 메뉴">
             {NAV_ITEMS.map((item) => {

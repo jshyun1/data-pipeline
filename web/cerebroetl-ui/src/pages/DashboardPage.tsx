@@ -329,7 +329,6 @@ export function DashboardPage() {
     <div>
       <div className="page-toolbar">
         <div>
-          <div className="page-kicker">SYSTEM OVERVIEW</div>
           <h2 className="page-title">대시보드</h2>
         </div>
       </div>
@@ -338,8 +337,7 @@ export function DashboardPage() {
         <section className="dashboard-section">
           <div className="section-heading">
             <div>
-              <div className="section-kicker">AIRFLOW</div>
-              <h3>워크플로우 오케스트레이션</h3>
+              <h3>Airflow 대시보드</h3>
             </div>
             <Badge status={airflowOnline ? "success" : "error"} text={airflowOnline ? "정상" : "응답 없음"} />
           </div>
@@ -408,7 +406,6 @@ export function DashboardPage() {
         <section className="dashboard-section">
           <div className="section-heading">
             <div>
-              <div className="section-kicker">ETL</div>
               <h3>NiFi 대시보드</h3>
             </div>
             <Badge status={nifiStatus.isError ? "error" : "success"} text={nifiStatus.isError ? "응답 없음" : "정상"} />
@@ -486,7 +483,6 @@ export function DashboardPage() {
         <section className="dashboard-section cdc-section">
           <div className="section-heading">
             <div>
-              <div className="section-kicker">CDC</div>
               <h3>Kafka CDC 파이프라인</h3>
             </div>
             <div className="section-statuses">

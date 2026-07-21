@@ -59,13 +59,6 @@ body {
   border-right: 1px solid #e5e7eb;
 }
 
-.sidebar-section-kicker,
-.page-kicker {
-  color: #d40000;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 2px;
-}
 
 .sidebar-title {
   margin-top: 8px;
