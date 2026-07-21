@@ -1,5 +1,5 @@
 import { Layout, Menu } from "antd";
-import { ApiOutlined, DashboardOutlined, NodeIndexOutlined } from "@ant-design/icons";
+import { ApiOutlined, NodeIndexOutlined } from "@ant-design/icons";
 import { Link, Outlet, useLocation } from "react-router-dom";
 
 const { Header, Sider, Content } = Layout;
@@ -21,11 +21,6 @@ export function AppLayout() {
             selectedKeys={[location.pathname]}
             style={{ height: "100%" }}
             items={[
-              {
-                key: "/dashboard",
-                icon: <DashboardOutlined />,
-                label: <Link to="/dashboard">대시보드</Link>,
-              },
               {
                 key: "/connections",
                 icon: <ApiOutlined />,

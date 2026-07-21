@@ -31,14 +31,9 @@ export async function deletePipeline(id: number): Promise<void> {
   unwrap(res.data);
 }
 
-// deploy/start/pause/stop/restart는 전부 "커넥터에 액션 하나 실행하고 최신 상태 돌려주는" 같은 모양이라 공용화.
-async function invokeLifecycleAction(id: number, action: string): Promise<PipelineResponse> {
-  const res = await apiClient.post<ApiResponse<PipelineResponse>>(`/pipelines/${id}/${action}`);
+// start/pause/stop/restart는 Airflow DAG(kafka_pipelines_dynamic.py)가 같은 엔드포인트를
+// 호출해서 담당한다 - 웹 UI는 생성/배포/삭제까지만 다룬다.
+export async function deployPipeline(id: number): Promise<PipelineResponse> {
+  const res = await apiClient.post<ApiResponse<PipelineResponse>>(`/pipelines/${id}/deploy`);
   return unwrap(res.data);
 }
-
-export const deployPipeline = (id: number) => invokeLifecycleAction(id, "deploy");
-export const startPipeline = (id: number) => invokeLifecycleAction(id, "start");
-export const pausePipeline = (id: number) => invokeLifecycleAction(id, "pause");
-export const stopPipeline = (id: number) => invokeLifecycleAction(id, "stop");
-export const restartPipeline = (id: number) => invokeLifecycleAction(id, "restart");

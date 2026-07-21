@@ -27,10 +27,6 @@ import {
   deployPipeline,
   getPipelineHistory,
   listPipelines,
-  pausePipeline,
-  restartPipeline,
-  startPipeline,
-  stopPipeline,
 } from "../api/pipelines";
 import type { LogPipelineCreateRequest, PipelineCommandHistoryResponse, PipelineCreateRequest, PipelineResponse } from "../types/pipeline";
 
@@ -103,16 +99,11 @@ export function PipelinesPage() {
     onError: (error: Error) => message.error(error.message),
   });
 
-  // deploy/start/pause/stop/restart는 전부 "실행하고 목록 새로고침" 패턴이 같아 하나로 묶는다.
-  const lifecycleMutation = useMutation({
-    mutationFn: (vars: { id: number; action: "deploy" | "start" | "pause" | "stop" | "restart" }) => {
-      const fn = { deploy: deployPipeline, start: startPipeline, pause: pausePipeline, stop: stopPipeline, restart: restartPipeline }[
-        vars.action
-      ];
-      return fn(vars.id);
-    },
-    onSuccess: (_, vars) => {
-      message.success(`${ACTION_LABEL[vars.action]} 완료`);
+  // 시작/일시정지/중지/재시작은 Airflow DAG가 담당한다 - 웹 UI는 배포까지만.
+  const deployMutation = useMutation({
+    mutationFn: deployPipeline,
+    onSuccess: () => {
+      message.success("배포 완료");
       invalidatePipelines();
     },
     onError: (error: Error) => message.error(error.message),
@@ -188,22 +179,10 @@ export function PipelinesPage() {
                 </Button>
                 <Button
                   size="small"
-                  loading={lifecycleMutation.isPending}
-                  onClick={() => lifecycleMutation.mutate({ id: record.id, action: "deploy" })}
+                  loading={deployMutation.isPending}
+                  onClick={() => deployMutation.mutate(record.id)}
                 >
                   배포
-                </Button>
-                <Button size="small" onClick={() => lifecycleMutation.mutate({ id: record.id, action: "start" })}>
-                  시작
-                </Button>
-                <Button size="small" onClick={() => lifecycleMutation.mutate({ id: record.id, action: "pause" })}>
-                  일시정지
-                </Button>
-                <Button size="small" onClick={() => lifecycleMutation.mutate({ id: record.id, action: "stop" })}>
-                  중지
-                </Button>
-                <Button size="small" onClick={() => lifecycleMutation.mutate({ id: record.id, action: "restart" })}>
-                  재시작
                 </Button>
                 <Popconfirm
                   title="이 파이프라인을 삭제할까요?"
@@ -477,11 +456,3 @@ export function PipelinesPage() {
     </div>
   );
 }
-
-const ACTION_LABEL: Record<string, string> = {
-  deploy: "배포",
-  start: "시작",
-  pause: "일시정지",
-  stop: "중지",
-  restart: "재시작",
-};
