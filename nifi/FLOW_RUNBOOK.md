@@ -28,7 +28,7 @@ PutDatabaseRecord (Record Reader: json-reader / JsonTreeReader)
 
 테스트 방법:
 ```
-curl -X POST "http://localhost:${NIFI_LISTENHTTP_PORT}/contentListener" \
+docker compose exec -T nifi curl -X POST "http://localhost:${NIFI_LISTENHTTP_PORT}/contentListener" \
   -H "Content-Type: application/json" \
   -d '{"source_path": "test/hello.txt", "mime_type": "text/plain", "extracted_text": "샘플 텍스트"}'
 

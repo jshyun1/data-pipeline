@@ -228,9 +228,8 @@ services:
       NIFI_JVM_HEAP_INIT: ${NIFI_JVM_HEAP_INIT}
       NIFI_JVM_HEAP_MAX: ${NIFI_JVM_HEAP_MAX}
       NIFI_WEB_PROXY_HOST: ${NIFI_WEB_PROXY_HOST}
-    ports:
-      - "${NIFI_HTTPS_PORT}:${NIFI_HTTPS_PORT}"
-      - "${NIFI_LISTENHTTP_PORT}:${NIFI_LISTENHTTP_PORT}"
+    expose:
+      - "${NIFI_HTTPS_PORT}"
     volumes:
       # state는 컴포넌트 상태값(예: 마지막 처리 위치)만 저장한다. 캔버스에서
       # 만드는 실제 플로우 정의(flow.json.gz)는 conf/에 저장되는데 예전엔 이게
@@ -362,6 +361,7 @@ services:
     restart: unless-stopped
     ports:
       - "${CEREBROETL_UI_PORT}:80"
+      - "${NIFI_PUBLIC_HTTPS_PORT}:80"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ || exit 1"]
       interval: 10s

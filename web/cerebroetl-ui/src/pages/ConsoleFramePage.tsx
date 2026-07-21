@@ -6,11 +6,12 @@ interface ConsoleFramePageProps {
   kicker: string;
   title: string;
   src: string;
+  externalSrc?: string;
   healthcheckSrc?: string;
   waitMessage?: string;
 }
 
-export function ConsoleFramePage({ kicker, title, src, healthcheckSrc, waitMessage }: ConsoleFramePageProps) {
+export function ConsoleFramePage({ kicker, title, src, externalSrc, healthcheckSrc, waitMessage }: ConsoleFramePageProps) {
   const [isReady, setIsReady] = useState(!healthcheckSrc);
   const [frameKey, setFrameKey] = useState(0);
 
@@ -67,7 +68,7 @@ export function ConsoleFramePage({ kicker, title, src, healthcheckSrc, waitMessa
           <div className="page-kicker">{kicker}</div>
           <h2 className="page-title">{title}</h2>
         </div>
-        <Button icon={<ExportOutlined />} href={src} target="_blank" rel="noreferrer">
+        <Button icon={<ExportOutlined />} href={externalSrc ?? src} target="_blank" rel="noreferrer">
           새 창
         </Button>
       </div>
