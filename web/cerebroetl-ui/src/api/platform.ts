@@ -22,6 +22,13 @@ export interface AirflowDagRun {
   execution_date?: string;
 }
 
+export interface AirflowTaskInstance {
+  task_id: string;
+  state?: string;
+  try_number?: number;
+  max_tries?: number;
+}
+
 export interface KafkaConnectInfoResponse {
   version?: string;
   commit?: string;
@@ -94,6 +101,13 @@ export async function listAirflowDagRuns(dagId: string, limit = 100): Promise<Ai
     },
   );
   return res.data.dag_runs ?? [];
+}
+
+export async function listAirflowTaskInstances(dagId: string, dagRunId: string): Promise<AirflowTaskInstance[]> {
+  const res = await axios.get<{ task_instances?: AirflowTaskInstance[] }>(
+    `/airflow-api/dags/${encodeURIComponent(dagId)}/dagRuns/${encodeURIComponent(dagRunId)}/taskInstances`,
+  );
+  return res.data.task_instances ?? [];
 }
 
 export async function getKafkaConnectInfo(): Promise<KafkaConnectInfoResponse> {
