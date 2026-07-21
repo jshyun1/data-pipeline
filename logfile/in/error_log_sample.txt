@@ -1,0 +1,300 @@
+2026-07-10 09:01:24 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 09:03:34 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 09:05:35 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:49
+2026-07-10 09:06:38 [ERROR] DatabaseConnectionFailed: Connection refused at /app/db.js:165
+2026-07-10 09:08:34 [INFO] UserLoggedIn: User session established for user_id=1024.
+2026-07-10 09:09:15 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 09:12:05 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:479
+2026-07-10 09:13:57 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:126
+2026-07-10 09:14:28 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:408
+2026-07-10 09:14:50 [WARN] MemoryUsageHigh: 85% capacity reached, consider checking processes.
+2026-07-10 09:16:42 [INFO] ScheduledJobCompleted: Nightly backup job completed in 45 seconds.
+2026-07-10 09:18:24 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 09:18:47 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:164
+2026-07-10 09:20:08 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 09:21:59 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:459
+2026-07-10 09:24:20 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:188
+2026-07-10 09:24:33 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:393
+2026-07-10 09:27:14 [WARN] MemoryUsageHigh: 85% capacity reached, consider checking processes.
+2026-07-10 09:28:49 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:226
+2026-07-10 09:30:44 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 09:31:27 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:123
+2026-07-10 09:32:17 [ERROR] FileNotFound: Unable to locate /var/data/config.json at /app/utils/config.js:86
+2026-07-10 09:32:45 [INFO] UserLoggedIn: User session established for user_id=1024.
+2026-07-10 09:33:07 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:109
+2026-07-10 09:33:35 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 09:35:28 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:81
+2026-07-10 09:37:51 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:295
+2026-07-10 09:38:51 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:234
+2026-07-10 09:41:39 [INFO] ScheduledJobCompleted: Nightly backup job completed in 45 seconds.
+2026-07-10 09:43:28 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 09:45:37 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 09:46:10 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 09:46:42 [INFO] UserLoggedIn: User session established for user_id=1024.
+2026-07-10 09:49:14 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:40
+2026-07-10 09:50:45 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 09:53:28 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 09:53:46 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 09:55:48 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:157
+2026-07-10 09:57:27 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 09:57:57 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:298
+2026-07-10 09:58:55 [ERROR] DatabaseConnectionFailed: Connection refused at /app/db.js:405
+2026-07-10 10:01:06 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 10:02:43 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:238
+2026-07-10 10:05:09 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 10:05:15 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 10:07:34 [INFO] ScheduledJobCompleted: Nightly backup job completed in 45 seconds.
+2026-07-10 10:10:28 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:433
+2026-07-10 10:12:00 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:325
+2026-07-10 10:12:54 [WARN] RateLimitApproaching: Client 203.0.113.45 has used 90% of allowed API quota.
+2026-07-10 10:15:29 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 10:18:09 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:362
+2026-07-10 10:20:25 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 10:20:37 [INFO] ScheduledJobCompleted: Nightly backup job completed in 45 seconds.
+2026-07-10 10:20:46 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:395
+2026-07-10 10:21:52 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:214
+2026-07-10 10:23:52 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:486
+2026-07-10 10:25:50 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:177
+2026-07-10 10:27:23 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:313
+2026-07-10 10:28:16 [ERROR] FileNotFound: Unable to locate /var/data/config.json at /app/utils/config.js:165
+2026-07-10 10:28:59 [WARN] MemoryUsageHigh: 85% capacity reached, consider checking processes.
+2026-07-10 10:31:44 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:314
+2026-07-10 10:34:44 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 10:37:04 [INFO] UserLoggedIn: User session established for user_id=1024.
+2026-07-10 10:38:33 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:479
+2026-07-10 10:40:55 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:328
+2026-07-10 10:41:12 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:227
+2026-07-10 10:43:35 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:167
+2026-07-10 10:45:38 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:257
+2026-07-10 10:47:41 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 10:48:02 [WARN] DeprecatedFunctionUsed: Function getUserSync() is deprecated, use getUserAsync() instead.
+2026-07-10 10:50:07 [ERROR] DatabaseConnectionFailed: Connection refused at /app/db.js:202
+2026-07-10 10:52:34 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:399
+2026-07-10 10:54:32 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 10:57:31 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:393
+2026-07-10 10:59:11 [WARN] DiskSpaceLow: Only 12% disk space remaining on /dev/sda1.
+2026-07-10 11:00:06 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:73
+2026-07-10 11:00:39 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 11:02:15 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:294
+2026-07-10 11:03:00 [INFO] UserLoggedIn: User session established for user_id=1024.
+2026-07-10 11:04:09 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:13
+2026-07-10 11:06:57 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:42
+2026-07-10 11:09:31 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 11:10:16 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:50
+2026-07-10 11:12:14 [ERROR] FileNotFound: Unable to locate /var/data/config.json at /app/utils/config.js:11
+2026-07-10 11:14:41 [INFO] ScheduledJobCompleted: Nightly backup job completed in 45 seconds.
+2026-07-10 11:15:34 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:59
+2026-07-10 11:16:36 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:426
+2026-07-10 11:18:43 [WARN] MemoryUsageHigh: 85% capacity reached, consider checking processes.
+2026-07-10 11:19:14 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 11:20:04 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 11:20:31 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 11:21:06 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 11:22:03 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:329
+2026-07-10 11:23:12 [WARN] RateLimitApproaching: Client 203.0.113.45 has used 90% of allowed API quota.
+2026-07-10 11:23:50 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 11:26:31 [WARN] MemoryUsageHigh: 85% capacity reached, consider checking processes.
+2026-07-10 11:27:49 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:455
+2026-07-10 11:28:25 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 11:29:13 [INFO] UserLoggedIn: User session established for user_id=1024.
+2026-07-10 11:29:21 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:22
+2026-07-10 11:30:52 [ERROR] DatabaseConnectionFailed: Connection refused at /app/db.js:494
+2026-07-10 11:32:20 [ERROR] DatabaseConnectionFailed: Connection refused at /app/db.js:67
+2026-07-10 11:34:29 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 11:34:50 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:278
+2026-07-10 11:36:39 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:328
+2026-07-10 11:38:50 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 11:39:24 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:312
+2026-07-10 11:40:33 [WARN] DeprecatedFunctionUsed: Function getUserSync() is deprecated, use getUserAsync() instead.
+2026-07-10 11:41:57 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:303
+2026-07-10 11:44:51 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:303
+2026-07-10 11:47:24 [INFO] UserLoggedIn: User session established for user_id=1024.
+2026-07-10 11:50:12 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:492
+2026-07-10 11:52:24 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 11:55:09 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:308
+2026-07-10 11:57:47 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:252
+2026-07-10 12:00:26 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 12:01:41 [WARN] DiskSpaceLow: Only 12% disk space remaining on /dev/sda1.
+2026-07-10 12:04:24 [WARN] MemoryUsageHigh: 85% capacity reached, consider checking processes.
+2026-07-10 12:05:01 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 12:06:58 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:50
+2026-07-10 12:09:29 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 12:10:03 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 12:12:20 [WARN] DeprecatedFunctionUsed: Function getUserSync() is deprecated, use getUserAsync() instead.
+2026-07-10 12:13:39 [WARN] MemoryUsageHigh: 85% capacity reached, consider checking processes.
+2026-07-10 12:16:21 [WARN] DiskSpaceLow: Only 12% disk space remaining on /dev/sda1.
+2026-07-10 12:19:12 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 12:19:32 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:306
+2026-07-10 12:22:29 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 12:23:53 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:330
+2026-07-10 12:25:48 [WARN] DeprecatedFunctionUsed: Function getUserSync() is deprecated, use getUserAsync() instead.
+2026-07-10 12:26:05 [WARN] RateLimitApproaching: Client 203.0.113.45 has used 90% of allowed API quota.
+2026-07-10 12:26:32 [ERROR] DatabaseConnectionFailed: Connection refused at /app/db.js:408
+2026-07-10 12:28:56 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 12:29:33 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:426
+2026-07-10 12:32:08 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:353
+2026-07-10 12:34:21 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 12:37:04 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:83
+2026-07-10 12:39:30 [WARN] DeprecatedFunctionUsed: Function getUserSync() is deprecated, use getUserAsync() instead.
+2026-07-10 12:42:05 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:411
+2026-07-10 12:44:25 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:412
+2026-07-10 12:44:39 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:90
+2026-07-10 12:44:50 [WARN] DeprecatedFunctionUsed: Function getUserSync() is deprecated, use getUserAsync() instead.
+2026-07-10 12:46:53 [INFO] ScheduledJobCompleted: Nightly backup job completed in 45 seconds.
+2026-07-10 12:49:20 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 12:50:15 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 12:52:47 [ERROR] DatabaseConnectionFailed: Connection refused at /app/db.js:130
+2026-07-10 12:53:19 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:176
+2026-07-10 12:53:55 [WARN] DeprecatedFunctionUsed: Function getUserSync() is deprecated, use getUserAsync() instead.
+2026-07-10 12:56:21 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:344
+2026-07-10 12:56:31 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 12:58:54 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:176
+2026-07-10 12:59:32 [WARN] RateLimitApproaching: Client 203.0.113.45 has used 90% of allowed API quota.
+2026-07-10 13:00:08 [INFO] UserLoggedIn: User session established for user_id=1024.
+2026-07-10 13:00:55 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:238
+2026-07-10 13:01:45 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:165
+2026-07-10 13:04:14 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:184
+2026-07-10 13:07:07 [INFO] UserLoggedIn: User session established for user_id=1024.
+2026-07-10 13:08:41 [INFO] ScheduledJobCompleted: Nightly backup job completed in 45 seconds.
+2026-07-10 13:10:41 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:279
+2026-07-10 13:13:08 [WARN] DeprecatedFunctionUsed: Function getUserSync() is deprecated, use getUserAsync() instead.
+2026-07-10 13:15:15 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 13:16:45 [WARN] RateLimitApproaching: Client 203.0.113.45 has used 90% of allowed API quota.
+2026-07-10 13:17:39 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:50
+2026-07-10 13:19:39 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:125
+2026-07-10 13:20:26 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:11
+2026-07-10 13:22:00 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:201
+2026-07-10 13:22:37 [ERROR] DatabaseConnectionFailed: Connection refused at /app/db.js:264
+2026-07-10 13:24:31 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 13:25:39 [ERROR] DatabaseConnectionFailed: Connection refused at /app/db.js:487
+2026-07-10 13:27:05 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:365
+2026-07-10 13:27:47 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 13:28:45 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 13:29:07 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 13:31:10 [WARN] DeprecatedFunctionUsed: Function getUserSync() is deprecated, use getUserAsync() instead.
+2026-07-10 13:31:32 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 13:33:13 [INFO] UserLoggedIn: User session established for user_id=1024.
+2026-07-10 13:35:05 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 13:36:39 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:432
+2026-07-10 13:36:57 [WARN] RateLimitApproaching: Client 203.0.113.45 has used 90% of allowed API quota.
+2026-07-10 13:38:36 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:375
+2026-07-10 13:39:25 [WARN] MemoryUsageHigh: 85% capacity reached, consider checking processes.
+2026-07-10 13:41:40 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:399
+2026-07-10 13:43:53 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 13:46:41 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:176
+2026-07-10 13:49:04 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 13:49:43 [WARN] DiskSpaceLow: Only 12% disk space remaining on /dev/sda1.
+2026-07-10 13:52:08 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:84
+2026-07-10 13:54:16 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:135
+2026-07-10 13:54:21 [INFO] ScheduledJobCompleted: Nightly backup job completed in 45 seconds.
+2026-07-10 13:54:55 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:325
+2026-07-10 13:55:04 [WARN] RateLimitApproaching: Client 203.0.113.45 has used 90% of allowed API quota.
+2026-07-10 13:57:50 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:79
+2026-07-10 14:00:00 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:10
+2026-07-10 14:00:56 [WARN] RateLimitApproaching: Client 203.0.113.45 has used 90% of allowed API quota.
+2026-07-10 14:03:54 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 14:06:46 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:473
+2026-07-10 14:09:22 [WARN] DiskSpaceLow: Only 12% disk space remaining on /dev/sda1.
+2026-07-10 14:11:09 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 14:14:02 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 14:16:23 [WARN] MemoryUsageHigh: 85% capacity reached, consider checking processes.
+2026-07-10 14:16:48 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:156
+2026-07-10 14:16:55 [WARN] DiskSpaceLow: Only 12% disk space remaining on /dev/sda1.
+2026-07-10 14:17:10 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:311
+2026-07-10 14:19:45 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:99
+2026-07-10 14:20:50 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:52
+2026-07-10 14:23:39 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 14:25:39 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 14:26:51 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 14:27:52 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:424
+2026-07-10 14:30:04 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 14:32:48 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 14:34:04 [INFO] ScheduledJobCompleted: Nightly backup job completed in 45 seconds.
+2026-07-10 14:36:23 [WARN] MemoryUsageHigh: 85% capacity reached, consider checking processes.
+2026-07-10 14:37:21 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:153
+2026-07-10 14:37:37 [ERROR] FileNotFound: Unable to locate /var/data/config.json at /app/utils/config.js:137
+2026-07-10 14:39:54 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 14:42:04 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:388
+2026-07-10 14:42:45 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:487
+2026-07-10 14:44:13 [INFO] ScheduledJobCompleted: Nightly backup job completed in 45 seconds.
+2026-07-10 14:45:24 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 14:48:22 [INFO] UserLoggedIn: User session established for user_id=1024.
+2026-07-10 14:49:56 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:91
+2026-07-10 14:52:05 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:234
+2026-07-10 14:54:15 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:350
+2026-07-10 14:56:22 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:397
+2026-07-10 14:56:37 [INFO] UserLoggedIn: User session established for user_id=1024.
+2026-07-10 14:59:34 [INFO] ScheduledJobCompleted: Nightly backup job completed in 45 seconds.
+2026-07-10 15:00:50 [WARN] DiskSpaceLow: Only 12% disk space remaining on /dev/sda1.
+2026-07-10 15:03:43 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:416
+2026-07-10 15:04:28 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 15:05:45 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:374
+2026-07-10 15:08:35 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:466
+2026-07-10 15:10:07 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:105
+2026-07-10 15:12:09 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:35
+2026-07-10 15:12:29 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:279
+2026-07-10 15:14:15 [INFO] ScheduledJobCompleted: Nightly backup job completed in 45 seconds.
+2026-07-10 15:14:46 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 15:16:27 [WARN] RateLimitApproaching: Client 203.0.113.45 has used 90% of allowed API quota.
+2026-07-10 15:16:38 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 15:18:52 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:114
+2026-07-10 15:21:16 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 15:22:48 [ERROR] DiskWriteError: Failed to write to /var/log/app.log at /app/logger.js:204
+2026-07-10 15:24:37 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:243
+2026-07-10 15:25:16 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:492
+2026-07-10 15:27:00 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 15:29:12 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:350
+2026-07-10 15:31:33 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:287
+2026-07-10 15:31:41 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 15:32:25 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 15:32:38 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:253
+2026-07-10 15:35:15 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:400
+2026-07-10 15:37:29 [WARN] DeprecatedFunctionUsed: Function getUserSync() is deprecated, use getUserAsync() instead.
+2026-07-10 15:37:58 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 15:39:16 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:478
+2026-07-10 15:39:21 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:76
+2026-07-10 15:40:20 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 15:43:01 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:450
+2026-07-10 15:43:08 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:126
+2026-07-10 15:43:44 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 15:45:12 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:175
+2026-07-10 15:46:44 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:434
+2026-07-10 15:49:12 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:258
+2026-07-10 15:50:20 [ERROR] QuerySyntaxError: Invalid SQL syntax near 'SELECT *' at /app/models/order.js:269
+2026-07-10 15:51:13 [ERROR] DatabaseConnectionFailed: Connection refused at /app/db.js:296
+2026-07-10 15:53:52 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 15:55:38 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 15:58:21 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 15:59:14 [INFO] ServiceStarted: Application server started successfully on port 8080.
+2026-07-10 15:59:57 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:311
+2026-07-10 16:01:17 [WARN] RateLimitApproaching: Client 203.0.113.45 has used 90% of allowed API quota.
+2026-07-10 16:03:05 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 16:05:47 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:105
+2026-07-10 16:08:08 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 16:08:31 [WARN] SlowQueryDetected: Query execution took 3200ms, exceeding threshold of 1000ms.
+2026-07-10 16:10:06 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 16:12:56 [FATAL] OutOfMemoryError: Java heap space exhausted, shutting down process at /app/server.js:435
+2026-07-10 16:14:44 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:75
+2026-07-10 16:14:56 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 16:17:19 [WARN] RetryAttempt: Retrying failed request to /api/orders, attempt 2 of 3.
+2026-07-10 16:17:46 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:156
+2026-07-10 16:20:00 [WARN] DeprecatedFunctionUsed: Function getUserSync() is deprecated, use getUserAsync() instead.
+2026-07-10 16:21:05 [WARN] MemoryUsageHigh: 85% capacity reached, consider checking processes.
+2026-07-10 16:21:48 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 16:22:03 [WARN] RateLimitApproaching: Client 203.0.113.45 has used 90% of allowed API quota.
+2026-07-10 16:22:31 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 16:23:51 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:171
+2026-07-10 16:23:56 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 16:25:28 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:131
+2026-07-10 16:26:27 [ERROR] APIRequestTimeout: Request to /api/payments timed out after 30000ms at /app/services/payment.js:138
+2026-07-10 16:26:34 [ERROR] NullPointerException: Cannot read property 'id' of undefined at /app/controllers/user.js:300
+2026-07-10 16:28:59 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 16:30:32 [ERROR] UnhandledPromiseRejection: Promise rejected without catch at /app/index.js:14
+2026-07-10 16:33:06 [ERROR] FileNotFound: Unable to locate /var/data/config.json at /app/utils/config.js:428
+2026-07-10 16:35:42 [WARN] CacheMiss: Cache miss rate exceeded 40% in the last 5 minutes.
+2026-07-10 16:36:25 [INFO] ConfigReloaded: Configuration file reloaded without downtime.
+2026-07-10 16:37:17 [FATAL] SegmentationFault: Process crashed with signal SIGSEGV at /app/native/module.c:418
+2026-07-10 16:39:37 [ERROR] AuthenticationFailed: Invalid token provided at /app/middleware/auth.js:76
+2026-07-10 16:40:33 [WARN] DiskSpaceLow: Only 12% disk space remaining on /dev/sda1.
+2026-07-10 16:43:29 [WARN] DeprecatedFunctionUsed: Function getUserSync() is deprecated, use getUserAsync() instead.
+2026-07-10 16:46:18 [ERROR] FileNotFound: Unable to locate /var/data/config.json at /app/utils/config.js:171

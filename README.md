@@ -1,7 +1,9 @@
-# Oracle ↔ 타란툴라DB 실시간 데이터 파이프라인
+# Cerebro ETL — Oracle ↔ 타란툴라DB 실시간 데이터 파이프라인
 
-Kafka + NiFi 기반 CDC/ETL 파이프라인. 1단계 목표는 **Oracle → 타란툴라DB(PostgreSQL 기반)**
-실시간 적재이며, 최종 목표는 **양방향(타란툴라DB → Oracle 포함)** 연동입니다.
+Kafka + NiFi + Airflow 기반 CDC/ETL 파이프라인과, 그 위에서 파이프라인을
+생성·배포·관리하는 웹 서비스("Cerebro ETL")입니다. 1단계 목표는
+**Oracle → 타란툴라DB(PostgreSQL 기반)** 실시간 적재이며, 최종 목표는
+**양방향(타란툴라DB → Oracle 포함)** 연동입니다.
 
 ## 아키텍처
 
@@ -13,18 +15,31 @@ Kafka + NiFi 기반 CDC/ETL 파이프라인. 1단계 목표는 **Oracle → 타�
                                                                       [NiFi ETL]
                                                 (정형: CDC 이벤트 변환/라우팅)
                                                 (비정형: 파일 수집/텍스트 추출)
+                                                (로그: Filebeat → Kafka → JDBC Sink)
                                                                           │
                                                                           ▼
                                                        [타란툴라DB (PostgreSQL 기반)]
+
+[Airflow]  -- 파이프라인 시작/중지/재시작/스케줄 제어 (제어 플레인) -->  [Kafka Connect / NiFi]
+[Cerebro ETL 웹]  -- 파이프라인 생성/배포/삭제, 각 도구 화면 통합 -->  [위 스택 전체]
 ```
 
-- **CDC 실시간 수집**: Debezium Oracle 커넥터(LogMiner 어댑터)가 Oracle redo log를
-  읽어 Kafka 토픽(`oracle-cdc.<SCHEMA>.<TABLE>`)에 변경 이벤트를 발행합니다.
+- **CDC 실시간 수집**: Debezium Oracle/Postgres 커넥터가 redo log/논리 복제를
+  읽어 Kafka 토픽(`oracle-cdc.<SCHEMA>.<TABLE>` 등)에 변경 이벤트를 발행합니다.
 - **정형 데이터 ETL**: NiFi가 Kafka 토픽을 구독해 Debezium 이벤트를 파싱/평탄화하고
   `PutDatabaseRecord`로 타깃 DB에 upsert합니다.
 - **비정형 데이터 수집**: NiFi의 파일/HTTP 기반 프로세서(ListFile, ListenHTTP 등)로
   수집 후 필요 시 텍스트 추출하여 별도 테이블에 적재합니다. 상세는
   [`nifi/FLOW_RUNBOOK.md`](nifi/FLOW_RUNBOOK.md) 참고.
+- **로그파일 실시간 적재**: Filebeat가 로그 파일을 tailing해서 Kafka에 쓰고,
+  기존 JDBC Sink 커넥터가 그대로 타깃 DB에 적재합니다.
+- **파이프라인 웹 서비스**(`web/backend` + `web/frontend`/`web/cerebroetl-ui`):
+  화면/API로 Kafka Connect 커넥터를 동적으로 생성·배포·삭제합니다. 자세한 설계는
+  [`docs/kafka-webservice-design.md`](docs/kafka-webservice-design.md) 참고.
+- **Airflow**: 이미 배포된 파이프라인의 시작/중지/재시작 및 스케줄을 담당하는
+  제어 플레인입니다. Kafka/NiFi 파이프라인마다 DAG가 자동 생성됩니다
+  (`airflow/dags/kafka_pipelines_dynamic.py`, `nifi_pipelines_dynamic.py`).
+  생성/삭제는 여전히 각 도구(웹 화면 또는 NiFi 캔버스)에서 담당합니다.
 
 ## "타란툴라DB"에 대한 안내
 
@@ -61,12 +76,24 @@ docker compose logs -f kafka-connect   # 커넥터 등록/기동 로그 확인
 # Debezium 커넥터 상태
 curl -s http://localhost:8083/connectors/oracle-cdc-source/status | jq
 
-# NiFi UI (초기 실행 시 이미지 빌드로 몇 분 소요될 수 있음)
-open http://localhost:8080/nifi   # 접속 후 nifi/FLOW_RUNBOOK.md 순서로 플로우 구성
+# NiFi UI (초기 실행 시 이미지 빌드로 몇 분 소요될 수 있음, HTTPS 전용 - 자체 서명 인증서 경고는 무시)
+open https://localhost:${NIFI_PUBLIC_HTTPS_PORT}/nifi   # 접속 후 nifi/FLOW_RUNBOOK.md 순서로 플로우 구성
 ```
 
 Oracle 테이블(`appuser.customers`)에 INSERT/UPDATE/DELETE를 발생시키면 Kafka
 토픽 → NiFi를 거쳐 타깃 DB(`cdc_landing.customers`)에 반영되는지 확인합니다.
+
+## 웹 서비스 / Airflow 접속
+
+`.env`에서 실제 포트를 확인하세요(기본값 기준):
+
+| 서비스 | URL | 용도 |
+|---|---|---|
+| Cerebro ETL 통합 웹 | `https://localhost:${CEREBROETL_UI_PORT}` | NiFi/Airflow/Kafka Connect를 한 화면에서 |
+| Kafka 파이프라인 웹 | `http://localhost:${PIPELINE_UI_PORT}` | Kafka 파이프라인 생성/배포/삭제 전용 |
+| Airflow | `http://localhost:${AIRFLOW_WEBSERVER_PORT}` | 파이프라인 시작/중지/재시작/스케줄 |
+| NiFi | `https://localhost:${NIFI_PUBLIC_HTTPS_PORT}/nifi` | NiFi 캔버스 직접 접속 |
+| Kafka Connect REST | `http://localhost:${CONNECT_REST_PORT}` | 커넥터 상태 조회 |
 
 ## 2) 회사 DB 연동 단계 (로컬 컨테이너 → 실제 사내 DB)
 
@@ -85,8 +112,9 @@ docker compose up -d --build   # --profile poc 를 빼면 오라클/타깃DB 컨
 - 컨테이너에서 사내 DB로의 네트워크 접근(방화벽/VPN) 및 자격 증명 관리(사내 Vault 등)를
   별도로 검토하세요. `.env`는 git에 포함되지 않지만 평문 저장이므로, 운영 단계에서는
   비밀 관리 도구 연동을 권장합니다.
-- NiFi는 현재 HTTP(비TLS)로 구성되어 있습니다(로컬 POC 전용). 사내 DB 연동 시에는
-  `NIFI_WEB_HTTPS_PORT`/인증서/Single-User 또는 LDAP 인증으로 전환하세요.
+- NiFi 2.x는 HTTPS + Single-User 인증으로만 기동됩니다(`NIFI_HTTPS_PORT`/
+  `NIFI_PUBLIC_HTTPS_PORT`, 자체 서명 인증서). 사내 배포 시 LDAP 등 다른 인증
+  방식이 필요하면 별도 전환이 필요합니다.
 
 ## 3) 최종 목표: 타란툴라DB → Oracle 역방향
 
@@ -100,9 +128,16 @@ docker compose up -d --build   # --profile poc 를 빼면 오라클/타깃DB 컨
 db/oracle-init/       Oracle CDC 활성화 + 샘플 스키마 (컨테이너 최초 기동 시 1회 실행)
 db/target-init/       타깃 DB(PostgreSQL) 랜딩 스키마
 kafka-connect/         Debezium Oracle 커넥터 포함 Kafka Connect 이미지 + 커넥터 설정 템플릿
-nifi/                  JDBC 드라이버 포함 NiFi 이미지 + 플로우 구성 가이드
+nifi/                  JDBC 드라이버 포함 NiFi 이미지 + 플로우 구성 가이드 (FLOW_RUNBOOK.md)
+airflow/dags/          Kafka/NiFi 파이프라인 제어용 동적 DAG + 배선 검증용 DAG
+filebeat/              로그파일 실시간 적재 파이프라인의 소스 설정
+web/backend/           파이프라인 웹 서비스 백엔드 (Spring Boot)
+web/frontend/          Kafka 파이프라인 전용 웹 UI (생성/배포/삭제)
+web/cerebroetl-ui/     NiFi/Airflow/Kafka Connect 통합 웹 UI ("Cerebro ETL")
+docs/                  설계 문서 (kafka-webservice-design.md 등)
+offline/               폐쇄망 배포 패키징 스크립트
 scripts/               로컬 개발환경 셋업, 커넥터 등록 스크립트
-.gitlab-ci.yml         GitLab CI (compose 유효성 검증 + 이미지 빌드)
+.gitlab-ci.yml         GitLab CI (compose 유효성 검증 + 이미지 빌드 + 백엔드 테스트)
 ```
 
 ## 알려진 제약사항
