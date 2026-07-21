@@ -26,7 +26,7 @@ export function App() {
               kicker="ETL FLOW MANAGEMENT"
               title="ETL 관리"
               src="/nifi/"
-              externalSrc="https://localhost:18443/nifi/"
+              externalSrc="https://localhost:8443/nifi/"
               healthcheckSrc="/nifi/"
               waitMessage="NiFi 관리 콘솔을 준비하는 중입니다"
             />
