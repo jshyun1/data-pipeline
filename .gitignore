@@ -1,0 +1,43 @@
+# 환경 변수 (비밀번호 포함) - 절대 커밋 금지
+.env
+.env.*
+!.env.example
+
+# Docker / Compose 로컬 상태
+*.log
+.DS_Store
+
+# NiFi / Kafka Connect 로컬 산출물
+nifi/drivers/
+kafka-connect/plugins/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# SDKMAN / JDK 로컬 설치물
+.sdkman/
+
+# web/backend (Gradle) 빌드 산출물 - gradlew/gradle-wrapper.jar는 커밋 대상이라 제외하지 않음
+web/backend/build/
+web/backend/.gradle/
+web/backend/out/
+web/backend/bin/
+
+# web/frontend (Node) 빌드 산출물, 다음 증분에서 추가 예정
+web/frontend/node_modules/
+web/frontend/dist/
+
+# 로그 파이프라인 검증용 테스트 로그 파일 (디렉터리 자체는 .gitkeep으로 유지)
+log-sources/*
+!log-sources/.gitkeep
+
+# offline/save-images.sh 결과물 (이미지 tar, 수 GB) - 커밋 대상 아님
+release/
+
+# Airflow 컨테이너가 쓰는 로그/DB 런타임 산출물 (dags/plugins는 커밋 대상)
+airflow/logs/*
+!airflow/logs/.gitkeep
+__pycache__/
+*.pyc

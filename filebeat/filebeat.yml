@@ -1,0 +1,28 @@
+# 파이프라인별 입력은 정적으로 여기 안 적고, pipeline-api가 filebeat-inputs 볼륨에
+# 파일 하나씩 써넣으면 아래 reload 설정이 주기적으로 스캔해서 동적으로 반영한다
+# (컨테이너 재시작 없이 파이프라인 생성/삭제가 즉시 적용됨).
+filebeat.config.inputs:
+  enabled: true
+  path: /usr/share/filebeat/inputs.d/*.yml
+  reload.enabled: true
+  reload.period: 10s
+
+# Kafka Connect 없이 Kafka에 직접 쓴다. 토픽은 각 입력 파일의 fields.kafka_topic 값으로
+# 라우팅하고, 실제 메시지 바디는 각 입력의 script 프로세서가 만든 kafka_value_json
+# 필드(Kafka Connect 스키마 봉투 {"schema":..,"payload":..})를 그대로 내보낸다 -
+# worker 기본 컨버터(JsonConverter, schemas.enable=true)가 그대로 파싱할 수 있게 하기 위함.
+output.kafka:
+  hosts: ["kafka:9092"]
+  topic: '%{[fields.kafka_topic]}'
+  codec.format:
+    string: '%{[kafka_value_json]}'
+  required_acks: 1
+
+logging.level: info
+logging.to_stderr: true
+
+# docker-compose의 filebeat healthcheck가 이 엔드포인트로 살아있는지 확인한다
+# (컨테이너 안에서만 접근하므로 외부에 포트 노출은 불필요).
+http.enabled: true
+http.host: 0.0.0.0
+http.port: 5066

@@ -1,0 +1,539 @@
+networks:
+  pipeline-net:
+    driver: bridge
+
+volumes:
+  oracle-data:
+  target-db-data:
+  kafka-data:
+  nifi-state:
+  nifi-conf:
+  nifi-database-repository:
+  nifi-flowfile-repository:
+  nifi-content-repository:
+  nifi-provenance-repository:
+  metadata-db-data:
+  filebeat-inputs:
+  filebeat-registry:
+  airflow-db-data:
+
+services:
+  # ---------------------------------------------------------------------
+  # Source: Oracle (POC 전용 컨테이너). 회사 Oracle 사용 시 --profile poc
+  # 없이 실행하고 .env 의 ORACLE_HOST/PORT 를 회사 DB로 지정하세요.
+  # ---------------------------------------------------------------------
+  oracle-db:
+    image: ${ORACLE_IMAGE}
+    profiles: ["poc"]
+    container_name: oracle-db
+    restart: unless-stopped
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD}
+      APP_USER: ${ORACLE_APP_USER}
+      APP_USER_PASSWORD: ${ORACLE_APP_USER_PASSWORD}
+      # gvenzl 계열 이미지(oracle-free/oracle-xe)는 기본 PDB(FREEPDB1/XEPDB1)를
+      # 이미 내장하고 있음. ORACLE_DATABASE를 같은 이름으로 넘기면 엔트리포인트가
+      # 새 PDB 생성을 시도하다 ORA-65012(이미 존재)로 실패하고, 그 여파로 healthcheck
+      # 마커 파일이 지워지지 않아 컨테이너가 영구히 unhealthy로 남는 문제가 있어 제거함.
+    ports:
+      - "${ORACLE_PORT}:1521"
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      - ./db/oracle-init:/container-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+    networks: [pipeline-net]
+
+  # ---------------------------------------------------------------------
+  # Target: "타란툴라DB" (PostgreSQL 기반) POC 스탠드인.
+  # 실제 사내 타란툴라DB 사용 시 --profile poc 없이 실행하고
+  # .env 의 TARGET_DB_HOST/PORT/계정을 실제 값으로 지정하세요.
+  # ---------------------------------------------------------------------
+  target-db:
+    image: ${TARGET_DB_IMAGE}
+    profiles: ["poc"]
+    container_name: target-db
+    restart: unless-stopped
+    # wal_level=logical: Postgres를 CDC 소스로도 쓰는 파이프라인(Debezium pgoutput)을
+    # 지원하려면 필요. sink 전용 용도에도 상위 호환이라 기존 동작에는 영향 없음.
+    command: ["postgres", "-c", "wal_level=logical"]
+    environment:
+      POSTGRES_DB: ${TARGET_DB_NAME}
+      POSTGRES_USER: ${TARGET_DB_USER}
+      POSTGRES_PASSWORD: ${TARGET_DB_PASSWORD}
+    ports:
+      - "${TARGET_DB_PORT}:5432"
+    volumes:
+      - target-db-data:/var/lib/postgresql/data
+      - ./db/target-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TARGET_DB_USER} -d ${TARGET_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+    networks: [pipeline-net]
+
+  # ---------------------------------------------------------------------
+  # Kafka (KRaft 모드, 브로커+컨트롤러 결합, 단일 노드)
+  # ---------------------------------------------------------------------
+  kafka:
+    image: ${KAFKA_IMAGE}
+    container_name: kafka
+    restart: unless-stopped
+    environment:
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS}
+    ports:
+      - "${KAFKA_BROKER_PORT}:9092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+    networks: [pipeline-net]
+
+  # ---------------------------------------------------------------------
+  # Kafka Connect + Debezium Oracle(LogMiner) 커넥터 (CDC 실시간 캡처)
+  # ---------------------------------------------------------------------
+  kafka-connect:
+    image: data-pipeline-kafka-connect:${APP_VERSION:-latest}
+    build:
+      context: ./kafka-connect
+      args:
+        CONNECT_IMAGE_TAG: ${CONNECT_IMAGE_TAG}
+        DEBEZIUM_VERSION: ${DEBEZIUM_VERSION}
+        OJDBC_VERSION: ${OJDBC_VERSION}
+        POSTGRES_JDBC_VERSION: ${POSTGRES_JDBC_VERSION}
+    container_name: kafka-connect
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9092
+      CONNECT_GROUP_ID: ${CONNECT_GROUP_ID}
+      CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: _connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      # Debezium JDBC Sink(schema.evolution/primary.key.mode=record_key)는 Kafka
+      # 레코드의 키/값 모두에 Connect 스키마가 실려 있어야 동작함(스키마 없으면
+      # "cannot have null schema" / Struct 캐스팅 NPE 발생) -> 키/값 모두 활성화
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "true"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "true"
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+      KAFKA_HEAP_OPTS: ${CONNECT_HEAP_OPTS}
+    ports:
+      - "${CONNECT_REST_PORT}:8083"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+    networks: [pipeline-net]
+
+  # 최초 기동 시 1회 실행되어 정형 CDC 소스/싱크 커넥터를 REST API로 등록
+  # (Oracle LogMiner 소스 + Postgres JDBC 싱크)
+  connect-init:
+    image: data-pipeline-connect-init:${APP_VERSION:-latest}
+    build:
+      context: ./connect-init
+    container_name: connect-init
+    depends_on:
+      kafka-connect:
+        condition: service_healthy
+    environment:
+      ORACLE_HOST: ${ORACLE_HOST}
+      ORACLE_PORT: ${ORACLE_PORT}
+      ORACLE_SERVICE_NAME: ${ORACLE_SERVICE_NAME}
+      ORACLE_CDC_USER: ${ORACLE_CDC_USER}
+      ORACLE_CDC_USER_PASSWORD: ${ORACLE_CDC_USER_PASSWORD}
+      TARGET_DB_NAME: ${TARGET_DB_NAME}
+      TARGET_DB_USER: ${TARGET_DB_USER}
+      TARGET_DB_PASSWORD: ${TARGET_DB_PASSWORD}
+    volumes:
+      - ./kafka-connect/connectors:/connectors:ro
+      - ./scripts:/scripts:ro
+    entrypoint: ["/bin/sh", "/scripts/register-connector.sh"]
+    networks: [pipeline-net]
+
+  # ---------------------------------------------------------------------
+  # NiFi: Kafka 토픽 소비 -> 정형/비정형 ETL -> 타깃 DB 실시간 적재
+  # (JDK 21 기반, NiFi 2.x 요구사항)
+  # ---------------------------------------------------------------------
+  nifi:
+    image: data-pipeline-nifi:${APP_VERSION:-latest}
+    build:
+      context: ./nifi
+      args:
+        NIFI_IMAGE_TAG: ${NIFI_IMAGE_TAG}
+        POSTGRES_JDBC_VERSION: ${POSTGRES_JDBC_VERSION}
+        OJDBC_VERSION: ${OJDBC_VERSION}
+    container_name: nifi
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      NIFI_WEB_HTTPS_HOST: 0.0.0.0
+      NIFI_WEB_HTTPS_PORT: ${NIFI_HTTPS_PORT}
+      SINGLE_USER_CREDENTIALS_USERNAME: ${NIFI_SINGLE_USER_USERNAME}
+      SINGLE_USER_CREDENTIALS_PASSWORD: ${NIFI_SINGLE_USER_PASSWORD}
+      NIFI_JVM_HEAP_INIT: ${NIFI_JVM_HEAP_INIT}
+      NIFI_JVM_HEAP_MAX: ${NIFI_JVM_HEAP_MAX}
+      NIFI_WEB_PROXY_HOST: ${NIFI_WEB_PROXY_HOST}
+    ports:
+      - "${NIFI_HTTPS_PORT}:${NIFI_HTTPS_PORT}"
+      - "${NIFI_LISTENHTTP_PORT}:${NIFI_LISTENHTTP_PORT}"
+    volumes:
+      # state는 컴포넌트 상태값(예: 마지막 처리 위치)만 저장한다. 캔버스에서
+      # 만드는 실제 플로우 정의(flow.json.gz)는 conf/에 저장되는데 예전엔 이게
+      # 볼륨이 아니었어서 down/재생성 때마다 작업 내용이 통째로 날아갔다 -
+      # conf 및 저장소 디렉터리들도 전부 볼륨으로 영속화한다.
+      - nifi-state:/opt/nifi/nifi-current/state
+      - nifi-conf:/opt/nifi/nifi-current/conf
+      - nifi-database-repository:/opt/nifi/nifi-current/database_repository
+      - nifi-flowfile-repository:/opt/nifi/nifi-current/flowfile_repository
+      - nifi-content-repository:/opt/nifi/nifi-current/content_repository
+      - nifi-provenance-repository:/opt/nifi/nifi-current/provenance_repository
+      - ./csv_data/in:/data/nifi/csv/in
+      - ./csv_data/error:/data/nifi/csv/error
+      - ./logfile/in:/data/nifi/logfile/in
+      - ./logfile/error:/data/nifi/logfile/error
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sfk https://localhost:${NIFI_HTTPS_PORT}/nifi/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+    networks: [pipeline-net]
+
+  # ---------------------------------------------------------------------
+  # Metadata DB: Kafka 파이프라인 웹서비스 전용 Postgres (target-db와 별개).
+  # docs/kafka-webservice-design.md §14 참고.
+  # ---------------------------------------------------------------------
+  metadata-db:
+    image: postgres:16-alpine
+    container_name: metadata-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${METADATA_DB_NAME}
+      POSTGRES_USER: ${METADATA_DB_USER}
+      POSTGRES_PASSWORD: ${METADATA_DB_PASSWORD}
+    ports:
+      - "${METADATA_DB_PORT}:5432"
+    volumes:
+      - metadata-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${METADATA_DB_USER} -d ${METADATA_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks: [pipeline-net]
+
+  # ---------------------------------------------------------------------
+  # Pipeline API: web/backend (Spring Boot). Kafka Connect REST API를 제어하는
+  # 웹서비스 백엔드. 이번 증분은 pipeline_connection CRUD까지만 구현됨
+  # (KafkaConnectClient/ConnectorConfigRenderer는 다음 증분).
+  # ---------------------------------------------------------------------
+  pipeline-api:
+    image: data-pipeline-pipeline-api:${APP_VERSION:-latest}
+    build:
+      context: ./web/backend
+    container_name: pipeline-api
+    restart: unless-stopped
+    depends_on:
+      metadata-db:
+        condition: service_healthy
+      kafka-connect:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${METADATA_DB_HOST}:5432/${METADATA_DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${METADATA_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${METADATA_DB_PASSWORD}
+      SERVER_PORT: ${PIPELINE_API_PORT}
+      PIPELINE_CRYPTO_SECRET: ${PIPELINE_CRYPTO_SECRET}
+      PIPELINE_CRYPTO_SALT: ${PIPELINE_CRYPTO_SALT}
+      KAFKA_CONNECT_URL: http://kafka-connect:8083
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      FILEBEAT_INPUTS_DIR: /filebeat-inputs
+    volumes:
+      # 로그 파이프라인 배포 시 여기 파이프라인별 Filebeat input YAML을 쓴다 -
+      # filebeat 컨테이너가 같은 볼륨을 읽기 전용으로 마운트해서 재시작 없이 반영한다.
+      - filebeat-inputs:/filebeat-inputs
+    ports:
+      - "${PIPELINE_API_PORT}:${PIPELINE_API_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${PIPELINE_API_PORT}/api/connections || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks: [pipeline-net]
+
+  # ---------------------------------------------------------------------
+  # Pipeline UI: web/frontend (React+Vite, nginx로 정적 서빙). /api는
+  # nginx.conf가 pipeline-api로 리버스 프록시하므로, 브라우저는 이 컨테이너
+  # 하나의 포트만 알면 된다.
+  # ---------------------------------------------------------------------
+  pipeline-ui:
+    image: data-pipeline-pipeline-ui:${APP_VERSION:-latest}
+    build:
+      context: ./web/frontend
+    container_name: pipeline-ui
+    restart: unless-stopped
+    depends_on:
+      pipeline-api:
+        condition: service_healthy
+    ports:
+      - "${PIPELINE_UI_PORT}:80"
+    healthcheck:
+      # localhost가 컨테이너 안에서 ::1(IPv6)로만 풀려서 nginx(IPv4만 바인딩)에
+      # 연결 거부가 나는 문제가 있었음 - 127.0.0.1로 명시해서 회피.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [pipeline-net]
+
+  # ---------------------------------------------------------------------
+  # Filebeat: 로그파일 실시간 적재 파이프라인의 소스 역할 (docs/kafka-webservice-design.md
+  # §12). Kafka Connect를 거치지 않고 output.kafka로 Kafka에 직접 쓴다. 파이프라인별
+  # 입력 설정은 pipeline-api가 filebeat-inputs 볼륨에 파일로 써주면 filebeat.yml의
+  # reload 설정이 컨테이너 재시작 없이 주기적으로 반영한다.
+  # ---------------------------------------------------------------------
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:${FILEBEAT_IMAGE_TAG}
+    container_name: filebeat
+    restart: unless-stopped
+    user: root
+    # 바인드 마운트된 filebeat.yml은 호스트 사용자 소유로 남아있어서(root 아님)
+    # Filebeat의 기본 config 파일 소유권 검사(--strict.perms)에 걸림 - 이 프로젝트
+    # 사용자가 매번 chown하지 않아도 되도록 검사를 끈다(공식 문서가 권장하는 방법).
+    command: ["--strict.perms=false"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - filebeat-inputs:/usr/share/filebeat/inputs.d:ro
+      - filebeat-registry:/usr/share/filebeat/data
+      - ./log-sources:/var/log/app
+    healthcheck:
+      # filebeat.yml의 http.enabled 모니터링 엔드포인트 - wget이 이 이미지엔 없어서 curl 사용.
+      test: ["CMD-SHELL", "curl -sf http://localhost:5066/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks: [pipeline-net]
+
+  # ---------------------------------------------------------------------
+  # Airflow (3.x): 통합 "Dataworld ETL" 웹의 선행 작업으로 설치. 장기적으로는
+  # Kafka/NiFi 파이프라인의 실행/중지/재시작을 DAG가 담당하게 될 예정 -
+  # 이번 증분은 Airflow 자체를 띄우고 최소 검증만 한다(운영 DAG는 범위 밖).
+  # metadata-db/target-db와 마찬가지로 airflow-db도 완전히 별개 컨테이너로
+  # 분리한다(이 프로젝트의 "DB는 용도별로 분리" 원칙).
+  #
+  # 2.10.4로 처음 설치했다가 3.2.2로 교체함(한국어 UI가 3.1부터 공식 지원 -
+  # 아직 실 운영 DAG가 없는 지금이 전환 비용이 가장 낮은 시점이라 판단).
+  # 3.x는 아키텍처가 바뀌어서 webserver가 api-server로 개명되고, DAG 파싱을
+  # 전담하는 dag-processor가 별도 컨테이너로 분리됐다. 태스크/스케줄러가
+  # api-server를 거쳐 통신하므로(AIP-72 Task Execution API) localhost가 아니라
+  # 서비스 이름으로 명시 설정해야 한다(공식 예제 docker-compose.yaml 확인).
+  # ---------------------------------------------------------------------
+  airflow-db:
+    image: postgres:16-alpine
+    container_name: airflow-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${AIRFLOW_DB_NAME}
+      POSTGRES_USER: ${AIRFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+    ports:
+      - "${AIRFLOW_DB_PORT}:5432"
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AIRFLOW_DB_USER} -d ${AIRFLOW_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+    networks: [pipeline-net]
+
+  # 최초 기동 시 1회 실행되어 DB 마이그레이션 + admin 계정을 만들고 종료된다
+  # (connect-init과 동일한 "1회성 초기화 컨테이너" 패턴).
+  airflow-init:
+    image: apache/airflow:${AIRFLOW_IMAGE_TAG}
+    container_name: airflow-init
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+    environment: &airflow-common-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/${AIRFLOW_DB_NAME}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      # 3.x부터 [webserver] secret_key가 [api] secret_key로 이동됨(구 키는 deprecation
+      # 경고와 함께 여전히 동작하지만 새 키를 씀).
+      AIRFLOW__API__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      # api-server 컨테이너 이름으로 명시(localhost 아님) - 태스크/스케줄러가
+      # 이 주소로 Task Execution API를 호출한다.
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+      AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+      # NiFi 파이프라인 동적 DAG 생성/제어용 (nifi 서비스와 같은 자격증명 재사용,
+      # 새 비밀 발급 아님).
+      NIFI_BASE_URL: "https://nifi:${NIFI_HTTPS_PORT}"
+      NIFI_USERNAME: ${NIFI_SINGLE_USER_USERNAME}
+      NIFI_PASSWORD: ${NIFI_SINGLE_USER_PASSWORD}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        airflow db migrate &&
+        airflow users create --username "${AIRFLOW_ADMIN_USERNAME}" --password "${AIRFLOW_ADMIN_PASSWORD}" \
+          --firstname admin --lastname admin --role Admin --email admin@example.com || true
+    networks: [pipeline-net]
+
+  airflow-apiserver:
+    image: apache/airflow:${AIRFLOW_IMAGE_TAG}
+    container_name: airflow-apiserver
+    restart: unless-stopped
+    # ./airflow/logs 바인드 마운트에 컨테이너가 쓰려면 호스트 사용자 UID로 떠야 함
+    # (기본 airflow uid=50000이면 호스트 소유 디렉터리에 권한 거부됨).
+    user: "${AIRFLOW_UID:-50000}:0"
+    command: ["api-server"]
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-common-env
+    ports:
+      - "${AIRFLOW_WEBSERVER_PORT}:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/v2/monitor/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+    networks: [pipeline-net]
+
+  airflow-scheduler:
+    image: apache/airflow:${AIRFLOW_IMAGE_TAG}
+    container_name: airflow-scheduler
+    restart: unless-stopped
+    user: "${AIRFLOW_UID:-50000}:0"
+    command: ["scheduler"]
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-common-env
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+    healthcheck:
+      # 3.x부터 CLI 대신 내장 헬스체크 서버(ENABLE_HEALTH_CHECK) 사용이 공식 권장 방식.
+      test: ["CMD-SHELL", "curl -sf http://localhost:8974/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+    networks: [pipeline-net]
+
+  # 3.x부터 DAG 파일 파싱이 스케줄러에서 분리된 별도 컨테이너로 나뉨.
+  airflow-dag-processor:
+    image: apache/airflow:${AIRFLOW_IMAGE_TAG}
+    container_name: airflow-dag-processor
+    restart: unless-stopped
+    user: "${AIRFLOW_UID:-50000}:0"
+    command: ["dag-processor"]
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-common-env
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type DagProcessorJob --hostname \"$$HOSTNAME\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+    networks: [pipeline-net]

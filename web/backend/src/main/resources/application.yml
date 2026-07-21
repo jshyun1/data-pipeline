@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: pipeline-backend
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/pipeline_meta}
+    username: ${SPRING_DATASOURCE_USERNAME:pipeline_app}
+    password: ${SPRING_DATASOURCE_PASSWORD:devpassword}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8081}
+
+pipeline:
+  crypto:
+    secret: ${PIPELINE_CRYPTO_SECRET}
+    salt: ${PIPELINE_CRYPTO_SALT}
+
+kafka-connect:
+  base-url: ${KAFKA_CONNECT_URL:http://localhost:8083}
+
+kafka:
+  bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+filebeat:
+  inputs-dir: ${FILEBEAT_INPUTS_DIR:/filebeat-inputs}

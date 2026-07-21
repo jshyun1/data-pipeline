@@ -1,0 +1,101 @@
+package com.company.pipeline.connector;
+
+import com.company.pipeline.connector.dto.ConnectorPluginInfo;
+import com.company.pipeline.connector.dto.ConnectorStatusResponse;
+import java.util.List;
+import java.util.Map;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+
+/**
+ * Kafka Connect REST API(:8083)를 호출하는 클라이언트.
+ * PUT .../config는 register-connector.sh와 동일하게 멱등적으로 등록/갱신에 쓰인다.
+ */
+@Component
+@EnableConfigurationProperties(KafkaConnectProperties.class)
+public class KafkaConnectClient {
+
+    private final RestClient restClient;
+
+    public KafkaConnectClient(KafkaConnectProperties properties) {
+        this.restClient = RestClient.builder()
+                .baseUrl(properties.baseUrl())
+                .build();
+    }
+
+    public List<String> listConnectors() {
+        return execute(() -> restClient.get()
+                .uri("/connectors")
+                .retrieve()
+                .body(new ParameterizedTypeReference<List<String>>() { }));
+    }
+
+    public ConnectorStatusResponse getStatus(String connectorName) {
+        return execute(() -> restClient.get()
+                .uri("/connectors/{name}/status", connectorName)
+                .retrieve()
+                .body(ConnectorStatusResponse.class));
+    }
+
+    public Map<String, Object> getConfig(String connectorName) {
+        return execute(() -> restClient.get()
+                .uri("/connectors/{name}/config", connectorName)
+                .retrieve()
+                .body(new ParameterizedTypeReference<Map<String, Object>>() { }));
+    }
+
+    /** PUT은 멱등적: 커넥터가 없으면 생성, 있으면 설정을 갱신한다. */
+    public Map<String, Object> upsertConfig(String connectorName, Map<String, Object> config) {
+        return execute(() -> restClient.put()
+                .uri("/connectors/{name}/config", connectorName)
+                .body(config)
+                .retrieve()
+                .body(new ParameterizedTypeReference<Map<String, Object>>() { }));
+    }
+
+    public void pause(String connectorName) {
+        execute(() -> restClient.put()
+                .uri("/connectors/{name}/pause", connectorName)
+                .retrieve()
+                .toBodilessEntity());
+    }
+
+    public void resume(String connectorName) {
+        execute(() -> restClient.put()
+                .uri("/connectors/{name}/resume", connectorName)
+                .retrieve()
+                .toBodilessEntity());
+    }
+
+    public void delete(String connectorName) {
+        execute(() -> restClient.delete()
+                .uri("/connectors/{name}", connectorName)
+                .retrieve()
+                .toBodilessEntity());
+    }
+
+    public void restartTask(String connectorName, int taskId) {
+        execute(() -> restClient.post()
+                .uri("/connectors/{name}/tasks/{taskId}/restart", connectorName, taskId)
+                .retrieve()
+                .toBodilessEntity());
+    }
+
+    public List<ConnectorPluginInfo> listPlugins() {
+        return execute(() -> restClient.get()
+                .uri("/connector-plugins")
+                .retrieve()
+                .body(new ParameterizedTypeReference<List<ConnectorPluginInfo>>() { }));
+    }
+
+    private <T> T execute(java.util.function.Supplier<T> call) {
+        try {
+            return call.get();
+        } catch (RestClientException ex) {
+            throw new KafkaConnectClientException("Kafka Connect 호출 실패: " + ex.getMessage(), ex);
+        }
+    }
+}

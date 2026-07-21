@@ -1,0 +1,23 @@
+{
+  "connector.class": "io.debezium.connector.oracle.OracleConnector",
+  "tasks.max": "1",
+  "database.hostname": "${ORACLE_HOST}",
+  "database.port": "${ORACLE_PORT}",
+  "database.user": "${ORACLE_CDC_USER}",
+  "database.password": "${ORACLE_CDC_USER_PASSWORD}",
+  "database.dbname": "XE",
+  "database.pdb.name": "${ORACLE_SERVICE_NAME}",
+  "database.connection.adapter": "logminer",
+  "log.mining.strategy": "online_catalog",
+  "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
+  "schema.history.internal.kafka.topic": "schema-changes.oracle",
+  "topic.prefix": "oracle-cdc",
+  "schema.include.list": "APPUSER",
+  "table.include.list": "APPUSER.CUSTOMERS,APPUSER.CLOB_TEST_DATA",
+  "tombstones.on.delete": "false",
+  "decimal.handling.mode": "double",
+  "include.schema.changes": "true",
+  "lob.enabled": "true",
+  "schema.history.internal.skip.unparseable.ddl": "true",
+  "event.processing.failure.handling.mode": "warn"
+}
