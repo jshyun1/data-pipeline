@@ -7,6 +7,21 @@ export interface AirflowHealthResponse {
   dag_processor?: { status?: string };
 }
 
+export interface AirflowDag {
+  dag_id: string;
+  is_active?: boolean;
+  is_paused?: boolean;
+}
+
+export interface AirflowDagRun {
+  dag_id?: string;
+  dag_run_id: string;
+  state?: string;
+  start_date?: string;
+  end_date?: string;
+  execution_date?: string;
+}
+
 export interface KafkaConnectInfoResponse {
   version?: string;
   commit?: string;
@@ -62,6 +77,23 @@ export interface NifiProcessGroupStatusSnapshot {
 export async function getAirflowHealth(): Promise<AirflowHealthResponse> {
   const res = await axios.get<AirflowHealthResponse>("/airflow-api/monitor/health");
   return res.data;
+}
+
+export async function listAirflowDags(): Promise<AirflowDag[]> {
+  const res = await axios.get<{ dags?: AirflowDag[] }>("/airflow-api/dags", {
+    params: { limit: 100 },
+  });
+  return res.data.dags ?? [];
+}
+
+export async function listAirflowDagRuns(dagId: string, limit = 100): Promise<AirflowDagRun[]> {
+  const res = await axios.get<{ dag_runs?: AirflowDagRun[] }>(
+    `/airflow-api/dags/${encodeURIComponent(dagId)}/dagRuns`,
+    {
+      params: { limit, order_by: "-start_date" },
+    },
+  );
+  return res.data.dag_runs ?? [];
 }
 
 export async function getKafkaConnectInfo(): Promise<KafkaConnectInfoResponse> {

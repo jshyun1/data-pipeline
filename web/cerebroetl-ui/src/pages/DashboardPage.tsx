@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, Card, Col, Descriptions, Row, Statistic, Table, Tag } from "antd";
+import { Badge, Card, Col, Row, Statistic, Table, Tag } from "antd";
 import { getDashboardSummary } from "../api/dashboard";
-import { getAirflowHealth, getNifiRootStatus } from "../api/platform";
-import type { NifiProcessGroupStatusSnapshot } from "../api/platform";
+import { getAirflowHealth, getNifiRootStatus, listAirflowDagRuns, listAirflowDags } from "../api/platform";
+import type { AirflowDagRun, NifiProcessGroupStatusSnapshot } from "../api/platform";
 import type { PipelineCommandHistoryResponse } from "../types/pipeline";
 
 const RESULT_COLOR: Record<string, string> = {
@@ -37,6 +37,24 @@ interface NifiJob {
   queued: string;
   activeThreadCount: number;
 }
+
+interface AirflowDashboardStats {
+  totalDags: number;
+  activeDags: number;
+  running: number;
+  todaySuccess: number;
+  todayFailed: number;
+  delayed: number;
+}
+
+const EMPTY_AIRFLOW_STATS: AirflowDashboardStats = {
+  totalDags: 0,
+  activeDags: 0,
+  running: 0,
+  todaySuccess: 0,
+  todayFailed: 0,
+  delayed: 0,
+};
 
 function collectNifiJobs(groups: NifiProcessGroupStatusSnapshot[] = []): NifiJob[] {
   return groups.flatMap((group) => {
@@ -85,6 +103,55 @@ function etlStatusTag(status: NifiJob["status"]) {
   return <Tag>STOPPED</Tag>;
 }
 
+function isToday(value?: string) {
+  if (!value) {
+    return false;
+  }
+
+  const date = new Date(value);
+  const today = new Date();
+  return (
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate()
+  );
+}
+
+async function getAirflowDashboardStats(): Promise<AirflowDashboardStats> {
+  const dags = await listAirflowDags();
+  const activeDags = dags.filter((dag) => dag.is_active !== false && dag.is_paused !== true);
+  const runResults = await Promise.allSettled(activeDags.map((dag) => listAirflowDagRuns(dag.dag_id, 100)));
+  const dagRuns = runResults.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+  const todayRuns = dagRuns.filter((run) => isToday(run.end_date ?? run.start_date ?? run.execution_date));
+  const running = dagRuns.filter((run) => run.state === "running" || run.state === "queued").length;
+  const todaySuccess = todayRuns.filter((run) => run.state === "success").length;
+  const todayFailed = todayRuns.filter((run) => run.state === "failed").length;
+  const latestRunsByDag = new Map<string, AirflowDagRun>();
+
+  dagRuns.forEach((run) => {
+    const dagId = run.dag_id;
+    if (!dagId) {
+      return;
+    }
+
+    const previous = latestRunsByDag.get(dagId);
+    const runTime = new Date(run.start_date ?? run.execution_date ?? 0).getTime();
+    const previousTime = new Date(previous?.start_date ?? previous?.execution_date ?? 0).getTime();
+    if (!previous || runTime > previousTime) {
+      latestRunsByDag.set(dagId, run);
+    }
+  });
+
+  return {
+    totalDags: dags.length,
+    activeDags: activeDags.length,
+    running,
+    todaySuccess,
+    todayFailed,
+    delayed: activeDags.filter((dag) => !latestRunsByDag.has(dag.dag_id)).length,
+  };
+}
+
 export function DashboardPage() {
   const [etlJobFilter, setEtlJobFilter] = useState<EtlJobFilter>("all");
   const dashboardSummary = useQuery({
@@ -97,6 +164,14 @@ export function DashboardPage() {
   const airflowHealth = useQuery({
     queryKey: ["dashboard-airflow-health"],
     queryFn: getAirflowHealth,
+    refetchInterval: 60000,
+    retry: false,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const airflowStats = useQuery({
+    queryKey: ["dashboard-airflow-stats"],
+    queryFn: getAirflowDashboardStats,
     refetchInterval: 60000,
     retry: false,
     placeholderData: (previousData) => previousData,
@@ -143,8 +218,9 @@ export function DashboardPage() {
   ];
   const airflowHealthyCount = airflowServices.filter((service) => service.status?.toLowerCase() === "healthy").length;
   const airflowOnline = !airflowHealth.isError && airflowHealthyCount > 0;
+  const airflowDashboardStats = airflowStats.data ?? EMPTY_AIRFLOW_STATS;
   const showDashboardInitialLoading = dashboardSummary.isLoading && !dashboardSummary.data;
-  const showAirflowInitialLoading = airflowHealth.isLoading && !airflowHealth.data;
+  const showAirflowInitialLoading = airflowStats.isLoading && !airflowStats.data;
   const showNifiInitialLoading = nifiStatus.isLoading && !nifiStatus.data;
 
   return (
@@ -165,23 +241,35 @@ export function DashboardPage() {
             </div>
             <Badge status={airflowOnline ? "success" : "error"} text={airflowOnline ? "정상" : "응답 없음"} />
           </div>
-          <Row gutter={[16, 16]}>
-            <Col xs={24} md={8}>
+          <Row gutter={[12, 12]} className="airflow-metrics">
+            <Col xs={12} md={8} xl={4}>
               <Card loading={showAirflowInitialLoading}>
-                <Statistic title="정상 컴포넌트" value={airflowHealthyCount} suffix={`/ ${airflowServices.length}`} />
+                <Statistic title="전체 DAG" value={airflowDashboardStats.totalDags} />
               </Card>
             </Col>
-            <Col xs={24} md={16}>
+            <Col xs={12} md={8} xl={4}>
               <Card loading={showAirflowInitialLoading}>
-                <Descriptions column={{ xs: 1, md: 2 }} size="small" bordered>
-                  {airflowServices.map((service) => (
-                    <Descriptions.Item key={service.label} label={service.label}>
-                      <Tag color={service.status?.toLowerCase() === "healthy" ? "success" : "error"}>
-                        {service.status ?? "UNKNOWN"}
-                      </Tag>
-                    </Descriptions.Item>
-                  ))}
-                </Descriptions>
+                <Statistic title="활성 DAG" value={airflowDashboardStats.activeDags} />
+              </Card>
+            </Col>
+            <Col xs={12} md={8} xl={4}>
+              <Card loading={showAirflowInitialLoading}>
+                <Statistic title="실행 중" value={airflowDashboardStats.running} valueStyle={{ color: "#1677ff" }} />
+              </Card>
+            </Col>
+            <Col xs={12} md={8} xl={4}>
+              <Card loading={showAirflowInitialLoading}>
+                <Statistic title="오늘 성공" value={airflowDashboardStats.todaySuccess} valueStyle={{ color: "#2f7d32" }} />
+              </Card>
+            </Col>
+            <Col xs={12} md={8} xl={4}>
+              <Card loading={showAirflowInitialLoading}>
+                <Statistic title="오늘 실패" value={airflowDashboardStats.todayFailed} valueStyle={{ color: "#c62828" }} />
+              </Card>
+            </Col>
+            <Col xs={12} md={8} xl={4}>
+              <Card loading={showAirflowInitialLoading}>
+                <Statistic title="지연" value={airflowDashboardStats.delayed} />
               </Card>
             </Col>
           </Row>

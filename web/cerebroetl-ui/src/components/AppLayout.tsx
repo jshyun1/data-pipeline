@@ -1,6 +1,5 @@
 import { Input, Layout } from "antd";
 import {
-  ApiOutlined,
   ApartmentOutlined,
   DashboardOutlined,
   DeploymentUnitOutlined,
@@ -42,9 +41,9 @@ const NAV_ITEMS: NavItem[] = [
     children: [
       { path: "/cdc/kafka-connect", label: "Kafka Connect" },
       { path: "/cdc/pipelines", label: "파이프라인" },
+      { path: "/cdc/connections", label: "연결정보" },
     ],
   },
-  { path: "/connections", label: "연결정보", icon: <ApiOutlined /> },
 ];
 
 export function AppLayout() {

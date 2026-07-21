@@ -36,7 +36,8 @@ export function App() {
         <Route path="/cdc" element={<Navigate to="/cdc/kafka-connect" replace />} />
         <Route path="/cdc/kafka-connect" element={<KafkaConnectPage />} />
         <Route path="/cdc/pipelines" element={<PipelinesPage />} />
-        <Route path="/connections" element={<ConnectionsPage />} />
+        <Route path="/cdc/connections" element={<ConnectionsPage />} />
+        <Route path="/connections" element={<Navigate to="/cdc/connections" replace />} />
         <Route path="/pipelines" element={<Navigate to="/cdc/pipelines" replace />} />
       </Route>
     </Routes>
