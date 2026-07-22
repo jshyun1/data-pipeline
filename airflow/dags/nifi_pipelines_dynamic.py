@@ -114,7 +114,12 @@ def sanitize(name: str) -> str:
 
 
 def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str, username: str, password: str) -> DAG:
-    dag_id = f"nifi_pipeline_{sanitize(pg_name)}_{pg_id[:8]}_control"
+    # dag_id에는 그룹 "이름"을 넣지 않는다 - 캔버스에서 이름을 바꾸면 dag_id가
+    # 통째로 바뀌어서 스케줄 Variable과 실행 이력이 조용히 끊어지기 때문.
+    # 프로세스 그룹 id(앞 8자리)는 불변이라 이것만으로 dag_id를 만들고,
+    # 사람이 읽을 이름은 dag_display_name(화면 표시 전용)으로만 쓴다.
+    # (구 형식 nifi_pipeline_{이름}_{id8}_control 에서 2026-07-22 전환)
+    dag_id = f"nifi_pipeline_{pg_id[:8]}_control"
     # 스케줄은 코드가 아니라 Airflow Variable로 설정한다 - Admin > Variables에서
     # "{dag_id}__schedule" 키에 크론/프리셋을 넣으면 다음 파싱 주기에 반영됨.
     # Variable이 없으면 기존과 동일하게 수동 트리거 전용(schedule=None)으로 동작.
@@ -122,6 +127,7 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str, usernam
     schedule = Variable.get(f"{dag_id}__schedule", default_var=None)
     with DAG(
         dag_id=dag_id,
+        dag_display_name=f"nifi_pipeline_{sanitize(pg_name)}_control",
         description=f'NiFi 프로세스 그룹 "{pg_name}"({pg_id}) 시작/중지 제어'
         + (f" (스케줄: {schedule})" if schedule else " (수동 트리거 전용)"),
         schedule=schedule,
