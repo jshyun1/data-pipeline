@@ -24,13 +24,8 @@ import {
   createLogFilePipeline,
   createPipeline,
   deletePipeline,
-  deployPipeline,
   getPipelineHistory,
   listPipelines,
-  pausePipeline,
-  restartPipeline,
-  startPipeline,
-  stopPipeline,
 } from "../api/pipelines";
 import type { LogPipelineCreateRequest, PipelineCommandHistoryResponse, PipelineCreateRequest, PipelineResponse } from "../types/pipeline";
 
@@ -77,7 +72,7 @@ export function PipelinesPage() {
   const createMutation = useMutation({
     mutationFn: createPipeline,
     onSuccess: () => {
-      message.success("파이프라인을 생성했습니다. 이제 배포하세요.");
+      message.success("파이프라인을 생성했습니다.");
       invalidatePipelines();
       closeModal();
     },
@@ -87,7 +82,7 @@ export function PipelinesPage() {
   const createLogMutation = useMutation({
     mutationFn: createLogFilePipeline,
     onSuccess: () => {
-      message.success("로그 파이프라인을 생성했습니다. 이제 배포하세요.");
+      message.success("로그 파이프라인을 생성했습니다.");
       invalidatePipelines();
       closeModal();
     },
@@ -98,21 +93,6 @@ export function PipelinesPage() {
     mutationFn: deletePipeline,
     onSuccess: () => {
       message.success("파이프라인을 삭제했습니다 (Kafka Connect 커넥터도 함께 정리됨).");
-      invalidatePipelines();
-    },
-    onError: (error: Error) => message.error(error.message),
-  });
-
-  // deploy/start/pause/stop/restart는 전부 "실행하고 목록 새로고침" 패턴이 같아 하나로 묶는다.
-  const lifecycleMutation = useMutation({
-    mutationFn: (vars: { id: number; action: "deploy" | "start" | "pause" | "stop" | "restart" }) => {
-      const fn = { deploy: deployPipeline, start: startPipeline, pause: pausePipeline, stop: stopPipeline, restart: restartPipeline }[
-        vars.action
-      ];
-      return fn(vars.id);
-    },
-    onSuccess: (_, vars) => {
-      message.success(`${ACTION_LABEL[vars.action]} 완료`);
       invalidatePipelines();
     },
     onError: (error: Error) => message.error(error.message),
@@ -184,25 +164,6 @@ export function PipelinesPage() {
               <Space wrap>
                 <Button size="small" onClick={() => setDetailPipelineId(record.id)}>
                   상세
-                </Button>
-                <Button
-                  size="small"
-                  loading={lifecycleMutation.isPending}
-                  onClick={() => lifecycleMutation.mutate({ id: record.id, action: "deploy" })}
-                >
-                  배포
-                </Button>
-                <Button size="small" onClick={() => lifecycleMutation.mutate({ id: record.id, action: "start" })}>
-                  시작
-                </Button>
-                <Button size="small" onClick={() => lifecycleMutation.mutate({ id: record.id, action: "pause" })}>
-                  일시정지
-                </Button>
-                <Button size="small" onClick={() => lifecycleMutation.mutate({ id: record.id, action: "stop" })}>
-                  중지
-                </Button>
-                <Button size="small" onClick={() => lifecycleMutation.mutate({ id: record.id, action: "restart" })}>
-                  재시작
                 </Button>
                 <Popconfirm
                   title="이 파이프라인을 삭제할까요?"
@@ -476,11 +437,3 @@ export function PipelinesPage() {
     </div>
   );
 }
-
-const ACTION_LABEL: Record<string, string> = {
-  deploy: "배포",
-  start: "시작",
-  pause: "일시정지",
-  stop: "중지",
-  restart: "재시작",
-};

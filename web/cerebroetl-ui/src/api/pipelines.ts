@@ -31,14 +31,5 @@ export async function deletePipeline(id: number): Promise<void> {
   unwrap(res.data);
 }
 
-// deploy/start/pause/stop/restart는 전부 "커넥터에 액션 하나 실행하고 최신 상태 돌려주는" 같은 모양이라 공용화.
-async function invokeLifecycleAction(id: number, action: string): Promise<PipelineResponse> {
-  const res = await apiClient.post<ApiResponse<PipelineResponse>>(`/pipelines/${id}/${action}`);
-  return unwrap(res.data);
-}
-
-export const deployPipeline = (id: number) => invokeLifecycleAction(id, "deploy");
-export const startPipeline = (id: number) => invokeLifecycleAction(id, "start");
-export const pausePipeline = (id: number) => invokeLifecycleAction(id, "pause");
-export const stopPipeline = (id: number) => invokeLifecycleAction(id, "stop");
-export const restartPipeline = (id: number) => invokeLifecycleAction(id, "restart");
+// deploy/start/pause/stop/restart는 포털에서 제거됨 - Airflow가 이 파이프라인
+// 생명주기를 전담한다(같은 /pipelines/{id}/{action} 백엔드 엔드포인트를 Airflow DAG가 호출).
