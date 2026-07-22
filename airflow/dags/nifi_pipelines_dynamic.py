@@ -19,8 +19,13 @@ Host 헤더만 바꾸는 것이라 안전).
 화면에서 "{dag_id}__schedule" 키에 크론 표현식/프리셋(예: "@hourly", "0 */6 * * *")을
 넣으면 다음 DAG 파싱 주기(최대 5분)에 반영된다. Variable이 없으면 기존과 동일하게
 schedule=None(수동 트리거 전용)으로 동작한다.
+apply_action 뒤의 verify_action이 프로세스 그룹의 컴포넌트 상태 집계
+(runningCount/invalidCount 등)를 다시 조회해서 액션이 실제로 반영됐는지 확인한다
+- 예전에 FetchFile이 invalid로 고착돼 시작이 안 되던 결함 같은 것이 있으면
+호출 자체는 성공해도 이 검증 단계에서 실패로 잡힌다.
 """
 import os
+import time
 from datetime import datetime
 
 import requests
@@ -35,6 +40,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)  # 자체 �
 NIFI_BASE_URL_DEFAULT = "https://nifi:8443"
 NIFI_HOST_HEADER_DEFAULT = "localhost:8443"
 ACTIONS = ["start", "stop"]
+VERIFY_ATTEMPTS = 6
+VERIFY_INTERVAL_SECONDS = 5
 
 
 def _get_nifi_token(base_url: str, host_header: str, username: str, password: str) -> str:
@@ -69,6 +76,39 @@ def apply_process_group_action(
     print(f"NiFi 프로세스 그룹 {pg_id} {action}({state}) 완료: {response.json()}")
 
 
+def verify_process_group_action(
+    pg_id: str, base_url: str, host_header: str, username: str, password: str, **context
+):
+    action = context["params"]["action"]
+    token = _get_nifi_token(base_url, host_header, username, password)
+
+    counts = {}
+    for attempt in range(VERIFY_ATTEMPTS):
+        response = requests.get(
+            f"{base_url}/nifi-api/process-groups/{pg_id}",
+            headers={"Authorization": f"Bearer {token}", "Host": host_header},
+            verify=False,
+            timeout=15,
+        )
+        response.raise_for_status()
+        entity = response.json()
+        counts = {
+            key: entity.get(key, 0)
+            for key in ("runningCount", "stoppedCount", "invalidCount", "disabledCount")
+        }
+        if action == "start":
+            # invalid가 하나라도 있으면 그 프로세서는 시작되지 못한 것 (호출은 성공했어도)
+            ok = counts["invalidCount"] == 0 and counts["stoppedCount"] == 0 and counts["runningCount"] > 0
+        else:
+            ok = counts["runningCount"] == 0
+        if ok:
+            print(f"검증 통과: {action} 반영 확인 {counts}")
+            return
+        time.sleep(VERIFY_INTERVAL_SECONDS)
+
+    raise RuntimeError(f"{action} 후에도 프로세스 그룹 상태가 기대와 다름: {counts}")
+
+
 def sanitize(name: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in name).strip("_").lower()
 
@@ -90,17 +130,24 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str, usernam
         tags=["nifi", "pipeline-control"],
         params={"action": Param("start", enum=ACTIONS, description="수행할 동작을 선택하세요")},
     ) as dag:
-        PythonOperator(
+        _op_kwargs = {
+            "pg_id": pg_id,
+            "base_url": base_url,
+            "host_header": host_header,
+            "username": username,
+            "password": password,
+        }
+        apply = PythonOperator(
             task_id="apply_action",
             python_callable=apply_process_group_action,
-            op_kwargs={
-                "pg_id": pg_id,
-                "base_url": base_url,
-                "host_header": host_header,
-                "username": username,
-                "password": password,
-            },
+            op_kwargs=_op_kwargs,
         )
+        verify = PythonOperator(
+            task_id="verify_action",
+            python_callable=verify_process_group_action,
+            op_kwargs=_op_kwargs,
+        )
+        apply >> verify
     return dag
 
 
