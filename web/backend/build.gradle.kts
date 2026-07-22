@@ -23,11 +23,9 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("org.springframework.security:spring-security-crypto")
-    // 통합 웹 로그인용 JWT 발급/검증 (jjwt). 빌드 시점에만 Maven Central에서 받고
-    // 런타임 외부망 접근은 없음 - 기존 의존성들과 동일한 폐쇄망 원칙.
-    implementation("io.jsonwebtoken:jjwt-api:0.12.6")
-    runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
-    runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
+    // Keycloak(OIDC) 토큰을 검증하는 리소스 서버. 자체 JWT를 발급하지 않고 Keycloak이
+    // 발급한 액세스 토큰의 서명/issuer/만료를 검증한다(SSO의 단일 인증원은 Keycloak).
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
     runtimeOnly("org.postgresql:postgresql:42.7.4")

@@ -30,7 +30,8 @@ public class AppUser {
     @Column(name = "user_nm", nullable = false, length = 255)
     private String userNm;
 
-    @Column(name = "user_pw", nullable = false, length = 255)
+    // 인증은 Keycloak이 담당하므로 로컬 비밀번호는 저장하지 않는다(nullable, V8 참고).
+    @Column(name = "user_pw", length = 255)
     private String userPw;
 
     @Column(name = "email", length = 255)
@@ -39,10 +40,11 @@ public class AppUser {
     @Column(name = "tel_no", length = 255)
     private String telNo;
 
-    @Column(name = "hq_cd", nullable = false, length = 50)
+    // 첫 로그인 자동 프로비저닝 시 비어있을 수 있고 관리자가 나중에 채운다(nullable, V8 참고).
+    @Column(name = "hq_cd", length = 50)
     private String hqCd;
 
-    @Column(name = "position_cd", nullable = false, length = 50)
+    @Column(name = "position_cd", length = 50)
     private String positionCd;
 
     @Column(name = "admin_yn", nullable = false, length = 255)
@@ -82,12 +84,5 @@ public class AppUser {
 
     public boolean isAdmin() {
         return "Y".equalsIgnoreCase(adminYn);
-    }
-
-    /** 로그인 가능 여부: 승인(use_yn='Y')됐고 사용 기간(use_strt~use_end) 안에 있어야 한다. */
-    public boolean isLoginAllowed(LocalDateTime at) {
-        return "Y".equalsIgnoreCase(useYn)
-                && !at.isBefore(useStrtDttm)
-                && !at.isAfter(useEndDttm);
     }
 }

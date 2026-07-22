@@ -349,6 +349,9 @@ services:
         condition: service_healthy
       kafka-connect:
         condition: service_healthy
+      # OAuth2 Resource Server가 부팅 시 issuer discovery를 조회하므로 Keycloak이 먼저 떠야 함
+      keycloak:
+        condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://${METADATA_DB_HOST}:5432/${METADATA_DB_NAME}
       SPRING_DATASOURCE_USERNAME: ${METADATA_DB_USER}
@@ -356,8 +359,9 @@ services:
       SERVER_PORT: ${PIPELINE_API_PORT}
       PIPELINE_CRYPTO_SECRET: ${PIPELINE_CRYPTO_SECRET}
       PIPELINE_CRYPTO_SALT: ${PIPELINE_CRYPTO_SALT}
-      PIPELINE_JWT_SECRET: ${PIPELINE_JWT_SECRET}
-      PIPELINE_JWT_EXPIRATION_MINUTES: ${PIPELINE_JWT_EXPIRATION_MINUTES:-480}
+      # Keycloak(OIDC) 토큰 검증용 issuer. 브라우저/컨테이너 공통 URL이라 토큰 iss와 일치.
+      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM}
       KAFKA_CONNECT_URL: http://kafka-connect:8083
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       FILEBEAT_INPUTS_DIR: /filebeat-inputs
