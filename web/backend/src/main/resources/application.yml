@@ -24,6 +24,11 @@ pipeline:
   crypto:
     secret: ${PIPELINE_CRYPTO_SECRET}
     salt: ${PIPELINE_CRYPTO_SALT}
+  jwt:
+    # 통합 웹 로그인 JWT 서명 키. 기본값 없음(없으면 부팅 실패) - 하드코딩 키 방지.
+    # HMAC-SHA용으로 최소 32바이트 이상이어야 함.
+    secret: ${PIPELINE_JWT_SECRET}
+    expiration-minutes: ${PIPELINE_JWT_EXPIRATION_MINUTES:480}
 
 kafka-connect:
   base-url: ${KAFKA_CONNECT_URL:http://localhost:8083}
