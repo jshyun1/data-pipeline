@@ -79,7 +79,6 @@ export function AppLayout() {
       </Header>
       <Layout>
         <Sider width={270} theme="light" className="app-sidebar">
-          <div className="sidebar-title">메뉴</div>
           <nav className="sidebar-nav" aria-label="주요 메뉴">
             {NAV_ITEMS.map((item) => {
               const groupPrefix = `/${item.path.split("/")[1]}`;

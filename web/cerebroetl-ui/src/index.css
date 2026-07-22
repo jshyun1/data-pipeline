@@ -68,18 +68,10 @@ body {
 }
 
 
-.sidebar-title {
-  margin-top: 8px;
-  color: #1f2937;
-  font-size: 20px;
-  font-weight: 800;
-}
-
 .sidebar-nav {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 18px;
 }
 
 .sidebar-link {
