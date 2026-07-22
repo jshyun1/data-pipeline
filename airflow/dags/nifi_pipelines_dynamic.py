@@ -109,6 +109,11 @@ _host_header = os.environ.get("NIFI_HOST_HEADER", NIFI_HOST_HEADER_DEFAULT)
 _username = os.environ.get("NIFI_USERNAME", "")
 _password = os.environ.get("NIFI_PASSWORD", "")
 
+# 마지막으로 성공한 프로세스 그룹 조회 결과를 담는 Variable 키.
+# NiFi가 잠깐 죽어있는 동안 파싱이 돌면 예전엔 DAG가 통째로 사라져서
+# (= 그 사이 스케줄 실행이 조용히 누락) 마지막 성공 조회를 캐시로 재사용한다.
+PG_CACHE_VARIABLE_KEY = "nifi_process_groups_cache"
+
 try:
     _token = _get_nifi_token(_base_url, _host_header, _username, _password)
     _resp = requests.get(
@@ -118,13 +123,22 @@ try:
         timeout=10,
     )
     _resp.raise_for_status()
-    _process_groups = _resp.json()["processGroupFlow"]["flow"]["processGroups"]
+    _process_groups = [
+        {"id": pg["component"]["id"], "name": pg["component"]["name"]}
+        for pg in _resp.json()["processGroupFlow"]["flow"]["processGroups"]
+    ]
+    # 매 파싱(기본 30초)마다 DB에 쓰지 않도록 내용이 바뀐 경우에만 캐시 갱신
+    _cached = Variable.get(PG_CACHE_VARIABLE_KEY, default_var=None, deserialize_json=True)
+    if _cached != _process_groups:
+        Variable.set(PG_CACHE_VARIABLE_KEY, _process_groups, serialize_json=True)
 except Exception as exc:  # NiFi가 잠시 안 뜬 상태라도 DAG 파싱 전체가 죽지 않게
-    print(f"NiFi 조회 실패, 이번 파싱 주기엔 NiFi 파이프라인 DAG를 생성하지 않음: {exc}")
-    _process_groups = []
+    _process_groups = Variable.get(PG_CACHE_VARIABLE_KEY, default_var=[], deserialize_json=True)
+    print(
+        f"NiFi 조회 실패, 캐시된 프로세스 그룹 {len(_process_groups)}개로 DAG를 유지함"
+        f" (스케줄 누락 방지, 그룹 추가/삭제는 NiFi 복구 후 반영): {exc}"
+    )
 
 for _pg in _process_groups:
-    _component = _pg["component"]
-    globals()[f"nifi_pg_{_component['id'][:8]}_control_dag"] = build_dag(
-        _component["id"], _component["name"], _base_url, _host_header, _username, _password
+    globals()[f"nifi_pg_{_pg['id'][:8]}_control_dag"] = build_dag(
+        _pg["id"], _pg["name"], _base_url, _host_header, _username, _password
     )
