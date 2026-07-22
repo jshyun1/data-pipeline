@@ -1,12 +1,14 @@
-import { Layout } from "antd";
+import { Button, Layout } from "antd";
 import {
   ApartmentOutlined,
   DashboardOutlined,
   DeploymentUnitOutlined,
+  LogoutOutlined,
   NodeIndexOutlined,
 } from "@ant-design/icons";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useState, type ReactNode } from "react";
+import { useAuth } from "../auth/AuthContext";
 
 const { Header, Sider, Content } = Layout;
 
@@ -48,6 +50,7 @@ const NAV_ITEMS: NavItem[] = [
 
 export function AppLayout() {
   const location = useLocation();
+  const { user, logout } = useAuth();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
   const toggleGroup = (path: string) => {
@@ -60,6 +63,17 @@ export function AppLayout() {
         <div className="brand-mark">dw</div>
         <div className="brand-divider" />
         <div className="brand-title">Cerebro ETL</div>
+        <div className="header-account">
+          {user && (
+            <span className="header-user">
+              {user.userNm}
+              {user.admin ? " (관리자)" : ""}
+            </span>
+          )}
+          <Button type="text" size="small" icon={<LogoutOutlined />} onClick={logout}>
+            로그아웃
+          </Button>
+        </div>
       </Header>
       <Layout>
         <Sider width={270} theme="light" className="app-sidebar">

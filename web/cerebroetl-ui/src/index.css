@@ -365,3 +365,80 @@ body {
     justify-content: flex-start;
   }
 }
+
+/* ===== 로그인 화면 (LoginPage) ===== */
+.login-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(1200px 600px at 12% 0%, rgba(223, 0, 0, 0.06), transparent 60%),
+    #f5f6f8;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  padding: 34px 32px 30px;
+  background: #ffffff;
+  border: 1px solid #eef0f2;
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(17, 24, 39, 0.08);
+}
+
+.login-kicker {
+  color: #9aa1ab;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.login-title {
+  margin: 6px 0 0;
+  font-size: 30px;
+  font-weight: 900;
+  color: #1f2937;
+  letter-spacing: -0.01em;
+}
+
+.login-subtitle {
+  margin: 8px 0 22px;
+  color: #8a919c;
+  font-size: 13px;
+}
+
+.login-form .ant-form-item {
+  margin-bottom: 14px;
+}
+
+.login-error {
+  margin: -4px 0 12px;
+  color: #df0000;
+  font-size: 13px;
+}
+
+.login-register-btn {
+  margin-top: 10px;
+  color: #df0000;
+  border-color: #f3c9c9;
+}
+
+.login-register-btn:hover {
+  color: #b00000 !important;
+  border-color: #df0000 !important;
+}
+
+.header-account {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-user {
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 600;
+}

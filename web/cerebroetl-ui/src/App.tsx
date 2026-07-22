@@ -1,17 +1,21 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./components/AppLayout";
+import { RequireAuth } from "./auth/RequireAuth";
 import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { ConsoleFramePage } from "./pages/ConsoleFramePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EtlCreatePage } from "./pages/EtlCreatePage";
 import { EtlLogsPage } from "./pages/EtlLogsPage";
 import { KafkaConnectPage } from "./pages/EtlPage";
+import { LoginPage } from "./pages/LoginPage";
 import { PipelinesPage } from "./pages/PipelinesPage";
 
 export function App() {
   return (
     <Routes>
-      <Route element={<AppLayout />}>
+      <Route path="/login" element={<LoginPage />} />
+      <Route element={<RequireAuth />}>
+        <Route element={<AppLayout />}>
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/airflow" element={<Navigate to="/airflow/manage" replace />} />
@@ -41,6 +45,7 @@ export function App() {
         <Route path="/cdc/connections" element={<ConnectionsPage />} />
         <Route path="/connections" element={<Navigate to="/cdc/connections" replace />} />
         <Route path="/pipelines" element={<Navigate to="/cdc/pipelines" replace />} />
+        </Route>
       </Route>
     </Routes>
   );
