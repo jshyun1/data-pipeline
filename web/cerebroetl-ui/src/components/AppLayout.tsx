@@ -6,7 +6,7 @@ import {
   LogoutOutlined,
   NodeIndexOutlined,
 } from "@ant-design/icons";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { useAuth } from "../auth/AuthContext";
 
@@ -60,9 +60,11 @@ export function AppLayout() {
   return (
     <Layout className="app-shell">
       <Header className="app-header">
-        <div className="brand-mark">dw</div>
-        <div className="brand-divider" />
-        <div className="brand-title">Cerebro ETL</div>
+        <Link to="/dashboard" className="brand-link">
+          <div className="brand-mark">dw</div>
+          <div className="brand-divider" />
+          <div className="brand-title">Cerebro ETL</div>
+        </Link>
         <div className="header-account">
           {user && (
             <span className="header-user">
