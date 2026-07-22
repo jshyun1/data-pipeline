@@ -312,3 +312,56 @@ cd web/backend && ./gradlew test   # ConnectionRepositoryIT만 실패하면 정�
 - **원인**: `web/frontend/src/api/client.ts`의 `unwrap()` — `if (!response.success || response.data === null)`로 되어 있어서, `success: true`인데 `data: null`인 정상 응답(반환값이 없는 `DELETE`가 대표적)도 무조건 에러로 던짐. 백엔드가 `DELETE /api/pipelines/{id}` 성공 시 `{"success":true,"data":null,"error":null}`을 돌려주는데, 이게 항상 이 조건에 걸려 "요청 처리 중 오류가 발생했습니다"를 던졌던 것.
 - **수정**: 조건을 `!response.success`만으로 판단하도록 변경(`data` null 여부는 더 이상 에러 판정에 안 씀) — `success` 플래그가 백엔드의 유일한 성공/실패 신호라는 원칙에 맞춤. `deletePipeline`(파이프라인)뿐 아니라 `connections.ts`의 삭제 API도 같은 `unwrap()`을 써서 동일 버그를 갖고 있었는데 이번 수정으로 같이 해결됨.
 - **검증**: 프론트 빌드 통과 → `pipeline-ui` 재빌드/재기동 → nginx `/api` 프록시(실제 프론트엔드가 쓰는 것과 동일 경로)로 테스트 파이프라인 생성 후 삭제해서 실제 응답 `{"success":true,"data":null,"error":null}`을 캡처 → 그 실제 응답을 고친 `unwrap()` 로직에 그대로 넣어서 예외 없이 반환되는 것 확인(수정 전 로직이면 이 응답에서 무조건 던졌을 것). **다만 브라우저에서 실제로 토스트/알람 UI가 안 뜨는지 시각적으로는 확인 못 함**(도구 한계) — 로직 자체는 확실히 고쳐졌으니 사용자가 화면에서 재확인 필요.
+
+## 16. 통합 SSO 2단계: 포털 로그인 Keycloak OIDC 전환 (2026-07-22) — ✅ 2-A/2-B 완료
+
+목표: 통합 웹(Cerebro ETL) 계정 하나로 포털/NiFi/Airflow를 다 쓰는 SSO. 진행 순서를
+재검토해서 **Kafka는 사용자 SSO 대상이 아니라 데이터 플레인 보안(SASL)이라 별개 트랙**으로
+빼고, IdP는 **Keycloak** 도입으로 확정. 포털 로그인 자체도 Keycloak으로 통일하기로 함
+(1단계에서 잠깐 만든 자체 JWT 로그인은 이 단계에서 제거됨 — 진짜 SSO엔 Keycloak 브라우저
+세션이 필요하기 때문).
+
+### 2-A. Keycloak 배포
+- `keycloak` 컨테이너(quay.io/keycloak/keycloak) + `cerebro` realm import(`keycloak/realm-export.json`).
+  클라이언트 3개: `cerebro-portal`(public+PKCE), `nifi`/`airflow`(confidential). 시크릿은
+  `${ENV}` 치환으로 파일에 안 남김. 시드 관리자 `cerebro-admin`.
+- DB는 새 컨테이너 대신 `metadata-db`의 별도 `keycloak` database 재사용(메모리 절약,
+  `db/metadata-init/01_create_keycloak_db.sql`).
+
+### issuer/URL 전략 (이 단계 핵심 난제)
+- **split-horizon 문제**: 브라우저(Windows)는 `localhost:8543`만 도달 가능하고
+  `host.docker.internal`(→LAN IP)은 브라우저에서 타임아웃. 반대로 컨테이너는
+  `host.docker.internal:8543`만 도달 가능(`localhost`는 컨테이너 자신). 하나의 issuer 호스트로
+  둘 다 만족 불가.
+- **해결**: Keycloak `KC_HOSTNAME=https://localhost:8543`(프론트/토큰 iss) +
+  `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`. 그러면 discovery의 authorization/logout은
+  localhost(브라우저용), token/jwks는 요청 호스트(host.docker.internal, 컨테이너용)로 분리되고
+  issuer는 localhost로 일치. 실측으로 확인함.
+- **HTTPS 필수**: 포털이 HTTPS라 HTTP Keycloak은 mixed-content로 차단됨 → Keycloak을 자체
+  서명 인증서(SAN: host.docker.internal/localhost/keycloak)로 HTTPS 제공(`keycloak/certs/`).
+  cerebroetl-ui 인증서 커밋 관례와 동일하게 인증서/키 커밋.
+
+### 2-B. 포털 OIDC 전환
+- **백엔드(pipeline-api)**: 자체 JWT 발급 제거 → `spring-boot-starter-oauth2-resource-server`로
+  Keycloak 토큰 검증. `JwtDecoderConfig`가 iss는 localhost로 검증하되 JWKS는 컨테이너가 도달
+  가능한 백채널 URL(host.docker.internal)에서 가져옴(자체 서명 인증서는 trust-all로 신뢰, POC).
+  Keycloak realm role → `ROLE_*` 매핑, `portal_admin`→관리자.
+- **app_user 역할 전환(V8)**: 인증은 Keycloak이 담당하므로 `user_pw`/`hq_cd`/`position_cd`를
+  nullable로. `GET /api/auth/me`가 첫 로그인 시 토큰 클레임으로 app_user를 자동 프로비저닝
+  (프로필/권한 저장소로만 사용).
+- **프론트(cerebroetl-ui)**: `oidc-client-ts`로 Authorization Code + PKCE 리다이렉트. 로그인
+  화면은 "CEREBRO ETL" 브랜딩 랜딩 + [로그인] 버튼(→Keycloak). `/auth/callback` 라우트에서
+  코드↔토큰 교환. 자체 로그인 폼/등록신청은 제거(등록은 Keycloak 몫).
+- **검증**: 백엔드는 실 토큰으로 e2e(프로비저닝/401/위조토큰 거부) 확인. **브라우저 클릭
+  로그인 왕복도 사용자가 실제로 성공 확인**(cerebro-admin으로 로그인 → 대시보드 복귀).
+  전제: 브라우저에서 `https://localhost:8543` 자체 서명 인증서 1회 수락 필요(NiFi처럼).
+- 브랜치: `feature/unified-web-login`(MR !5). 커밋 다수(8e56127 Keycloak, 9596225 리소스서버,
+  0579fd7 HTTPS, 8495bf2 프론트 OIDC, 3d4eb7e backchannel dynamic 등).
+
+### 2-C/2-D (다음): NiFi/Airflow OIDC — 아직
+- NiFi: 이미지가 `AUTH=oidc` 네이티브 지원하지만 keystore/truststore 직접 제공 +
+  Keycloak 인증서 신뢰 + 초기 관리자 신원(`cerebro-admin`) + 프록시 뒤 redirect_uri 매칭 필요.
+  **초기 관리자 신원 틀리면 NiFi lock-out 위험** → 현재 conf를 컨테이너 안에 `.pre-oidc.bak`로
+  백업해둠. iframe 유지하려면 Keycloak realm의 frame-ancestors를 포털 출처로 완화 필요(전부
+  localhost라 SameSite 쿠키 문제는 없음 — 클릭재킹 방어 완화만 트레이드오프).
+- Airflow: FabAuthManager OIDC 설정.
