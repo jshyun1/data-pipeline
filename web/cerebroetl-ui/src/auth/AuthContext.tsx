@@ -1,13 +1,13 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { getStoredToken, setStoredToken } from "../api/client";
-import { fetchMe, login as loginApi, type AppUser } from "../api/auth";
+import { getAccessToken, userManager } from "./oidc";
+import { fetchMe, type AppUser } from "../api/auth";
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
 interface AuthContextValue {
   status: AuthStatus;
   user: AppUser | null;
-  login: (userId: string, password: string) => Promise<void>;
+  login: () => void;
   logout: () => void;
 }
 
@@ -17,35 +17,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [user, setUser] = useState<AppUser | null>(null);
 
-  // 앱 로드 시 저장된 토큰이 있으면 /me로 유효성 확인 + 사용자 정보 복원.
+  // 앱 로드 시 Keycloak 세션(로컬 저장된 토큰)이 유효하면 /me로 앱 프로필을 가져온다.
   useEffect(() => {
-    if (!getStoredToken()) {
-      setStatus("unauthenticated");
-      return;
-    }
-    fetchMe()
-      .then((me) => {
-        setUser(me);
-        setStatus("authenticated");
-      })
-      .catch(() => {
-        setStoredToken(null);
-        setUser(null);
-        setStatus("unauthenticated");
-      });
+    let cancelled = false;
+    (async () => {
+      const token = await getAccessToken();
+      if (!token) {
+        if (!cancelled) setStatus("unauthenticated");
+        return;
+      }
+      try {
+        const me = await fetchMe();
+        if (!cancelled) {
+          setUser(me);
+          setStatus("authenticated");
+        }
+      } catch {
+        if (!cancelled) setStatus("unauthenticated");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const login = async (userId: string, password: string) => {
-    const res = await loginApi(userId, password);
-    setStoredToken(res.token);
-    setUser(res.user);
-    setStatus("authenticated");
+  // Keycloak 로그인 페이지로 리다이렉트(Authorization Code + PKCE).
+  const login = () => {
+    void userManager.signinRedirect();
   };
 
+  // Keycloak 로그아웃(SSO 세션 종료) 후 /login으로 복귀.
   const logout = () => {
-    setStoredToken(null);
-    setUser(null);
-    setStatus("unauthenticated");
+    void userManager.signoutRedirect();
   };
 
   return (

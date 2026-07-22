@@ -7,6 +7,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { EtlCreatePage } from "./pages/EtlCreatePage";
 import { EtlLogsPage } from "./pages/EtlLogsPage";
 import { KafkaConnectPage } from "./pages/EtlPage";
+import { CallbackPage } from "./pages/CallbackPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PipelinesPage } from "./pages/PipelinesPage";
 
@@ -14,6 +15,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/auth/callback" element={<CallbackPage />} />
       <Route element={<RequireAuth />}>
         <Route element={<AppLayout />}>
         <Route index element={<Navigate to="/dashboard" replace />} />
