@@ -1,6 +1,6 @@
 # WORK LOG — Kafka 파이프라인 웹서비스 구축
 
-> 갱신: 2026-07-21 (NiFi 유실/미완성 플로우 3건 복구 + WSL2 메모리 부족 이슈 진단 — 15절 참고. 그 이전 갱신: 2026-07-14, 7차 증분 + 로그 파이프라인 생성 UI + 대시보드/Connector 상세 탭 + Postgres publication 정리 로직 + filebeat healthcheck + 폐쇄망 배포 패키징 + gitlab-ci test:backend 스테이지 + NiFi 볼륨 영속화 버그 수정 + Kafka Broker 헬스체크 + Airflow 설치(9차 증분) 완료 시점 — 13절 참고)
+> 갱신: 2026-07-22 (Keycloak 기반 포털/NiFi/Airflow SSO + Airflow 통합 웹 iframe + GitLab CI 보안 테스트 수정 — 16~17절 참고. 그 이전 갱신: 2026-07-21, NiFi 유실/미완성 플로우 3건 복구 + WSL2 메모리 부족 이슈 진단 — 15절 참고)
 > 상세 증분 이력/검증 로그의 원본은 `/home/user/.claude/plans/peppy-plotting-quasar.md` (계속 갱신됨, 이 파일과 같이 볼 것).
 > 설계서 원문: `docs/kafka-webservice-design.md`
 
@@ -313,7 +313,7 @@ cd web/backend && ./gradlew test   # ConnectionRepositoryIT만 실패하면 정�
 - **수정**: 조건을 `!response.success`만으로 판단하도록 변경(`data` null 여부는 더 이상 에러 판정에 안 씀) — `success` 플래그가 백엔드의 유일한 성공/실패 신호라는 원칙에 맞춤. `deletePipeline`(파이프라인)뿐 아니라 `connections.ts`의 삭제 API도 같은 `unwrap()`을 써서 동일 버그를 갖고 있었는데 이번 수정으로 같이 해결됨.
 - **검증**: 프론트 빌드 통과 → `pipeline-ui` 재빌드/재기동 → nginx `/api` 프록시(실제 프론트엔드가 쓰는 것과 동일 경로)로 테스트 파이프라인 생성 후 삭제해서 실제 응답 `{"success":true,"data":null,"error":null}`을 캡처 → 그 실제 응답을 고친 `unwrap()` 로직에 그대로 넣어서 예외 없이 반환되는 것 확인(수정 전 로직이면 이 응답에서 무조건 던졌을 것). **다만 브라우저에서 실제로 토스트/알람 UI가 안 뜨는지 시각적으로는 확인 못 함**(도구 한계) — 로직 자체는 확실히 고쳐졌으니 사용자가 화면에서 재확인 필요.
 
-## 16. 통합 SSO 2단계: 포털 로그인 Keycloak OIDC 전환 (2026-07-22) — ✅ 2-A/2-B 완료
+## 16. 통합 SSO 2단계: Keycloak 기반 포털/NiFi/Airflow OIDC (2026-07-22) — ✅ 2-A~2-D 완료
 
 목표: 통합 웹(Cerebro ETL) 계정 하나로 포털/NiFi/Airflow를 다 쓰는 SSO. 진행 순서를
 재검토해서 **Kafka는 사용자 SSO 대상이 아니라 데이터 플레인 보안(SASL)이라 별개 트랙**으로
@@ -358,10 +358,83 @@ cd web/backend && ./gradlew test   # ConnectionRepositoryIT만 실패하면 정�
 - 브랜치: `feature/unified-web-login`(MR !5). 커밋 다수(8e56127 Keycloak, 9596225 리소스서버,
   0579fd7 HTTPS, 8495bf2 프론트 OIDC, 3d4eb7e backchannel dynamic 등).
 
-### 2-C/2-D (다음): NiFi/Airflow OIDC — 아직
-- NiFi: 이미지가 `AUTH=oidc` 네이티브 지원하지만 keystore/truststore 직접 제공 +
-  Keycloak 인증서 신뢰 + 초기 관리자 신원(`cerebro-admin`) + 프록시 뒤 redirect_uri 매칭 필요.
-  **초기 관리자 신원 틀리면 NiFi lock-out 위험** → 현재 conf를 컨테이너 안에 `.pre-oidc.bak`로
-  백업해둠. iframe 유지하려면 Keycloak realm의 frame-ancestors를 포털 출처로 완화 필요(전부
-  localhost라 SameSite 쿠키 문제는 없음 — 클릭재킹 방어 완화만 트레이드오프).
-- Airflow: FabAuthManager OIDC 설정.
+### 2-C. NiFi OIDC 전환 — ✅ 완료
+
+- `docker-compose.yml`의 NiFi 인증을 single-user에서 이미지 네이티브 `AUTH=oidc`로 전환.
+  기존 `nifi-conf` 영속 볼륨의 keystore/truststore를 그대로 사용하면서 Keycloak 자체 서명 인증서를
+  truststore에 추가했고, `NIFI_SECURITY_USER_OIDC_TRUSTSTORE_STRATEGY=NIFI`로 discovery/JWKS TLS를
+  신뢰하게 함.
+- OIDC discovery는 컨테이너가 도달 가능한 `${KEYCLOAK_BACKCHANNEL_URL}`을 사용하고, 사용자 identity는
+  `preferred_username` claim으로 고정. 초기 관리자 identity는 `${KEYCLOAK_SEED_USER_ID}`
+  (`cerebro-admin`)로 설정.
+- 통합 웹 프록시 callback을 위해 `NIFI_WEB_PROXY_HOST`와 Keycloak `nifi` client redirect URI에
+  `https://localhost:13001/*`를 허용. Keycloak 로그인 화면을 포털 iframe 안에서 표시할 수 있도록
+  realm CSP의 `frame-ancestors`에 `https://localhost:13001` 추가.
+- **검증**: NiFi가 `oidcAuthorizationCode` provider로 정상 기동하고 discovery/인증서 오류 없이 OIDC
+  로그인을 광고하는 것, 통합 웹 프록시 기준 callback URL을 생성하는 것 확인. 이후 사용자가 시크릿
+  브라우저에서 `cerebro-admin`으로 `ETL → 관리`에 접속해 **NiFi UI가 정상 표시되는 것까지 확인**.
+- 기존 일반 브라우저에서 `Insufficient Permissions`가 한 번 발생했으나, NiFi 정책 파일에는
+  `cerebro-admin`의 `/flow`, `/controller`, `/tenants`, `/policies` 권한이 정상 존재했고 시크릿 창에서는
+  정상 접속됨. 설정 결함이 아니라 이전 NiFi/Keycloak 쿠키 또는 서로 다른 사용자 세션 충돌로 판단.
+- 현재는 단일 관리자 운영이므로 `cerebro-admin` 한 명에게만 NiFi 관리자 정책을 부여. 향후 다중 사용자
+  단계에서는 Keycloak 그룹과 NiFi user group/access policy를 별도로 동기화해야 함(Keycloak role이
+  NiFi 정책으로 자동 변환되지는 않음).
+- 커밋 `27be89c` (`feature/nifi-oidc`, 이후 `dev`에 반영).
+
+### 2-D. Airflow OIDC 전환 — ✅ 완료
+
+- `airflow/webserver_config.py` 신규: FAB `AUTH_OAUTH`, Keycloak provider, 사용자 자동 등록 및 로그인할
+  때마다 역할 동기화. Keycloak realm role을 `portal_admin → Admin`, `portal_user → Viewer`로 매핑하는
+  `KeycloakSecurityManager` 구현.
+- 서버 측 metadata/token/JWKS 요청은 `host.docker.internal` 백채널, 브라우저 authorize/logout은
+  Keycloak dynamic backchannel discovery가 반환하는 `localhost:8543` 주소를 사용. Airflow 컨테이너에는
+  Keycloak 인증서와 `REQUESTS_CA_BUNDLE`을 주입해 자체 서명 TLS를 검증하게 함.
+- **검증**: 로그인 화면의 Keycloak 로그인 진입, authorize 302 redirect, `client_id=airflow`, 등록된
+  callback URI 생성까지 서버 측 확인. 커밋 `0211d89` (`feature/airflow-oidc`, 이후 `dev`에 반영).
+
+### 2-E. Airflow 콘솔을 Cerebro ETL iframe에 통합 — ✅ 완료
+
+- 기존 `AirFlow → 생성/관리` 메뉴는 `http://localhost:8090`을 새 탭으로 여는 외부 링크였음.
+  `/airflow/manage` 내부 라우트와 `ConsoleFramePage`로 변경해 중앙 패널 iframe으로 표시.
+- `cerebroetl-ui/nginx.conf`에 `/airflow/` reverse proxy 추가. URI prefix를 rewrite하지 않고 Airflow에
+  그대로 전달하고 `X-Forwarded-Proto/Host/Prefix`를 설정. `X-Frame-Options`/원래 CSP를 제거한 뒤
+  동일 출처만 허용하는 `Content-Security-Policy: frame-ancestors 'self'`로 제한.
+- Airflow 3 공식 하위 경로 방식에 맞춰
+  `AIRFLOW__API__BASE_URL=https://localhost:${CEREBROETL_UI_PORT}/airflow` 설정. OAuth callback을 HTTPS로
+  생성하도록 api-server `--proxy-headers`와 `AIRFLOW__FAB__ENABLE_PROXY_FIX=true` 적용.
+- Keycloak `airflow` client에 `https://localhost:13001/airflow/*` redirect URI 추가. realm import 파일뿐
+  아니라 이미 운영 중인 realm에도 `kcadm`으로 즉시 반영.
+- 구현 중 브랜치 전환 이후 실행 중 Keycloak 컨테이너의 인증서 bind mount가 빈 디렉터리로 보이는 stale
+  mount 현상 발견 → Keycloak DB는 보존한 채 컨테이너만 재생성해 정상 복구(기존 realm/사용자 유지).
+- **검증**: 프론트 TypeScript/Vite production build 통과, Compose config/diff check 통과,
+  `/airflow/` HTML 200 + `<base href="/airflow/">`, 정적 JS 200, Airflow UI 내부 API 요청 다수 200 확인.
+  OAuth 최종 redirect URI가
+  `https://localhost:13001/airflow/oauth-authorized/keycloak`으로 생성되는 것과 iframe CSP 확인.
+  Keycloak/Airflow/Cerebro ETL 재배포 후 healthy. 커밋 `b0e53c7`, `dev` push 완료.
+
+### 현재 SSO 보안 범위와 다음 단계
+
+- 현재 `pipeline-api`는 `/api/auth/me`만 Keycloak 토큰을 필수로 요구하고, 기존 Airflow DAG와 레거시
+  `pipeline-ui` 호환 때문에 파이프라인 등 업무 API는 아직 `permitAll`이다.
+- 최종 운영 모델은 Keycloak 개인 계정/그룹 + Cerebro ETL의 프로젝트별 역할(admin/developer/operator/
+  viewer/auditor) + 리소스 `project_id` + append-only 통합 감사 이벤트로 확장해야 한다.
+- Airflow/NiFi 직접 접속은 관리자·장애 대응자 중심으로 제한하고, 일반 작업은 Cerebro ETL API를 단일
+  관문으로 두는 것이 목표. 이를 위해 Airflow용 service account/token을 먼저 도입한 뒤 업무 API를
+  인증 필수로 전환해야 한다.
+
+## 17. GitLab CI 보안 테스트 실패 수정 + dev 직접 CI 활성화 (2026-07-22) — ✅ 완료
+
+- MR !5(`feature/unified-web-login`, commit `087cc6b`)의 `test:backend`가 36개 중
+  `ConnectionControllerTest` 4개 실패. Runner/Docker/Testcontainers 문제가 아니라 Keycloak Resource
+  Server 의존성 추가 후 `@WebMvcTest`가 사용자 정의 `SecurityConfig` 대신 Spring 기본 보안 체인을
+  적용한 것이 원인.
+- 실제 응답: POST/DELETE는 CSRF로 403, GET은 미인증으로 401. 운영 설정은 업무 API `permitAll` +
+  CSRF disabled인데 MVC slice가 이를 불러오지 않아 테스트와 운영 설정이 달라졌음.
+- `ConnectionControllerTest`에 `@Import(SecurityConfig.class)`를 추가해 운영 보안 체인을 명시적으로
+  로드. 실패했던 4개 테스트 로컬 재실행 전부 통과.
+- 전체 로컬 테스트는 36개 중 35개 통과. 남은 `ConnectionRepositoryIT` 1개는 기존 WSL2 Docker
+  discovery 문제(`DockerClientProviderStrategy`)이고, 동일 GitLab DinD 실행에서는 이 통합 테스트가
+  통과했으므로 코드 회귀가 아님.
+- `.gitlab-ci.yml` rules가 `main || develop`만 대상으로 하고 실제 공유 브랜치 `dev`를 빠뜨려,
+  `dev` 직접 push가 CI를 우회하는 문제도 발견. validate/test/build 네 job 모두 `dev`를 포함하도록 수정.
+- 커밋 `2c0bbd4` 후 `feature/airflow-oidc`를 `dev`에 fast-forward 병합하고 원격 push 완료.
