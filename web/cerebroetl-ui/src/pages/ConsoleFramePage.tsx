@@ -5,10 +5,15 @@ import { useLocation } from "react-router-dom";
 
 const HIDE_TOOL_LOGO_STYLE_ID = "cerebro-hide-tool-logo";
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
-// 보이게 한다. 두 앱 다 소스에서 확인한 실제 선택자(NiFi는 컴파일된 CSS의
-// .context-logo, Airflow는 <img alt="Logo">) - 둘 다 넣어도 안 쓰는 쪽은 그냥
-// 매치가 안 될 뿐이라 안전하다.
-const HIDE_TOOL_LOGO_CSS = ".context-logo, img[alt=\"Logo\"] { display: none !important; }";
+// 보이게 한다. 번들 분석으로 실제 렌더링되는 요소를 확인한 선택자:
+// - NiFi: 라우트 가드 로딩 중에만 뜨는 스플래시 오버레이(.splash/.splash-img,
+//   nifi-drop-splash*.svg 배경) - 툴바 로고가 아니라 부트 스플래시였음.
+// - Airflow: <img alt="Logo">는 커스텀 테마 아이콘을 설정했을 때만 렌더링되는
+//   코드 경로라 지금 설정에선 절대 매치되지 않음. 실제로는 네브바 홈 링크에
+//   인라인 SVG(viewBox="0 0 35 35", 5색 팬휠)로 항상 그려짐 - 번들 전체에서
+//   이 viewBox를 쓰는 요소가 그것 하나뿐이라 안전하게 특정 가능.
+const HIDE_TOOL_LOGO_CSS =
+  ".splash, svg[viewBox=\"0 0 35 35\"], .context-logo, img[alt=\"Logo\"] { display: none !important; }";
 
 function hideToolLogo(event: SyntheticEvent<HTMLIFrameElement>) {
   try {
