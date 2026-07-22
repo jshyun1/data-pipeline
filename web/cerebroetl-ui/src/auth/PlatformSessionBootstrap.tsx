@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
 import { Button, Result, Spin } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 
@@ -12,7 +12,8 @@ const LABELS: Record<PlatformKey, string> = {
 
 const CHECK_URLS: Record<PlatformKey, string> = {
   airflow: "/airflow/ui/auth/me",
-  nifi: "/nifi-api/access/config",
+  // NiFi 2.x에는 /access/config가 없으므로 인증이 필요한 실제 Flow API로 확인한다.
+  nifi: "/nifi-api/flow/process-groups/root/status",
   kafka: "/kafka-connect-api/connectors",
 };
 
@@ -42,14 +43,34 @@ async function checkPlatform(key: PlatformKey) {
  * Kafka Connect는 사용자 로그인 세션이 없으므로 REST 연결 가능 여부만 확인한다.
  */
 export function PlatformSessionBootstrap({ children }: { children: ReactNode }) {
+  const airflowProviderSelected = useRef(false);
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState<Record<PlatformKey, boolean>>(EMPTY_STATUS);
   const [timedOut, setTimedOut] = useState(false);
 
   const retry = useCallback(() => {
+    airflowProviderSelected.current = false;
     setStatus(EMPTY_STATUS);
     setTimedOut(false);
     setAttempt((value) => value + 1);
+  }, []);
+
+  const continueAirflowLogin = useCallback((event: SyntheticEvent<HTMLIFrameElement>) => {
+    if (airflowProviderSelected.current) return;
+
+    try {
+      const frame = event.currentTarget;
+      const document = frame.contentDocument;
+      // FAB OAuth 선택 버튼은 href가 없고 inline script가 id에 click handler를 연결한다.
+      const keycloakLogin = document?.querySelector<HTMLAnchorElement>("#btn-signin-keycloak");
+
+      if (keycloakLogin) {
+        airflowProviderSelected.current = true;
+        keycloakLogin.click();
+      }
+    } catch {
+      // Keycloak로 이동해 있는 동안에는 cross-origin 문서이므로 접근할 수 없다.
+    }
   }, []);
 
   useEffect(() => {
@@ -96,7 +117,8 @@ export function PlatformSessionBootstrap({ children }: { children: ReactNode }) 
           key={`airflow-${attempt}`}
           className="platform-bootstrap-frame"
           title="Airflow SSO 준비"
-          src="/airflow/auth/login/keycloak?next=/airflow/"
+          src="/airflow/api/v2/auth/login?next=/airflow/"
+          onLoad={continueAirflowLogin}
         />
       )}
       {!status.nifi && (

@@ -2,7 +2,11 @@
   "realm": "cerebro",
   "enabled": true,
   "sslRequired": "none",
-  "registrationAllowed": false,
+  "registrationAllowed": true,
+  "loginTheme": "cerebro",
+  "internationalizationEnabled": true,
+  "supportedLocales": ["ko", "en"],
+  "defaultLocale": "ko",
   "loginWithEmailAllowed": true,
   "browserSecurityHeaders": {
     "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self' https://localhost:13001; object-src 'none';",

@@ -422,12 +422,38 @@ cd web/backend && ./gradlew test   # ConnectionRepositoryIT만 실패하면 정�
   `Sign In with keycloak` 버튼을 다시 눌러야 하는 UX를 제거. 포털의 Keycloak 토큰 검증이 끝나면
   `PlatformSessionBootstrap`이 숨김 same-origin iframe으로 Airflow의 Keycloak 직접 로그인 경로와 NiFi
   UI를 즉시 열어 두 도구의 브라우저 세션 쿠키를 미리 발급한다. 동시에 Airflow `/ui/auth/me`, NiFi
-  `/access/config`, Kafka Connect `/connectors`를 1초 간격으로 확인하고 세 서비스가 모두 준비된 뒤에만
+  `/flow/process-groups/root/status`, Kafka Connect `/connectors`를 1초 간격으로 확인하고 세 서비스가 모두 준비된 뒤에만
   통합 대시보드를 표시한다. 45초 안에 준비되지 않으면 지연된 서비스명과 재시도 버튼을 표시.
   Kafka Connect는 사용자 로그인 개념이 없으므로 별도 SSO가 아니라 REST 연결 가능 여부를 선확인한다.
   이후 Airflow/NiFi 메뉴 iframe은 이미 발급된 세션을 재사용하므로 추가 로그인 입력 없이 바로 콘솔을
   표시한다. production TypeScript/Vite build 및 `cerebroetl-ui` 재배포 완료. 최종 브라우저 로그인 왕복은
   사용자가 새 로그인 세션에서 확인 필요.
+- **선연결 대기 화면 정체 수정**: 최초 구현의 NiFi 확인 URL `/nifi-api/access/config`는 현재 NiFi 2.x에서
+  404를 반환해 준비 상태가 영원히 완료되지 않았고, Airflow는 Keycloak OAuth callback 뒤 FAB의
+  `User confirmation needed` 단계에서 멈춰 `/ui/auth/me`가 계속 401을 반환했다. NiFi 확인을 인증이
+  필요한 실제 Flow status API로 교체하고, same-origin 숨김 iframe의 Airflow 확인 화면에서 `OK`를
+  자동 실행해 사용자 클릭 없이 세션 발급이 끝나도록 수정.
+- **Airflow 자동 확인 후속 수정**: 실제 브라우저 로그에서 NiFi Flow status와 Kafka Connect는 200이지만
+  Airflow `/ui/auth/me`만 401인 것을 확인. FAB 확인 페이지에는 같은 문구의 `OK` 링크와 form submit
+  버튼이 함께 있는데, 첫 구현이 링크를 선택해 `/api/v2/auth/login` → `/auth/login/`으로 되돌아가는
+  인증 순환이 발생했다. 자동화 대상을 form의 submit control로 한정해 OAuth 승인을 실제 제출하도록 수정.
+- **Airflow 3 세션 발급 흐름 최종 교정**: 위 `User confirmation needed` 문구는 OAuth 승인 페이지가 아니라
+  FAB base layout에 항상 숨겨 포함되는 공통 modal임을 설치 패키지의 `confirm.html`로 확인했다. 따라서
+  해당 DOM을 클릭하는 접근은 폐기. 기존 `/auth/login/keycloak` 직접 호출은 FAB 세션만 시작해 Airflow 3
+  UI가 요구하는 API JWT 세션 발급을 건너뛰므로 `/ui/auth/me`가 401인 채 `/api/v2/auth/login`과
+  `/auth/login/` 사이를 순환했다. 숨김 iframe을 Airflow 3 공식 `/api/v2/auth/login?next=/airflow/`에서
+  시작하고, 이어지는 FAB provider 선택 화면에서 Keycloak 링크만 자동 클릭하도록 변경. 이후 OAuth
+  callback의 `next` 체인이 API 로그인으로 돌아와 UI 세션 쿠키를 발급하게 구성.
+- **Airflow provider 자동 선택 selector 수정**: 실제 FAB 로그인 HTML을 확인한 결과 Keycloak 선택 요소는
+  `href`가 있는 링크가 아니라 `id="btn-signin-keycloak"`인 anchor에 inline script가 click handler를
+  등록하는 구조였다. 최신 요청도 `/auth/login/` 200 이후 `/auth/login/keycloak` 요청이 없어 이 단계에서
+  정지한 것을 확인. href selector를 실제 element id selector로 교체.
+- **Airflow OAuth callback mount 경로 수정**: 자동 provider 선택과 Keycloak 왕복 이후에도 callback이
+  `/airflow/oauth-authorized/keycloak`으로 생성됐는데, Airflow 3의 FAB 인증 앱은 `/airflow/auth` 아래에
+  mount되어 있어 이 URL은 OAuth handler가 아니라 React UI fallback으로 처리되고 있었다(응답 200 뒤
+  `/ui/auth/me` 401 반복). `CustomAuthOAuthView` 기반 view에서 외부 callback을
+  `/airflow/auth/oauth-authorized/keycloak`으로 명시해 실제 FAB callback handler로 연결. 설정 문법/import
+  검증 후 API server 재시작, authorize 302의 `redirect_uri`가 새 callback으로 생성되는 것까지 확인.
 
 ### 현재 SSO 보안 범위와 다음 단계
 
@@ -438,6 +464,26 @@ cd web/backend && ./gradlew test   # ConnectionRepositoryIT만 실패하면 정�
 - Airflow/NiFi 직접 접속은 관리자·장애 대응자 중심으로 제한하고, 일반 작업은 Cerebro ETL API를 단일
   관문으로 두는 것이 목표. 이를 위해 Airflow용 service account/token을 먼저 도입한 뒤 업무 API를
   인증 필수로 전환해야 한다.
+
+### 2-F. 포털 일체형 로그인 화면 — ✅ 완료
+
+- 포털 화면에서 Keycloak password grant로 자격증명을 직접 받는 방식은 브라우저 SSO 쿠키가 생성되지
+  않아 Airflow/NiFi 자동 로그인이 깨지고, SPA가 비밀번호를 직접 취급하게 되므로 적용하지 않음.
+- Authorization Code + PKCE 흐름은 유지하면서 Keycloak 26용 `cerebro` 로그인 테마를 추가. 기본
+  Keycloak 브랜딩을 제거하고 CEREBRO ETL 카드 안에 아이디·비밀번호와 로그인 버튼만 표시하도록 구성.
+- 포털 `/login`은 별도 로그인 버튼 클릭 없이 미인증 확인 즉시 OIDC 인증 화면으로 이동하도록 변경.
+  사용자는 CEREBRO 화면에서 바로 자격증명을 입력하지만 비밀번호는 계속 Keycloak에만 전달되며,
+  생성된 Keycloak 브라우저 세션은 Airflow와 NiFi 선연결에도 그대로 사용됨.
+- Compose에 `./keycloak/themes` read-only mount 추가, realm export와 실행 중 realm 모두
+  `loginTheme=cerebro`, 기본 언어 `ko`(`supportedLocales=ko,en`) 적용.
+- **검증**: 프론트 production build 및 재배포 통과, Keycloak 재생성/healthy 확인, authorize 응답에서
+  CEREBRO CSS와 `username`/`password` 입력 및 한국어 `로그인` submit 버튼 렌더링 확인.
+- **테마 반응형 레이아웃 수정**: Keycloak v2의 기본 grid/padding과 언어 utility가 남아 모바일 폭에서
+  카드가 약 190px로 축소되고 `CEREBRO ETL` 및 입력란이 깨지는 문제 수정. 로그인 container를
+  `min(390px, 100vw - 16px)`로 고정하고 header/body 기본 grid를 제거했으며, 기본 언어를 한국어로
+  고정해 언어 selector를 숨김. 제목 nowrap, 폼/input/password group/button을 100% 폭으로 보정.
+  POC 개발 환경에서는 테마 변경이 즉시 반영되도록 Keycloak theme cache와 static max-age를 비활성화.
+  Keycloak 재생성 후 healthy 및 테마 CSS `Cache-Control: no-cache` 응답 확인.
 
 ## 17. GitLab CI 보안 테스트 실패 수정 + dev 직접 CI 활성화 (2026-07-22) — ✅ 완료
 

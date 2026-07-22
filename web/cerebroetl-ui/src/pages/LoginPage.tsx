@@ -1,23 +1,20 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { Button } from "antd";
+import { Button, Spin } from "antd";
 import { useAuth } from "../auth/AuthContext";
 
 const KEYCLOAK_URL =
   import.meta.env.VITE_OIDC_AUTHORITY?.replace(/\/realms\/.*$/, "") ?? "https://localhost:8543";
 
 /**
- * 브랜딩 랜딩 화면. 실제 자격증명 입력은 Keycloak 로그인 페이지에서 이뤄진다
- * (Authorization Code + PKCE 리다이렉트). 이렇게 해야 브라우저가 Keycloak과 세션을
- * 맺어 NiFi/Airflow까지 SSO가 흐른다. "등록신청"도 Keycloak이 담당한다.
+ * 미인증 사용자는 별도 버튼 클릭 없이 CEREBRO 전용 Keycloak 로그인 테마로 이동한다.
+ * 자격증명은 포털이 받지 않고 Keycloak에만 입력되며 Authorization Code + PKCE와
+ * 브라우저 SSO 세션을 그대로 유지한다.
  */
 export function LoginPage() {
   const { status, login } = useAuth();
   const [error, setError] = useState<string | null>(null);
-
-  if (status === "authenticated") {
-    return <Navigate to="/dashboard" replace />;
-  }
+  const loginStarted = useRef(false);
 
   const onLogin = async () => {
     setError(null);
@@ -31,6 +28,16 @@ export function LoginPage() {
     }
   };
 
+  useEffect(() => {
+    if (status !== "unauthenticated" || loginStarted.current) return;
+    loginStarted.current = true;
+    void onLogin();
+  }, [status]);
+
+  if (status === "authenticated") {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   return (
     <div className="login-shell">
       <div className="login-card">
@@ -38,17 +45,12 @@ export function LoginPage() {
         <h1 className="login-title">CEREBRO ETL</h1>
         <p className="login-subtitle">권한에 맞는 데이터 파이프라인을 안전하게 관리합니다.</p>
 
-        <Button
-          type="primary"
-          size="large"
-          block
-          danger
-          onClick={onLogin}
-          disabled={status === "loading"}
-          style={{ marginTop: 8 }}
-        >
-          로그인
-        </Button>
+        {!error && (
+          <div style={{ marginTop: 24, textAlign: "center" }}>
+            <Spin />
+            <p style={{ color: "#7b8799", fontSize: 13, marginTop: 12 }}>로그인 화면을 준비하고 있습니다.</p>
+          </div>
+        )}
 
         {error === "cert" && (
           <div className="login-error" style={{ marginTop: 12 }}>
@@ -57,12 +59,11 @@ export function LoginPage() {
               여기
             </a>
             를 새 탭에서 열어 "계속 진행"으로 인증서를 수락한 뒤 다시 로그인하세요.
+            <Button type="primary" danger block onClick={onLogin} style={{ marginTop: 12 }}>
+              다시 시도
+            </Button>
           </div>
         )}
-
-        <p style={{ color: "#9aa1ab", fontSize: 12, marginTop: 14, marginBottom: 0 }}>
-          통합 계정(Keycloak)으로 로그인합니다. 계정이 없으면 관리자에게 등록을 요청하세요.
-        </p>
       </div>
     </div>
   );

@@ -16,7 +16,12 @@ import os
 from airflow.providers.fab.auth_manager.security_manager.override import (
     FabAirflowSecurityManagerOverride,
 )
+from airflow.providers.fab.auth_manager.views.auth_oauth import CustomAuthOAuthView
+from flask import g, redirect, request, session
+from flask_appbuilder.security.utils import generate_random_string
+from flask_appbuilder.views import expose
 from flask_appbuilder.security.manager import AUTH_OAUTH
+import jwt
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +37,10 @@ AUTH_ROLES_MAPPING = {
 
 _REALM = os.environ.get("KEYCLOAK_REALM", "cerebro")
 _BACKCHANNEL = os.environ.get("KEYCLOAK_BACKCHANNEL_URL", "https://host.docker.internal:8543")
+_OAUTH_CALLBACK = os.environ.get(
+    "AIRFLOW_OAUTH_CALLBACK_URL",
+    "https://localhost:13001/airflow/auth/oauth-authorized/keycloak",
+)
 
 OAUTH_PROVIDERS = [
     {
@@ -58,6 +67,29 @@ def _decode_jwt_claims(token: str) -> dict:
 
 
 class KeycloakSecurityManager(FabAirflowSecurityManagerOverride):
+    class PrefixedAuthOAuthView(CustomAuthOAuthView):
+        """Airflow 3의 /auth FAB mount를 포함한 외부 callback URL을 사용한다."""
+
+        @expose("/login/")
+        @expose("/login/<provider>")
+        def login(self, provider=None):
+            if provider is None or (g.user is not None and g.user.is_authenticated):
+                return super().login(provider)
+
+            random_state = generate_random_string()
+            state = jwt.encode(request.args.to_dict(flat=False), random_state, algorithm="HS256")
+            session["oauth_state"] = random_state
+            callback = _OAUTH_CALLBACK if provider == "keycloak" else None
+            if callback is None:
+                return super().login(provider)
+
+            return self.appbuilder.sm.oauth_remotes[provider].authorize_redirect(
+                redirect_uri=callback,
+                state=state.decode("ascii") if isinstance(state, bytes) else state,
+            )
+
+    authoauthview = PrefixedAuthOAuthView
+
     def get_oauth_user_info(self, provider, resp):
         if provider != "keycloak":
             return {}

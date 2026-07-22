@@ -336,6 +336,10 @@ services:
       KC_HTTPS_CERTIFICATE_KEY_FILE: /opt/keycloak/certs/keycloak.key
       KC_HTTP_ENABLED: "true"
       KC_HEALTH_ENABLED: "true"
+      # POC에서 로그인 테마를 수정하면 브라우저/서버 캐시 없이 즉시 반영한다.
+      KC_SPI_THEME_STATIC_MAX_AGE: "-1"
+      KC_SPI_THEME_CACHE_THEMES: "false"
+      KC_SPI_THEME_CACHE_TEMPLATES: "false"
       # realm-export.json의 ${...} 치환에 쓰인다(시크릿을 파일에 하드코딩하지 않기 위함)
       KEYCLOAK_NIFI_CLIENT_SECRET: ${KEYCLOAK_NIFI_CLIENT_SECRET}
       KEYCLOAK_AIRFLOW_CLIENT_SECRET: ${KEYCLOAK_AIRFLOW_CLIENT_SECRET}
@@ -346,6 +350,7 @@ services:
     volumes:
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
       - ./keycloak/certs:/opt/keycloak/certs:ro
+      - ./keycloak/themes:/opt/keycloak/themes:ro
     healthcheck:
       # 이 이미지엔 curl/wget이 없고, 인증서를 붙이면 관리 포트(9000)도 HTTPS가 되어
       # 평문 HTTP 헬스 요청이 안 된다. HTTPS 리스너(8443)에 TCP 연결이 열리는지만 확인한다.
