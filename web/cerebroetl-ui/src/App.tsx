@@ -23,7 +23,15 @@ export function App() {
         <Route path="/airflow" element={<Navigate to="/airflow/manage" replace />} />
         <Route
           path="/airflow/manage"
-          element={<ConsoleFramePage kicker="WORKFLOW ORCHESTRATION" title="AirFlow 관리" src="http://localhost:8090" />}
+          element={
+            <ConsoleFramePage
+              kicker="WORKFLOW ORCHESTRATION"
+              title="AirFlow 관리"
+              src="/airflow/"
+              healthcheckSrc="/airflow/"
+              waitMessage="AirFlow 관리 콘솔을 준비하는 중입니다"
+            />
+          }
         />
         <Route path="/etl" element={<Navigate to="/etl/create" replace />} />
         <Route path="/etl/create" element={<EtlCreatePage />} />

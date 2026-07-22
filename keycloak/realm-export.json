@@ -58,7 +58,8 @@
       "directAccessGrantsEnabled": false,
       "redirectUris": [
         "http://localhost:8090/*",
-        "http://host.docker.internal:8090/*"
+        "http://host.docker.internal:8090/*",
+        "https://localhost:13001/airflow/*"
       ],
       "webOrigins": ["+"]
     }

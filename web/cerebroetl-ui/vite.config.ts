@@ -17,6 +17,10 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/airflow-api/, ""),
       },
+      "/airflow": {
+        target: "http://localhost:8090",
+        changeOrigin: true,
+      },
       "/kafka-connect-api": {
         target: "http://localhost:8083",
         changeOrigin: true,

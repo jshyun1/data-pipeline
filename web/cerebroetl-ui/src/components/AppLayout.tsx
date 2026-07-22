@@ -16,7 +16,7 @@ interface NavItem {
   path: string;
   label: string;
   icon: ReactNode;
-  children?: Array<{ path: string; label: string; external?: boolean }>;
+  children?: Array<{ path: string; label: string }>;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -25,7 +25,7 @@ const NAV_ITEMS: NavItem[] = [
     path: "/airflow",
     label: "AirFlow",
     icon: <DeploymentUnitOutlined />,
-    children: [{ path: "http://localhost:8090", label: "생성/관리", external: true }],
+    children: [{ path: "/airflow/manage", label: "생성/관리" }],
   },
   {
     path: "/etl/manage",
@@ -103,21 +103,15 @@ export function AppLayout() {
                   )}
                   {item.children && expanded ? (
                     <div className="sidebar-subnav">
-                      {item.children.map((child) =>
-                        child.external ? (
-                          <a key={child.path} href={child.path} target="_blank" rel="noreferrer" className="sidebar-sublink">
-                            {child.label}
-                          </a>
-                        ) : (
-                          <NavLink
-                            key={child.path}
-                            to={child.path}
-                            className={location.pathname === child.path ? "sidebar-sublink active" : "sidebar-sublink"}
-                          >
-                            {child.label}
-                          </NavLink>
-                        ),
-                      )}
+                      {item.children.map((child) => (
+                        <NavLink
+                          key={child.path}
+                          to={child.path}
+                          className={location.pathname === child.path ? "sidebar-sublink active" : "sidebar-sublink"}
+                        >
+                          {child.label}
+                        </NavLink>
+                      ))}
                     </div>
                   ) : null}
                 </div>
