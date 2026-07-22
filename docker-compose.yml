@@ -275,12 +275,62 @@ services:
       - "${METADATA_DB_PORT}:5432"
     volumes:
       - metadata-db-data:/var/lib/postgresql/data
+      # 최초 기동 시 keycloak database를 함께 생성(Keycloak 전용 컨테이너 절약)
+      - ./db/metadata-init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${METADATA_DB_USER} -d ${METADATA_DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 20
       start_period: 20s
+    networks: [pipeline-net]
+
+  # ---------------------------------------------------------------------
+  # Keycloak: 통합 SSO IdP. 포털/NiFi/Airflow가 모두 이 realm(cerebro)의 OIDC로
+  # 인증한다. issuer는 브라우저·컨테이너 양쪽에서 동일하게 해석되는
+  # host.docker.internal:${KEYCLOAK_PORT}로 고정해 issuer 불일치를 피한다.
+  # DB는 metadata-db의 keycloak database를 재사용(컨테이너 절약). POC라 start-dev.
+  # ---------------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_IMAGE_TAG}
+    container_name: keycloak
+    restart: unless-stopped
+    depends_on:
+      metadata-db:
+        condition: service_healthy
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://${METADATA_DB_HOST}:5432/${KEYCLOAK_DB_NAME}
+      KC_DB_USERNAME: ${METADATA_DB_USER}
+      KC_DB_PASSWORD: ${METADATA_DB_PASSWORD}
+      # 브라우저/백엔드 공통 canonical URL. hostname을 고정해 issuer를 일치시킴.
+      KC_HOSTNAME: ${KEYCLOAK_ISSUER_URL}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      # realm-export.json의 ${...} 치환에 쓰인다(시크릿을 파일에 하드코딩하지 않기 위함)
+      KEYCLOAK_NIFI_CLIENT_SECRET: ${KEYCLOAK_NIFI_CLIENT_SECRET}
+      KEYCLOAK_AIRFLOW_CLIENT_SECRET: ${KEYCLOAK_AIRFLOW_CLIENT_SECRET}
+      KEYCLOAK_SEED_USER_ID: ${KEYCLOAK_SEED_USER_ID}
+      KEYCLOAK_SEED_USER_PASSWORD: ${KEYCLOAK_SEED_USER_PASSWORD}
+    ports:
+      - "${KEYCLOAK_PORT}:8080"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    healthcheck:
+      # 이 이미지엔 curl/wget이 없어 내장 관리 헬스 엔드포인트를 bash /dev/tcp로 확인
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '\"status\": \"UP\"'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
