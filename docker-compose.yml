@@ -557,6 +557,14 @@ services:
       NIFI_BASE_URL: "https://nifi:${NIFI_HTTPS_PORT}"
       NIFI_USERNAME: ${NIFI_SINGLE_USER_USERNAME}
       NIFI_PASSWORD: ${NIFI_SINGLE_USER_PASSWORD}
+      # --- Keycloak OIDC 로그인(webserver_config.py가 사용) ---
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM}
+      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL}
+      KEYCLOAK_BACKCHANNEL_URL: ${KEYCLOAK_BACKCHANNEL_URL}
+      KEYCLOAK_AIRFLOW_CLIENT_SECRET: ${KEYCLOAK_AIRFLOW_CLIENT_SECRET}
+      # 자체 서명 Keycloak 인증서를 requests(authlib)가 신뢰하도록. Airflow의 다른 HTTPS
+      # 호출은 pipeline-api(http)/NiFi(verify=False DAG)라 이 번들 한정이 문제되지 않음.
+      REQUESTS_CA_BUNDLE: /opt/airflow/certs/keycloak.crt
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
@@ -585,6 +593,10 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
+      - ./keycloak/certs/keycloak.crt:/opt/airflow/certs/keycloak.crt:ro
+      # FAB OIDC 로그인 설정 + Keycloak 자체 서명 인증서(REQUESTS_CA_BUNDLE 대상)
+      - ./airflow/webserver_config.py:/opt/airflow/webserver_config.py:ro
+      - ./keycloak/certs/keycloak.crt:/opt/airflow/certs/keycloak.crt:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/v2/monitor/health || exit 1"]
       interval: 15s
@@ -613,6 +625,7 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
+      - ./keycloak/certs/keycloak.crt:/opt/airflow/certs/keycloak.crt:ro
     healthcheck:
       # 3.x부터 CLI 대신 내장 헬스체크 서버(ENABLE_HEALTH_CHECK) 사용이 공식 권장 방식.
       test: ["CMD-SHELL", "curl -sf http://localhost:8974/health || exit 1"]
@@ -643,6 +656,7 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
+      - ./keycloak/certs/keycloak.crt:/opt/airflow/certs/keycloak.crt:ro
     healthcheck:
       test: ["CMD-SHELL", "airflow jobs check --job-type DagProcessorJob --hostname \"$$HOSTNAME\" || exit 1"]
       interval: 15s
