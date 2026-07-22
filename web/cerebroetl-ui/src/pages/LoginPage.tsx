@@ -38,32 +38,32 @@ export function LoginPage() {
     return <Navigate to="/dashboard" replace />;
   }
 
+  if (!error) {
+    return (
+      <div className="login-shell">
+        <div className="login-card" style={{ textAlign: "center" }}>
+          <Spin />
+          <p style={{ color: "#7b8799", fontSize: 13, marginTop: 12 }}>로그인 화면을 준비하고 있습니다.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="login-shell">
       <div className="login-card">
-        <div className="login-kicker">MANUAL PORTAL</div>
         <h1 className="login-title">CEREBRO ETL</h1>
-        <p className="login-subtitle">권한에 맞는 데이터 파이프라인을 안전하게 관리합니다.</p>
 
-        {!error && (
-          <div style={{ marginTop: 24, textAlign: "center" }}>
-            <Spin />
-            <p style={{ color: "#7b8799", fontSize: 13, marginTop: 12 }}>로그인 화면을 준비하고 있습니다.</p>
-          </div>
-        )}
-
-        {error === "cert" && (
-          <div className="login-error" style={{ marginTop: 12 }}>
-            Keycloak 서버 인증서를 먼저 신뢰해야 합니다.{" "}
-            <a href={KEYCLOAK_URL} target="_blank" rel="noreferrer">
-              여기
-            </a>
-            를 새 탭에서 열어 "계속 진행"으로 인증서를 수락한 뒤 다시 로그인하세요.
-            <Button type="primary" danger block onClick={onLogin} style={{ marginTop: 12 }}>
-              다시 시도
-            </Button>
-          </div>
-        )}
+        <div className="login-error" style={{ marginTop: 12 }}>
+          Keycloak 서버 인증서를 먼저 신뢰해야 합니다.{" "}
+          <a href={KEYCLOAK_URL} target="_blank" rel="noreferrer">
+            여기
+          </a>
+          를 새 탭에서 열어 "계속 진행"으로 인증서를 수락한 뒤 다시 로그인하세요.
+          <Button type="primary" danger block onClick={onLogin} style={{ marginTop: 12 }}>
+            다시 시도
+          </Button>
+        </div>
       </div>
     </div>
   );
