@@ -4,6 +4,10 @@
   "sslRequired": "none",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
+  "browserSecurityHeaders": {
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self' https://localhost:13001; object-src 'none';",
+    "xFrameOptions": ""
+  },
   "roles": {
     "realm": [
       { "name": "portal_admin", "description": "통합 웹 포털 관리자" },

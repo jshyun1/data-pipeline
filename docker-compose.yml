@@ -223,11 +223,27 @@ services:
     environment:
       NIFI_WEB_HTTPS_HOST: 0.0.0.0
       NIFI_WEB_HTTPS_PORT: ${NIFI_HTTPS_PORT}
-      SINGLE_USER_CREDENTIALS_USERNAME: ${NIFI_SINGLE_USER_USERNAME}
-      SINGLE_USER_CREDENTIALS_PASSWORD: ${NIFI_SINGLE_USER_PASSWORD}
       NIFI_JVM_HEAP_INIT: ${NIFI_JVM_HEAP_INIT}
       NIFI_JVM_HEAP_MAX: ${NIFI_JVM_HEAP_MAX}
       NIFI_WEB_PROXY_HOST: ${NIFI_WEB_PROXY_HOST}
+      # --- Keycloak OIDC 인증(single-user 대체) ---
+      # 이미지의 secure.sh(AUTH=oidc)가 기존 keystore/truststore를 그대로 쓰도록 경로/비번을 넘긴다.
+      # (truststore.p12에는 Keycloak 자체 서명 인증서를 미리 import 해둠)
+      AUTH: oidc
+      KEYSTORE_PATH: /opt/nifi/nifi-current/conf/keystore.p12
+      KEYSTORE_TYPE: PKCS12
+      KEYSTORE_PASSWORD: ${NIFI_KEYSTORE_PASSWORD}
+      TRUSTSTORE_PATH: /opt/nifi/nifi-current/conf/truststore.p12
+      TRUSTSTORE_TYPE: PKCS12
+      TRUSTSTORE_PASSWORD: ${NIFI_TRUSTSTORE_PASSWORD}
+      # 첫 로그인 관리자 = Keycloak preferred_username. 틀리면 아무도 못 들어감(주의)
+      INITIAL_ADMIN_IDENTITY: ${KEYCLOAK_SEED_USER_ID}
+      NIFI_SECURITY_USER_OIDC_DISCOVERY_URL: ${KEYCLOAK_BACKCHANNEL_URL}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration
+      NIFI_SECURITY_USER_OIDC_CLIENT_ID: nifi
+      NIFI_SECURITY_USER_OIDC_CLIENT_SECRET: ${KEYCLOAK_NIFI_CLIENT_SECRET}
+      NIFI_SECURITY_USER_OIDC_CLAIM_IDENTIFYING_USER: preferred_username
+      # NIFI = nifi.security.truststore를 IdP TLS 신뢰에 사용(Keycloak 자체 서명 인증서)
+      NIFI_SECURITY_USER_OIDC_TRUSTSTORE_STRATEGY: NIFI
     expose:
       - "${NIFI_HTTPS_PORT}"
     ports:
