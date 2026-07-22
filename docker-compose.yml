@@ -306,9 +306,14 @@ services:
       KC_DB_URL: jdbc:postgresql://${METADATA_DB_HOST}:5432/${KEYCLOAK_DB_NAME}
       KC_DB_USERNAME: ${METADATA_DB_USER}
       KC_DB_PASSWORD: ${METADATA_DB_PASSWORD}
-      # 브라우저/백엔드 공통 canonical URL. hostname을 고정해 issuer를 일치시킴.
+      # 브라우저/백엔드 공통 canonical URL(HTTPS). hostname을 고정해 issuer를 일치시킴.
+      # HTTPS라 HTTPS 포털(13001)에서 토큰/JWKS를 가져올 때 mixed content로 안 막힌다.
       KC_HOSTNAME: ${KEYCLOAK_ISSUER_URL}
       KC_HOSTNAME_STRICT: "false"
+      # 자체 서명 인증서(SAN=host.docker.internal). 소비자(pipeline-api/NiFi/Airflow)는
+      # 이 인증서를 신뢰하도록 각자 설정한다.
+      KC_HTTPS_CERTIFICATE_FILE: /opt/keycloak/certs/keycloak.crt
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /opt/keycloak/certs/keycloak.key
       KC_HTTP_ENABLED: "true"
       KC_HEALTH_ENABLED: "true"
       # realm-export.json의 ${...} 치환에 쓰인다(시크릿을 파일에 하드코딩하지 않기 위함)
@@ -317,12 +322,14 @@ services:
       KEYCLOAK_SEED_USER_ID: ${KEYCLOAK_SEED_USER_ID}
       KEYCLOAK_SEED_USER_PASSWORD: ${KEYCLOAK_SEED_USER_PASSWORD}
     ports:
-      - "${KEYCLOAK_PORT}:8080"
+      - "${KEYCLOAK_PORT}:8443"
     volumes:
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - ./keycloak/certs:/opt/keycloak/certs:ro
     healthcheck:
-      # 이 이미지엔 curl/wget이 없어 내장 관리 헬스 엔드포인트를 bash /dev/tcp로 확인
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '\"status\": \"UP\"'"]
+      # 이 이미지엔 curl/wget이 없고, 인증서를 붙이면 관리 포트(9000)도 HTTPS가 되어
+      # 평문 HTTP 헬스 요청이 안 된다. HTTPS 리스너(8443)에 TCP 연결이 열리는지만 확인한다.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8443"]
       interval: 15s
       timeout: 5s
       retries: 20
