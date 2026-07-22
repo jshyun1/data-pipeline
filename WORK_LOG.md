@@ -411,6 +411,13 @@ cd web/backend && ./gradlew test   # ConnectionRepositoryIT만 실패하면 정�
   OAuth 최종 redirect URI가
   `https://localhost:13001/airflow/oauth-authorized/keycloak`으로 생성되는 것과 iframe CSP 확인.
   Keycloak/Airflow/Cerebro ETL 재배포 후 healthy. 커밋 `b0e53c7`, `dev` push 완료.
+- **후속 수정 — FAB 확인 화면 CSS/JS 404**: 신규 React UI 자원(`/airflow/static/assets`, i18n)은
+  정상이었지만, 최초 iframe 로그인 때 FAB의 `User confirmation needed` 페이지가 참조하는
+  `/airflow/static/appbuilder/*`와 `/airflow/static/dist/*`는 모두 404여서 버튼·Airflow 로고만 크게
+  보이는 무스타일 화면이 표시됨. Airflow 3.2.2에서 FAB 정적 라우트의 실제 위치가
+  `/airflow/auth/static/{appbuilder,dist}/*`인 것을 컨테이너 파일/HTTP 조합으로 확인. Nginx에서 새 UI
+  자원은 그대로 두고 FAB 전용 두 경로만 실제 라우트로 rewrite하도록 수정. 대표 CSS/JS 3개를 통합
+  웹 경유로 재검증해 모두 200 및 올바른 `text/css`/`text/javascript` Content-Type 확인.
 
 ### 현재 SSO 보안 범위와 다음 단계
 
