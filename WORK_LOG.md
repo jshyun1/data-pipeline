@@ -485,6 +485,27 @@ cd web/backend && ./gradlew test   # ConnectionRepositoryIT만 실패하면 정�
   POC 개발 환경에서는 테마 변경이 즉시 반영되도록 Keycloak theme cache와 static max-age를 비활성화.
   Keycloak 재생성 후 healthy 및 테마 CSS `Cache-Control: no-cache` 응답 확인.
 
+### 2-G. 로그인 화면에 등록신청 버튼 추가 — ✅ 완료
+
+- 첨부된 목업(카드 안에 아이디/비밀번호 + 빨간 로그인 버튼 + 아웃라인 등록신청 버튼)과 비교했을 때
+  기존 `cerebro` 테마는 `#kc-registration`을 `display: none`으로 숨기고 있었고, realm도
+  `registrationAllowed: false`라 그 링크 자체가 렌더링되지 않는 상태였음.
+- Keycloak 기본 템플릿(`keycloak.v2`의 `login.ftl`)을 직접 열어 실제 마크업을 확인
+  (`#kc-registration-container` > `#kc-registration` > `<span>{noAccount} <a>{doRegister}</a></span>`).
+  이걸 기반으로: `noAccount` 메시지를 빈 문자열로 비우고 `doRegister`를 "등록신청"(en: "Request Access")으로
+  덮어써서 안내 문구 없이 링크만 남긴 뒤, 그 링크를 로그인 버튼과 동일한 폭의 아웃라인 버튼(흰 배경, 빨간
+  테두리/글자)으로 CSS 스타일링. `#kc-registration-container`는 ID 선택자라 기존의
+  `.pf-v5-c-login__main-footer-band { display:none }` 규칙보다 우선 적용되어 다른 footer 요소는
+  계속 숨겨진 채로 유지됨.
+- realm의 `registrationAllowed`를 `true`로 전환(실행 중 Keycloak API + `realm-export.json` 둘 다).
+- **알려진 제약**: Keycloak 기본 자기등록은 계정을 즉시 `enabled=true`로 생성한다 — 이전에 정한
+  "등록신청 후 관리자 승인 대기" 정책은 아직 여기 반영되지 않음. 승인 대기 상태로 만들려면 커스텀
+  Registration 인증 플로우(또는 Required Action)가 추가로 필요하며, 이번 범위는 목업과 동일한 화면
+  구성(버튼 노출/스타일)까지만 처리함.
+- **검증**: 로그인 페이지 실제 응답(HTML/CSS)에서 `kc-registration-container` 렌더링, "등록신청" 텍스트,
+  갱신된 CSS 규칙(`#kc-registration a` 등) 전부 확인. 테마가 bind mount + 캐시 비활성화 상태라 별도
+  재기동 없이 즉시 반영됨.
+
 ## 17. GitLab CI 보안 테스트 실패 수정 + dev 직접 CI 활성화 (2026-07-22) — ✅ 완료
 
 - MR !5(`feature/unified-web-login`, commit `087cc6b`)의 `test:backend`가 36개 중

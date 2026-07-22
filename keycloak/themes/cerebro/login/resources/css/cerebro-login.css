@@ -1,0 +1,213 @@
+:root {
+  --cerebro-navy: #10213a;
+  --cerebro-red: #ff4d55;
+  --cerebro-muted: #7b8799;
+}
+
+html,
+body,
+.login-pf,
+.login-pf body {
+  min-height: 100%;
+  background: #f3f6fb !important;
+  font-family: Inter, "Noto Sans KR", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+#kc-header,
+.pf-v5-c-login__header,
+.pf-v5-c-brand,
+.kc-logo-text {
+  display: none !important;
+}
+
+.pf-v5-c-login,
+.login-pf-page {
+  align-items: center;
+  display: flex !important;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 8px !important;
+}
+
+.pf-v5-c-login__container,
+.card-pf {
+  display: block !important;
+  margin: 0 !important;
+  max-width: none !important;
+  padding: 0 !important;
+  width: min(390px, calc(100vw - 16px)) !important;
+}
+
+.pf-v5-c-login__main,
+.card-pf {
+  background: #fff !important;
+  border: 0 !important;
+  border-radius: 16px !important;
+  box-shadow: 0 12px 32px rgb(15 35 64 / 10%) !important;
+  overflow: hidden;
+}
+
+.pf-v5-c-login__main-header,
+.pf-v5-c-login__main-body {
+  padding-left: 32px !important;
+  padding-right: 32px !important;
+}
+
+.pf-v5-c-login__main-header {
+  display: block !important;
+  position: relative;
+  padding-top: 34px !important;
+}
+
+.pf-v5-c-login__main-header::before {
+  color: #9aa3b5;
+  content: "MANUAL PORTAL";
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  margin-bottom: 8px;
+}
+
+#kc-page-title {
+  color: var(--cerebro-navy) !important;
+  font-size: 28px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.03em;
+  margin: 0 !important;
+  overflow-wrap: normal !important;
+  text-align: left !important;
+  white-space: nowrap !important;
+}
+
+.pf-v5-c-login__main-header-utilities {
+  display: none !important;
+}
+
+.pf-v5-c-login__main-body {
+  padding-bottom: 34px !important;
+  padding-top: 0 !important;
+  width: 100% !important;
+}
+
+.pf-v5-c-login__main-body::before {
+  color: var(--cerebro-muted);
+  content: "권한에 맞는 데이터 파이프라인을 안전하게 관리합니다.";
+  display: block;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 10px 0 24px;
+}
+
+#kc-form,
+#kc-form-wrapper,
+#kc-form-login,
+.pf-v5-c-form,
+.pf-v5-c-form__group,
+.pf-v5-c-form__actions {
+  width: 100% !important;
+}
+
+.pf-v5-c-form__label-text,
+.control-label {
+  color: #4f5d73 !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+}
+
+#kc-form .pf-v5-c-form-control,
+#username,
+#password {
+  border: 1px solid #dce2ea !important;
+  border-radius: 8px !important;
+  min-height: 44px;
+  width: 100% !important;
+}
+
+.pf-v5-c-input-group {
+  display: flex !important;
+  width: 100% !important;
+}
+
+.pf-v5-c-input-group__item.pf-m-fill {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+}
+
+.pf-v5-c-input-group__item:last-child .pf-v5-c-button {
+  border: 1px solid #dce2ea !important;
+  border-left: 0 !important;
+  min-height: 44px;
+  width: 44px;
+}
+
+#kc-login,
+input[type="submit"].pf-v5-c-button {
+  background: var(--cerebro-red) !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  min-height: 44px;
+}
+
+#kc-login:hover,
+#kc-login:focus {
+  background: #eb3f48 !important;
+}
+
+#kc-info,
+.pf-v5-c-login__main-footer-band {
+  display: none !important;
+}
+
+/* 등록신청: "계정이 없으신가요?" 문구는 messages_*.properties에서 비우고,
+   남은 링크(doRegister)만 로그인 버튼 아래 아웃라인 버튼으로 스타일링한다.
+   ID 선택자라 위의 .pf-v5-c-login__main-footer-band 숨김 규칙보다 우선 적용됨. */
+#kc-registration-container {
+  display: block !important;
+  margin-top: 10px;
+  width: 100%;
+}
+
+#kc-registration {
+  width: 100%;
+}
+
+#kc-registration a {
+  background: #fff;
+  border: 1px solid var(--cerebro-red);
+  border-radius: 8px;
+  color: var(--cerebro-red);
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 44px;
+  min-height: 44px;
+  text-align: center;
+  text-decoration: none;
+  width: 100%;
+}
+
+#kc-registration a:hover,
+#kc-registration a:focus {
+  background: #fff5f5;
+}
+
+@media (max-width: 420px) {
+  .pf-v5-c-login__main-header,
+  .pf-v5-c-login__main-body {
+    padding-left: 24px !important;
+    padding-right: 24px !important;
+  }
+
+  #kc-page-title {
+    font-size: 26px !important;
+  }
+}
+
+.alert-error,
+.pf-v5-c-alert.pf-m-danger {
+  border-radius: 8px;
+  font-size: 13px;
+}
