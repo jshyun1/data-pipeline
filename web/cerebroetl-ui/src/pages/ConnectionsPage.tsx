@@ -46,11 +46,7 @@ export function ConnectionsPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-        <div>
-          <div className="page-kicker">DATABASE CONNECTIONS</div>
-          <h2 className="page-title">연결정보</h2>
-        </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
           신규 등록
         </Button>

@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { Button, Form, Input, Space, Typography, message } from "antd";
-import { ApartmentOutlined, ExportOutlined, PlusOutlined } from "@ant-design/icons";
+import { ApartmentOutlined, PlusOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { createNifiProcessGroup } from "../api/platform";
 
@@ -32,16 +32,6 @@ export function EtlCreatePage() {
 
   return (
     <div className="etl-create-page">
-      <div className="page-toolbar">
-        <div>
-          <div className="page-kicker">ETL FLOW CREATION</div>
-          <h2 className="page-title">ETL 생성</h2>
-        </div>
-        <Button icon={<ExportOutlined />} href="/nifi/" target="_blank" rel="noreferrer">
-          NiFi 열기
-        </Button>
-      </div>
-
       <div className="etl-create-shell">
         <section className="etl-create-panel" aria-label="Processor Group 생성">
           <div className="etl-create-heading">

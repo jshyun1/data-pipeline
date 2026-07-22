@@ -327,12 +327,6 @@ export function DashboardPage() {
 
   return (
     <div>
-      <div className="page-toolbar">
-        <div>
-          <h2 className="page-title">대시보드</h2>
-        </div>
-      </div>
-
       <div className="dashboard-stack">
         <section className="dashboard-section">
           <div className="section-heading">

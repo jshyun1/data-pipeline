@@ -120,11 +120,7 @@ export function PipelinesPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-        <div>
-          <div className="page-kicker">CHANGE DATA CAPTURE</div>
-          <h2 className="page-title">CDC</h2>
-        </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
         <Button
           type="primary"
           icon={<PlusOutlined />}

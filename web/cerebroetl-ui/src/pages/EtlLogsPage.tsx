@@ -24,13 +24,6 @@ export function EtlLogsPage() {
 
   return (
     <div>
-      <div className="page-toolbar">
-        <div>
-          <div className="page-kicker">LOG INGESTION</div>
-          <h2 className="page-title">로그</h2>
-        </div>
-      </div>
-
       <Card title="로그 파이프라인">
         <Table<PipelineResponse>
           rowKey="id"
