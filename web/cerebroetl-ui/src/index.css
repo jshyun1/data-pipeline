@@ -99,18 +99,18 @@ body {
   border-left-color: #d40000;
 }
 
-.sidebar-link-static {
-  cursor: default;
-}
-
-.sidebar-link-static:hover {
-  color: #374151;
+.sidebar-link-button {
+  width: 100%;
+  border: 0;
   background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
 }
 
-.sidebar-link-static.active:hover {
+.sidebar-link-button:hover {
   color: #d40000;
-  background: #fff0f0;
+  background: #fff5f5;
 }
 
 .sidebar-link-icon {
@@ -175,6 +175,45 @@ body {
   color: #111827;
   font-size: 24px;
   font-weight: 800;
+}
+
+.etl-create-shell {
+  max-width: 760px;
+}
+
+.etl-create-panel {
+  padding: 22px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.etl-create-heading {
+  margin-bottom: 22px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.etl-create-heading h3 {
+  margin: 0 0 2px;
+  color: #111827;
+  font-size: 19px;
+  font-weight: 800;
+}
+
+.etl-create-icon {
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: #d40000;
+  background: #fff0f0;
+  border: 1px solid #ffd6d6;
+  border-radius: 8px;
+  font-size: 20px;
 }
 
 .dashboard-stack {

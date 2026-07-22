@@ -1,4 +1,5 @@
 import axios from "axios";
+import { apiClient, unwrap } from "./client";
 
 export interface AirflowHealthResponse {
   metadatabase?: { status?: string };
@@ -81,6 +82,12 @@ export interface NifiProcessGroupStatusSnapshot {
   };
 }
 
+export interface NifiProcessGroupEntity {
+  id?: string;
+  name?: string;
+  parentGroupId?: string;
+}
+
 export async function getAirflowHealth(): Promise<AirflowHealthResponse> {
   const res = await axios.get<AirflowHealthResponse>("/airflow-api/monitor/health");
   return res.data;
@@ -125,4 +132,9 @@ export async function getNifiRootStatus(): Promise<NifiRootStatusResponse> {
     params: { recursive: true },
   });
   return res.data;
+}
+
+export async function createNifiProcessGroup(name: string): Promise<NifiProcessGroupEntity> {
+  const res = await apiClient.post("/nifi/process-groups", { name });
+  return unwrap<NifiProcessGroupEntity>(res.data);
 }

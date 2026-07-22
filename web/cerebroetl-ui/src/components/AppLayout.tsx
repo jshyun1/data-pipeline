@@ -6,7 +6,7 @@ import {
   NodeIndexOutlined,
 } from "@ant-design/icons";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 const { Header, Sider, Content } = Layout;
 
@@ -30,16 +30,16 @@ const NAV_ITEMS: NavItem[] = [
     label: "ETL",
     icon: <ApartmentOutlined />,
     children: [
-      { path: "/etl/manage", label: "생성/관리" },
+      { path: "/etl/create", label: "생성" },
+      { path: "/etl/manage", label: "관리" },
       { path: "/etl/logs", label: "로그" },
     ],
   },
   {
-    path: "/cdc/kafka-connect",
+    path: "/cdc/pipelines",
     label: "CDC",
     icon: <NodeIndexOutlined />,
     children: [
-      { path: "/cdc/kafka-connect", label: "Kafka Connect" },
       { path: "/cdc/pipelines", label: "파이프라인" },
       { path: "/cdc/connections", label: "연결정보" },
     ],
@@ -48,6 +48,11 @@ const NAV_ITEMS: NavItem[] = [
 
 export function AppLayout() {
   const location = useLocation();
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+
+  const toggleGroup = (path: string) => {
+    setOpenGroups((previous) => ({ ...previous, [path]: !previous[path] }));
+  };
 
   return (
     <Layout className="app-shell">
@@ -63,20 +68,26 @@ export function AppLayout() {
             {NAV_ITEMS.map((item) => {
               const groupPrefix = `/${item.path.split("/")[1]}`;
               const active = location.pathname === item.path || location.pathname.startsWith(`${groupPrefix}/`);
+              const expanded = item.children ? Boolean(openGroups[item.path]) || active : false;
               return (
                 <div key={item.path} className="sidebar-group">
                   {item.children ? (
-                    <div className={active ? "sidebar-link sidebar-link-static active" : "sidebar-link sidebar-link-static"}>
+                    <button
+                      type="button"
+                      className={active ? "sidebar-link sidebar-link-button active" : "sidebar-link sidebar-link-button"}
+                      aria-expanded={expanded}
+                      onClick={() => toggleGroup(item.path)}
+                    >
                       <span className="sidebar-link-icon">{item.icon}</span>
                       <span>{item.label}</span>
-                    </div>
+                    </button>
                   ) : (
                     <NavLink to={item.path} className={active ? "sidebar-link active" : "sidebar-link"}>
                       <span className="sidebar-link-icon">{item.icon}</span>
                       <span>{item.label}</span>
                     </NavLink>
                   )}
-                  {item.children ? (
+                  {item.children && expanded ? (
                     <div className="sidebar-subnav">
                       {item.children.map((child) =>
                         child.external ? (

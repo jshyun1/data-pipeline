@@ -33,3 +33,8 @@ kafka:
 
 filebeat:
   inputs-dir: ${FILEBEAT_INPUTS_DIR:/filebeat-inputs}
+
+nifi:
+  base-url: ${NIFI_BASE_URL:https://localhost:8443}
+  username: ${NIFI_USERNAME:}
+  password: ${NIFI_PASSWORD:}

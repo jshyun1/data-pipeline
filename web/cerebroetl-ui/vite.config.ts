@@ -27,6 +27,11 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      "/nifi-api": {
+        target: "https://localhost:8443",
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 });

@@ -309,6 +309,9 @@ services:
       KAFKA_CONNECT_URL: http://kafka-connect:8083
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       FILEBEAT_INPUTS_DIR: /filebeat-inputs
+      NIFI_BASE_URL: https://nifi:${NIFI_HTTPS_PORT}
+      NIFI_USERNAME: ${NIFI_SINGLE_USER_USERNAME}
+      NIFI_PASSWORD: ${NIFI_SINGLE_USER_PASSWORD}
     volumes:
       # 로그 파이프라인 배포 시 여기 파이프라인별 Filebeat input YAML을 쓴다 -
       # filebeat 컨테이너가 같은 볼륨을 읽기 전용으로 마운트해서 재시작 없이 반영한다.

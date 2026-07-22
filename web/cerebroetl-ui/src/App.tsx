@@ -3,6 +3,7 @@ import { AppLayout } from "./components/AppLayout";
 import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { ConsoleFramePage } from "./pages/ConsoleFramePage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { EtlCreatePage } from "./pages/EtlCreatePage";
 import { EtlLogsPage } from "./pages/EtlLogsPage";
 import { KafkaConnectPage } from "./pages/EtlPage";
 import { PipelinesPage } from "./pages/PipelinesPage";
@@ -18,7 +19,8 @@ export function App() {
           path="/airflow/manage"
           element={<ConsoleFramePage kicker="WORKFLOW ORCHESTRATION" title="AirFlow 관리" src="http://localhost:8090" />}
         />
-        <Route path="/etl" element={<Navigate to="/etl/manage" replace />} />
+        <Route path="/etl" element={<Navigate to="/etl/create" replace />} />
+        <Route path="/etl/create" element={<EtlCreatePage />} />
         <Route
           path="/etl/manage"
           element={
@@ -33,7 +35,7 @@ export function App() {
           }
         />
         <Route path="/etl/logs" element={<EtlLogsPage />} />
-        <Route path="/cdc" element={<Navigate to="/cdc/kafka-connect" replace />} />
+        <Route path="/cdc" element={<Navigate to="/cdc/pipelines" replace />} />
         <Route path="/cdc/kafka-connect" element={<KafkaConnectPage />} />
         <Route path="/cdc/pipelines" element={<PipelinesPage />} />
         <Route path="/cdc/connections" element={<ConnectionsPage />} />
