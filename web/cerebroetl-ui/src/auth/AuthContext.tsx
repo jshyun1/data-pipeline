@@ -7,7 +7,7 @@ type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 interface AuthContextValue {
   status: AuthStatus;
   user: AppUser | null;
-  login: () => void;
+  login: () => Promise<void>;
   logout: () => void;
 }
 
@@ -42,8 +42,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Keycloak 로그인 페이지로 리다이렉트(Authorization Code + PKCE).
-  const login = () => {
-    void userManager.signinRedirect();
+  // signinRedirect는 리다이렉트 전에 Keycloak 메타데이터를 fetch하는데, 자체 서명
+  // 인증서가 브라우저에 신뢰돼 있지 않으면 여기서 실패한다 → 에러를 던져 호출부가 안내하게 한다.
+  const login = async () => {
+    await userManager.signinRedirect();
   };
 
   // Keycloak 로그아웃(SSO 세션 종료) 후 /login으로 복귀.

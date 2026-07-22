@@ -5,9 +5,10 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          # Keycloak cerebro realm이 발급한 토큰만 신뢰. issuer는 브라우저/컨테이너
-          # 공통 URL(host.docker.internal)이라 토큰의 iss 클레임과 일치한다.
-          issuer-uri: ${KEYCLOAK_ISSUER_URL:http://host.docker.internal:8180}/realms/${KEYCLOAK_REALM:cerebro}
+          # 토큰 iss 검증값(브라우저가 받은 토큰의 iss = localhost).
+          issuer-uri: ${KEYCLOAK_ISSUER_URL:https://localhost:8543}/realms/${KEYCLOAK_REALM:cerebro}
+          # JWKS는 컨테이너가 실제로 도달 가능한 백채널 URL에서 가져온다(iss와 host가 다름).
+          jwk-set-uri: ${KEYCLOAK_BACKCHANNEL_URL:https://host.docker.internal:8543}/realms/${KEYCLOAK_REALM:cerebro}/protocol/openid-connect/certs
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/pipeline_meta}
     username: ${SPRING_DATASOURCE_USERNAME:pipeline_app}

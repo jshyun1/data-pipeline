@@ -23,12 +23,16 @@ import org.springframework.web.client.RestTemplate;
 @Configuration
 public class JwtDecoderConfig {
 
+    // 토큰의 iss 검증값(브라우저가 받은 토큰의 iss = localhost). 컨테이너에선 도달 불가한 호스트다.
     @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}")
     private String issuerUri;
 
+    // JWKS 실제 fetch 주소(컨테이너가 도달 가능한 백채널 URL). iss와 host가 다르다.
+    @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}")
+    private String jwkSetUri;
+
     @Bean
     public JwtDecoder jwtDecoder() throws Exception {
-        String jwkSetUri = issuerUri + "/protocol/openid-connect/certs";
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(jwkSetUri)
                 .restOperations(trustAllRestTemplate())
                 .build();

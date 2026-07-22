@@ -4,7 +4,7 @@ import { UserManager, WebStorageStateStore, type UserManagerSettings } from "oid
 // authority는 브라우저·백엔드 공통 canonical URL(host.docker.internal)이라 토큰 iss와 일치한다.
 // 빌드 시 주입되지 않으면 로컬 기본값을 쓴다(운영 빌드에서 VITE_* 로 덮어쓸 수 있음).
 const AUTHORITY =
-  import.meta.env.VITE_OIDC_AUTHORITY ?? "https://host.docker.internal:8543/realms/cerebro";
+  import.meta.env.VITE_OIDC_AUTHORITY ?? "https://localhost:8543/realms/cerebro";
 const CLIENT_ID = import.meta.env.VITE_OIDC_CLIENT_ID ?? "cerebro-portal";
 
 const settings: UserManagerSettings = {

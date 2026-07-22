@@ -306,9 +306,13 @@ services:
       KC_DB_URL: jdbc:postgresql://${METADATA_DB_HOST}:5432/${KEYCLOAK_DB_NAME}
       KC_DB_USERNAME: ${METADATA_DB_USER}
       KC_DB_PASSWORD: ${METADATA_DB_PASSWORD}
-      # 브라우저/백엔드 공통 canonical URL(HTTPS). hostname을 고정해 issuer를 일치시킴.
-      # HTTPS라 HTTPS 포털(13001)에서 토큰/JWKS를 가져올 때 mixed content로 안 막힌다.
+      # 프론트(브라우저)용 URL = issuer. 브라우저는 localhost:8543만 도달 가능하므로
+      # issuer/frontend는 localhost로 둔다(토큰 iss도 이 값).
       KC_HOSTNAME: ${KEYCLOAK_ISSUER_URL}
+      # 백채널(컨테이너→Keycloak) URL은 요청 호스트를 따라가게 한다: 컨테이너가
+      # host.docker.internal:8543로 부르면 token/JWKS 등 백채널 엔드포인트가 그 호스트로
+      # 나온다. 브라우저(localhost)와 컨테이너(host.docker.internal) 도달성을 동시에 만족.
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HOSTNAME_STRICT: "false"
       # 자체 서명 인증서(SAN=host.docker.internal). 소비자(pipeline-api/NiFi/Airflow)는
       # 이 인증서를 신뢰하도록 각자 설정한다.
@@ -366,8 +370,10 @@ services:
       SERVER_PORT: ${PIPELINE_API_PORT}
       PIPELINE_CRYPTO_SECRET: ${PIPELINE_CRYPTO_SECRET}
       PIPELINE_CRYPTO_SALT: ${PIPELINE_CRYPTO_SALT}
-      # Keycloak(OIDC) 토큰 검증용 issuer. 브라우저/컨테이너 공통 URL이라 토큰 iss와 일치.
+      # 토큰 iss 검증용(브라우저가 받은 토큰의 iss = localhost). JWKS 실제 fetch는 컨테이너가
+      # 도달 가능한 백채널 URL(host.docker.internal)로 한다 - JwtDecoderConfig가 둘을 분리 사용.
       KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL}
+      KEYCLOAK_BACKCHANNEL_URL: ${KEYCLOAK_BACKCHANNEL_URL}
       KEYCLOAK_REALM: ${KEYCLOAK_REALM}
       KAFKA_CONNECT_URL: http://kafka-connect:8083
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092

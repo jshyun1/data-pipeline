@@ -1,6 +1,10 @@
+import { useState } from "react";
 import { Navigate } from "react-router-dom";
 import { Button } from "antd";
 import { useAuth } from "../auth/AuthContext";
+
+const KEYCLOAK_URL =
+  import.meta.env.VITE_OIDC_AUTHORITY?.replace(/\/realms\/.*$/, "") ?? "https://localhost:8543";
 
 /**
  * 브랜딩 랜딩 화면. 실제 자격증명 입력은 Keycloak 로그인 페이지에서 이뤄진다
@@ -9,10 +13,23 @@ import { useAuth } from "../auth/AuthContext";
  */
 export function LoginPage() {
   const { status, login } = useAuth();
+  const [error, setError] = useState<string | null>(null);
 
   if (status === "authenticated") {
     return <Navigate to="/dashboard" replace />;
   }
+
+  const onLogin = async () => {
+    setError(null);
+    try {
+      await login();
+    } catch (e) {
+      // 대개 Keycloak 자체 서명 인증서를 브라우저가 아직 신뢰하지 않아 메타데이터
+      // 조회에 실패한 경우다. 인증서를 한 번 수락하도록 안내한다.
+      console.error("signinRedirect 실패:", e);
+      setError("cert");
+    }
+  };
 
   return (
     <div className="login-shell">
@@ -26,12 +43,23 @@ export function LoginPage() {
           size="large"
           block
           danger
-          onClick={login}
+          onClick={onLogin}
           disabled={status === "loading"}
           style={{ marginTop: 8 }}
         >
           로그인
         </Button>
+
+        {error === "cert" && (
+          <div className="login-error" style={{ marginTop: 12 }}>
+            Keycloak 서버 인증서를 먼저 신뢰해야 합니다.{" "}
+            <a href={KEYCLOAK_URL} target="_blank" rel="noreferrer">
+              여기
+            </a>
+            를 새 탭에서 열어 "계속 진행"으로 인증서를 수락한 뒤 다시 로그인하세요.
+          </div>
+        )}
+
         <p style={{ color: "#9aa1ab", fontSize: 12, marginTop: 14, marginBottom: 0 }}>
           통합 계정(Keycloak)으로 로그인합니다. 계정이 없으면 관리자에게 등록을 요청하세요.
         </p>
