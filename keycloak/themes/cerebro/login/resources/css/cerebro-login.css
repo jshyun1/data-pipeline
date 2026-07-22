@@ -59,16 +59,6 @@ body,
   padding-top: 34px !important;
 }
 
-.pf-v5-c-login__main-header::before {
-  color: #9aa3b5;
-  content: "MANUAL PORTAL";
-  display: block;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  margin-bottom: 8px;
-}
-
 #kc-page-title {
   color: var(--cerebro-navy) !important;
   font-size: 28px !important;
@@ -86,17 +76,8 @@ body,
 
 .pf-v5-c-login__main-body {
   padding-bottom: 34px !important;
-  padding-top: 0 !important;
+  padding-top: 20px !important;
   width: 100% !important;
-}
-
-.pf-v5-c-login__main-body::before {
-  color: var(--cerebro-muted);
-  content: "권한에 맞는 데이터 파이프라인을 안전하게 관리합니다.";
-  display: block;
-  font-size: 13px;
-  line-height: 1.5;
-  margin: 10px 0 24px;
 }
 
 #kc-form,
