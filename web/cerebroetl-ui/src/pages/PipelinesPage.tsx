@@ -24,6 +24,7 @@ import {
   createLogFilePipeline,
   createPipeline,
   deletePipeline,
+  deployPipeline,
   getPipelineHistory,
   listPipelines,
 } from "../api/pipelines";
@@ -72,7 +73,7 @@ export function PipelinesPage() {
   const createMutation = useMutation({
     mutationFn: createPipeline,
     onSuccess: () => {
-      message.success("파이프라인을 생성했습니다.");
+      message.success("파이프라인을 생성했습니다. 이제 배포하세요.");
       invalidatePipelines();
       closeModal();
     },
@@ -82,7 +83,7 @@ export function PipelinesPage() {
   const createLogMutation = useMutation({
     mutationFn: createLogFilePipeline,
     onSuccess: () => {
-      message.success("로그 파이프라인을 생성했습니다.");
+      message.success("로그 파이프라인을 생성했습니다. 이제 배포하세요.");
       invalidatePipelines();
       closeModal();
     },
@@ -93,6 +94,15 @@ export function PipelinesPage() {
     mutationFn: deletePipeline,
     onSuccess: () => {
       message.success("파이프라인을 삭제했습니다 (Kafka Connect 커넥터도 함께 정리됨).");
+      invalidatePipelines();
+    },
+    onError: (error: Error) => message.error(error.message),
+  });
+
+  const deployMutation = useMutation({
+    mutationFn: deployPipeline,
+    onSuccess: () => {
+      message.success("배포 완료");
       invalidatePipelines();
     },
     onError: (error: Error) => message.error(error.message),
@@ -164,6 +174,13 @@ export function PipelinesPage() {
               <Space wrap>
                 <Button size="small" onClick={() => setDetailPipelineId(record.id)}>
                   상세
+                </Button>
+                <Button
+                  size="small"
+                  loading={deployMutation.isPending}
+                  onClick={() => deployMutation.mutate(record.id)}
+                >
+                  배포
                 </Button>
                 <Popconfirm
                   title="이 파이프라인을 삭제할까요?"

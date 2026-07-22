@@ -31,5 +31,9 @@ export async function deletePipeline(id: number): Promise<void> {
   unwrap(res.data);
 }
 
-// deploy/start/pause/stop/restart는 포털에서 제거됨 - Airflow가 이 파이프라인
-// 생명주기를 전담한다(같은 /pipelines/{id}/{action} 백엔드 엔드포인트를 Airflow DAG가 호출).
+// 배포는 커넥터를 최초로 등록하는 생성 절차의 연장이라 포털에 남겨둔다(안 하면 새
+// 파이프라인이 활성화될 방법이 없음). start/pause/stop/restart는 Airflow가 전담.
+export async function deployPipeline(id: number): Promise<PipelineResponse> {
+  const res = await apiClient.post<ApiResponse<PipelineResponse>>(`/pipelines/${id}/deploy`);
+  return unwrap(res.data);
+}
