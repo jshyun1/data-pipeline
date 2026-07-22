@@ -18,7 +18,7 @@ validate:compose:
     - docker compose config > /dev/null
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "develop"'
 
 # web/backend의 유닛/통합 테스트. ConnectionRepositoryIT는 Testcontainers로 실제
 # Postgres 컨테이너를 띄우는데, 로컬 WSL2+Docker Desktop 환경에서는 Docker Desktop의
@@ -51,7 +51,7 @@ test:backend:
       - web/backend/build/reports/tests/test
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "develop"'
 
 build:kafka-connect:
   stage: build
@@ -61,7 +61,7 @@ build:kafka-connect:
   script:
     - docker build -t "$CI_REGISTRY_IMAGE/kafka-connect:$CI_COMMIT_SHORT_SHA" ./kafka-connect
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "develop"'
 
 build:nifi:
   stage: build
@@ -71,4 +71,4 @@ build:nifi:
   script:
     - docker build -t "$CI_REGISTRY_IMAGE/nifi:$CI_COMMIT_SHORT_SHA" ./nifi
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "develop"'
