@@ -25,7 +25,6 @@ export function App() {
           path="/airflow/manage"
           element={
             <ConsoleFramePage
-              kicker="WORKFLOW ORCHESTRATION"
               title="AirFlow 관리"
               src="/airflow/"
               healthcheckSrc="/airflow/"
@@ -39,10 +38,8 @@ export function App() {
           path="/etl/manage"
           element={
             <ConsoleFramePage
-              kicker="ETL FLOW MANAGEMENT"
               title="ETL 관리"
               src="/nifi/"
-              externalSrc="https://localhost:8443/nifi/"
               healthcheckSrc="/nifi/"
               waitMessage="NiFi 관리 콘솔을 준비하는 중입니다"
             />

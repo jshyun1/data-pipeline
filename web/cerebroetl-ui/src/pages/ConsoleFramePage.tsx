@@ -1,13 +1,11 @@
 import { useEffect, useState } from "react";
 import { Button, Result, Spin } from "antd";
-import { ExportOutlined, ReloadOutlined } from "@ant-design/icons";
+import { ReloadOutlined } from "@ant-design/icons";
 import { useLocation } from "react-router-dom";
 
 interface ConsoleFramePageProps {
-  kicker: string;
   title: string;
   src: string;
-  externalSrc?: string;
   healthcheckSrc?: string;
   waitMessage?: string;
 }
@@ -17,13 +15,12 @@ function withProcessGroupId(url: string, processGroupId: string) {
   return `${url}${separator}processGroupId=${encodeURIComponent(processGroupId)}`;
 }
 
-export function ConsoleFramePage({ kicker, title, src, externalSrc, healthcheckSrc, waitMessage }: ConsoleFramePageProps) {
+export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage }: ConsoleFramePageProps) {
   const location = useLocation();
   const [isReady, setIsReady] = useState(!healthcheckSrc);
   const [frameKey, setFrameKey] = useState(0);
   const processGroupId = new URLSearchParams(location.search).get("processGroupId");
   const frameSrc = processGroupId ? withProcessGroupId(src, processGroupId) : src;
-  const openSrc = processGroupId ? withProcessGroupId(externalSrc ?? src, processGroupId) : (externalSrc ?? src);
 
   useEffect(() => {
     if (!healthcheckSrc) {
@@ -73,15 +70,6 @@ export function ConsoleFramePage({ kicker, title, src, externalSrc, healthcheckS
 
   return (
     <div className="console-page">
-      <div className="page-toolbar">
-        <div>
-          <div className="page-kicker">{kicker}</div>
-          <h2 className="page-title">{title}</h2>
-        </div>
-        <Button icon={<ExportOutlined />} href={openSrc} target="_blank" rel="noreferrer">
-          새 창
-        </Button>
-      </div>
       <div className="console-frame-shell">
         {isReady ? (
           <iframe key={frameKey} className="console-frame" title={title} src={frameSrc} />
