@@ -1,6 +1,7 @@
 import { Navigate, Outlet } from "react-router-dom";
 import { Spin } from "antd";
 import { useAuth } from "./AuthContext";
+import { PlatformSessionBootstrap } from "./PlatformSessionBootstrap";
 
 /** 로그인하지 않았으면 /login으로 보낸다. 토큰 검증 중에는 스피너를 보여준다. */
 export function RequireAuth() {
@@ -16,5 +17,9 @@ export function RequireAuth() {
   if (status === "unauthenticated") {
     return <Navigate to="/login" replace />;
   }
-  return <Outlet />;
+  return (
+    <PlatformSessionBootstrap>
+      <Outlet />
+    </PlatformSessionBootstrap>
+  );
 }

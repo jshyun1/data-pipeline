@@ -323,6 +323,44 @@ body {
   padding-top: 120px;
 }
 
+.platform-bootstrap {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: #f5f7fa;
+}
+
+.platform-bootstrap-frame {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  left: -10000px;
+  top: -10000px;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.platform-bootstrap-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.platform-bootstrap-status h2,
+.platform-bootstrap-status p {
+  margin: 0;
+}
+
+.platform-bootstrap-status p {
+  color: #64748b;
+}
+
 @media (max-width: 800px) {
   .app-header {
     padding: 0 12px;

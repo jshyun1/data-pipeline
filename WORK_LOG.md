@@ -418,6 +418,16 @@ cd web/backend && ./gradlew test   # ConnectionRepositoryIT만 실패하면 정�
   `/airflow/auth/static/{appbuilder,dist}/*`인 것을 컨테이너 파일/HTTP 조합으로 확인. Nginx에서 새 UI
   자원은 그대로 두고 FAB 전용 두 경로만 실제 라우트로 rewrite하도록 수정. 대표 CSS/JS 3개를 통합
   웹 경유로 재검증해 모두 200 및 올바른 `text/css`/`text/javascript` Content-Type 확인.
+- **통합 로그인 직후 플랫폼 세션 선연결**: Airflow 메뉴에 처음 들어갔을 때 FAB의
+  `Sign In with keycloak` 버튼을 다시 눌러야 하는 UX를 제거. 포털의 Keycloak 토큰 검증이 끝나면
+  `PlatformSessionBootstrap`이 숨김 same-origin iframe으로 Airflow의 Keycloak 직접 로그인 경로와 NiFi
+  UI를 즉시 열어 두 도구의 브라우저 세션 쿠키를 미리 발급한다. 동시에 Airflow `/ui/auth/me`, NiFi
+  `/access/config`, Kafka Connect `/connectors`를 1초 간격으로 확인하고 세 서비스가 모두 준비된 뒤에만
+  통합 대시보드를 표시한다. 45초 안에 준비되지 않으면 지연된 서비스명과 재시도 버튼을 표시.
+  Kafka Connect는 사용자 로그인 개념이 없으므로 별도 SSO가 아니라 REST 연결 가능 여부를 선확인한다.
+  이후 Airflow/NiFi 메뉴 iframe은 이미 발급된 세션을 재사용하므로 추가 로그인 입력 없이 바로 콘솔을
+  표시한다. production TypeScript/Vite build 및 `cerebroetl-ui` 재배포 완료. 최종 브라우저 로그인 왕복은
+  사용자가 새 로그인 세션에서 확인 필요.
 
 ### 현재 SSO 보안 범위와 다음 단계
 
