@@ -11,7 +11,11 @@ DAG는 실제 데이터 흐름을 만들지 않고, 이미 배포된 파이프�
 커넥터를 켜고 끄는 리모컨 역할만 한다(파이프라인 생성/배포/삭제는 여전히 웹에서).
 
 트리거할 때 Params의 action(start/stop/restart)을 선택해서 실행한다.
+apply_action 뒤의 verify_action이 Kafka Connect의 "라이브" 상태(메타데이터 DB의
+저장값이 아님 - 그건 낡아있을 수 있음)를 조회해서 액션이 실제로 반영됐는지
+확인한다: start/restart면 커넥터/태스크 전부 RUNNING, stop이면 PAUSED.
 """
+import time
 from datetime import datetime
 
 import requests
@@ -21,6 +25,8 @@ from airflow.sdk import Param
 
 PIPELINE_API_BASE_URL = "http://pipeline-api:8081"
 ACTIONS = ["start", "stop", "restart"]
+VERIFY_ATTEMPTS = 6
+VERIFY_INTERVAL_SECONDS = 5
 
 
 def call_pipeline_action(pipeline_id: int, **context):
@@ -34,6 +40,41 @@ def call_pipeline_action(pipeline_id: int, **context):
     print(f"파이프라인 {pipeline_id} {action} 완료: {response.json()}")
 
 
+def verify_pipeline_action(pipeline_id: int, **context):
+    action = context["params"]["action"]
+    # Kafka Connect의 "stop"은 내부적으로 pause라 기대 상태는 PAUSED (백엔드 주석과 동일)
+    expected = "PAUSED" if action == "stop" else "RUNNING"
+
+    resp = requests.get(f"{PIPELINE_API_BASE_URL}/api/pipelines/{pipeline_id}", timeout=30)
+    resp.raise_for_status()
+    connector_names = [c["connectorName"] for c in resp.json()["data"]["connectors"]]
+    if not connector_names:
+        raise RuntimeError(f"파이프라인 {pipeline_id}에 배포된 커넥터가 없어 검증할 수 없습니다")
+
+    problems = []
+    for attempt in range(VERIFY_ATTEMPTS):
+        problems = []
+        for name in connector_names:
+            status_resp = requests.get(
+                f"{PIPELINE_API_BASE_URL}/api/connect/connectors/{name}/status", timeout=30
+            )
+            status_resp.raise_for_status()
+            data = status_resp.json()["data"]
+            connector_state = data["connector"]["state"]
+            task_states = [t["state"] for t in data["tasks"]]
+            if connector_state != expected:
+                problems.append(f"{name}: connector={connector_state} (기대: {expected})")
+            elif expected == "RUNNING" and any(s != "RUNNING" for s in task_states):
+                traces = [t.get("trace", "")[:200] for t in data["tasks"] if t.get("trace")]
+                problems.append(f"{name}: tasks={task_states} trace={traces}")
+        if not problems:
+            print(f"검증 통과: 커넥터 {len(connector_names)}개 전부 {expected}")
+            return
+        time.sleep(VERIFY_INTERVAL_SECONDS)
+
+    raise RuntimeError(f"{action} 후에도 커넥터가 기대 상태({expected})가 아님: {problems}")
+
+
 def build_dag(pipeline_id: int, pipeline_name: str) -> DAG:
     with DAG(
         dag_id=f"kafka_pipeline_{pipeline_id}_control",
@@ -44,11 +85,17 @@ def build_dag(pipeline_id: int, pipeline_name: str) -> DAG:
         tags=["kafka", "pipeline-control", f"pipeline-{pipeline_id}"],
         params={"action": Param("start", enum=ACTIONS, description="수행할 동작을 선택하세요")},
     ) as dag:
-        PythonOperator(
+        apply = PythonOperator(
             task_id="apply_action",
             python_callable=call_pipeline_action,
             op_kwargs={"pipeline_id": pipeline_id},
         )
+        verify = PythonOperator(
+            task_id="verify_action",
+            python_callable=verify_pipeline_action,
+            op_kwargs={"pipeline_id": pipeline_id},
+        )
+        apply >> verify
     return dag
 
 
