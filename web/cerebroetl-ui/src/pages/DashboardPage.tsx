@@ -13,8 +13,9 @@ import {
   listAirflowDags,
   listAirflowTaskInstances,
 } from "../api/platform";
-import type { AirflowDagRun, AirflowTaskInstance, NifiProcessGroupStatusSnapshot } from "../api/platform";
+import type { AirflowDagRun, AirflowTaskInstance } from "../api/platform";
 import type { PipelineCommandHistoryResponse } from "../types/pipeline";
+import { collectNifiJobs, type NifiJob } from "../utils/nifiJobs";
 
 const { RangePicker } = DatePicker;
 
@@ -37,17 +38,6 @@ const historyColumns = [
 ];
 
 type EtlJobFilter = "all" | "running" | "failed" | "stopped";
-
-interface NifiJob {
-  id: string;
-  name: string;
-  status: "RUNNING" | "FAILED" | "STOPPED";
-  processorCount: number;
-  runningProcessorCount: number;
-  failedProcessorCount: number;
-  queued: string;
-  activeThreadCount: number;
-}
 
 interface AirflowDashboardStats {
   totalDags: number;
@@ -84,43 +74,6 @@ const EMPTY_AIRFLOW_DASHBOARD: AirflowDashboardData = {
   },
   issues: [],
 };
-
-function collectNifiJobs(groups: NifiProcessGroupStatusSnapshot[] = []): NifiJob[] {
-  return groups.flatMap((group) => {
-    const snapshot = group.processGroupStatusSnapshot;
-    if (!snapshot?.id) {
-      return [];
-    }
-
-    const processors = snapshot.processorStatusSnapshots ?? [];
-    const childJobs = collectNifiJobs(snapshot.processGroupStatusSnapshots);
-    const readableProcessors = processors
-      .map((processor) => processor.processorStatusSnapshot)
-      .filter((processor) => Boolean(processor?.id));
-
-    if (readableProcessors.length === 0) {
-      return childJobs;
-    }
-
-    const runningProcessorCount = readableProcessors.filter((processor) => processor?.runStatus === "Running").length;
-    const failedProcessorCount = readableProcessors.filter((processor) => processor?.runStatus === "Invalid").length;
-    const status = failedProcessorCount > 0 ? "FAILED" : runningProcessorCount > 0 ? "RUNNING" : "STOPPED";
-
-    return [
-      {
-        id: snapshot.id,
-        name: snapshot.name ?? snapshot.id,
-        status,
-        processorCount: readableProcessors.length,
-        runningProcessorCount,
-        failedProcessorCount,
-        queued: snapshot.queued ?? `${snapshot.flowFilesQueued ?? 0}`,
-        activeThreadCount: snapshot.activeThreadCount ?? 0,
-      },
-      ...childJobs,
-    ];
-  });
-}
 
 function etlStatusTag(status: NifiJob["status"]) {
   if (status === "RUNNING") {
@@ -185,7 +138,7 @@ async function getAirflowDashboard(): Promise<AirflowDashboardData> {
   const runResults = await Promise.allSettled(
     activeDags.map(async (dag) => ({
       dagId: dag.dag_id,
-      runs: await listAirflowDagRuns(dag.dag_id, 100),
+      runs: await listAirflowDagRuns(dag.dag_id, { limit: 100 }),
     })),
   );
   const dagRunGroups = runResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));

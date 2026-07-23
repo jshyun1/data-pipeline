@@ -21,6 +21,7 @@ export interface AirflowDagRun {
   start_date?: string;
   end_date?: string;
   execution_date?: string;
+  conf?: Record<string, unknown>;
 }
 
 export interface AirflowTaskInstance {
@@ -111,11 +112,20 @@ export async function listAirflowDags(): Promise<AirflowDag[]> {
   return res.data.dags ?? [];
 }
 
-export async function listAirflowDagRuns(dagId: string, limit = 100): Promise<AirflowDagRun[]> {
+export async function listAirflowDagRuns(
+  dagId: string,
+  options: { limit?: number; startDateGte?: string; startDateLte?: string; state?: string } = {},
+): Promise<AirflowDagRun[]> {
   const res = await axios.get<{ dag_runs?: AirflowDagRun[] }>(
     `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/dagRuns`,
     {
-      params: { limit, order_by: "-start_date" },
+      params: {
+        limit: options.limit ?? 100,
+        order_by: "-start_date",
+        start_date_gte: options.startDateGte,
+        start_date_lte: options.startDateLte,
+        state: options.state,
+      },
     },
   );
   return res.data.dag_runs ?? [];
