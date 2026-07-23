@@ -346,11 +346,15 @@ services:
       KC_SPI_THEME_STATIC_MAX_AGE: "-1"
       KC_SPI_THEME_CACHE_THEMES: "false"
       KC_SPI_THEME_CACHE_TEMPLATES: "false"
-      # realm-export.json의 ${...} 치환에 쓰인다(시크릿을 파일에 하드코딩하지 않기 위함)
+      # realm-export.json의 ${...} 치환에 쓰인다(시크릿을 파일에 하드코딩하지 않기 위함).
+      # PORTAL_PUBLIC_HOST는 이 배포를 실제로 접속하는 호스트명/IP - 서버가 바뀌면
+      # 이 값만 바꾸면 되고 realm-export.json은 다시 안 고쳐도 됨(--import-realm이
+      # 매 기동마다 이 값으로 다시 치환해서 재적용함).
       KEYCLOAK_NIFI_CLIENT_SECRET: ${KEYCLOAK_NIFI_CLIENT_SECRET}
       KEYCLOAK_AIRFLOW_CLIENT_SECRET: ${KEYCLOAK_AIRFLOW_CLIENT_SECRET}
       KEYCLOAK_SEED_USER_ID: ${KEYCLOAK_SEED_USER_ID}
       KEYCLOAK_SEED_USER_PASSWORD: ${KEYCLOAK_SEED_USER_PASSWORD}
+      PORTAL_PUBLIC_HOST: ${PORTAL_PUBLIC_HOST}
     ports:
       - "${KEYCLOAK_PORT}:8443"
     volumes:
