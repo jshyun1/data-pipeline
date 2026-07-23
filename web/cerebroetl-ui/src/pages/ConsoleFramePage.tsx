@@ -6,19 +6,25 @@ import { useLocation } from "react-router-dom";
 const HIDE_TOOL_LOGO_STYLE_ID = "cerebro-hide-tool-logo";
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
 // 보이게 한다. 번들 분석으로 실제 렌더링되는 요소를 확인한 선택자:
-// - NiFi: 라우트 가드 로딩 중에만 뜨는 스플래시 오버레이(.splash/.splash-img,
-//   nifi-drop-splash*.svg 배경) - 툴바 로고가 아니라 부트 스플래시였음.
+// - NiFi: 두 곳에 있었다.
+//   1) 라우트 가드 로딩 중에만 뜨는 스플래시 오버레이(.splash/.splash-img,
+//      nifi-drop-splash*.svg 배경) - 부트 스플래시.
+//   2) 캔버스 상단 "navigation" 컴포넌트가 항상 그리는 진짜 툴바 로고:
+//      <img ngSrc="assets/icons/nifi-logo.svg" alt="NiFi Logo"> (h-16 w-28
+//      고정 크기 div로 감싸져 있음 - .context-logo는 번들 전체(125개 청크)에
+//      실제로 안 쓰여서 제거, img[alt="NiFi Logo"]가 진짜 선택자).
 // - Airflow: <img alt="Logo">는 커스텀 테마 아이콘을 설정했을 때만 렌더링되는
 //   코드 경로라 지금 설정에선 절대 매치되지 않음. 실제로는 네브바 홈 링크에
 //   인라인 SVG(viewBox="0 0 35 35", 5색 팬휠)로 항상 그려짐 - 번들 전체에서
 //   이 viewBox를 쓰는 요소가 그것 하나뿐이라 안전하게 특정 가능.
-// svg 자체만 감추면 Chakra가 고정 크기(boxSize)로 감싸둔 링크/버튼 껍데기가
-// 그대로 남아 빈 칸으로 보인다(실제로 사용자가 스크린샷으로 확인) - :has()로
-// 그 svg를 직접 담고 있는 조상 요소째로 접어서 빈 칸이 안 남게 한다.
+// 로고 자체만 감추면 고정 크기로 감싸둔 컨테이너 껍데기가 빈 칸으로 남는다
+// (사용자가 스크린샷으로 확인) - :has()로 그 요소를 직접 담고 있는 조상까지
+// 같이 접어서 빈 칸 없이 나머지가 당겨 붙게 한다.
 const HIDE_TOOL_LOGO_CSS = `
-  .splash, .context-logo, img[alt="Logo"] { display: none !important; }
+  .splash, img[alt="Logo"], img[alt="NiFi Logo"] { display: none !important; }
   svg[viewBox="0 0 35 35"] { display: none !important; }
   :has(> svg[viewBox="0 0 35 35"]) { display: none !important; }
+  :has(> img[alt="NiFi Logo"]) { display: none !important; }
 `;
 
 function hideToolLogo(event: SyntheticEvent<HTMLIFrameElement>) {
