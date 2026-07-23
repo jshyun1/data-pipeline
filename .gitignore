@@ -41,3 +41,13 @@ airflow/logs/*
 !airflow/logs/.gitkeep
 __pycache__/
 *.pyc
+
+# NiFi가 파일 감시/적재용으로 bind-mount해서 실제 쓰는 런타임 데이터 폴더 -
+# 배포 서버마다 내용이 다르고(컨테이너 사용자 권한으로 파일이 생성됨) 코드가 아니므로
+# 커밋/배포 동기화 대상에서 제외한다.
+logfile/**
+!logfile/**/
+!logfile/**/.gitkeep
+csv_data/**
+!csv_data/**/
+!csv_data/**/.gitkeep
