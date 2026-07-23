@@ -23,8 +23,20 @@ apply_action 뒤의 verify_action이 프로세스 그룹의 컴포넌트 상태 
 (runningCount/invalidCount 등)를 다시 조회해서 액션이 실제로 반영됐는지 확인한다
 - 예전에 FetchFile이 invalid로 고착돼 시작이 안 되던 결함 같은 것이 있으면
 호출 자체는 성공해도 이 검증 단계에서 실패로 잡힌다.
+
+verify_action 다음의 verify_target_db_landing은 한 단계 더 나아가 NiFi 컴포넌트
+상태가 아니라 실제 타겟 DB(target-db의 Postgres)에 데이터가 적재됐는지 확인한다
+(row count > 0). 어떤 process group이 어느 schema.table로 적재하는지는 NiFi
+캔버스 안에만 있고 이 DAG가 알 방법이 없어서, schedule과 동일한 패턴으로
+Admin > Variables의 "{dag_id}__target_schema"/"{dag_id}__target_table"에서
+읽는다 - 둘 다 설정 안 하면 이 태스크는 skipped로 끝난다(실패 아님). action이
+start가 아니면(stop) 검증할 대상이 없으므로 마찬가지로 skip.
+검증에 성공하면(=태스크가 success로 끝나면) outlets로 등록해둔 Asset 이벤트가
+자동 발행된다 - skipped인 경우엔 Asset 이벤트가 발행되지 않는다(Airflow의
+표준 동작: outlets는 태스크가 success로 끝났을 때만 이벤트를 만든다).
 """
 import os
+import re
 import time
 from datetime import datetime
 
@@ -32,8 +44,10 @@ import requests
 import urllib3
 from airflow import DAG
 from airflow.models import Variable
+from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.providers.standard.operators.python import PythonOperator
-from airflow.sdk import Param
+from airflow.sdk import Asset, Param
+from airflow.sdk.exceptions import AirflowSkipException
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)  # 자체 서명 인증서
 
@@ -42,6 +56,11 @@ NIFI_HOST_HEADER_DEFAULT = "localhost:8443"
 ACTIONS = ["start", "stop"]
 VERIFY_ATTEMPTS = 6
 VERIFY_INTERVAL_SECONDS = 5
+
+# docker-compose.yml의 AIRFLOW_CONN_TARGET_DB_POSTGRES 환경변수로 등록되는 Connection.
+TARGET_DB_CONN_ID = "target_db_postgres"
+TARGET_DB_NAME = os.environ.get("TARGET_DB_NAME", "tarantula")
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _get_nifi_token() -> str:
@@ -116,6 +135,25 @@ def verify_process_group_action(pg_id: str, base_url: str, host_header: str, **c
     raise RuntimeError(f"{action} 후에도 프로세스 그룹 상태가 기대와 다름: {counts}")
 
 
+def verify_target_db_landing(dag_id: str, target_schema: str | None, target_table: str | None, **context):
+    action = context["params"]["action"]
+    if action != "start":
+        raise AirflowSkipException(f"action={action}이라 타겟 DB 적재 검증은 건너뜀 (start일 때만 검증)")
+    if not target_schema or not target_table:
+        raise AirflowSkipException(
+            f"Admin > Variables에 '{dag_id}__target_schema'/'{dag_id}__target_table'이 "
+            "설정되지 않아 타겟 DB 적재 검증을 건너뜀"
+        )
+    if not (_IDENTIFIER_RE.match(target_schema) and _IDENTIFIER_RE.match(target_table)):
+        raise ValueError(f"target_schema/target_table 형식이 올바르지 않습니다: {target_schema}.{target_table}")
+
+    hook = PostgresHook(postgres_conn_id=TARGET_DB_CONN_ID)
+    count = hook.get_first(f"SELECT COUNT(*) FROM {target_schema}.{target_table}")[0]
+    if count == 0:
+        raise RuntimeError(f"{target_schema}.{target_table}에 적재된 데이터가 없습니다 (count=0)")
+    print(f"타겟 DB 적재 확인: {target_schema}.{target_table} = {count}건")
+
+
 def sanitize(name: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in name).strip("_").lower()
 
@@ -132,6 +170,16 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str) -> DAG:
     # Variable이 없으면 기존과 동일하게 수동 트리거 전용(schedule=None)으로 동작.
     # 자동(스케줄) 실행 시엔 params가 없어 action은 항상 Param 기본값("start")으로 동작한다.
     schedule = Variable.get(f"{dag_id}__schedule", default_var=None)
+    # 타겟 DB 적재 검증 대상. Admin > Variables에서 "{dag_id}__target_schema"/
+    # "{dag_id}__target_table"로 설정 - 둘 다 있어야 Asset을 만들고 검증 태스크를
+    # 의미 있게 돈다(없으면 태스크는 만들어지되 매 실행마다 skipped로 끝남).
+    target_schema = Variable.get(f"{dag_id}__target_schema", default_var=None)
+    target_table = Variable.get(f"{dag_id}__target_table", default_var=None)
+    target_outlets = (
+        [Asset(f"postgres://target-db/{TARGET_DB_NAME}/{target_schema}/{target_table}")]
+        if target_schema and target_table
+        else []
+    )
     with DAG(
         dag_id=dag_id,
         dag_display_name=f"nifi_pipeline_{sanitize(pg_name)}_control",
@@ -158,7 +206,17 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str) -> DAG:
             python_callable=verify_process_group_action,
             op_kwargs=_op_kwargs,
         )
-        apply >> verify
+        verify_target = PythonOperator(
+            task_id="verify_target_db_landing",
+            python_callable=verify_target_db_landing,
+            op_kwargs={
+                "dag_id": dag_id,
+                "target_schema": target_schema,
+                "target_table": target_table,
+            },
+            outlets=target_outlets,
+        )
+        apply >> verify >> verify_target
     return dag
 
 

@@ -578,6 +578,13 @@ services:
       # 자체 서명 Keycloak 인증서를 requests(authlib)가 신뢰하도록. Airflow의 다른 HTTPS
       # 호출은 pipeline-api(http)/NiFi(verify=False DAG)라 이 번들 한정이 문제되지 않음.
       REQUESTS_CA_BUNDLE: /opt/airflow/certs/keycloak.crt
+      # nifi_pipelines_dynamic.py의 verify_target_db_landing이 NiFi가 실제로 적재한
+      # 타겟 테이블을 직접 조회할 때 쓰는 Connection. AIRFLOW_CONN_* 형태로 주면
+      # airflow-init의 db migrate만으로 별도 `airflow connections add` 없이 바로 쓸 수 있다.
+      # TARGET_DB_PASSWORD에 !/@/# 같은 URI 예약 문자가 들어있어 postgresql://user:pass@host
+      # 형태로 조합하면 파싱이 깨진다(# 뒤가 URI fragment로 잘림) - JSON 형식으로 우회.
+      AIRFLOW_CONN_TARGET_DB_POSTGRES: '{"conn_type": "postgres", "login": "${TARGET_DB_USER}", "password": "${TARGET_DB_PASSWORD}", "host": "target-db", "port": ${TARGET_DB_PORT}, "schema": "${TARGET_DB_NAME}"}'
+      TARGET_DB_NAME: ${TARGET_DB_NAME}
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
