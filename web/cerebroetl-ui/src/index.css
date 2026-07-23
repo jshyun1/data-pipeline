@@ -251,18 +251,6 @@ body {
   letter-spacing: 1.6px;
 }
 
-.section-statuses {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 12px;
-  padding-top: 4px;
-}
-
-.dashboard-metrics {
-  margin-bottom: 16px;
-}
-
 .dashboard-section .ant-card {
   height: 100%;
   background: #fbfcfd;
@@ -275,6 +263,20 @@ body {
   height: 220px;
   color: #9ca3af;
   font-size: 13px;
+}
+
+.history-log-panel {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  background: #0b1020;
+  color: #d7e0f0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-radius: 6px;
 }
 
 .metric-card {
@@ -406,10 +408,6 @@ body {
 
   .section-heading {
     flex-direction: column;
-  }
-
-  .section-statuses {
-    justify-content: flex-start;
   }
 }
 

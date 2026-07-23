@@ -29,6 +29,8 @@ export interface AirflowTaskInstance {
   state?: string;
   try_number?: number;
   max_tries?: number;
+  start_date?: string;
+  end_date?: string;
 }
 
 export interface AirflowTask {
@@ -143,6 +145,32 @@ export async function listAirflowDagTasks(dagId: string): Promise<AirflowTask[]>
     `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/tasks`,
   );
   return res.data.tasks ?? [];
+}
+
+interface AirflowLogMessage {
+  timestamp?: string;
+  event?: string;
+}
+
+export async function getAirflowTaskLog(
+  dagId: string,
+  dagRunId: string,
+  taskId: string,
+  tryNumber = 1,
+): Promise<string> {
+  const res = await axios.get<{ content?: Array<AirflowLogMessage | string> }>(
+    `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/dagRuns/${encodeURIComponent(dagRunId)}/taskInstances/${encodeURIComponent(taskId)}/logs/${tryNumber}`,
+    { params: { full_content: true } },
+  );
+  const content = res.data.content ?? [];
+  if (content.length === 0) {
+    return "로그가 없습니다.";
+  }
+  return content
+    .map((entry) =>
+      typeof entry === "string" ? entry : `${entry.timestamp ? `[${entry.timestamp}] ` : ""}${entry.event ?? ""}`,
+    )
+    .join("\n");
 }
 
 

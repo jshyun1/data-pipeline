@@ -1,216 +1,25 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, Button, Card, Col, DatePicker, Row, Space, Statistic, Table, Tag } from "antd";
-import { Column, Line } from "@ant-design/plots";
+import { Button, Card, Col, DatePicker, Row, Space, Statistic } from "antd";
+import { Column, Line, Pie } from "@ant-design/plots";
 import dayjs, { type Dayjs } from "dayjs";
-import { getDailyLoadSummary, getDashboardSummary } from "../api/dashboard";
+import { getDailyLoadSummary } from "../api/dashboard";
 import {
-  getAirflowHealth,
+  getAirflowTaskLog,
   getNifiRootStatus,
   listAirflowDagRuns,
   listAirflowDagTasks,
   listAirflowDags,
   listAirflowTaskInstances,
 } from "../api/platform";
-import type { AirflowDagRun, AirflowTaskInstance } from "../api/platform";
-import type { PipelineCommandHistoryResponse } from "../types/pipeline";
-import { collectNifiJobs, type NifiJob } from "../utils/nifiJobs";
+import type { AirflowTaskInstance } from "../api/platform";
+import { listPipelines } from "../api/pipelines";
+import type { PipelineResponse } from "../types/pipeline";
+import { collectNifiJobs } from "../utils/nifiJobs";
+import { categorizeDag, NIFI_METRICS_COLLECTOR_DAG_ID, resolveDagDisplayName, type DagCategory } from "../utils/dagHistory";
+import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
 
 const { RangePicker } = DatePicker;
-
-const RESULT_COLOR: Record<string, string> = {
-  SUCCESS: "success",
-  FAILED: "error",
-};
-
-const historyColumns = [
-  { title: "파이프라인 ID", dataIndex: "pipelineId", width: 120 },
-  { title: "명령", dataIndex: "command", width: 120 },
-  {
-    title: "결과",
-    dataIndex: "result",
-    width: 100,
-    render: (value: string | null) => (value ? <Tag color={RESULT_COLOR[value] ?? "default"}>{value}</Tag> : "-"),
-  },
-  { title: "메시지", dataIndex: "message", ellipsis: true },
-  { title: "요청 시각", dataIndex: "requestedAt" },
-];
-
-type EtlJobFilter = "all" | "running" | "failed" | "stopped";
-
-interface AirflowDashboardStats {
-  totalDags: number;
-  activeDags: number;
-  running: number;
-  todaySuccess: number;
-  todayFailed: number;
-  delayed: number;
-}
-
-interface AirflowIssueRow {
-  id: string;
-  dagId: string;
-  status: "failed" | "delayed";
-  failedTask: string;
-  startedAt: string;
-  duration: string;
-  retry: string;
-}
-
-interface AirflowDashboardData {
-  stats: AirflowDashboardStats;
-  issues: AirflowIssueRow[];
-}
-
-const EMPTY_AIRFLOW_DASHBOARD: AirflowDashboardData = {
-  stats: {
-    totalDags: 0,
-    activeDags: 0,
-    running: 0,
-    todaySuccess: 0,
-    todayFailed: 0,
-    delayed: 0,
-  },
-  issues: [],
-};
-
-function etlStatusTag(status: NifiJob["status"]) {
-  if (status === "RUNNING") {
-    return <Tag color="success">RUNNING</Tag>;
-  }
-  if (status === "FAILED") {
-    return <Tag color="error">FAILED</Tag>;
-  }
-  return <Tag>STOPPED</Tag>;
-}
-
-function isToday(value?: string) {
-  if (!value) {
-    return false;
-  }
-
-  const date = new Date(value);
-  const today = new Date();
-  return (
-    date.getFullYear() === today.getFullYear() &&
-    date.getMonth() === today.getMonth() &&
-    date.getDate() === today.getDate()
-  );
-}
-
-function formatAirflowTime(value?: string) {
-  if (!value) {
-    return "-";
-  }
-
-  return new Intl.DateTimeFormat("ko-KR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
-}
-
-function formatAirflowDuration(start?: string, end?: string) {
-  if (!start) {
-    return "-";
-  }
-
-  const startTime = new Date(start).getTime();
-  const endTime = end ? new Date(end).getTime() : Date.now();
-  const minutes = Math.max(1, Math.round((endTime - startTime) / 60000));
-  return `${minutes}분`;
-}
-
-function formatAirflowRetry(task?: AirflowTaskInstance) {
-  if (!task) {
-    return "-";
-  }
-
-  const tryNumber = task.try_number ?? 0;
-  const maxTries = Math.max((task.max_tries ?? 0) + 1, tryNumber);
-  return `${tryNumber}/${maxTries}`;
-}
-
-async function getAirflowDashboard(): Promise<AirflowDashboardData> {
-  const dags = await listAirflowDags();
-  const activeDags = dags.filter((dag) => dag.is_active !== false && dag.is_paused !== true);
-  const runResults = await Promise.allSettled(
-    activeDags.map(async (dag) => ({
-      dagId: dag.dag_id,
-      runs: await listAirflowDagRuns(dag.dag_id, { limit: 100 }),
-    })),
-  );
-  const dagRunGroups = runResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
-  const dagRuns = dagRunGroups.flatMap((group) =>
-    group.runs.map((run) => ({
-      ...run,
-      dag_id: run.dag_id ?? group.dagId,
-    })),
-  );
-  const todayRuns = dagRuns.filter((run) => isToday(run.end_date ?? run.start_date ?? run.execution_date));
-  const running = dagRuns.filter((run) => run.state === "running" || run.state === "queued").length;
-  const todaySuccess = todayRuns.filter((run) => run.state === "success").length;
-  const todayFailed = todayRuns.filter((run) => run.state === "failed").length;
-  const latestRunsByDag = new Map<string, AirflowDagRun>();
-
-  dagRuns.forEach((run) => {
-    const dagId = run.dag_id as string;
-    const previous = latestRunsByDag.get(dagId);
-    const runTime = new Date(run.start_date ?? run.execution_date ?? 0).getTime();
-    const previousTime = new Date(previous?.start_date ?? previous?.execution_date ?? 0).getTime();
-    if (!previous || runTime > previousTime) {
-      latestRunsByDag.set(dagId, run);
-    }
-  });
-
-  const failureResults = await Promise.allSettled(
-    dagRunGroups.flatMap((group) =>
-      group.runs
-        .filter((run) => run.state === "failed")
-        .slice(0, 3)
-        .map(async (run) => {
-          const tasks = await listAirflowTaskInstances(group.dagId, run.dag_run_id).catch(() => []);
-          const failedTask = tasks.find((task) => task.state === "failed");
-          return {
-            id: `${group.dagId}:${run.dag_run_id}`,
-            dagId: group.dagId,
-            status: "failed" as const,
-            failedTask: failedTask?.task_id ?? "-",
-            startedAt: formatAirflowTime(run.start_date ?? run.execution_date),
-            duration: formatAirflowDuration(run.start_date ?? run.execution_date, run.end_date),
-            retry: formatAirflowRetry(failedTask),
-          };
-        }),
-    ),
-  );
-  const failures = failureResults
-    .flatMap((result) => (result.status === "fulfilled" ? [result.value] : []))
-    .slice(0, 10);
-  const delayedIssues = activeDags
-    .filter((dag) => !latestRunsByDag.has(dag.dag_id))
-    .map((dag) => ({
-      id: `${dag.dag_id}:delayed`,
-      dagId: dag.dag_id,
-      status: "delayed" as const,
-      failedTask: "-",
-      startedAt: "실행 이력 없음",
-      duration: "-",
-      retry: "-",
-    }));
-
-  return {
-    stats: {
-      totalDags: dags.length,
-      activeDags: activeDags.length,
-      running,
-      todaySuccess,
-      todayFailed,
-      delayed: activeDags.filter((dag) => !latestRunsByDag.has(dag.dag_id)).length,
-    },
-    issues: [...failures, ...delayedIssues].slice(0, 10),
-  };
-}
 
 interface DailyLoadPoint {
   date: string;
@@ -227,34 +36,208 @@ interface TaskLoadPoint {
   count: number;
 }
 
-interface DataLoadDashboardData {
+interface CategoryLoadPoint {
+  category: string;
+  count: number;
+}
+
+interface DagInfo {
+  dagId: string;
+  category: DagCategory;
+  displayName: string;
+  isActive: boolean;
+}
+
+interface DashboardHistoryData {
   dagCount: number;
   taskCount: number;
   daily: DailyLoadPoint[];
   topDags: DagLoadPoint[];
   topTasks: TaskLoadPoint[];
+  categoryBreakdown: CategoryLoadPoint[];
+  dagCatalog: HistoryEntry[];
+  taskCatalog: HistoryEntry[];
+  successEntries: HistoryEntry[];
+  failedEntries: HistoryEntry[];
+  delayedEntries: HistoryEntry[];
 }
 
-const EMPTY_DATA_LOAD_DASHBOARD: DataLoadDashboardData = {
+const EMPTY_DASHBOARD_HISTORY: DashboardHistoryData = {
   dagCount: 0,
   taskCount: 0,
   daily: [],
   topDags: [],
   topTasks: [],
+  categoryBreakdown: [],
+  dagCatalog: [],
+  taskCatalog: [],
+  successEntries: [],
+  failedEntries: [],
+  delayedEntries: [],
 };
 
-// Kafka(Spring 스케줄러)/NiFi(1분 주기 Airflow DAG)가 실제 적재 건수를 감지할 때마다
-// pipeline_daily_load_metric 롤업 테이블에 UPSERT로 반영해두므로, 대시보드는 원시
-// Airflow 이벤트를 다시 집계하는 대신 이 테이블을 요약하는 백엔드 엔드포인트를 읽는다.
-async function getDataLoadDashboard(range: [Dayjs, Dayjs]): Promise<DataLoadDashboardData> {
-  const dags = await listAirflowDags();
-  const taskListResults = await Promise.allSettled(dags.map((dag) => listAirflowDagTasks(dag.dag_id)));
-  const taskCount = taskListResults.reduce(
-    (sum, result) => sum + (result.status === "fulfilled" ? result.value.length : 0),
-    0,
+async function fetchTaskLogText(dagId: string, runId: string, taskId: string, tryNumber?: number): Promise<string> {
+  try {
+    return await getAirflowTaskLog(dagId, runId, taskId, tryNumber && tryNumber > 0 ? tryNumber : 1);
+  } catch {
+    return "로그를 불러올 수 없습니다.";
+  }
+}
+
+async function fetchRunLogText(dagId: string, runId: string): Promise<string> {
+  const instances = await listAirflowTaskInstances(dagId, runId).catch(() => []);
+  if (instances.length === 0) {
+    return "로그를 불러올 수 없습니다.";
+  }
+  const parts = await Promise.all(
+    instances.map(async (instance) => {
+      const text = await fetchTaskLogText(dagId, runId, instance.task_id, instance.try_number);
+      return `=== ${instance.task_id} ===\n${text}`;
+    }),
+  );
+  return parts.join("\n\n");
+}
+
+// NiFi 프로세스 그룹(UUID)과 Kafka 파이프라인(정수 id)은 pipeline_daily_load_metric의
+// pipelineKey 모양만 봐도 구분된다 - 숫자면 CDC(Kafka), 아니면 ETL(NiFi).
+function classifyPipelineKey(key: string): "ETL" | "CDC" {
+  return /^\d+$/.test(key) ? "CDC" : "ETL";
+}
+
+// 대시보드 상단 5개 타일(DAG/태스크/성공/실패/지연)과 그 클릭 시 뜨는 상세 내역 모달,
+// 그리고 적재 건수 차트 3종의 데이터를 한 번에 만든다. 적재 건수는
+// pipeline_daily_load_metric 롤업을 그대로 읽고, DAG/태스크/성공/실패/지연은 Airflow의
+// 실제 DAG/실행 이력을 ETL(NiFi)/CDC(Kafka)/기타로 분류해서 집계한다.
+async function buildDashboardHistory(range: [Dayjs, Dayjs]): Promise<DashboardHistoryData> {
+  const [dags, nifiStatusResult, kafkaPipelines, summary] = await Promise.all([
+    listAirflowDags(),
+    getNifiRootStatus().catch(() => undefined),
+    listPipelines().catch(() => [] as PipelineResponse[]),
+    getDailyLoadSummary(range[0].format("YYYY-MM-DD"), range[1].format("YYYY-MM-DD")),
+  ]);
+
+  const nifiJobs = collectNifiJobs(nifiStatusResult?.processGroupStatus?.aggregateSnapshot?.processGroupStatusSnapshots);
+
+  const dagInfos: DagInfo[] = dags.map((dag) => {
+    const category = categorizeDag(dag.dag_id);
+    return {
+      dagId: dag.dag_id,
+      category,
+      displayName: resolveDagDisplayName(dag.dag_id, category, nifiJobs, kafkaPipelines),
+      isActive: dag.is_active !== false && dag.is_paused !== true,
+    };
+  });
+
+  const latestRunResults = await Promise.allSettled(
+    dagInfos.map(async (info) => ({
+      dagId: info.dagId,
+      run: (await listAirflowDagRuns(info.dagId, { limit: 1 }))[0],
+    })),
+  );
+  const latestRunByDag = new Map(
+    latestRunResults
+      .filter((result) => result.status === "fulfilled")
+      .map((result) => [result.value.dagId, result.value.run]),
   );
 
-  const summary = await getDailyLoadSummary(range[0].format("YYYY-MM-DD"), range[1].format("YYYY-MM-DD"));
+  const taskListResults = await Promise.allSettled(
+    dagInfos.map(async (info) => ({ dagId: info.dagId, tasks: await listAirflowDagTasks(info.dagId) })),
+  );
+
+  const latestRunTaskInstances = new Map<string, AirflowTaskInstance[]>();
+  await Promise.all(
+    dagInfos.map(async (info) => {
+      const run = latestRunByDag.get(info.dagId);
+      if (!run) {
+        return;
+      }
+      const instances = await listAirflowTaskInstances(info.dagId, run.dag_run_id).catch(() => []);
+      latestRunTaskInstances.set(info.dagId, instances);
+    }),
+  );
+
+  const dagCatalog: HistoryEntry[] = dagInfos.map((info) => {
+    const run = latestRunByDag.get(info.dagId);
+    return {
+      id: info.dagId,
+      basicContent: info.displayName,
+      category: info.category,
+      datetime: run?.start_date ?? run?.execution_date,
+      fetchLog: run ? () => fetchRunLogText(info.dagId, run.dag_run_id) : undefined,
+    };
+  });
+
+  const taskCatalog: HistoryEntry[] = taskListResults.flatMap((result) => {
+    if (result.status !== "fulfilled") {
+      return [];
+    }
+    const { dagId, tasks } = result.value;
+    const info = dagInfos.find((candidate) => candidate.dagId === dagId);
+    if (!info) {
+      return [];
+    }
+    const run = latestRunByDag.get(dagId);
+    const instances = latestRunTaskInstances.get(dagId) ?? [];
+    return tasks.map((task) => {
+      const instance = instances.find((candidate) => candidate.task_id === task.task_id);
+      return {
+        id: `${dagId}.${task.task_id}`,
+        basicContent: `${info.displayName} / ${task.task_id}`,
+        category: info.category,
+        datetime: instance?.start_date,
+        fetchLog: run ? () => fetchTaskLogText(dagId, run.dag_run_id, task.task_id, instance?.try_number) : undefined,
+      };
+    });
+  });
+
+  // 1분마다 도는 nifi_pipelines_metrics_collector는 알려진 executor 버그로 매번
+  // failed로 찍히는 노이즈라 성공/실패/지연 집계에서는 제외한다(DAG/태스크 목록에는
+  // 실제로 존재하는 DAG이니 그대로 포함).
+  const historyDagInfos = dagInfos.filter((info) => info.dagId !== NIFI_METRICS_COLLECTOR_DAG_ID);
+  const runGroupResults = await Promise.allSettled(
+    historyDagInfos.map(async (info) => ({
+      info,
+      runs: await listAirflowDagRuns(info.dagId, {
+        limit: 200,
+        startDateGte: range[0].startOf("day").toISOString(),
+        startDateLte: range[1].endOf("day").toISOString(),
+      }),
+    })),
+  );
+  const runGroups = runGroupResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+
+  const successEntries: HistoryEntry[] = [];
+  const failedEntries: HistoryEntry[] = [];
+  const delayedEntries: HistoryEntry[] = [];
+
+  runGroups.forEach(({ info, runs }) => {
+    runs.forEach((run) => {
+      const entry: HistoryEntry = {
+        id: `${info.dagId}:${run.dag_run_id}`,
+        basicContent: info.displayName,
+        category: info.category,
+        datetime: run.start_date ?? run.execution_date,
+        fetchLog: () => fetchRunLogText(info.dagId, run.dag_run_id),
+      };
+      if (run.state === "success") {
+        successEntries.push(entry);
+      } else if (run.state === "failed") {
+        failedEntries.push(entry);
+      }
+    });
+    if (info.isActive && runs.length === 0) {
+      delayedEntries.push({
+        id: `${info.dagId}:delayed`,
+        basicContent: info.displayName,
+        category: info.category,
+      });
+    }
+  });
+
+  const byDatetimeDesc = (a: HistoryEntry, b: HistoryEntry) =>
+    new Date(b.datetime ?? 0).getTime() - new Date(a.datetime ?? 0).getTime();
+  successEntries.sort(byDatetimeDesc);
+  failedEntries.sort(byDatetimeDesc);
 
   const daily = summary.daily
     .map((point) => ({ date: dayjs(point.date).format("YYYY.MM.DD"), count: point.count }))
@@ -262,91 +245,68 @@ async function getDataLoadDashboard(range: [Dayjs, Dayjs]): Promise<DataLoadDash
   const topDags = summary.topPipelines.map((point) => ({ dagId: point.label, count: point.count }));
   const topTasks = summary.topTasks.map((point) => ({ taskKey: point.label, count: point.count }));
 
-  return { dagCount: dags.length, taskCount, daily, topDags, topTasks };
+  const categoryTotals = new Map<string, number>();
+  summary.topPipelines.forEach((point) => {
+    const category = classifyPipelineKey(point.key);
+    categoryTotals.set(category, (categoryTotals.get(category) ?? 0) + point.count);
+  });
+  const categoryBreakdown = Array.from(categoryTotals.entries()).map(([category, count]) => ({ category, count }));
+
+  return {
+    dagCount: dagInfos.length,
+    taskCount: taskCatalog.length,
+    daily,
+    topDags,
+    topTasks,
+    categoryBreakdown,
+    dagCatalog,
+    taskCatalog,
+    successEntries,
+    failedEntries,
+    delayedEntries,
+  };
 }
 
+type TileKind = "dag" | "task" | "success" | "failed" | "delayed";
+
+const TILE_TITLE: Record<TileKind, string> = {
+  dag: "DAG 목록",
+  task: "태스크 목록",
+  success: "성공 내역",
+  failed: "실패 내역",
+  delayed: "지연 내역",
+};
+
 export function DashboardPage() {
-  const [etlJobFilter, setEtlJobFilter] = useState<EtlJobFilter>("all");
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(6, "day"), dayjs()]);
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
+  const [activeTile, setActiveTile] = useState<TileKind | null>(null);
 
-  const dataLoadStats = useQuery({
-    queryKey: ["dashboard-data-load", appliedRange[0].toISOString(), appliedRange[1].toISOString()],
-    queryFn: () => getDataLoadDashboard(appliedRange),
+  const historyQuery = useQuery({
+    queryKey: ["dashboard-history", appliedRange[0].toISOString(), appliedRange[1].toISOString()],
+    queryFn: () => buildDashboardHistory(appliedRange),
     placeholderData: (previousData) => previousData,
   });
 
-  const dashboardSummary = useQuery({
-    queryKey: ["dashboard-summary"],
-    queryFn: getDashboardSummary,
-    refetchInterval: 60000,
-    placeholderData: (previousData) => previousData,
-  });
+  const history = historyQuery.data ?? EMPTY_DASHBOARD_HISTORY;
+  const showInitialLoading = historyQuery.isLoading && !historyQuery.data;
 
-  const airflowHealth = useQuery({
-    queryKey: ["dashboard-airflow-health"],
-    queryFn: getAirflowHealth,
-    refetchInterval: 60000,
-    retry: false,
-    placeholderData: (previousData) => previousData,
-  });
-
-  const airflowStats = useQuery({
-    queryKey: ["dashboard-airflow-stats"],
-    queryFn: getAirflowDashboard,
-    refetchInterval: 60000,
-    retry: false,
-    placeholderData: (previousData) => previousData,
-  });
-
-  const nifiStatus = useQuery({
-    queryKey: ["dashboard-nifi-root-status"],
-    queryFn: getNifiRootStatus,
-    refetchInterval: 60000,
-    retry: false,
-    placeholderData: (previousData) => previousData,
-  });
-
-  const data = dashboardSummary.data;
-  const nifiSnapshot = nifiStatus.data?.processGroupStatus?.aggregateSnapshot;
-  const nifiJobs = useMemo(
-    () => collectNifiJobs(nifiSnapshot?.processGroupStatusSnapshots),
-    [nifiSnapshot?.processGroupStatusSnapshots],
-  );
-  const runningNifiJobs = nifiJobs.filter((job) => job.status === "RUNNING");
-  const failedNifiJobs = nifiJobs.filter((job) => job.status === "FAILED");
-  const stoppedNifiJobs = nifiJobs.filter((job) => job.status === "STOPPED");
-  const filteredNifiJobs =
-    etlJobFilter === "running"
-      ? runningNifiJobs
-      : etlJobFilter === "failed"
-        ? failedNifiJobs
-        : etlJobFilter === "stopped"
-          ? stoppedNifiJobs
-          : nifiJobs;
-  const etlJobFilterLabel =
-    etlJobFilter === "running"
-      ? "실행중 JOB"
-      : etlJobFilter === "failed"
-        ? "실패 JOB"
-        : etlJobFilter === "stopped"
-          ? "중지 JOB"
-          : "전체 JOB";
-  const airflowServices = [
-    { label: "Metadatabase", status: airflowHealth.data?.metadatabase?.status },
-    { label: "Scheduler", status: airflowHealth.data?.scheduler?.status },
-    { label: "Triggerer", status: airflowHealth.data?.triggerer?.status },
-    { label: "DAG Processor", status: airflowHealth.data?.dag_processor?.status },
-  ];
-  const airflowHealthyCount = airflowServices.filter((service) => service.status?.toLowerCase() === "healthy").length;
-  const airflowOnline = !airflowHealth.isError && airflowHealthyCount > 0;
-  const airflowDashboard = airflowStats.data ?? EMPTY_AIRFLOW_DASHBOARD;
-  const showDashboardInitialLoading = dashboardSummary.isLoading && !dashboardSummary.data;
-  const showAirflowInitialLoading = airflowStats.isLoading && !airflowStats.data;
-  const showNifiInitialLoading = nifiStatus.isLoading && !nifiStatus.data;
-
-  const dataLoad = dataLoadStats.data ?? EMPTY_DATA_LOAD_DASHBOARD;
-  const showDataLoadInitialLoading = dataLoadStats.isLoading && !dataLoadStats.data;
+  const modalRows = useMemo(() => {
+    switch (activeTile) {
+      case "dag":
+        return history.dagCatalog;
+      case "task":
+        return history.taskCatalog;
+      case "success":
+        return history.successEntries;
+      case "failed":
+        return history.failedEntries;
+      case "delayed":
+        return history.delayedEntries;
+      default:
+        return [];
+    }
+  }, [activeTile, history]);
 
   return (
     <div>
@@ -372,24 +332,52 @@ export function DashboardPage() {
             </Space>
           </div>
           <Row gutter={[16, 16]}>
-            <Col xs={24} lg={6}>
-              <Row gutter={[12, 12]}>
-                <Col span={24}>
-                  <Card loading={showDataLoadInitialLoading}>
-                    <Statistic title="DAG" value={dataLoad.dagCount} valueStyle={{ color: "#08979c" }} />
-                  </Card>
-                </Col>
-                <Col span={24}>
-                  <Card loading={showDataLoadInitialLoading}>
-                    <Statistic title="태스크" value={dataLoad.taskCount} valueStyle={{ color: "#5cdbd3" }} />
-                  </Card>
-                </Col>
-              </Row>
+            <Col xs={12} md={8} xl={4}>
+              <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("dag")}>
+                <Statistic title="DAG" value={history.dagCount} valueStyle={{ color: "#08979c" }} />
+              </Card>
             </Col>
-            <Col xs={24} lg={18}>
-              <Card title="일자별 데이터 로드 건수" size="small" loading={showDataLoadInitialLoading}>
-                {dataLoad.daily.length > 0 ? (
-                  <Line data={dataLoad.daily} xField="date" yField="count" height={220} />
+            <Col xs={12} md={8} xl={4}>
+              <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("task")}>
+                <Statistic title="태스크" value={history.taskCount} valueStyle={{ color: "#5cdbd3" }} />
+              </Card>
+            </Col>
+            <Col xs={12} md={8} xl={4}>
+              <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("success")}>
+                <Statistic title="성공" value={history.successEntries.length} valueStyle={{ color: "#2f7d32" }} />
+              </Card>
+            </Col>
+            <Col xs={12} md={8} xl={4}>
+              <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("failed")}>
+                <Statistic title="실패" value={history.failedEntries.length} valueStyle={{ color: "#c62828" }} />
+              </Card>
+            </Col>
+            <Col xs={12} md={8} xl={4}>
+              <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("delayed")}>
+                <Statistic title="지연" value={history.delayedEntries.length} />
+              </Card>
+            </Col>
+          </Row>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} xl={12}>
+              <Card title="일별 적재 건수" size="small" loading={showInitialLoading}>
+                {history.daily.length > 0 ? (
+                  <Line data={history.daily} xField="date" yField="count" height={240} />
+                ) : (
+                  <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
+                )}
+              </Card>
+            </Col>
+            <Col xs={24} xl={12}>
+              <Card title="소스별 적재 비중" size="small" loading={showInitialLoading}>
+                {history.categoryBreakdown.length > 0 ? (
+                  <Pie
+                    data={history.categoryBreakdown}
+                    angleField="count"
+                    colorField="category"
+                    innerRadius={0.6}
+                    height={240}
+                  />
                 ) : (
                   <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
                 )}
@@ -398,238 +386,34 @@ export function DashboardPage() {
           </Row>
           <Row gutter={[16, 16]}>
             <Col xs={24} xl={12}>
-              <Card title="Top 5 데이터 로드 DAG" size="small" loading={showDataLoadInitialLoading}>
-                {dataLoad.topDags.length > 0 ? (
-                  <Column data={dataLoad.topDags} xField="dagId" yField="count" height={240} />
+              <Card title="Top 5 데이터 로드 DAG" size="small" loading={showInitialLoading}>
+                {history.topDags.length > 0 ? (
+                  <Column data={history.topDags} xField="dagId" yField="count" height={240} />
                 ) : (
                   <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
                 )}
               </Card>
             </Col>
             <Col xs={24} xl={12}>
-              <Card title="Top 10 데이터 로드 태스크" size="small" loading={showDataLoadInitialLoading}>
-                {dataLoad.topTasks.length > 0 ? (
-                  <Column data={dataLoad.topTasks} xField="taskKey" yField="count" height={240} />
+              <Card title="Top 10 데이터 로드 태스크" size="small" loading={showInitialLoading}>
+                {history.topTasks.length > 0 ? (
+                  <Column data={history.topTasks} xField="taskKey" yField="count" height={240} />
                 ) : (
                   <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
                 )}
-              </Card>
-            </Col>
-          </Row>
-        </section>
-
-        <section className="dashboard-section">
-          <div className="section-heading">
-            <div>
-              <h3>Airflow 대시보드</h3>
-            </div>
-            <Badge status={airflowOnline ? "success" : "error"} text={airflowOnline ? "정상" : "응답 없음"} />
-          </div>
-          <Row gutter={[12, 12]} className="airflow-metrics">
-            <Col xs={12} md={8} xl={4}>
-              <Card loading={showAirflowInitialLoading}>
-                <Statistic title="전체 DAG" value={airflowDashboard.stats.totalDags} />
-              </Card>
-            </Col>
-            <Col xs={12} md={8} xl={4}>
-              <Card loading={showAirflowInitialLoading}>
-                <Statistic title="활성 DAG" value={airflowDashboard.stats.activeDags} />
-              </Card>
-            </Col>
-            <Col xs={12} md={8} xl={4}>
-              <Card loading={showAirflowInitialLoading}>
-                <Statistic title="실행 중" value={airflowDashboard.stats.running} valueStyle={{ color: "#1677ff" }} />
-              </Card>
-            </Col>
-            <Col xs={12} md={8} xl={4}>
-              <Card loading={showAirflowInitialLoading}>
-                <Statistic title="오늘 성공" value={airflowDashboard.stats.todaySuccess} valueStyle={{ color: "#2f7d32" }} />
-              </Card>
-            </Col>
-            <Col xs={12} md={8} xl={4}>
-              <Card loading={showAirflowInitialLoading}>
-                <Statistic title="오늘 실패" value={airflowDashboard.stats.todayFailed} valueStyle={{ color: "#c62828" }} />
-              </Card>
-            </Col>
-            <Col xs={12} md={8} xl={4}>
-              <Card loading={showAirflowInitialLoading}>
-                <Statistic title="지연" value={airflowDashboard.stats.delayed} />
-              </Card>
-            </Col>
-            <Col xs={24}>
-              <Card title="실패 / 지연 목록" size="small">
-                <Table<AirflowIssueRow>
-                  rowKey="id"
-                  size="small"
-                  loading={showAirflowInitialLoading}
-                  dataSource={airflowDashboard.issues}
-                  pagination={false}
-                  columns={[
-                    { title: "DAG", dataIndex: "dagId" },
-                    {
-                      title: "상태",
-                      dataIndex: "status",
-                      width: 100,
-                      render: (status: AirflowIssueRow["status"]) => (
-                        <Tag color={status === "failed" ? "error" : "warning"}>
-                          {status === "failed" ? "실패" : "지연"}
-                        </Tag>
-                      ),
-                    },
-                    { title: "실패 Task", dataIndex: "failedTask", width: 180 },
-                    { title: "실행 시각", dataIndex: "startedAt", width: 120 },
-                    { title: "경과시간", dataIndex: "duration", width: 120 },
-                    { title: "재시도", dataIndex: "retry", width: 100 },
-                  ]}
-                />
-              </Card>
-            </Col>
-          </Row>
-        </section>
-
-        <section className="dashboard-section">
-          <div className="section-heading">
-            <div>
-              <h3>NiFi 대시보드</h3>
-            </div>
-            <Badge status={nifiStatus.isError ? "error" : "success"} text={nifiStatus.isError ? "응답 없음" : "정상"} />
-          </div>
-          <Row gutter={[16, 16]}>
-            <Col xs={12} xl={6}>
-              <Card
-                className={etlJobFilter === "all" ? "metric-card active" : "metric-card"}
-                loading={showNifiInitialLoading}
-                onClick={() => setEtlJobFilter("all")}
-              >
-                <Statistic title="전체 JOB 수" value={nifiJobs.length} />
-              </Card>
-            </Col>
-            <Col xs={12} xl={6}>
-              <Card
-                className={etlJobFilter === "running" ? "metric-card active" : "metric-card"}
-                loading={showNifiInitialLoading}
-                onClick={() => setEtlJobFilter("running")}
-              >
-                <Statistic title="실행중 JOB" value={runningNifiJobs.length} valueStyle={{ color: "#2f7d32" }} />
-              </Card>
-            </Col>
-            <Col xs={12} xl={6}>
-              <Card
-                className={etlJobFilter === "failed" ? "metric-card active" : "metric-card"}
-                loading={showNifiInitialLoading}
-                onClick={() => setEtlJobFilter("failed")}
-              >
-                <Statistic title="실패 JOB" value={failedNifiJobs.length} valueStyle={{ color: "#c62828" }} />
-              </Card>
-            </Col>
-            <Col xs={12} xl={6}>
-              <Card
-                className={etlJobFilter === "stopped" ? "metric-card active" : "metric-card"}
-                loading={showNifiInitialLoading}
-                onClick={() => setEtlJobFilter("stopped")}
-              >
-                <Statistic title="중지 JOB" value={stoppedNifiJobs.length} />
-              </Card>
-            </Col>
-            <Col xs={24}>
-              <Card title={`${etlJobFilterLabel} 목록`} size="small">
-                <Table<NifiJob>
-                  rowKey="id"
-                  size="small"
-                  loading={showNifiInitialLoading}
-                  dataSource={filteredNifiJobs}
-                  pagination={false}
-                  columns={[
-                    {
-                      title: "Process Group ID",
-                      dataIndex: "id",
-                      width: 280,
-                      render: (id: string) => <Link to={`/etl/manage?processGroupId=${encodeURIComponent(id)}`}>{id}</Link>,
-                    },
-                    { title: "Name", dataIndex: "name" },
-                    {
-                      title: "상태",
-                      dataIndex: "status",
-                      width: 110,
-                      render: (status: NifiJob["status"]) => etlStatusTag(status),
-                    },
-                    { title: "Processor", dataIndex: "processorCount", width: 110 },
-                    { title: "Running", dataIndex: "runningProcessorCount", width: 110 },
-                    { title: "Invalid", dataIndex: "failedProcessorCount", width: 110 },
-                    { title: "Queued", dataIndex: "queued", width: 130 },
-                  ]}
-                />
-              </Card>
-            </Col>
-          </Row>
-        </section>
-
-        <section className="dashboard-section cdc-section">
-          <div className="section-heading">
-            <div>
-              <h3>Kafka CDC 파이프라인</h3>
-            </div>
-            <div className="section-statuses">
-              <Badge
-                status={data?.kafkaBrokerHealthy ? "success" : "error"}
-                text={data?.kafkaBrokerHealthy ? "Kafka Broker 정상" : "Kafka Broker 응답 없음"}
-              />
-              <Badge
-                status={data?.kafkaConnectHealthy ? "success" : "error"}
-                text={data?.kafkaConnectHealthy ? "Kafka Connect 정상" : "Kafka Connect 응답 없음"}
-              />
-            </div>
-          </div>
-          <Row gutter={[16, 16]} className="dashboard-metrics">
-            <Col xs={12} xl={6}>
-              <Card loading={showDashboardInitialLoading}>
-                <Statistic title="전체 파이프라인" value={data?.totalPipelines ?? 0} />
-              </Card>
-            </Col>
-            <Col xs={12} xl={6}>
-              <Card loading={showDashboardInitialLoading}>
-                <Statistic title="RUNNING" value={data?.runningCount ?? 0} valueStyle={{ color: "#3f8600" }} />
-              </Card>
-            </Col>
-            <Col xs={12} xl={6}>
-              <Card loading={showDashboardInitialLoading}>
-                <Statistic title="FAILED" value={data?.failedCount ?? 0} valueStyle={{ color: "#cf1322" }} />
-              </Card>
-            </Col>
-            <Col xs={12} xl={6}>
-              <Card loading={showDashboardInitialLoading}>
-                <Statistic title="PAUSED" value={data?.pausedCount ?? 0} />
-              </Card>
-            </Col>
-          </Row>
-          <Row gutter={[16, 16]}>
-            <Col xs={24} xl={12}>
-              <Card title="최근 오류" size="small">
-                <Table<PipelineCommandHistoryResponse>
-                  rowKey="id"
-                  size="small"
-                  loading={showDashboardInitialLoading}
-                  dataSource={data?.recentErrors}
-                  pagination={false}
-                  columns={historyColumns}
-                />
-              </Card>
-            </Col>
-            <Col xs={24} xl={12}>
-              <Card title="최근 배포 이력" size="small">
-                <Table<PipelineCommandHistoryResponse>
-                  rowKey="id"
-                  size="small"
-                  loading={showDashboardInitialLoading}
-                  dataSource={data?.recentDeployments}
-                  pagination={false}
-                  columns={historyColumns}
-                />
               </Card>
             </Col>
           </Row>
         </section>
       </div>
+
+      <HistoryModal
+        open={activeTile !== null}
+        onClose={() => setActiveTile(null)}
+        title={activeTile ? TILE_TITLE[activeTile] : ""}
+        loading={showInitialLoading}
+        rows={modalRows}
+      />
     </div>
   );
 }
