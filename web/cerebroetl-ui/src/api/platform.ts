@@ -100,13 +100,20 @@ export interface NifiProcessGroupEntity {
   parentGroupId?: string;
 }
 
+// Airflow의 세션 쿠키(_token/session)는 Path=/airflow/로 발급된다(AIRFLOW__API__BASE_URL이
+// /airflow 프리픽스라 FAB가 그렇게 스코프함) - /airflow-api/* 처럼 다른 최상위 경로로
+// 호출하면 브라우저가 쿠키를 아예 안 붙여서 항상 401이 난다(로그인/로그아웃과 무관하게
+// 재현됨 - 실제 로그인 플로우를 curl로 재현해서 확인). 그래서 반드시 /airflow/ 아래의
+// 기존 프록시 경로(nginx의 /airflow/ 블록, 곧 airflow-apiserver:8080)를 그대로 쓴다.
+const AIRFLOW_API_BASE = "/airflow/api/v2";
+
 export async function getAirflowHealth(): Promise<AirflowHealthResponse> {
-  const res = await axios.get<AirflowHealthResponse>("/airflow-api/monitor/health");
+  const res = await axios.get<AirflowHealthResponse>(`${AIRFLOW_API_BASE}/monitor/health`);
   return res.data;
 }
 
 export async function listAirflowDags(): Promise<AirflowDag[]> {
-  const res = await axios.get<{ dags?: AirflowDag[] }>("/airflow-api/dags", {
+  const res = await axios.get<{ dags?: AirflowDag[] }>(`${AIRFLOW_API_BASE}/dags`, {
     params: { limit: 100 },
   });
   return res.data.dags ?? [];
@@ -114,7 +121,7 @@ export async function listAirflowDags(): Promise<AirflowDag[]> {
 
 export async function listAirflowDagRuns(dagId: string, limit = 100): Promise<AirflowDagRun[]> {
   const res = await axios.get<{ dag_runs?: AirflowDagRun[] }>(
-    `/airflow-api/dags/${encodeURIComponent(dagId)}/dagRuns`,
+    `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/dagRuns`,
     {
       params: { limit, order_by: "-start_date" },
     },
@@ -124,14 +131,14 @@ export async function listAirflowDagRuns(dagId: string, limit = 100): Promise<Ai
 
 export async function listAirflowTaskInstances(dagId: string, dagRunId: string): Promise<AirflowTaskInstance[]> {
   const res = await axios.get<{ task_instances?: AirflowTaskInstance[] }>(
-    `/airflow-api/dags/${encodeURIComponent(dagId)}/dagRuns/${encodeURIComponent(dagRunId)}/taskInstances`,
+    `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/dagRuns/${encodeURIComponent(dagRunId)}/taskInstances`,
   );
   return res.data.task_instances ?? [];
 }
 
 export async function listAirflowDagTasks(dagId: string): Promise<AirflowTask[]> {
   const res = await axios.get<{ tasks?: AirflowTask[] }>(
-    `/airflow-api/dags/${encodeURIComponent(dagId)}/tasks`,
+    `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/tasks`,
   );
   return res.data.tasks ?? [];
 }
@@ -141,7 +148,7 @@ export async function listAirflowAssetEvents(params: {
   timestampLte?: string;
   limit?: number;
 }): Promise<AirflowAssetEvent[]> {
-  const res = await axios.get<{ asset_events?: AirflowAssetEvent[] }>("/airflow-api/assets/events", {
+  const res = await axios.get<{ asset_events?: AirflowAssetEvent[] }>(`${AIRFLOW_API_BASE}/assets/events`, {
     params: {
       timestamp_gte: params.timestampGte,
       timestamp_lte: params.timestampLte,
