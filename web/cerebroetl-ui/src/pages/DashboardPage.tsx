@@ -308,7 +308,7 @@ const TILE_TITLE: Record<TileKind, string> = {
   running: "실행중 내역",
   success: "성공 내역",
   failed: "실패 내역",
-  delayed: "지연 내역",
+  delayed: "대기 내역",
 };
 
 export function DashboardPage() {
@@ -385,7 +385,7 @@ export function DashboardPage() {
                 <Statistic title="실패" value={history.failedEntries.length} valueStyle={{ color: "#c62828" }} />
               </Card>
               <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("delayed")}>
-                <Statistic title="지연" value={history.delayedEntries.length} />
+                <Statistic title="대기" value={history.delayedEntries.length} />
               </Card>
             </div>
             <div className="dashboard-chart-grid">
