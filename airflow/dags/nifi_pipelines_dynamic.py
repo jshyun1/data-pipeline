@@ -25,12 +25,32 @@ apply_action 뒤의 verify_action이 프로세스 그룹의 컴포넌트 상태 
 호출 자체는 성공해도 이 검증 단계에서 실패로 잡힌다.
 
 verify_action 다음의 verify_target_db_landing은 한 단계 더 나아가 NiFi 컴포넌트
-상태가 아니라 실제 타겟 DB(target-db의 Postgres)에 데이터가 적재됐는지 확인한다
-(row count > 0). 어떤 process group이 어느 schema.table로 적재하는지는 NiFi
+상태가 아니라 실제 타겟 DB(target-db의 Postgres)에 "이번 실행이" 데이터를
+적재했는지 확인한다. NiFi 프로세스 그룹은 배치 잡과 달리 한 번 시작하면 계속
+도는 구조라 "이번 실행이 만든 건수"라는 경계가 원래 없다 - 대신 dag_run이
+시작된 시각(dag_run.start_date) 이후로 적재된 행만 세는 방식으로 근사한다
+(타겟 테이블 전체 row count를 그냥 세면 이전에 이미 쌓인 데이터 때문에 이번
+실행이 실제로 아무것도 안 넣었어도 통과해버려서 안 됨).
+
+더 정확한 대안으로 NiFi 자체 Provenance API(특정 프로세서가 실제로 처리한
+FlowFile 이력 조회)도 검토했으나 기각했다: NiFi의 provenance 인덱스는
+nifi.provenance.repository.rollover.time(기본 10분) 주기로만 커밋되기 때문에
+방금 일어난 이벤트가 최대 10분간 검색이 안 될 수 있어서, "실행 직후 바로
+검증"이라는 이 태스크의 목적과 맞지 않는다(실측: 로그 라인을 넣고 20초 후
+조회해도 0건). 그래서 타겟 테이블에 직접 타임스탬프로 필터링하는 방식을 쓴다.
+
+이 방식의 알려진 한계: UPSERT로 적재하는 파이프라인(예: employees-batch-sync)은
+NiFi PutDatabaseRecord가 레코드 스키마에 없는 컬럼(synced_at 등)은 INSERT
+시점의 DEFAULT로만 채워지고 UPDATE(충돌) 경로에서는 건드리지 않는다 - 즉 이번
+실행이 기존 행만 UPDATE하고 새로 INSERT한 행이 없으면 이 검증이 놓칠 수 있다.
+INSERT 전용 파이프라인(http-ingest, logfile)에는 이 한계가 없다.
+
+어떤 process group이 어느 schema.table/타임스탬프 컬럼으로 적재하는지는 NiFi
 캔버스 안에만 있고 이 DAG가 알 방법이 없어서, schedule과 동일한 패턴으로
-Admin > Variables의 "{dag_id}__target_schema"/"{dag_id}__target_table"에서
-읽는다 - 둘 다 설정 안 하면 이 태스크는 skipped로 끝난다(실패 아님). action이
-start가 아니면(stop) 검증할 대상이 없으므로 마찬가지로 skip.
+Admin > Variables의 "{dag_id}__target_schema"/"{dag_id}__target_table"/
+"{dag_id}__target_timestamp_column"에서 읽는다 - 셋 다 설정 안 하면 이
+태스크는 skipped로 끝난다(실패 아님). action이 start가 아니면(stop) 검증할
+대상이 없으므로 마찬가지로 skip.
 검증에 성공하면(=태스크가 success로 끝나면) outlets로 등록해둔 Asset 이벤트가
 자동 발행된다 - skipped인 경우엔 Asset 이벤트가 발행되지 않는다(Airflow의
 표준 동작: outlets는 태스크가 success로 끝났을 때만 이벤트를 만든다).
@@ -135,23 +155,41 @@ def verify_process_group_action(pg_id: str, base_url: str, host_header: str, **c
     raise RuntimeError(f"{action} 후에도 프로세스 그룹 상태가 기대와 다름: {counts}")
 
 
-def verify_target_db_landing(dag_id: str, target_schema: str | None, target_table: str | None, **context):
+def verify_target_db_landing(
+    dag_id: str,
+    target_schema: str | None,
+    target_table: str | None,
+    target_timestamp_column: str | None,
+    **context,
+):
     action = context["params"]["action"]
     if action != "start":
         raise AirflowSkipException(f"action={action}이라 타겟 DB 적재 검증은 건너뜀 (start일 때만 검증)")
-    if not target_schema or not target_table:
+    if not (target_schema and target_table and target_timestamp_column):
         raise AirflowSkipException(
-            f"Admin > Variables에 '{dag_id}__target_schema'/'{dag_id}__target_table'이 "
-            "설정되지 않아 타겟 DB 적재 검증을 건너뜀"
+            f"Admin > Variables에 '{dag_id}__target_schema'/'{dag_id}__target_table'/"
+            f"'{dag_id}__target_timestamp_column'이 모두 설정되지 않아 타겟 DB 적재 검증을 건너뜀"
         )
-    if not (_IDENTIFIER_RE.match(target_schema) and _IDENTIFIER_RE.match(target_table)):
-        raise ValueError(f"target_schema/target_table 형식이 올바르지 않습니다: {target_schema}.{target_table}")
+    if not all(_IDENTIFIER_RE.match(v) for v in (target_schema, target_table, target_timestamp_column)):
+        raise ValueError(
+            f"target 설정 형식이 올바르지 않습니다: {target_schema}.{target_table}.{target_timestamp_column}"
+        )
 
+    # dag_run 시작 시각 이후로 적재된 행만 센다 (테이블 전체 count는 이전에
+    # 이미 쌓인 데이터 때문에 이번 실행이 아무것도 안 넣었어도 통과해버림).
+    run_start = context["dag_run"].start_date
     hook = PostgresHook(postgres_conn_id=TARGET_DB_CONN_ID)
-    count = hook.get_first(f"SELECT COUNT(*) FROM {target_schema}.{target_table}")[0]
+    count = hook.get_first(
+        f"SELECT COUNT(*) FROM {target_schema}.{target_table} WHERE {target_timestamp_column} >= %s",
+        parameters=(run_start,),
+    )[0]
     if count == 0:
-        raise RuntimeError(f"{target_schema}.{target_table}에 적재된 데이터가 없습니다 (count=0)")
-    print(f"타겟 DB 적재 확인: {target_schema}.{target_table} = {count}건")
+        raise RuntimeError(
+            f"{target_schema}.{target_table}에 이번 실행({run_start.isoformat()}) 이후 적재된 "
+            "데이터가 없습니다 (count=0). UPSERT 파이프라인이라면 기존 행만 UPDATE되고 새로 "
+            "INSERT된 행이 없어서 놓쳤을 가능성도 있습니다."
+        )
+    print(f"타겟 DB 적재 확인: {target_schema}.{target_table} ({target_timestamp_column} >= {run_start.isoformat()}) = {count}건")
 
 
 def sanitize(name: str) -> str:
@@ -171,10 +209,12 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str) -> DAG:
     # 자동(스케줄) 실행 시엔 params가 없어 action은 항상 Param 기본값("start")으로 동작한다.
     schedule = Variable.get(f"{dag_id}__schedule", default_var=None)
     # 타겟 DB 적재 검증 대상. Admin > Variables에서 "{dag_id}__target_schema"/
-    # "{dag_id}__target_table"로 설정 - 둘 다 있어야 Asset을 만들고 검증 태스크를
-    # 의미 있게 돈다(없으면 태스크는 만들어지되 매 실행마다 skipped로 끝남).
+    # "{dag_id}__target_table"/"{dag_id}__target_timestamp_column"으로 설정 -
+    # 셋 다 있어야 Asset을 만들고 검증 태스크를 의미 있게 돈다(없으면 태스크는
+    # 만들어지되 매 실행마다 skipped로 끝남).
     target_schema = Variable.get(f"{dag_id}__target_schema", default_var=None)
     target_table = Variable.get(f"{dag_id}__target_table", default_var=None)
+    target_timestamp_column = Variable.get(f"{dag_id}__target_timestamp_column", default_var=None)
     target_outlets = (
         [Asset(f"postgres://target-db/{TARGET_DB_NAME}/{target_schema}/{target_table}")]
         if target_schema and target_table
@@ -213,6 +253,7 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str) -> DAG:
                 "dag_id": dag_id,
                 "target_schema": target_schema,
                 "target_table": target_table,
+                "target_timestamp_column": target_timestamp_column,
             },
             outlets=target_outlets,
         )
