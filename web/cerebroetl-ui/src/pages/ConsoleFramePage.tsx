@@ -39,8 +39,14 @@ interface ConsoleFramePageProps {
 }
 
 function withProcessGroupId(url: string, processGroupId: string) {
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}processGroupId=${encodeURIComponent(processGroupId)}`;
+  // NiFi의 Angular Router는 useHash:true(해시 기반)라 실제 라우트는 서버로
+  // 전송되지 않는 URL 프래그먼트(#/...)에 있어야 한다 (canvas 라우팅이
+  // router.navigate(["/process-groups", id])로 구현돼 있고, 라우터 모듈이
+  // RouterModule.forRoot(routes,{useHash:!0})로 등록된 것을 번들에서 확인).
+  // 일반 경로 세그먼트(/nifi/process-groups/{id})로 요청하면 서버가 실제
+  // 리소스로 찾다가 없어서 자체 404(#/404)로 리다이렉트해버린다.
+  const base = url.endsWith("/") ? url : `${url}/`;
+  return `${base}#/process-groups/${encodeURIComponent(processGroupId)}`;
 }
 
 export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage }: ConsoleFramePageProps) {
