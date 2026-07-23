@@ -20,16 +20,17 @@ const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
 // 로고 자체만 감추면 고정 크기로 감싸둔 컨테이너 껍데기가 빈 칸으로 남는다
 // (사용자가 스크린샷으로 확인) - :has()로 그 요소를 직접 담고 있는 조상까지
 // 같이 접어서 빈 칸 없이 나머지가 당겨 붙게 한다.
-// NiFi의 상단 우측 로그인/로그아웃 링크도 감춘다 - 통합 포털이 SSO를 전담하므로
-// NiFi 자체 로그아웃은 오히려 혼란만 준다. 이 <a>는 고유 class가 없어서(그냥
-// [click] 바인딩만 있는 <a>) .current-user(사용자명, 진짜 class 있음)의 형제
-// 요소라는 구조로 특정한다 - flex-col 컨테이너라 감춰도 빈 칸 없이 붙는다.
+// NiFi의 상단 우측 로그인/로그아웃 링크와 사용자명도 감춘다 - 통합 포털이 SSO/계정
+// 표시를 전담하므로 NiFi 자체 계정 UI는 오히려 혼란만 준다. 로그인/로그아웃 <a>는
+// 고유 class가 없어서(그냥 [click] 바인딩만 있는 <a>) .current-user(사용자명,
+// 진짜 class 있음)의 형제 요소라는 구조로 특정한다 - flex-col 컨테이너라
+// 감춰도 빈 칸 없이 붙는다.
 const HIDE_TOOL_CHROME_CSS = `
   .splash, img[alt="Logo"], img[alt="NiFi Logo"] { display: none !important; }
   svg[viewBox="0 0 35 35"] { display: none !important; }
   :has(> svg[viewBox="0 0 35 35"]) { display: none !important; }
   :has(> img[alt="NiFi Logo"]) { display: none !important; }
-  .current-user ~ a { display: none !important; }
+  .current-user, .current-user ~ a { display: none !important; }
 `;
 
 function hideToolChrome(event: SyntheticEvent<HTMLIFrameElement>) {
