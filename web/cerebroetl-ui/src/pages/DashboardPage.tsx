@@ -398,7 +398,13 @@ export function DashboardPage() {
               </Card>
               <Card title="Top 5 수행시간 태스크" size="small" loading={showInitialLoading}>
                 {history.topDurationTasks.length > 0 ? (
-                  <Column data={history.topDurationTasks} xField="taskKey" yField="minutes" height={240} />
+                  <Column
+                    data={history.topDurationTasks}
+                    xField="taskKey"
+                    yField="minutes"
+                    height={240}
+                    axis={{ x: { labelAutoRotate: false, labelAutoHide: false, labelAutoEllipsis: true } }}
+                  />
                 ) : (
                   <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
                 )}
@@ -407,14 +413,26 @@ export function DashboardPage() {
             <div className="dashboard-chart-grid">
               <Card title="Top 5 데이터 로드 DAG" size="small" loading={showInitialLoading}>
                 {history.topDags.length > 0 ? (
-                  <Column data={history.topDags} xField="dagId" yField="count" height={240} />
+                  <Column
+                    data={history.topDags}
+                    xField="dagId"
+                    yField="count"
+                    height={240}
+                    axis={{ x: { labelAutoRotate: false, labelAutoHide: false, labelAutoEllipsis: true } }}
+                  />
                 ) : (
                   <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
                 )}
               </Card>
               <Card title="Top 10 데이터 로드 태스크" size="small" loading={showInitialLoading}>
                 {history.topTasks.length > 0 ? (
-                  <Column data={history.topTasks} xField="taskKey" yField="count" height={240} />
+                  <Column
+                    data={history.topTasks}
+                    xField="taskKey"
+                    yField="count"
+                    height={240}
+                    axis={{ x: { labelAutoRotate: false, labelAutoHide: false, labelAutoEllipsis: true } }}
+                  />
                 ) : (
                   <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
                 )}
