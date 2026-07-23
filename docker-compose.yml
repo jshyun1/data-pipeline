@@ -400,8 +400,10 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       FILEBEAT_INPUTS_DIR: /filebeat-inputs
       NIFI_BASE_URL: https://nifi:${NIFI_HTTPS_PORT}
-      NIFI_USERNAME: ${NIFI_SINGLE_USER_USERNAME}
-      NIFI_PASSWORD: ${NIFI_SINGLE_USER_PASSWORD}
+      # NiFi가 OIDC 전용 인증이라 username/password 대신 Keycloak service account
+      # (client_credentials)로 토큰을 받아 NiFi에 Bearer로 제시한다.
+      KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID}
+      KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET}
     volumes:
       # 로그 파이프라인 배포 시 여기 파이프라인별 Filebeat input YAML을 쓴다 -
       # filebeat 컨테이너가 같은 볼륨을 읽기 전용으로 마운트해서 재시작 없이 반영한다.
@@ -562,16 +564,17 @@ services:
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
       AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
       AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
-      # NiFi 파이프라인 동적 DAG 생성/제어용 (nifi 서비스와 같은 자격증명 재사용,
-      # 새 비밀 발급 아님).
+      # NiFi 파이프라인 동적 DAG 생성/제어용. NiFi가 OIDC 전용 인증으로 전환되며
+      # username/password 토큰 발급이 막혀서, pipeline-api와 동일하게 Keycloak service
+      # account(client_credentials)로 토큰을 받아 NiFi에 Bearer로 제시한다.
       NIFI_BASE_URL: "https://nifi:${NIFI_HTTPS_PORT}"
-      NIFI_USERNAME: ${NIFI_SINGLE_USER_USERNAME}
-      NIFI_PASSWORD: ${NIFI_SINGLE_USER_PASSWORD}
       # --- Keycloak OIDC 로그인(webserver_config.py가 사용) ---
       KEYCLOAK_REALM: ${KEYCLOAK_REALM}
       KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL}
       KEYCLOAK_BACKCHANNEL_URL: ${KEYCLOAK_BACKCHANNEL_URL}
       KEYCLOAK_AIRFLOW_CLIENT_SECRET: ${KEYCLOAK_AIRFLOW_CLIENT_SECRET}
+      KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID}
+      KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET}
       # 자체 서명 Keycloak 인증서를 requests(authlib)가 신뢰하도록. Airflow의 다른 HTTPS
       # 호출은 pipeline-api(http)/NiFi(verify=False DAG)라 이 번들 한정이 문제되지 않음.
       REQUESTS_CA_BUNDLE: /opt/airflow/certs/keycloak.crt

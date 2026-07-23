@@ -44,27 +44,36 @@ VERIFY_ATTEMPTS = 6
 VERIFY_INTERVAL_SECONDS = 5
 
 
-def _get_nifi_token(base_url: str, host_header: str, username: str, password: str) -> str:
+def _get_nifi_token() -> str:
+    # NiFi가 OIDC 전용 인증으로 전환되며 username/password 토큰 발급(/nifi-api/access/token)이
+    # 막혀서, Keycloak에서 client_credentials로 직접 토큰을 받아 NiFi에 Bearer로 제시한다.
+    # NiFi는 신뢰하는 realm이 서명한 토큰이면 발급 클라이언트를 가리지 않고 인증을 통과시키고,
+    # 이후 sub 클레임을 identity로 authorizers.xml/users.xml에 등록된 권한을 확인한다
+    # (pipeline-api의 NifiClient.getToken()과 동일한 방식).
+    backchannel_url = os.environ.get("KEYCLOAK_BACKCHANNEL_URL", "https://host.docker.internal:8543")
+    realm = os.environ.get("KEYCLOAK_REALM", "cerebro")
+    client_id = os.environ.get("KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID", "")
+    client_secret = os.environ.get("KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET", "")
     response = requests.post(
-        f"{base_url}/nifi-api/access/token",
-        data={"username": username, "password": password},
-        headers={"Host": host_header},
-        verify=False,
+        f"{backchannel_url}/realms/{realm}/protocol/openid-connect/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        },
         timeout=10,
     )
     response.raise_for_status()
-    return response.text
+    return response.json()["access_token"]
 
 
-def apply_process_group_action(
-    pg_id: str, base_url: str, host_header: str, username: str, password: str, **context
-):
+def apply_process_group_action(pg_id: str, base_url: str, host_header: str, **context):
     action = context["params"]["action"]
     if action not in ACTIONS:
         raise ValueError(f"알 수 없는 action: {action}")
     state = "RUNNING" if action == "start" else "STOPPED"
 
-    token = _get_nifi_token(base_url, host_header, username, password)
+    token = _get_nifi_token()
     response = requests.put(
         f"{base_url}/nifi-api/flow/process-groups/{pg_id}",
         json={"id": pg_id, "state": state},
@@ -76,11 +85,9 @@ def apply_process_group_action(
     print(f"NiFi 프로세스 그룹 {pg_id} {action}({state}) 완료: {response.json()}")
 
 
-def verify_process_group_action(
-    pg_id: str, base_url: str, host_header: str, username: str, password: str, **context
-):
+def verify_process_group_action(pg_id: str, base_url: str, host_header: str, **context):
     action = context["params"]["action"]
-    token = _get_nifi_token(base_url, host_header, username, password)
+    token = _get_nifi_token()
 
     counts = {}
     for attempt in range(VERIFY_ATTEMPTS):
@@ -113,7 +120,7 @@ def sanitize(name: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in name).strip("_").lower()
 
 
-def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str, username: str, password: str) -> DAG:
+def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str) -> DAG:
     # dag_id에는 그룹 "이름"을 넣지 않는다 - 캔버스에서 이름을 바꾸면 dag_id가
     # 통째로 바뀌어서 스케줄 Variable과 실행 이력이 조용히 끊어지기 때문.
     # 프로세스 그룹 id(앞 8자리)는 불변이라 이것만으로 dag_id를 만들고,
@@ -140,8 +147,6 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str, usernam
             "pg_id": pg_id,
             "base_url": base_url,
             "host_header": host_header,
-            "username": username,
-            "password": password,
         }
         apply = PythonOperator(
             task_id="apply_action",
@@ -159,8 +164,6 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str, usernam
 
 _base_url = os.environ.get("NIFI_BASE_URL", NIFI_BASE_URL_DEFAULT)
 _host_header = os.environ.get("NIFI_HOST_HEADER", NIFI_HOST_HEADER_DEFAULT)
-_username = os.environ.get("NIFI_USERNAME", "")
-_password = os.environ.get("NIFI_PASSWORD", "")
 
 # 마지막으로 성공한 프로세스 그룹 조회 결과를 담는 Variable 키.
 # NiFi가 잠깐 죽어있는 동안 파싱이 돌면 예전엔 DAG가 통째로 사라져서
@@ -168,7 +171,7 @@ _password = os.environ.get("NIFI_PASSWORD", "")
 PG_CACHE_VARIABLE_KEY = "nifi_process_groups_cache"
 
 try:
-    _token = _get_nifi_token(_base_url, _host_header, _username, _password)
+    _token = _get_nifi_token()
     _resp = requests.get(
         f"{_base_url}/nifi-api/flow/process-groups/root",
         headers={"Authorization": f"Bearer {_token}", "Host": _host_header},
@@ -193,5 +196,5 @@ except Exception as exc:  # NiFi가 잠시 안 뜬 상태라도 DAG 파싱 전�
 
 for _pg in _process_groups:
     globals()[f"nifi_pg_{_pg['id'][:8]}_control_dag"] = build_dag(
-        _pg["id"], _pg["name"], _base_url, _host_header, _username, _password
+        _pg["id"], _pg["name"], _base_url, _host_header
     )

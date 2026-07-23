@@ -44,5 +44,9 @@ filebeat:
 
 nifi:
   base-url: ${NIFI_BASE_URL:https://localhost:8443}
-  username: ${NIFI_USERNAME:}
-  password: ${NIFI_PASSWORD:}
+  # NiFi가 OIDC 전용 인증이라 username/password 대신 Keycloak에서 client_credentials로
+  # 토큰을 받아 NiFi에 Bearer로 제시한다 (KEYCLOAK_BACKCHANNEL_URL은 컨테이너가 실제로
+  # 도달 가능한 백채널 호스트 - JwtDecoderConfig의 jwk-set-uri와 동일한 이유).
+  keycloak-token-uri: ${KEYCLOAK_BACKCHANNEL_URL:https://host.docker.internal:8543}/realms/${KEYCLOAK_REALM:cerebro}/protocol/openid-connect/token
+  service-client-id: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID:}
+  service-client-secret: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET:}

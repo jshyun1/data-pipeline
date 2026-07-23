@@ -66,6 +66,16 @@
         "https://localhost:13001/airflow/*"
       ],
       "webOrigins": ["+"]
+    },
+    {
+      "clientId": "pipeline-service",
+      "name": "Pipeline Service Account",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET}",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false
     }
   ],
   "users": [
