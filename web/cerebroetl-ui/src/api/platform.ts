@@ -34,14 +34,6 @@ export interface AirflowTask {
   task_id: string;
 }
 
-export interface AirflowAssetEvent {
-  id: number;
-  extra?: Record<string, unknown>;
-  source_dag_id?: string;
-  source_task_id?: string;
-  timestamp: string;
-}
-
 export interface KafkaConnectInfoResponse {
   version?: string;
   commit?: string;
@@ -143,20 +135,6 @@ export async function listAirflowDagTasks(dagId: string): Promise<AirflowTask[]>
   return res.data.tasks ?? [];
 }
 
-export async function listAirflowAssetEvents(params: {
-  timestampGte?: string;
-  timestampLte?: string;
-  limit?: number;
-}): Promise<AirflowAssetEvent[]> {
-  const res = await axios.get<{ asset_events?: AirflowAssetEvent[] }>(`${AIRFLOW_API_BASE}/assets/events`, {
-    params: {
-      timestamp_gte: params.timestampGte,
-      timestamp_lte: params.timestampLte,
-      limit: params.limit ?? 1000,
-    },
-  });
-  return res.data.asset_events ?? [];
-}
 
 export async function getKafkaConnectInfo(): Promise<KafkaConnectInfoResponse> {
   const res = await axios.get<KafkaConnectInfoResponse>("/kafka-connect-api/");

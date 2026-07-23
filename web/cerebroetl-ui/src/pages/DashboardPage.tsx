@@ -4,11 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge, Button, Card, Col, DatePicker, Row, Space, Statistic, Table, Tag } from "antd";
 import { Column, Line } from "@ant-design/plots";
 import dayjs, { type Dayjs } from "dayjs";
-import { getDashboardSummary } from "../api/dashboard";
+import { getDailyLoadSummary, getDashboardSummary } from "../api/dashboard";
 import {
   getAirflowHealth,
   getNifiRootStatus,
-  listAirflowAssetEvents,
   listAirflowDagRuns,
   listAirflowDagTasks,
   listAirflowDags,
@@ -291,10 +290,9 @@ const EMPTY_DATA_LOAD_DASHBOARD: DataLoadDashboardData = {
   topTasks: [],
 };
 
-// nifi_pipelines_dynamic.py/kafka_pipelines_dynamic.py의 verify_target_db_landing이
-// 실제로 적재된 건수를 검증에 성공했을 때만 Airflow Asset 이벤트의 extra.count로
-// 남긴다(실패/스킵 시엔 이벤트 자체가 없음) - 그 이벤트들을 날짜/DAG/태스크별로
-// 집계한다. 가짜 수치가 아니라 실제 커밋된 데이터 건수만 반영된다.
+// Kafka(Spring 스케줄러)/NiFi(1분 주기 Airflow DAG)가 실제 적재 건수를 감지할 때마다
+// pipeline_daily_load_metric 롤업 테이블에 UPSERT로 반영해두므로, 대시보드는 원시
+// Airflow 이벤트를 다시 집계하는 대신 이 테이블을 요약하는 백엔드 엔드포인트를 읽는다.
 async function getDataLoadDashboard(range: [Dayjs, Dayjs]): Promise<DataLoadDashboardData> {
   const dags = await listAirflowDags();
   const taskListResults = await Promise.allSettled(dags.map((dag) => listAirflowDagTasks(dag.dag_id)));
@@ -303,44 +301,13 @@ async function getDataLoadDashboard(range: [Dayjs, Dayjs]): Promise<DataLoadDash
     0,
   );
 
-  const events = await listAirflowAssetEvents({
-    timestampGte: range[0].startOf("day").toISOString(),
-    timestampLte: range[1].endOf("day").toISOString(),
-    limit: 1000,
-  });
+  const summary = await getDailyLoadSummary(range[0].format("YYYY-MM-DD"), range[1].format("YYYY-MM-DD"));
 
-  const dailyMap = new Map<string, number>();
-  const dagMap = new Map<string, number>();
-  const taskMap = new Map<string, number>();
-
-  events.forEach((event) => {
-    const rawCount = event.extra?.count;
-    const count = typeof rawCount === "number" ? rawCount : 0;
-    if (count <= 0) {
-      return;
-    }
-    const day = dayjs(event.timestamp).format("YYYY.MM.DD");
-    dailyMap.set(day, (dailyMap.get(day) ?? 0) + count);
-    if (event.source_dag_id) {
-      dagMap.set(event.source_dag_id, (dagMap.get(event.source_dag_id) ?? 0) + count);
-    }
-    if (event.source_dag_id && event.source_task_id) {
-      const taskKey = `${event.source_dag_id}.${event.source_task_id}`;
-      taskMap.set(taskKey, (taskMap.get(taskKey) ?? 0) + count);
-    }
-  });
-
-  const daily = Array.from(dailyMap.entries())
-    .map(([date, count]) => ({ date, count }))
+  const daily = summary.daily
+    .map((point) => ({ date: dayjs(point.date).format("YYYY.MM.DD"), count: point.count }))
     .sort((a, b) => a.date.localeCompare(b.date));
-  const topDags = Array.from(dagMap.entries())
-    .map(([dagId, count]) => ({ dagId, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 5);
-  const topTasks = Array.from(taskMap.entries())
-    .map(([taskKey, count]) => ({ taskKey, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 10);
+  const topDags = summary.topPipelines.map((point) => ({ dagId: point.label, count: point.count }));
+  const topTasks = summary.topTasks.map((point) => ({ taskKey: point.label, count: point.count }));
 
   return { dagCount: dags.length, taskCount, daily, topDags, topTasks };
 }

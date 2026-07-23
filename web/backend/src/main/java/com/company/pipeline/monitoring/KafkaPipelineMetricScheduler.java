@@ -1,0 +1,70 @@
+package com.company.pipeline.monitoring;
+
+import com.company.pipeline.pipeline.PipelineDefinition;
+import com.company.pipeline.pipeline.PipelineDefinitionRepository;
+import com.company.pipeline.pipeline.PipelineStatus;
+import java.util.List;
+import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+/**
+ * 대시보드 "적재 건수"를 위해 배포된 Kafka 파이프라인들의 싱크 커넥터 committed offset을
+ * 주기적으로 스냅샷하고, 직전 스냅샷 대비 늘어난 만큼을 오늘 날짜 롤업에 더한다.
+ * Airflow DAG를 수동으로 트리거해야만 잡히던 이전 방식과 달리, 파이프라인이 배포돼서
+ * 돌아가는 동안 자동으로 계속 반영된다.
+ */
+@Component
+public class KafkaPipelineMetricScheduler {
+
+    private static final Logger log = LoggerFactory.getLogger(KafkaPipelineMetricScheduler.class);
+    private static final String SOURCE = "KAFKA";
+    private static final String TASK_KEY = "verify_target_db_landing";
+
+    private final PipelineDefinitionRepository pipelineDefinitionRepository;
+    private final PipelineMetricSnapshotService pipelineMetricSnapshotService;
+    private final PipelineMetricSnapshotRepository pipelineMetricSnapshotRepository;
+    private final PipelineDailyLoadMetricService dailyLoadMetricService;
+
+    public KafkaPipelineMetricScheduler(
+            PipelineDefinitionRepository pipelineDefinitionRepository,
+            PipelineMetricSnapshotService pipelineMetricSnapshotService,
+            PipelineMetricSnapshotRepository pipelineMetricSnapshotRepository,
+            PipelineDailyLoadMetricService dailyLoadMetricService) {
+        this.pipelineDefinitionRepository = pipelineDefinitionRepository;
+        this.pipelineMetricSnapshotService = pipelineMetricSnapshotService;
+        this.pipelineMetricSnapshotRepository = pipelineMetricSnapshotRepository;
+        this.dailyLoadMetricService = dailyLoadMetricService;
+    }
+
+    @Scheduled(fixedRate = 20_000, initialDelay = 20_000)
+    public void checkDeployedPipelines() {
+        List<PipelineDefinition> deployed = pipelineDefinitionRepository.findByStatus(PipelineStatus.DEPLOYED);
+        for (PipelineDefinition pipeline : deployed) {
+            try {
+                checkOne(pipeline);
+            } catch (Exception ex) {
+                // 파이프라인 하나가 일시적으로 응답 안 해도(예: 커넥터 재시작 중) 다른 파이프라인
+                // 체크까지 막히면 안 되므로 로그만 남기고 계속 진행한다.
+                log.warn("파이프라인 {} 적재 건수 체크 실패: {}", pipeline.getId(), ex.getMessage());
+            }
+        }
+    }
+
+    private void checkOne(PipelineDefinition pipeline) {
+        Optional<PipelineMetricSnapshot> previous =
+                pipelineMetricSnapshotRepository.findTopByPipelineIdOrderByCollectedAtDesc(pipeline.getId());
+        PipelineMetricSnapshot current = pipelineMetricSnapshotService.recordSnapshot(pipeline.getId());
+
+        if (previous.isEmpty()) {
+            return;
+        }
+        long delta = current.getCommittedOffset() - previous.get().getCommittedOffset();
+        if (delta > 0) {
+            dailyLoadMetricService.incrementLoadedCount(
+                    SOURCE, pipeline.getId().toString(), TASK_KEY, pipeline.getName(), delta);
+        }
+    }
+}

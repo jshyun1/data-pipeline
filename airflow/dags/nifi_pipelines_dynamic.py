@@ -92,6 +92,7 @@ VERIFY_INTERVAL_SECONDS = 5
 TARGET_DB_CONN_ID = "target_db_postgres"
 TARGET_DB_NAME = os.environ.get("TARGET_DB_NAME", "tarantula")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+PIPELINE_API_BASE_URL = "http://pipeline-api:8081"
 
 
 def _get_nifi_token() -> str:
@@ -352,4 +353,64 @@ except Exception as exc:  # NiFi가 잠시 안 뜬 상태라도 DAG 파싱 전�
 for _pg in _process_groups:
     globals()[f"nifi_pg_{_pg['id'][:8]}_control_dag"] = build_dag(
         _pg["id"], _pg["name"], _base_url, _host_header
+    )
+
+
+def check_all_pipelines_landing(**context):
+    # 사용자가 Airflow에서 수동으로 start를 트리거하지 않아도(NiFi 프로세스 그룹은
+    # 배포되면 알아서 계속 도는 구조라 보통 그렇다) 대시보드에 적재 건수가 반영되도록,
+    # 이 DAG가 1분마다 모든 파이프라인을 훑어서 확인한다. dag_run.start_date 대신
+    # data_interval_start/end(이번 1분 스케줄 구간)를 기준으로 세서 "직전 확인 이후
+    # 새로 늘어난 만큼"만 잡는다 - verify_target_db_landing(수동 트리거 전용)과
+    # 동일한 검증 로직을 재사용하되 재시도/skip-vs-fail 판정 없이 훨씬 가볍게 돈다.
+    interval_start = context["data_interval_start"]
+    interval_end = context["data_interval_end"]
+
+    for pg in _process_groups:
+        dag_id = f"nifi_pipeline_{pg['id'][:8]}_control"
+        target_schema = Variable.get(f"{dag_id}__target_schema", default_var=None)
+        target_table = Variable.get(f"{dag_id}__target_table", default_var=None)
+        target_timestamp_column = Variable.get(f"{dag_id}__target_timestamp_column", default_var=None)
+        if not (target_schema and target_table and target_timestamp_column):
+            continue
+        if not all(_IDENTIFIER_RE.match(v) for v in (target_schema, target_table, target_timestamp_column)):
+            continue
+
+        try:
+            hook = PostgresHook(postgres_conn_id=TARGET_DB_CONN_ID)
+            sql = (
+                f"SELECT COUNT(*) FROM {target_schema}.{target_table} "
+                f"WHERE {target_timestamp_column} >= %s AND {target_timestamp_column} < %s"
+            )
+            count = hook.get_first(sql, parameters=(interval_start, interval_end))[0]
+            if count > 0:
+                requests.post(
+                    f"{PIPELINE_API_BASE_URL}/api/metrics/daily-load/increment",
+                    json={
+                        "pipelineSource": "NIFI",
+                        "pipelineKey": pg["id"],
+                        "taskKey": "verify_target_db_landing",
+                        "pipelineLabel": pg["name"],
+                        "count": count,
+                    },
+                    timeout=10,
+                )
+                print(f"파이프라인 {pg['id']}({pg['name']}) 적재 {count}건 반영")
+        except Exception as exc:
+            # 파이프라인 하나가 일시적으로 응답 안 해도(타겟 DB 재시작 등) 다음 1분
+            # 스케줄에 다시 시도되므로, 여기서 죽지 않고 나머지 파이프라인을 계속 확인한다.
+            print(f"파이프라인 {pg['id']} 적재 건수 체크 실패(다음 스케줄에 재시도): {exc}")
+
+
+with DAG(
+    dag_id="nifi_pipelines_metrics_collector",
+    description="모든 NiFi 파이프라인의 실제 적재 건수를 1분마다 확인해서 대시보드 롤업 테이블에 반영",
+    schedule="* * * * *",
+    start_date=datetime(2026, 1, 1),
+    catchup=False,
+    tags=["nifi", "metrics"],
+) as nifi_pipelines_metrics_collector_dag:
+    PythonOperator(
+        task_id="check_all_pipelines_landing",
+        python_callable=check_all_pipelines_landing,
     )
