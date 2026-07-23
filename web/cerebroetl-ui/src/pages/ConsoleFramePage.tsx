@@ -12,8 +12,14 @@ const HIDE_TOOL_LOGO_STYLE_ID = "cerebro-hide-tool-logo";
 //   코드 경로라 지금 설정에선 절대 매치되지 않음. 실제로는 네브바 홈 링크에
 //   인라인 SVG(viewBox="0 0 35 35", 5색 팬휠)로 항상 그려짐 - 번들 전체에서
 //   이 viewBox를 쓰는 요소가 그것 하나뿐이라 안전하게 특정 가능.
-const HIDE_TOOL_LOGO_CSS =
-  ".splash, svg[viewBox=\"0 0 35 35\"], .context-logo, img[alt=\"Logo\"] { display: none !important; }";
+// svg 자체만 감추면 Chakra가 고정 크기(boxSize)로 감싸둔 링크/버튼 껍데기가
+// 그대로 남아 빈 칸으로 보인다(실제로 사용자가 스크린샷으로 확인) - :has()로
+// 그 svg를 직접 담고 있는 조상 요소째로 접어서 빈 칸이 안 남게 한다.
+const HIDE_TOOL_LOGO_CSS = `
+  .splash, .context-logo, img[alt="Logo"] { display: none !important; }
+  svg[viewBox="0 0 35 35"] { display: none !important; }
+  :has(> svg[viewBox="0 0 35 35"]) { display: none !important; }
+`;
 
 function hideToolLogo(event: SyntheticEvent<HTMLIFrameElement>) {
   try {
