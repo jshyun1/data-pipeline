@@ -3,7 +3,7 @@ import { Button, Result, Spin } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { useLocation } from "react-router-dom";
 
-const HIDE_TOOL_LOGO_STYLE_ID = "cerebro-hide-tool-logo";
+const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
 // 보이게 한다. 번들 분석으로 실제 렌더링되는 요소를 확인한 선택자:
 // - NiFi: 두 곳에 있었다.
@@ -20,22 +20,27 @@ const HIDE_TOOL_LOGO_STYLE_ID = "cerebro-hide-tool-logo";
 // 로고 자체만 감추면 고정 크기로 감싸둔 컨테이너 껍데기가 빈 칸으로 남는다
 // (사용자가 스크린샷으로 확인) - :has()로 그 요소를 직접 담고 있는 조상까지
 // 같이 접어서 빈 칸 없이 나머지가 당겨 붙게 한다.
-const HIDE_TOOL_LOGO_CSS = `
+// NiFi의 상단 우측 로그인/로그아웃 링크도 감춘다 - 통합 포털이 SSO를 전담하므로
+// NiFi 자체 로그아웃은 오히려 혼란만 준다. 이 <a>는 고유 class가 없어서(그냥
+// [click] 바인딩만 있는 <a>) .current-user(사용자명, 진짜 class 있음)의 형제
+// 요소라는 구조로 특정한다 - flex-col 컨테이너라 감춰도 빈 칸 없이 붙는다.
+const HIDE_TOOL_CHROME_CSS = `
   .splash, img[alt="Logo"], img[alt="NiFi Logo"] { display: none !important; }
   svg[viewBox="0 0 35 35"] { display: none !important; }
   :has(> svg[viewBox="0 0 35 35"]) { display: none !important; }
   :has(> img[alt="NiFi Logo"]) { display: none !important; }
+  .current-user ~ a { display: none !important; }
 `;
 
-function hideToolLogo(event: SyntheticEvent<HTMLIFrameElement>) {
+function hideToolChrome(event: SyntheticEvent<HTMLIFrameElement>) {
   try {
     const doc = event.currentTarget.contentDocument;
-    if (!doc || doc.getElementById(HIDE_TOOL_LOGO_STYLE_ID)) {
+    if (!doc || doc.getElementById(HIDE_TOOL_CHROME_STYLE_ID)) {
       return;
     }
     const style = doc.createElement("style");
-    style.id = HIDE_TOOL_LOGO_STYLE_ID;
-    style.textContent = HIDE_TOOL_LOGO_CSS;
+    style.id = HIDE_TOOL_CHROME_STYLE_ID;
+    style.textContent = HIDE_TOOL_CHROME_CSS;
     doc.head.appendChild(style);
   } catch {
     // Keycloak 로그인 리다이렉트 등 cross-origin 문서인 동안은 접근이 막힌다 -
@@ -123,7 +128,7 @@ export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage }: Co
             className="console-frame"
             title={title}
             src={frameSrc}
-            onLoad={hideToolLogo}
+            onLoad={hideToolChrome}
           />
         ) : (
           <Result
