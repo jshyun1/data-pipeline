@@ -203,6 +203,12 @@ def verify_target_db_landing(
                 f"타겟 DB 적재 확인: {target_schema}.{target_table} "
                 f"({target_timestamp_column} >= {run_start.isoformat()}) = {count}건"
             )
+            # 대시보드가 GET /api/v2/assets/events로 조회할 수 있도록 실제 적재
+            # 건수를 Asset 이벤트의 extra로 남긴다. outlets=[...]에 넘긴 것과
+            # 동일한 Asset을 다시 만들어서 키로 써야 한다(build_dag의 target_outlets
+            # 표현식과 반드시 일치해야 함).
+            target_asset = Asset(f"postgres://target-db/{TARGET_DB_NAME}/{target_schema}/{target_table}")
+            context["outlet_events"][target_asset].extra = {"count": count}
             return
         time.sleep(VERIFY_INTERVAL_SECONDS)
 

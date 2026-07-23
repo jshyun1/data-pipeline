@@ -2,6 +2,8 @@ package com.company.pipeline.pipeline;
 
 import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.logpipeline.dto.LogPipelineCreateRequest;
+import com.company.pipeline.monitoring.PipelineMetricSnapshotService;
+import com.company.pipeline.monitoring.dto.PipelineMetricSnapshotResponse;
 import com.company.pipeline.pipeline.dto.PipelineCommandHistoryResponse;
 import com.company.pipeline.pipeline.dto.PipelineCreateRequest;
 import com.company.pipeline.pipeline.dto.PipelineResponse;
@@ -22,12 +24,15 @@ public class PipelineController {
     private final PipelineService pipelineService;
     private final PipelineDeployService pipelineDeployService;
     private final PipelineCommandHistoryRepository pipelineCommandHistoryRepository;
+    private final PipelineMetricSnapshotService pipelineMetricSnapshotService;
 
     public PipelineController(PipelineService pipelineService, PipelineDeployService pipelineDeployService,
-            PipelineCommandHistoryRepository pipelineCommandHistoryRepository) {
+            PipelineCommandHistoryRepository pipelineCommandHistoryRepository,
+            PipelineMetricSnapshotService pipelineMetricSnapshotService) {
         this.pipelineService = pipelineService;
         this.pipelineDeployService = pipelineDeployService;
         this.pipelineCommandHistoryRepository = pipelineCommandHistoryRepository;
+        this.pipelineMetricSnapshotService = pipelineMetricSnapshotService;
     }
 
     @PostMapping
@@ -85,5 +90,16 @@ public class PipelineController {
     public ApiResponse<Void> delete(@PathVariable Long id) {
         pipelineService.delete(id);
         return ApiResponse.success(null);
+    }
+
+    /**
+     * 파이프라인의 싱크 커넥터가 지금까지 커밋한 offset을 스냅샷으로 남긴다. 대시보드용
+     * "실제 적재 건수"를 위해 Airflow의 kafka_pipelines_dynamic.py가 두 시점에 각각
+     * 호출해서 그 차이(delta)를 계산한다.
+     */
+    @PostMapping("/{id}/metrics/snapshot")
+    public ApiResponse<PipelineMetricSnapshotResponse> recordMetricSnapshot(@PathVariable Long id) {
+        return ApiResponse.success(PipelineMetricSnapshotResponse.from(
+                pipelineMetricSnapshotService.recordSnapshot(id)));
     }
 }

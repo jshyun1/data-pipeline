@@ -1,17 +1,23 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, Card, Col, Row, Statistic, Table, Tag } from "antd";
+import { Badge, Button, Card, Col, DatePicker, Row, Space, Statistic, Table, Tag } from "antd";
+import { Column, Line } from "@ant-design/plots";
+import dayjs, { type Dayjs } from "dayjs";
 import { getDashboardSummary } from "../api/dashboard";
 import {
   getAirflowHealth,
   getNifiRootStatus,
+  listAirflowAssetEvents,
   listAirflowDagRuns,
+  listAirflowDagTasks,
   listAirflowDags,
   listAirflowTaskInstances,
 } from "../api/platform";
 import type { AirflowDagRun, AirflowTaskInstance, NifiProcessGroupStatusSnapshot } from "../api/platform";
 import type { PipelineCommandHistoryResponse } from "../types/pipeline";
+
+const { RangePicker } = DatePicker;
 
 const RESULT_COLOR: Record<string, string> = {
   SUCCESS: "success",
@@ -254,8 +260,102 @@ async function getAirflowDashboard(): Promise<AirflowDashboardData> {
   };
 }
 
+interface DailyLoadPoint {
+  date: string;
+  count: number;
+}
+
+interface DagLoadPoint {
+  dagId: string;
+  count: number;
+}
+
+interface TaskLoadPoint {
+  taskKey: string;
+  count: number;
+}
+
+interface DataLoadDashboardData {
+  dagCount: number;
+  taskCount: number;
+  daily: DailyLoadPoint[];
+  topDags: DagLoadPoint[];
+  topTasks: TaskLoadPoint[];
+}
+
+const EMPTY_DATA_LOAD_DASHBOARD: DataLoadDashboardData = {
+  dagCount: 0,
+  taskCount: 0,
+  daily: [],
+  topDags: [],
+  topTasks: [],
+};
+
+// nifi_pipelines_dynamic.py/kafka_pipelines_dynamic.py의 verify_target_db_landing이
+// 실제로 적재된 건수를 검증에 성공했을 때만 Airflow Asset 이벤트의 extra.count로
+// 남긴다(실패/스킵 시엔 이벤트 자체가 없음) - 그 이벤트들을 날짜/DAG/태스크별로
+// 집계한다. 가짜 수치가 아니라 실제 커밋된 데이터 건수만 반영된다.
+async function getDataLoadDashboard(range: [Dayjs, Dayjs]): Promise<DataLoadDashboardData> {
+  const dags = await listAirflowDags();
+  const taskListResults = await Promise.allSettled(dags.map((dag) => listAirflowDagTasks(dag.dag_id)));
+  const taskCount = taskListResults.reduce(
+    (sum, result) => sum + (result.status === "fulfilled" ? result.value.length : 0),
+    0,
+  );
+
+  const events = await listAirflowAssetEvents({
+    timestampGte: range[0].startOf("day").toISOString(),
+    timestampLte: range[1].endOf("day").toISOString(),
+    limit: 1000,
+  });
+
+  const dailyMap = new Map<string, number>();
+  const dagMap = new Map<string, number>();
+  const taskMap = new Map<string, number>();
+
+  events.forEach((event) => {
+    const rawCount = event.extra?.count;
+    const count = typeof rawCount === "number" ? rawCount : 0;
+    if (count <= 0) {
+      return;
+    }
+    const day = dayjs(event.timestamp).format("YYYY.MM.DD");
+    dailyMap.set(day, (dailyMap.get(day) ?? 0) + count);
+    if (event.source_dag_id) {
+      dagMap.set(event.source_dag_id, (dagMap.get(event.source_dag_id) ?? 0) + count);
+    }
+    if (event.source_dag_id && event.source_task_id) {
+      const taskKey = `${event.source_dag_id}.${event.source_task_id}`;
+      taskMap.set(taskKey, (taskMap.get(taskKey) ?? 0) + count);
+    }
+  });
+
+  const daily = Array.from(dailyMap.entries())
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const topDags = Array.from(dagMap.entries())
+    .map(([dagId, count]) => ({ dagId, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+  const topTasks = Array.from(taskMap.entries())
+    .map(([taskKey, count]) => ({ taskKey, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  return { dagCount: dags.length, taskCount, daily, topDags, topTasks };
+}
+
 export function DashboardPage() {
   const [etlJobFilter, setEtlJobFilter] = useState<EtlJobFilter>("all");
+  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(6, "day"), dayjs()]);
+  const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
+
+  const dataLoadStats = useQuery({
+    queryKey: ["dashboard-data-load", appliedRange[0].toISOString(), appliedRange[1].toISOString()],
+    queryFn: () => getDataLoadDashboard(appliedRange),
+    placeholderData: (previousData) => previousData,
+  });
+
   const dashboardSummary = useQuery({
     queryKey: ["dashboard-summary"],
     queryFn: getDashboardSummary,
@@ -325,9 +425,79 @@ export function DashboardPage() {
   const showAirflowInitialLoading = airflowStats.isLoading && !airflowStats.data;
   const showNifiInitialLoading = nifiStatus.isLoading && !nifiStatus.data;
 
+  const dataLoad = dataLoadStats.data ?? EMPTY_DATA_LOAD_DASHBOARD;
+  const showDataLoadInitialLoading = dataLoadStats.isLoading && !dataLoadStats.data;
+
   return (
     <div>
       <div className="dashboard-stack">
+        <section className="dashboard-section">
+          <div className="section-heading">
+            <div>
+              <h3>데이터 로드 현황</h3>
+            </div>
+            <Space>
+              <RangePicker
+                value={dateRange}
+                onChange={(value) => {
+                  if (value && value[0] && value[1]) {
+                    setDateRange([value[0], value[1]]);
+                  }
+                }}
+                allowClear={false}
+              />
+              <Button type="primary" onClick={() => setAppliedRange(dateRange)}>
+                검색
+              </Button>
+            </Space>
+          </div>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} lg={6}>
+              <Row gutter={[12, 12]}>
+                <Col span={24}>
+                  <Card loading={showDataLoadInitialLoading}>
+                    <Statistic title="DAG" value={dataLoad.dagCount} valueStyle={{ color: "#08979c" }} />
+                  </Card>
+                </Col>
+                <Col span={24}>
+                  <Card loading={showDataLoadInitialLoading}>
+                    <Statistic title="태스크" value={dataLoad.taskCount} valueStyle={{ color: "#5cdbd3" }} />
+                  </Card>
+                </Col>
+              </Row>
+            </Col>
+            <Col xs={24} lg={18}>
+              <Card title="일자별 데이터 로드 건수" size="small" loading={showDataLoadInitialLoading}>
+                {dataLoad.daily.length > 0 ? (
+                  <Line data={dataLoad.daily} xField="date" yField="count" height={220} />
+                ) : (
+                  <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
+                )}
+              </Card>
+            </Col>
+          </Row>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} xl={12}>
+              <Card title="Top 5 데이터 로드 DAG" size="small" loading={showDataLoadInitialLoading}>
+                {dataLoad.topDags.length > 0 ? (
+                  <Column data={dataLoad.topDags} xField="dagId" yField="count" height={240} />
+                ) : (
+                  <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
+                )}
+              </Card>
+            </Col>
+            <Col xs={24} xl={12}>
+              <Card title="Top 10 데이터 로드 태스크" size="small" loading={showDataLoadInitialLoading}>
+                {dataLoad.topTasks.length > 0 ? (
+                  <Column data={dataLoad.topTasks} xField="taskKey" yField="count" height={240} />
+                ) : (
+                  <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
+                )}
+              </Card>
+            </Col>
+          </Row>
+        </section>
+
         <section className="dashboard-section">
           <div className="section-heading">
             <div>

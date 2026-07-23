@@ -268,6 +268,15 @@ body {
   background: #fbfcfd;
 }
 
+.empty-chart-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 220px;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
 .metric-card {
   cursor: pointer;
   transition:
