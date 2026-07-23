@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Card, Col, DatePicker, Row, Space, Statistic } from "antd";
-import { Column, Line, Pie } from "@ant-design/plots";
+import { Button, Card, DatePicker, Space, Statistic } from "antd";
+import { Column, Line } from "@ant-design/plots";
 import dayjs, { type Dayjs } from "dayjs";
 import { getDailyLoadSummary } from "../api/dashboard";
 import {
@@ -36,9 +36,9 @@ interface TaskLoadPoint {
   count: number;
 }
 
-interface CategoryLoadPoint {
-  category: string;
-  count: number;
+interface DurationTaskPoint {
+  taskKey: string;
+  minutes: number;
 }
 
 interface DagInfo {
@@ -54,9 +54,10 @@ interface DashboardHistoryData {
   daily: DailyLoadPoint[];
   topDags: DagLoadPoint[];
   topTasks: TaskLoadPoint[];
-  categoryBreakdown: CategoryLoadPoint[];
+  topDurationTasks: DurationTaskPoint[];
   dagCatalog: HistoryEntry[];
   taskCatalog: HistoryEntry[];
+  runningEntries: HistoryEntry[];
   successEntries: HistoryEntry[];
   failedEntries: HistoryEntry[];
   delayedEntries: HistoryEntry[];
@@ -68,9 +69,10 @@ const EMPTY_DASHBOARD_HISTORY: DashboardHistoryData = {
   daily: [],
   topDags: [],
   topTasks: [],
-  categoryBreakdown: [],
+  topDurationTasks: [],
   dagCatalog: [],
   taskCatalog: [],
+  runningEntries: [],
   successEntries: [],
   failedEntries: [],
   delayedEntries: [],
@@ -98,16 +100,14 @@ async function fetchRunLogText(dagId: string, runId: string): Promise<string> {
   return parts.join("\n\n");
 }
 
-// NiFi 프로세스 그룹(UUID)과 Kafka 파이프라인(정수 id)은 pipeline_daily_load_metric의
-// pipelineKey 모양만 봐도 구분된다 - 숫자면 CDC(Kafka), 아니면 ETL(NiFi).
-function classifyPipelineKey(key: string): "ETL" | "CDC" {
-  return /^\d+$/.test(key) ? "CDC" : "ETL";
-}
-
-// 대시보드 상단 5개 타일(DAG/태스크/성공/실패/지연)과 그 클릭 시 뜨는 상세 내역 모달,
-// 그리고 적재 건수 차트 3종의 데이터를 한 번에 만든다. 적재 건수는
-// pipeline_daily_load_metric 롤업을 그대로 읽고, DAG/태스크/성공/실패/지연은 Airflow의
-// 실제 DAG/실행 이력을 ETL(NiFi)/CDC(Kafka)/기타로 분류해서 집계한다.
+// 대시보드 상단 6개 타일(DAG/태스크/실행중/성공/실패/지연)과 그 클릭 시 뜨는 상세 내역
+// 모달, 그리고 적재 건수/수행시간 차트의 데이터를 한 번에 만든다. 적재 건수는
+// pipeline_daily_load_metric 롤업을 그대로 읽고, DAG/태스크/실행중/성공/실패/지연은
+// Airflow의 실제 DAG/실행 이력을 ETL(NiFi)/CDC(Kafka)/기타로 분류해서 집계한다.
+// 실행중/성공/실패/지연 4개 타일은 "DAG 실행(dag run)" 단위 집계다 - 하나의 DAG 실행이
+// 여러 태스크로 구성돼 있어도 그 실행 전체의 최종 상태 하나로만 집계되고, 개별 태스크
+// 성공/실패는 집계하지 않는다(태스크 타일은 이와 별개로 "정의된 태스크 종류가 몇 개인지"
+// 세는 카탈로그).
 async function buildDashboardHistory(range: [Dayjs, Dayjs]): Promise<DashboardHistoryData> {
   const [dags, nifiStatusResult, kafkaPipelines, summary] = await Promise.all([
     listAirflowDags(),
@@ -206,6 +206,7 @@ async function buildDashboardHistory(range: [Dayjs, Dayjs]): Promise<DashboardHi
   );
   const runGroups = runGroupResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
 
+  const runningEntries: HistoryEntry[] = [];
   const successEntries: HistoryEntry[] = [];
   const failedEntries: HistoryEntry[] = [];
   const delayedEntries: HistoryEntry[] = [];
@@ -223,6 +224,8 @@ async function buildDashboardHistory(range: [Dayjs, Dayjs]): Promise<DashboardHi
         successEntries.push(entry);
       } else if (run.state === "failed") {
         failedEntries.push(entry);
+      } else if (run.state === "running" || run.state === "queued") {
+        runningEntries.push(entry);
       }
     });
     if (info.isActive && runs.length === 0) {
@@ -236,8 +239,44 @@ async function buildDashboardHistory(range: [Dayjs, Dayjs]): Promise<DashboardHi
 
   const byDatetimeDesc = (a: HistoryEntry, b: HistoryEntry) =>
     new Date(b.datetime ?? 0).getTime() - new Date(a.datetime ?? 0).getTime();
+  runningEntries.sort(byDatetimeDesc);
   successEntries.sort(byDatetimeDesc);
   failedEntries.sort(byDatetimeDesc);
+
+  // Top 5 수행시간 태스크: 선택한 기간 안의 모든 실행에서 태스크별 소요시간(종료-시작)을
+  // 합산해 가장 오래 걸린 태스크 5개를 뽑는다(적재 건수 Top5/10과 같은 "합계 후 정렬" 방식).
+  const taskInstanceResults = await Promise.allSettled(
+    runGroups.flatMap((group) =>
+      group.runs.map(async (run) => ({
+        info: group.info,
+        instances: await listAirflowTaskInstances(group.info.dagId, run.dag_run_id).catch(() => []),
+      })),
+    ),
+  );
+  const durationTotals = new Map<string, { label: string; seconds: number }>();
+  taskInstanceResults.forEach((result) => {
+    if (result.status !== "fulfilled") {
+      return;
+    }
+    const { info, instances } = result.value;
+    instances.forEach((instance) => {
+      if (!instance.start_date || !instance.end_date) {
+        return;
+      }
+      const seconds = (new Date(instance.end_date).getTime() - new Date(instance.start_date).getTime()) / 1000;
+      if (seconds <= 0) {
+        return;
+      }
+      const key = `${info.dagId}.${instance.task_id}`;
+      const label = `${info.displayName} / ${instance.task_id}`;
+      const existing = durationTotals.get(key);
+      durationTotals.set(key, { label, seconds: (existing?.seconds ?? 0) + seconds });
+    });
+  });
+  const topDurationTasks = Array.from(durationTotals.values())
+    .map((entry) => ({ taskKey: entry.label, minutes: Math.round((entry.seconds / 60) * 10) / 10 }))
+    .sort((a, b) => b.minutes - a.minutes)
+    .slice(0, 5);
 
   const daily = summary.daily
     .map((point) => ({ date: dayjs(point.date).format("YYYY.MM.DD"), count: point.count }))
@@ -245,33 +284,28 @@ async function buildDashboardHistory(range: [Dayjs, Dayjs]): Promise<DashboardHi
   const topDags = summary.topPipelines.map((point) => ({ dagId: point.label, count: point.count }));
   const topTasks = summary.topTasks.map((point) => ({ taskKey: point.label, count: point.count }));
 
-  const categoryTotals = new Map<string, number>();
-  summary.topPipelines.forEach((point) => {
-    const category = classifyPipelineKey(point.key);
-    categoryTotals.set(category, (categoryTotals.get(category) ?? 0) + point.count);
-  });
-  const categoryBreakdown = Array.from(categoryTotals.entries()).map(([category, count]) => ({ category, count }));
-
   return {
     dagCount: dagInfos.length,
     taskCount: taskCatalog.length,
     daily,
     topDags,
     topTasks,
-    categoryBreakdown,
+    topDurationTasks,
     dagCatalog,
     taskCatalog,
+    runningEntries,
     successEntries,
     failedEntries,
     delayedEntries,
   };
 }
 
-type TileKind = "dag" | "task" | "success" | "failed" | "delayed";
+type TileKind = "dag" | "task" | "running" | "success" | "failed" | "delayed";
 
 const TILE_TITLE: Record<TileKind, string> = {
   dag: "DAG 목록",
   task: "태스크 목록",
+  running: "실행중 내역",
   success: "성공 내역",
   failed: "실패 내역",
   delayed: "지연 내역",
@@ -297,6 +331,8 @@ export function DashboardPage() {
         return history.dagCatalog;
       case "task":
         return history.taskCatalog;
+      case "running":
+        return history.runningEntries;
       case "success":
         return history.successEntries;
       case "failed":
@@ -331,35 +367,28 @@ export function DashboardPage() {
               </Button>
             </Space>
           </div>
-          <Row gutter={[16, 16]}>
-            <Col xs={12} md={8} xl={4}>
+          <div className="dashboard-grid-stack">
+            <div className="dashboard-tile-grid">
               <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("dag")}>
                 <Statistic title="DAG" value={history.dagCount} valueStyle={{ color: "#08979c" }} />
               </Card>
-            </Col>
-            <Col xs={12} md={8} xl={4}>
               <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("task")}>
                 <Statistic title="태스크" value={history.taskCount} valueStyle={{ color: "#5cdbd3" }} />
               </Card>
-            </Col>
-            <Col xs={12} md={8} xl={4}>
+              <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("running")}>
+                <Statistic title="실행중" value={history.runningEntries.length} valueStyle={{ color: "#1677ff" }} />
+              </Card>
               <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("success")}>
                 <Statistic title="성공" value={history.successEntries.length} valueStyle={{ color: "#2f7d32" }} />
               </Card>
-            </Col>
-            <Col xs={12} md={8} xl={4}>
               <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("failed")}>
                 <Statistic title="실패" value={history.failedEntries.length} valueStyle={{ color: "#c62828" }} />
               </Card>
-            </Col>
-            <Col xs={12} md={8} xl={4}>
               <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("delayed")}>
                 <Statistic title="지연" value={history.delayedEntries.length} />
               </Card>
-            </Col>
-          </Row>
-          <Row gutter={[16, 16]}>
-            <Col xs={24} xl={12}>
+            </div>
+            <div className="dashboard-chart-grid">
               <Card title="일별 적재 건수" size="small" loading={showInitialLoading}>
                 {history.daily.length > 0 ? (
                   <Line data={history.daily} xField="date" yField="count" height={240} />
@@ -367,25 +396,15 @@ export function DashboardPage() {
                   <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
                 )}
               </Card>
-            </Col>
-            <Col xs={24} xl={12}>
-              <Card title="소스별 적재 비중" size="small" loading={showInitialLoading}>
-                {history.categoryBreakdown.length > 0 ? (
-                  <Pie
-                    data={history.categoryBreakdown}
-                    angleField="count"
-                    colorField="category"
-                    innerRadius={0.6}
-                    height={240}
-                  />
+              <Card title="Top 5 수행시간 태스크" size="small" loading={showInitialLoading}>
+                {history.topDurationTasks.length > 0 ? (
+                  <Column data={history.topDurationTasks} xField="taskKey" yField="minutes" height={240} />
                 ) : (
                   <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
                 )}
               </Card>
-            </Col>
-          </Row>
-          <Row gutter={[16, 16]}>
-            <Col xs={24} xl={12}>
+            </div>
+            <div className="dashboard-chart-grid">
               <Card title="Top 5 데이터 로드 DAG" size="small" loading={showInitialLoading}>
                 {history.topDags.length > 0 ? (
                   <Column data={history.topDags} xField="dagId" yField="count" height={240} />
@@ -393,8 +412,6 @@ export function DashboardPage() {
                   <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
                 )}
               </Card>
-            </Col>
-            <Col xs={24} xl={12}>
               <Card title="Top 10 데이터 로드 태스크" size="small" loading={showInitialLoading}>
                 {history.topTasks.length > 0 ? (
                   <Column data={history.topTasks} xField="taskKey" yField="count" height={240} />
@@ -402,8 +419,8 @@ export function DashboardPage() {
                   <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
                 )}
               </Card>
-            </Col>
-          </Row>
+            </div>
+          </div>
         </section>
       </div>
 
