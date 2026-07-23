@@ -25,9 +25,9 @@ web/backend/.gradle/
 web/backend/out/
 web/backend/bin/
 
-# web/frontend (Node) 빌드 산출물, 다음 증분에서 추가 예정
-web/frontend/node_modules/
-web/frontend/dist/
+# web/cerebroetl-ui (Node) 빌드 산출물
+web/cerebroetl-ui/node_modules/
+web/cerebroetl-ui/dist/
 
 # 로그 파이프라인 검증용 테스트 로그 파일 (디렉터리 자체는 .gitkeep으로 유지)
 log-sources/*
