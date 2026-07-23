@@ -564,8 +564,10 @@ services:
       # 경고와 함께 여전히 동작하지만 새 키를 씀).
       AIRFLOW__API__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY}
       # 통합 웹의 iframe/reverse proxy 하위 경로. Airflow 3 UI가 정적 자원과
-      # OAuth callback을 모두 이 prefix 기준으로 생성한다.
-      AIRFLOW__API__BASE_URL: "https://localhost:${CEREBROETL_UI_PORT}/airflow"
+      # OAuth callback을 모두 이 prefix 기준으로 생성한다. 브라우저가 실제로 접속하는
+      # 호스트명/IP와 달라지면 "Invalid or unsafe next URL"로 로그인이 거부되므로,
+      # localhost가 아닌 주소로 배포할 땐 AIRFLOW_PUBLIC_BASE_URL을 그 주소로 바꿔야 함.
+      AIRFLOW__API__BASE_URL: "${AIRFLOW_PUBLIC_BASE_URL}"
       # FAB OAuth callback은 Flask/Werkzeug에서 생성되므로 FAB의 ProxyFix도 켠다.
       AIRFLOW__FAB__ENABLE_PROXY_FIX: "true"
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
