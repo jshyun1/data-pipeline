@@ -45,6 +45,17 @@ NiFi PutDatabaseRecord가 레코드 스키마에 없는 컬럼(synced_at 등)은
 실행이 기존 행만 UPDATE하고 새로 INSERT한 행이 없으면 이 검증이 놓칠 수 있다.
 INSERT 전용 파이프라인(http-ingest, logfile)에는 이 한계가 없다.
 
+count 조회는 verify_action과 동일하게 VERIFY_ATTEMPTS/VERIFY_INTERVAL_SECONDS로
+재시도한다 - NiFi 프로세서 자체가 폴링 주기를 갖는 경우가 있어서(예: logfile의
+ListFile은 1분 주기로만 새 파일을 확인 - 실측으로 확인함) start 직후 바로
+확인하면 아직 아무것도 안 왔을 뿐인데 실패로 오탐될 수 있다.
+재시도 끝까지 count=0이어도 그 자체를 실패로 보지 않는다 - 이번 주기에 소스
+쪽에 신규/변경 데이터가 없었을 뿐일 수 있기 때문이다(특히 QueryDatabaseTable
+같은 증분 소스). 대신 NiFi 프로세스 그룹 자체에 실제 문제 신호(ERROR bulletin,
+invalid 컴포넌트)가 있는지 추가로 확인해서, 신호가 있으면 그때 진짜 실패로
+처리하고, 없으면 skipped로 끝낸다(=Asset 이벤트도 발행 안 됨 - 실제로 아무것도
+적재되지 않았으니 맞는 동작).
+
 어떤 process group이 어느 schema.table/타임스탬프 컬럼으로 적재하는지는 NiFi
 캔버스 안에만 있고 이 DAG가 알 방법이 없어서, schedule과 동일한 패턴으로
 Admin > Variables의 "{dag_id}__target_schema"/"{dag_id}__target_table"/
@@ -157,6 +168,9 @@ def verify_process_group_action(pg_id: str, base_url: str, host_header: str, **c
 
 def verify_target_db_landing(
     dag_id: str,
+    pg_id: str,
+    base_url: str,
+    host_header: str,
     target_schema: str | None,
     target_table: str | None,
     target_timestamp_column: str | None,
@@ -179,17 +193,50 @@ def verify_target_db_landing(
     # 이미 쌓인 데이터 때문에 이번 실행이 아무것도 안 넣었어도 통과해버림).
     run_start = context["dag_run"].start_date
     hook = PostgresHook(postgres_conn_id=TARGET_DB_CONN_ID)
-    count = hook.get_first(
-        f"SELECT COUNT(*) FROM {target_schema}.{target_table} WHERE {target_timestamp_column} >= %s",
-        parameters=(run_start,),
-    )[0]
-    if count == 0:
+    sql = f"SELECT COUNT(*) FROM {target_schema}.{target_table} WHERE {target_timestamp_column} >= %s"
+
+    count = 0
+    for attempt in range(VERIFY_ATTEMPTS):
+        count = hook.get_first(sql, parameters=(run_start,))[0]
+        if count > 0:
+            print(
+                f"타겟 DB 적재 확인: {target_schema}.{target_table} "
+                f"({target_timestamp_column} >= {run_start.isoformat()}) = {count}건"
+            )
+            return
+        time.sleep(VERIFY_INTERVAL_SECONDS)
+
+    # 재시도 끝까지 count=0. 이 자체는 실패가 아니다 - 이번 주기에 신규/변경된
+    # 소스 데이터가 없었을 뿐일 수 있다(특히 QueryDatabaseTable류 증분 소스).
+    # NiFi 쪽에 실제 문제 신호(ERROR bulletin, invalid 컴포넌트)가 있을 때만
+    # 진짜 실패로 처리한다.
+    token = _get_nifi_token()
+    response = requests.get(
+        f"{base_url}/nifi-api/process-groups/{pg_id}",
+        headers={"Authorization": f"Bearer {token}", "Host": host_header},
+        verify=False,
+        timeout=15,
+    )
+    response.raise_for_status()
+    entity = response.json()
+    error_bulletins = [
+        b.get("bulletin", {}).get("message", "")
+        for b in entity.get("bulletins", [])
+        if b.get("bulletin", {}).get("level") == "ERROR"
+    ]
+    invalid_count = entity.get("invalidCount", 0)
+
+    if error_bulletins or invalid_count > 0:
         raise RuntimeError(
-            f"{target_schema}.{target_table}에 이번 실행({run_start.isoformat()}) 이후 적재된 "
-            "데이터가 없습니다 (count=0). UPSERT 파이프라인이라면 기존 행만 UPDATE되고 새로 "
-            "INSERT된 행이 없어서 놓쳤을 가능성도 있습니다."
+            f"{target_schema}.{target_table}에 적재된 데이터가 없고(count=0), NiFi 쪽에서도 "
+            f"문제 신호가 확인됩니다 (invalidCount={invalid_count}, error bulletins={error_bulletins})"
         )
-    print(f"타겟 DB 적재 확인: {target_schema}.{target_table} ({target_timestamp_column} >= {run_start.isoformat()}) = {count}건")
+
+    raise AirflowSkipException(
+        f"{target_schema}.{target_table}에 이번 실행({run_start.isoformat()}) 이후 적재된 데이터는 "
+        "없지만(count=0), NiFi 프로세스 자체는 정상입니다(ERROR bulletin/invalid 컴포넌트 없음) - "
+        "신규/변경 소스 데이터가 없었던 것으로 보고 실패 처리하지 않음"
+    )
 
 
 def sanitize(name: str) -> str:
@@ -251,6 +298,9 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str) -> DAG:
             python_callable=verify_target_db_landing,
             op_kwargs={
                 "dag_id": dag_id,
+                "pg_id": pg_id,
+                "base_url": base_url,
+                "host_header": host_header,
                 "target_schema": target_schema,
                 "target_table": target_table,
                 "target_timestamp_column": target_timestamp_column,
