@@ -248,6 +248,7 @@ services:
       - "${NIFI_HTTPS_PORT}"
     ports:
       - "${NIFI_PUBLIC_HTTPS_PORT}:${NIFI_HTTPS_PORT}"
+      - "${NIFI_LISTENHTTP_PUBLIC_PORT}:${NIFI_LISTENHTTP_PORT}"
     volumes:
       # state는 컴포넌트 상태값(예: 마지막 처리 위치)만 저장한다. 캔버스에서
       # 만드는 실제 플로우 정의(flow.json.gz)는 conf/에 저장되는데 예전엔 이게
@@ -409,7 +410,7 @@ services:
       # filebeat 컨테이너가 같은 볼륨을 읽기 전용으로 마운트해서 재시작 없이 반영한다.
       - filebeat-inputs:/filebeat-inputs
     ports:
-      - "${PIPELINE_API_PORT}:${PIPELINE_API_PORT}"
+      - "${PIPELINE_API_PUBLIC_PORT}:${PIPELINE_API_PORT}"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:${PIPELINE_API_PORT}/api/connections || exit 1"]
       interval: 10s
