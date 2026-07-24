@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Alert,
+  AutoComplete,
   Button,
   Checkbox,
   Collapse,
@@ -14,17 +16,20 @@ import {
   Segmented,
   Select,
   Space,
+  Spin,
   Table,
   Tabs,
   Tag,
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
-import { listConnections } from "../api/connections";
+import { listConnections, listConnectionSchemas, listConnectionTables } from "../api/connections";
+import { getPipelineDashboardSummary } from "../api/dashboard";
 import {
   createLogFilePipeline,
   createPipeline,
   deletePipeline,
   deployPipeline,
+  dismissConnectorDrift,
   getPipelineHistory,
   listPipelines,
 } from "../api/pipelines";
@@ -55,6 +60,59 @@ export function PipelinesPage() {
     queryKey: ["connections"],
     queryFn: listConnections,
   });
+
+  // metadata-db는 RUNNING이라고 알고 있는데 실제 Kafka Connect엔 없는 커넥터가 있는지
+  // 주기적으로 확인한다 - 예전에 이걸 놓쳐서 데이터가 조용히 안 들어온 적이 있었다.
+  const { data: dashboardSummary } = useQuery({
+    queryKey: ["pipeline-dashboard-summary"],
+    queryFn: getPipelineDashboardSummary,
+    refetchInterval: 30_000,
+  });
+  const connectorDrift = dashboardSummary?.connectorDrift ?? [];
+
+  // 스키마/테이블을 자유 텍스트로 입력받으면 실제 DB 카탈로그와 대소문자가 어긋나서
+  // CDC 토픽이 조용히 끊기는 문제가 실제로 있었다 - 커넥션을 고르면 그 DB에 실제로
+  // 존재하는 스키마/테이블 목록을 조회해서 드롭다운으로만 고르게 한다.
+  const sourceConnectionId = Form.useWatch("sourceConnectionId", form);
+  const sourceSchema = Form.useWatch("sourceSchema", form);
+  const targetConnectionId = Form.useWatch("targetConnectionId", form);
+  const targetSchema = Form.useWatch("targetSchema", form);
+  const logTargetConnectionId = Form.useWatch("targetConnectionId", logForm);
+  const logTargetSchema = Form.useWatch("targetSchema", logForm);
+
+  const sourceSchemasQuery = useQuery({
+    queryKey: ["connection-schemas", sourceConnectionId],
+    queryFn: () => listConnectionSchemas(sourceConnectionId!),
+    enabled: sourceConnectionId != null,
+  });
+  const sourceTablesQuery = useQuery({
+    queryKey: ["connection-tables", sourceConnectionId, sourceSchema],
+    queryFn: () => listConnectionTables(sourceConnectionId!, sourceSchema!),
+    enabled: sourceConnectionId != null && !!sourceSchema,
+  });
+  const targetSchemasQuery = useQuery({
+    queryKey: ["connection-schemas", targetConnectionId],
+    queryFn: () => listConnectionSchemas(targetConnectionId!),
+    enabled: targetConnectionId != null,
+  });
+  const targetTablesQuery = useQuery({
+    queryKey: ["connection-tables", targetConnectionId, targetSchema],
+    queryFn: () => listConnectionTables(targetConnectionId!, targetSchema!),
+    enabled: targetConnectionId != null && !!targetSchema,
+  });
+  const logTargetSchemasQuery = useQuery({
+    queryKey: ["connection-schemas", logTargetConnectionId],
+    queryFn: () => listConnectionSchemas(logTargetConnectionId!),
+    enabled: logTargetConnectionId != null,
+  });
+  const logTargetTablesQuery = useQuery({
+    queryKey: ["connection-tables", logTargetConnectionId, logTargetSchema],
+    queryFn: () => listConnectionTables(logTargetConnectionId!, logTargetSchema!),
+    enabled: logTargetConnectionId != null && !!logTargetSchema,
+  });
+
+  const schemaTableNotFoundContent = (query: { isFetching: boolean; isError: boolean }, emptyHint: string) =>
+    query.isFetching ? <Spin size="small" /> : query.isError ? "조회 실패 - 연결정보를 확인하세요" : emptyHint;
   const { data: history, isLoading: historyLoading } = useQuery({
     queryKey: ["pipeline-history", detailPipelineId],
     queryFn: () => getPipelineHistory(detailPipelineId!),
@@ -108,8 +166,49 @@ export function PipelinesPage() {
     onError: (error: Error) => message.error(error.message),
   });
 
+  const dismissDriftMutation = useMutation({
+    mutationFn: dismissConnectorDrift,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["pipeline-dashboard-summary"] }),
+    onError: (error: Error) => message.error(error.message),
+  });
+
+  const driftByPipeline = connectorDrift.reduce<Record<number, { pipelineName: string; connectorNames: string[] }>>(
+    (acc, entry) => {
+      const existing = acc[entry.pipelineId] ?? { pipelineName: entry.pipelineName, connectorNames: [] };
+      existing.connectorNames.push(entry.connectorName);
+      acc[entry.pipelineId] = existing;
+      return acc;
+    },
+    {},
+  );
+
   return (
     <div>
+      {Object.entries(driftByPipeline).map(([pipelineId, info]) => (
+        <Alert
+          key={pipelineId}
+          type="warning"
+          showIcon
+          closable
+          onClose={() => dismissDriftMutation.mutate(Number(pipelineId))}
+          style={{ marginBottom: 12 }}
+          message="파이프라인 커넥터가 Kafka Connect에서 사라졌습니다"
+          description={
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span>
+                <b>{info.pipelineName}</b> — {info.connectorNames.join(", ")} 없음
+              </span>
+              <Button
+                size="small"
+                loading={deployMutation.isPending}
+                onClick={() => deployMutation.mutate(Number(pipelineId))}
+              >
+                지금 재배포
+              </Button>
+            </div>
+          }
+        />
+      ))}
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
         <Button
           type="primary"
@@ -127,26 +226,6 @@ export function PipelinesPage() {
         loading={isLoading}
         dataSource={pipelines}
         pagination={false}
-        expandable={{
-          expandedRowRender: (record) => (
-            <Table
-              rowKey="id"
-              size="small"
-              pagination={false}
-              dataSource={record.connectors}
-              columns={[
-                { title: "역할", dataIndex: "connectorRole" },
-                { title: "커넥터명", dataIndex: "connectorName" },
-                { title: "클래스", dataIndex: "connectorClass" },
-                {
-                  title: "상태",
-                  dataIndex: "status",
-                  render: (value: string) => <Tag>{value}</Tag>,
-                },
-              ]}
-            />
-          ),
-        }}
         columns={[
           { title: "이름", dataIndex: "name" },
           {
@@ -237,6 +316,17 @@ export function PipelinesPage() {
                 <Select
                   options={connections?.map((c) => ({ value: c.id, label: `${c.name} (${c.dbType})` }))}
                   placeholder="소스 DB 선택"
+                  onChange={(value) => {
+                    form.setFieldsValue({ sourceSchema: undefined, sourceTable: undefined });
+                    // 사용자가 이미 직접 입력한 값이 있으면 덮어쓰지 않고, 비어있을 때만
+                    // 소스 DB 종류 기준 기본값을 채워준다(원하면 언제든 직접 수정 가능).
+                    if (!form.getFieldValue("topicPrefix")) {
+                      const dbType = connections?.find((c) => c.id === value)?.dbType;
+                      if (dbType) {
+                        form.setFieldsValue({ topicPrefix: `${dbType.toLowerCase()}-cdc` });
+                      }
+                    }
+                  }}
                 />
               </Form.Item>
               <Form.Item
@@ -248,23 +338,61 @@ export function PipelinesPage() {
                 <Select
                   options={connections?.map((c) => ({ value: c.id, label: `${c.name} (${c.dbType})` }))}
                   placeholder="타겟 DB 선택"
+                  onChange={() => form.setFieldsValue({ targetSchema: undefined, targetTable: undefined })}
                 />
               </Form.Item>
             </Space>
             <Space style={{ width: "100%" }} size="large">
               <Form.Item name="sourceSchema" label="소스 스키마" rules={[{ required: true }]} style={{ width: 260 }}>
-                <Input placeholder="예: APPUSER" />
+                <Select
+                  showSearch
+                  disabled={!sourceConnectionId}
+                  loading={sourceSchemasQuery.isFetching}
+                  options={sourceSchemasQuery.data?.map((s) => ({ value: s, label: s }))}
+                  notFoundContent={schemaTableNotFoundContent(sourceSchemasQuery, "스키마 없음")}
+                  placeholder={sourceConnectionId ? "스키마 선택" : "먼저 소스 연결을 선택하세요"}
+                  onChange={() => form.setFieldsValue({ sourceTable: undefined })}
+                />
               </Form.Item>
               <Form.Item name="sourceTable" label="소스 테이블" rules={[{ required: true }]} style={{ width: 260 }}>
-                <Input placeholder="예: CUSTOMERS" />
+                <Select
+                  showSearch
+                  disabled={!sourceSchema}
+                  loading={sourceTablesQuery.isFetching}
+                  options={sourceTablesQuery.data?.map((t) => ({ value: t, label: t }))}
+                  notFoundContent={schemaTableNotFoundContent(sourceTablesQuery, "테이블 없음")}
+                  placeholder={sourceSchema ? "테이블 선택" : "먼저 스키마를 선택하세요"}
+                />
               </Form.Item>
             </Space>
             <Space style={{ width: "100%" }} size="large">
               <Form.Item name="targetSchema" label="타겟 스키마" rules={[{ required: true }]} style={{ width: 260 }}>
-                <Input placeholder="예: cdc_landing" />
+                <Select
+                  showSearch
+                  disabled={!targetConnectionId}
+                  loading={targetSchemasQuery.isFetching}
+                  options={targetSchemasQuery.data?.map((s) => ({ value: s, label: s }))}
+                  notFoundContent={schemaTableNotFoundContent(targetSchemasQuery, "스키마 없음")}
+                  placeholder={targetConnectionId ? "스키마 선택" : "먼저 타겟 연결을 선택하세요"}
+                  onChange={() => form.setFieldsValue({ targetTable: undefined })}
+                />
               </Form.Item>
-              <Form.Item name="targetTable" label="타겟 테이블" rules={[{ required: true }]} style={{ width: 260 }}>
-                <Input placeholder="예: customers" />
+              <Form.Item
+                name="targetTable"
+                label="타겟 테이블"
+                rules={[{ required: true }]}
+                style={{ width: 260 }}
+                tooltip="기존 테이블을 고르거나, 첫 배포 때 자동 생성될 새 테이블명을 직접 입력할 수 있습니다"
+              >
+                <AutoComplete
+                  disabled={!targetSchema}
+                  options={targetTablesQuery.data?.map((t) => ({ value: t, label: t }))}
+                  notFoundContent={schemaTableNotFoundContent(targetTablesQuery, "기존 테이블 없음 (새 이름으로 입력 가능)")}
+                  placeholder={targetSchema ? "기존 테이블 선택 또는 새 이름 입력" : "먼저 스키마를 선택하세요"}
+                  filterOption={(inputValue, option) =>
+                    (option?.value ?? "").toLowerCase().includes(inputValue.toLowerCase())
+                  }
+                />
               </Form.Item>
             </Space>
             <Form.Item
@@ -321,14 +449,37 @@ export function PipelinesPage() {
               <Select
                 options={connections?.map((c) => ({ value: c.id, label: `${c.name} (${c.dbType})` }))}
                 placeholder="랜딩할 DB 선택"
+                onChange={() => logForm.setFieldsValue({ targetSchema: undefined, targetTable: undefined })}
               />
             </Form.Item>
             <Space style={{ width: "100%" }} size="large">
               <Form.Item name="targetSchema" label="타겟 스키마" rules={[{ required: true }]} style={{ width: 260 }}>
-                <Input placeholder="예: log_landing" />
+                <Select
+                  showSearch
+                  disabled={!logTargetConnectionId}
+                  loading={logTargetSchemasQuery.isFetching}
+                  options={logTargetSchemasQuery.data?.map((s) => ({ value: s, label: s }))}
+                  notFoundContent={schemaTableNotFoundContent(logTargetSchemasQuery, "스키마 없음")}
+                  placeholder={logTargetConnectionId ? "스키마 선택" : "먼저 타겟 연결을 선택하세요"}
+                  onChange={() => logForm.setFieldsValue({ targetTable: undefined })}
+                />
               </Form.Item>
-              <Form.Item name="targetTable" label="타겟 테이블" rules={[{ required: true }]} style={{ width: 260 }}>
-                <Input placeholder="예: app_log" />
+              <Form.Item
+                name="targetTable"
+                label="타겟 테이블"
+                rules={[{ required: true }]}
+                style={{ width: 260 }}
+                tooltip="기존 테이블을 고르거나, 첫 배포 때 자동 생성될 새 테이블명을 직접 입력할 수 있습니다"
+              >
+                <AutoComplete
+                  disabled={!logTargetSchema}
+                  options={logTargetTablesQuery.data?.map((t) => ({ value: t, label: t }))}
+                  notFoundContent={schemaTableNotFoundContent(logTargetTablesQuery, "기존 테이블 없음 (새 이름으로 입력 가능)")}
+                  placeholder={logTargetSchema ? "기존 테이블 선택 또는 새 이름 입력" : "먼저 스키마를 선택하세요"}
+                  filterOption={(inputValue, option) =>
+                    (option?.value ?? "").toLowerCase().includes(inputValue.toLowerCase())
+                  }
+                />
               </Form.Item>
             </Space>
             <Form.Item

@@ -10,6 +10,7 @@ public record DashboardSummaryResponse(
         long pausedCount,
         boolean kafkaConnectHealthy,
         boolean kafkaBrokerHealthy,
+        List<ConnectorDriftEntry> connectorDrift,
         List<PipelineCommandHistoryResponse> recentErrors,
         List<PipelineCommandHistoryResponse> recentDeployments
 ) {

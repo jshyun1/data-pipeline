@@ -17,7 +17,7 @@ class JdbcSinkTemplateTest {
         SinkConnectorRequest request = new SinkConnectorRequest(
                 12L, DbType.POSTGRESQL, "target-db", 5432, "tarantula_app", "pw",
                 "tarantula", null, "cdc_landing", "customers",
-                "APPUSER", "CUSTOMERS", "oracle-cdc", true);
+                DbType.ORACLE, "APPUSER", "CUSTOMERS", "oracle-cdc", true);
 
         RenderedConnectorConfig rendered = template.render(request);
 
@@ -33,12 +33,28 @@ class JdbcSinkTemplateTest {
         assertThat(config.get("delete.enabled")).isEqualTo("true");
     }
 
+    // 실제 운영에서 발견된 버그 재현: pipeline_definition에 sourceTable이 소문자로
+    // 저장돼 있어도(사용자가 화면에 소문자로 입력한 경우), Debezium이 Oracle 소스에서
+    // 실제로 만드는 토픽은 항상 대문자다 - 여기서 안 맞추면 싱크가 존재하지 않는 토픽을
+    // 구독하게 되어 데이터가 조용히 안 흐른다.
+    @Test
+    void render_oracleSourceWithLowercaseStoredNames_upperCasesTopicToMatchDebezium() {
+        SinkConnectorRequest request = new SinkConnectorRequest(
+                13L, DbType.POSTGRESQL, "target-db", 5432, "tarantula_app", "pw",
+                "tarantula", null, "cdc_landing", "customers",
+                DbType.ORACLE, "appuser", "customers", "oracle-cdc", true);
+
+        RenderedConnectorConfig rendered = template.render(request);
+
+        assertThat(rendered.config().get("topics")).isEqualTo("oracle-cdc.APPUSER.CUSTOMERS");
+    }
+
     @Test
     void render_oracleTarget_buildsOracleThinConnectionUrl() {
         SinkConnectorRequest request = new SinkConnectorRequest(
                 5L, DbType.ORACLE, "oracle-db", 1521, "appuser", "pw",
                 null, "XEPDB1", "APPUSER", "CUSTOMERS_FROM_PG",
-                "cdc_landing", "customers", "postgres-cdc", true);
+                DbType.POSTGRESQL, "cdc_landing", "customers", "postgres-cdc", true);
 
         RenderedConnectorConfig rendered = template.render(request);
 

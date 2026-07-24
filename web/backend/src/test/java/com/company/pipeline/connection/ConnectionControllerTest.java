@@ -34,6 +34,9 @@ class ConnectionControllerTest {
     @MockBean
     private ConnectionService connectionService;
 
+    @MockBean
+    private SchemaDiscoveryService schemaDiscoveryService;
+
     @Test
     void create_validRequest_returns200WithEnvelope() throws Exception {
         ConnectionResponse response = new ConnectionResponse(1L, "oracle-source-poc", DbType.ORACLE,

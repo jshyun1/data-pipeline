@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -20,9 +21,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class ConnectionController {
 
     private final ConnectionService connectionService;
+    private final SchemaDiscoveryService schemaDiscoveryService;
 
-    public ConnectionController(ConnectionService connectionService) {
+    public ConnectionController(ConnectionService connectionService,
+            SchemaDiscoveryService schemaDiscoveryService) {
         this.connectionService = connectionService;
+        this.schemaDiscoveryService = schemaDiscoveryService;
     }
 
     @PostMapping
@@ -50,5 +54,15 @@ public class ConnectionController {
     public ApiResponse<Void> delete(@PathVariable Long id) {
         connectionService.delete(id);
         return ApiResponse.success(null);
+    }
+
+    @GetMapping("/{id}/schemas")
+    public ApiResponse<List<String>> listSchemas(@PathVariable Long id) {
+        return ApiResponse.success(schemaDiscoveryService.listSchemas(id));
+    }
+
+    @GetMapping("/{id}/tables")
+    public ApiResponse<List<String>> listTables(@PathVariable Long id, @RequestParam String schema) {
+        return ApiResponse.success(schemaDiscoveryService.listTables(id, schema));
     }
 }

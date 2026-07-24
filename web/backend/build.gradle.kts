@@ -29,6 +29,9 @@ dependencies {
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
     runtimeOnly("org.postgresql:postgresql:42.7.4")
+    // 파이프라인 생성 화면에서 소스/타겟 커넥션의 실제 스키마·테이블 목록을 조회하는
+    // 용도(SchemaDiscoveryService). kafka-connect/nifi가 쓰는 것과 동일 버전으로 맞춘다.
+    runtimeOnly("com.oracle.database.jdbc:ojdbc11:23.26.2.0.0")
     // 대시보드의 Kafka Broker 헬스체크(AdminClient.describeCluster)용. docker-compose의
     // apache/kafka:3.8.0과 버전을 맞춘다.
     implementation("org.apache.kafka:kafka-clients:3.8.0")

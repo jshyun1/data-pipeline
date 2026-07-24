@@ -25,7 +25,7 @@ public class JdbcSinkTemplate {
                 request.pipelineId(), request.targetDbType().name().toLowerCase(),
                 request.targetSchema(), request.targetTable());
         String topics = ConnectorNaming.topicName(
-                request.topicPrefix(), request.sourceSchema(), request.sourceTable());
+                request.topicPrefix(), request.sourceDbType(), request.sourceSchema(), request.sourceTable());
 
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("connector.class", "io.debezium.connector.jdbc.JdbcSinkConnector");

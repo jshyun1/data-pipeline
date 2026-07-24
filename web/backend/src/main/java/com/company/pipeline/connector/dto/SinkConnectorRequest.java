@@ -13,6 +13,7 @@ public record SinkConnectorRequest(
         String serviceName,
         String targetSchema,
         String targetTable,
+        DbType sourceDbType,
         String sourceSchema,
         String sourceTable,
         String topicPrefix,

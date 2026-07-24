@@ -37,3 +37,9 @@ export async function deployPipeline(id: number): Promise<PipelineResponse> {
   const res = await apiClient.post<ApiResponse<PipelineResponse>>(`/pipelines/${id}/deploy`);
   return unwrap(res.data);
 }
+
+// 커넥터 불일치 경고를 닫는다 - 재배포는 안 하고, 확인했다는 기록만 남긴다.
+export async function dismissConnectorDrift(id: number): Promise<void> {
+  const res = await apiClient.post<ApiResponse<void>>(`/pipelines/${id}/dismiss-drift`);
+  unwrap(res.data);
+}

@@ -1,5 +1,7 @@
 package com.company.pipeline.connector;
 
+import com.company.pipeline.connection.DbType;
+
 /**
  * docs/kafka-webservice-design.md §6.3의 명명 규칙:
  *   source-{pipelineId}-{sourceDbType}-{schema}-{table}
@@ -19,7 +21,21 @@ final class ConnectorNaming {
         return "sink-%d-%s".formatted(pipelineId, slug(dbType, schema, table));
     }
 
-    static String topicName(String topicPrefix, String schema, String table) {
+    /**
+     * Debezium이 실제로 만드는 CDC 이벤트 토픽 이름은 사용자가 화면에 입력한 대소문자가
+     * 아니라 소스 DB가 카탈로그에 저장한 실제 대소문자를 따른다 - Oracle은 따옴표 없는
+     * 식별자를 항상 대문자로 접기 때문에 항상 대문자, Postgres는 반대로 항상 소문자로
+     * 접는다. 여기서 그 규칙을 맞추지 않으면 싱크 커넥터가 소스와 다른(존재하지 않는)
+     * 토픽을 구독하게 되어 데이터가 조용히 안 흐른다.
+     */
+    static String topicName(String topicPrefix, DbType sourceDbType, String schema, String table) {
+        if (sourceDbType == DbType.ORACLE) {
+            schema = schema.toUpperCase();
+            table = table.toUpperCase();
+        } else if (sourceDbType == DbType.POSTGRESQL) {
+            schema = schema.toLowerCase();
+            table = table.toLowerCase();
+        }
         return "%s.%s.%s".formatted(topicPrefix, schema, table);
     }
 

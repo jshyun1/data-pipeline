@@ -24,14 +24,17 @@ public class PipelineController {
     private final PipelineService pipelineService;
     private final PipelineDeployService pipelineDeployService;
     private final PipelineCommandHistoryRepository pipelineCommandHistoryRepository;
+    private final PipelineCommandHistoryRecorder pipelineCommandHistoryRecorder;
     private final PipelineMetricSnapshotService pipelineMetricSnapshotService;
 
     public PipelineController(PipelineService pipelineService, PipelineDeployService pipelineDeployService,
             PipelineCommandHistoryRepository pipelineCommandHistoryRepository,
+            PipelineCommandHistoryRecorder pipelineCommandHistoryRecorder,
             PipelineMetricSnapshotService pipelineMetricSnapshotService) {
         this.pipelineService = pipelineService;
         this.pipelineDeployService = pipelineDeployService;
         this.pipelineCommandHistoryRepository = pipelineCommandHistoryRepository;
+        this.pipelineCommandHistoryRecorder = pipelineCommandHistoryRecorder;
         this.pipelineMetricSnapshotService = pipelineMetricSnapshotService;
     }
 
@@ -89,6 +92,20 @@ public class PipelineController {
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {
         pipelineService.delete(id);
+        return ApiResponse.success(null);
+    }
+
+    /**
+     * 대시보드의 "커넥터 불일치" 경고를 닫는다 - 실제로 다시 배포하는 게 아니라,
+     * 이 파이프라인은 확인했고 당장은 그대로 둬도 된다는 걸 기록만 남긴다
+     * (예: 더 이상 안 쓰는 테스트 파이프라인이라 재배포가 필요 없는 경우).
+     * 다음에 이 파이프라인에 새 배포/제어 명령이 들어오면 이 기록은 더 이상
+     * 유효하지 않은 것으로 취급되어(DashboardController 참고) 경고가 다시 뜰 수 있다.
+     */
+    @PostMapping("/{id}/dismiss-drift")
+    public ApiResponse<Void> dismissDrift(@PathVariable Long id) {
+        pipelineService.get(id); // 존재하지 않는 파이프라인이면 404
+        pipelineCommandHistoryRecorder.record(id, "DISMISS_DRIFT", "SUCCESS", null);
         return ApiResponse.success(null);
     }
 

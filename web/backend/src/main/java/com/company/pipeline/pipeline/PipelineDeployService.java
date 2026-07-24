@@ -122,7 +122,7 @@ public class PipelineDeployService {
                 target.getUsername(), passwordCryptoService.decrypt(target.getEncryptedPassword()),
                 target.getDatabaseName(), target.getServiceName(),
                 pipeline.getTargetSchema(), pipeline.getTargetTable(),
-                pipeline.getSourceSchema(), pipeline.getSourceTable(),
+                source.getDbType(), pipeline.getSourceSchema(), pipeline.getSourceTable(),
                 pipeline.getTopicName(), Boolean.TRUE.equals(pipeline.getDeleteEnabled())));
         deployConnector(pipeline.getId(), "SINK", sinkConfig);
     }

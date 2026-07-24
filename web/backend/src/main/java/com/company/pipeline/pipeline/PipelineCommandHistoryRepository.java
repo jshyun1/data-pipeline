@@ -1,6 +1,7 @@
 package com.company.pipeline.pipeline;
 
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface PipelineCommandHistoryRepository extends JpaRepository<PipelineCommandHistory, Long> {
@@ -10,4 +11,6 @@ public interface PipelineCommandHistoryRepository extends JpaRepository<Pipeline
     List<PipelineCommandHistory> findTop10ByResultOrderByRequestedAtDesc(String result);
 
     List<PipelineCommandHistory> findTop10ByCommandOrderByRequestedAtDesc(String command);
+
+    Optional<PipelineCommandHistory> findFirstByPipelineIdOrderByRequestedAtDesc(Long pipelineId);
 }

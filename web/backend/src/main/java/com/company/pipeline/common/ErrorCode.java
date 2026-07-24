@@ -9,6 +9,7 @@ public enum ErrorCode {
     ACCOUNT_NOT_APPROVED(HttpStatus.FORBIDDEN, "승인 대기 중이거나 사용할 수 없는 계정입니다."),
     USER_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 존재하는 아이디입니다."),
     CONNECTION_NOT_FOUND(HttpStatus.NOT_FOUND, "연결정보를 찾을 수 없습니다."),
+    SCHEMA_DISCOVERY_ERROR(HttpStatus.BAD_GATEWAY, "스키마/테이블 조회 중 오류가 발생했습니다."),
     PIPELINE_NOT_FOUND(HttpStatus.NOT_FOUND, "파이프라인을 찾을 수 없습니다."),
     KAFKA_CONNECT_ERROR(HttpStatus.BAD_GATEWAY, "Kafka Connect 요청 처리 중 오류가 발생했습니다."),
     NIFI_ERROR(HttpStatus.BAD_GATEWAY, "NiFi 요청 처리 중 오류가 발생했습니다."),

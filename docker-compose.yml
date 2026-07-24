@@ -50,6 +50,7 @@ services:
       resources:
         limits:
           cpus: "2.0"
+          memory: 2048m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -84,6 +85,7 @@ services:
       resources:
         limits:
           cpus: "0.5"
+          memory: 384m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -120,6 +122,7 @@ services:
       resources:
         limits:
           cpus: "1.0"
+          memory: 640m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -170,6 +173,7 @@ services:
       resources:
         limits:
           cpus: "1.5"
+          memory: 1280m
     networks: [pipeline-net]
 
   # 최초 기동 시 1회 실행되어 정형 CDC 소스/싱크 커넥터를 REST API로 등록
@@ -201,6 +205,10 @@ services:
       - ./kafka-connect/connectors:/connectors:ro
       - ./scripts:/scripts:ro
     entrypoint: ["/bin/sh", "/scripts/register-connector.sh"]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -279,6 +287,7 @@ services:
       resources:
         limits:
           cpus: "1.0"
+          memory: 1536m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -305,6 +314,10 @@ services:
       timeout: 5s
       retries: 20
       start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 384m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -373,6 +386,7 @@ services:
       resources:
         limits:
           cpus: "1.0"
+          memory: 896m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -414,6 +428,11 @@ services:
       # (client_credentials)로 토큰을 받아 NiFi에 Bearer로 제시한다.
       KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID}
       KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET}
+      # 컨테이너에 메모리 상한(deploy.limits.memory)이 없으면 JVM이 host 전체 메모리
+      # 기준으로 힙 상한(기본 25%)을 잡아서 다른 서비스와 상관없이 자율적으로 커질 수
+      # 있다 - 명시적으로 캡을 걸어 아래 memory 상한 안에서 여유(메타스페이스/스레드/
+      # 네이티브용)를 확보한다.
+      JAVA_TOOL_OPTIONS: "-Xmx384m"
     # host.docker.internal은 Docker Desktop(Mac/Win/WSL2)에서만 자동 제공되고,
     # 일반 Linux Docker Engine에서는 명시적으로 매핑해야 함(host-gateway는
     # Docker 20.10+ 공식 지원) - 없으면 Keycloak 백채널 호출이 실패.
@@ -431,6 +450,10 @@ services:
       timeout: 5s
       retries: 15
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 768m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -457,6 +480,10 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 96m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -479,6 +506,10 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 96m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -511,6 +542,10 @@ services:
       timeout: 5s
       retries: 10
       start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 192m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -549,6 +584,7 @@ services:
       resources:
         limits:
           cpus: "0.5"
+          memory: 384m
     networks: [pipeline-net]
 
   # 최초 기동 시 1회 실행되어 DB 마이그레이션 + admin 계정을 만들고 종료된다
@@ -612,6 +648,10 @@ services:
     # 일반 Linux Docker Engine에서는 명시적으로 매핑해야 함(host-gateway는 Docker 20.10+ 공식 지원).
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          memory: 384m
     networks: [pipeline-net]
 
   airflow-apiserver:
@@ -652,6 +692,7 @@ services:
       resources:
         limits:
           cpus: "1.0"
+          memory: 512m
     networks: [pipeline-net]
 
   airflow-scheduler:
@@ -684,6 +725,7 @@ services:
       resources:
         limits:
           cpus: "1.0"
+          memory: 1024m
     networks: [pipeline-net]
 
   # 3.x부터 DAG 파일 파싱이 스케줄러에서 분리된 별도 컨테이너로 나뉨.
@@ -716,4 +758,5 @@ services:
       resources:
         limits:
           cpus: "1.0"
+          memory: 448m
     networks: [pipeline-net]
