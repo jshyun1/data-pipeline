@@ -404,8 +404,8 @@ def check_all_pipelines_landing(**context):
 
 with DAG(
     dag_id="nifi_pipelines_metrics_collector",
-    description="모든 NiFi 파이프라인의 실제 적재 건수를 1분마다 확인해서 대시보드 롤업 테이블에 반영",
-    schedule="* * * * *",
+    description="모든 NiFi 파이프라인의 실제 적재 건수를 1시간마다 확인해서 대시보드 롤업 테이블에 반영",
+    schedule="@hourly",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["nifi", "metrics"],

@@ -60,7 +60,7 @@ interface DashboardHistoryData {
   runningEntries: HistoryEntry[];
   successEntries: HistoryEntry[];
   failedEntries: HistoryEntry[];
-  delayedEntries: HistoryEntry[];
+  totalLoadCount: number;
 }
 
 const EMPTY_DASHBOARD_HISTORY: DashboardHistoryData = {
@@ -75,7 +75,7 @@ const EMPTY_DASHBOARD_HISTORY: DashboardHistoryData = {
   runningEntries: [],
   successEntries: [],
   failedEntries: [],
-  delayedEntries: [],
+  totalLoadCount: 0,
 };
 
 async function fetchTaskLogText(dagId: string, runId: string, taskId: string, tryNumber?: number): Promise<string> {
@@ -100,11 +100,11 @@ async function fetchRunLogText(dagId: string, runId: string): Promise<string> {
   return parts.join("\n\n");
 }
 
-// 대시보드 상단 6개 타일(DAG/태스크/실행중/성공/실패/지연)과 그 클릭 시 뜨는 상세 내역
-// 모달, 그리고 적재 건수/수행시간 차트의 데이터를 한 번에 만든다. 적재 건수는
-// pipeline_daily_load_metric 롤업을 그대로 읽고, DAG/태스크/실행중/성공/실패/지연은
+// 대시보드 상단 6개 타일(DAG/태스크/실행중/성공/실패/총 적재건수)과 그 클릭 시 뜨는 상세
+// 내역 모달, 그리고 적재 건수/수행시간 차트의 데이터를 한 번에 만든다. 적재 건수는
+// pipeline_daily_load_metric 롤업을 그대로 읽고, DAG/태스크/실행중/성공/실패는
 // Airflow의 실제 DAG/실행 이력을 ETL(NiFi)/CDC(Kafka)/기타로 분류해서 집계한다.
-// 실행중/성공/실패/지연 4개 타일은 "DAG 실행(dag run)" 단위 집계다 - 하나의 DAG 실행이
+// 실행중/성공/실패 3개 타일은 "DAG 실행(dag run)" 단위 집계다 - 하나의 DAG 실행이
 // 여러 태스크로 구성돼 있어도 그 실행 전체의 최종 상태 하나로만 집계되고, 개별 태스크
 // 성공/실패는 집계하지 않는다(태스크 타일은 이와 별개로 "정의된 태스크 종류가 몇 개인지"
 // 세는 카탈로그).
@@ -209,7 +209,6 @@ async function buildDashboardHistory(range: [Dayjs, Dayjs]): Promise<DashboardHi
   const runningEntries: HistoryEntry[] = [];
   const successEntries: HistoryEntry[] = [];
   const failedEntries: HistoryEntry[] = [];
-  const delayedEntries: HistoryEntry[] = [];
 
   runGroups.forEach(({ info, runs }) => {
     runs.forEach((run) => {
@@ -228,13 +227,6 @@ async function buildDashboardHistory(range: [Dayjs, Dayjs]): Promise<DashboardHi
         runningEntries.push(entry);
       }
     });
-    if (info.isActive && runs.length === 0) {
-      delayedEntries.push({
-        id: `${info.dagId}:delayed`,
-        basicContent: info.displayName,
-        category: info.category,
-      });
-    }
   });
 
   const byDatetimeDesc = (a: HistoryEntry, b: HistoryEntry) =>
@@ -283,6 +275,7 @@ async function buildDashboardHistory(range: [Dayjs, Dayjs]): Promise<DashboardHi
     .sort((a, b) => a.date.localeCompare(b.date));
   const topDags = summary.topPipelines.map((point) => ({ dagId: point.label, count: point.count }));
   const topTasks = summary.topTasks.map((point) => ({ taskKey: point.label, count: point.count }));
+  const totalLoadCount = daily.reduce((sum, point) => sum + point.count, 0);
 
   return {
     dagCount: dagInfos.length,
@@ -296,11 +289,11 @@ async function buildDashboardHistory(range: [Dayjs, Dayjs]): Promise<DashboardHi
     runningEntries,
     successEntries,
     failedEntries,
-    delayedEntries,
+    totalLoadCount,
   };
 }
 
-type TileKind = "dag" | "task" | "running" | "success" | "failed" | "delayed";
+type TileKind = "dag" | "task" | "running" | "success" | "failed";
 
 const TILE_TITLE: Record<TileKind, string> = {
   dag: "DAG 목록",
@@ -308,7 +301,6 @@ const TILE_TITLE: Record<TileKind, string> = {
   running: "실행중 내역",
   success: "성공 내역",
   failed: "실패 내역",
-  delayed: "대기 내역",
 };
 
 export function DashboardPage() {
@@ -337,8 +329,6 @@ export function DashboardPage() {
         return history.successEntries;
       case "failed":
         return history.failedEntries;
-      case "delayed":
-        return history.delayedEntries;
       default:
         return [];
     }
@@ -384,8 +374,8 @@ export function DashboardPage() {
               <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("failed")}>
                 <Statistic title="실패" value={history.failedEntries.length} valueStyle={{ color: "#c62828" }} />
               </Card>
-              <Card className="metric-card" loading={showInitialLoading} onClick={() => setActiveTile("delayed")}>
-                <Statistic title="대기" value={history.delayedEntries.length} />
+              <Card className="metric-card metric-card--static" loading={showInitialLoading}>
+                <Statistic title="총 적재건수" value={history.totalLoadCount} valueStyle={{ color: "#d4380d" }} />
               </Card>
             </div>
             <div className="dashboard-chart-grid">
