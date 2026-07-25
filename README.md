@@ -58,30 +58,19 @@ Kafka + NiFi + Airflow 기반 CDC/ETL 파이프라인과, 그 위에서 파이�
 - JDBC 드라이버: Oracle은 **ojdbc11**(JDK 11+ 대응, JDK 21과 호환), 타깃 DB는
   PostgreSQL 공식 JDBC 드라이버를 사용합니다. 버전은 `.env`에서 조정 가능합니다.
 
-## 1) 로컬 POC 실행 (Oracle + 타깃 DB 컨테이너 포함)
+## 1) 최초 기동
 
 ```bash
 cp .env.example .env
 # 필요 시 .env의 비밀번호 값들을 수정하세요.
-# 단, ORACLE_CDC_USER / ORACLE_CDC_USER_PASSWORD를 바꾸면
-# db/oracle-init/02_create_cdc_user.sql도 함께 수정해야 합니다.
 
-docker compose --profile poc up -d --build
-docker compose logs -f kafka-connect   # 커넥터 등록/기동 로그 확인
+docker compose up -d --build
 ```
 
-확인:
-
-```bash
-# Debezium 커넥터 상태
-curl -s http://localhost:8083/connectors/oracle-cdc-source/status | jq
-
-# NiFi UI (초기 실행 시 이미지 빌드로 몇 분 소요될 수 있음, HTTPS 전용 - 자체 서명 인증서 경고는 무시)
-open https://localhost:${NIFI_PUBLIC_HTTPS_PORT}/nifi   # 접속 후 nifi/FLOW_RUNBOOK.md 순서로 플로우 구성
-```
-
-Oracle 테이블(`appuser.customers`)에 INSERT/UPDATE/DELETE를 발생시키면 Kafka
-토픽 → NiFi를 거쳐 타깃 DB(`cdc_landing.customers`)에 반영되는지 확인합니다.
+기동 후 Cerebro ETL 통합 웹(아래 표)의 "연결정보" 화면에서 CDC 소스/타겟 DB
+연결정보를 등록하고, "파이프라인" 화면에서 생성/배포하면 됩니다. 로컬에 데모용
+타깃 DB 컨테이너도 함께 띄우고 싶다면 `--profile poc`를 추가하세요
+(`docker compose --profile poc up -d --build`).
 
 ## 웹 서비스 / Airflow 접속
 
@@ -93,41 +82,34 @@ Oracle 테이블(`appuser.customers`)에 INSERT/UPDATE/DELETE를 발생시키면
 | Kafka 파이프라인 웹 | `http://localhost:${PIPELINE_UI_PORT}` | Kafka 파이프라인 생성/배포/삭제 전용 |
 | Airflow | `http://localhost:${AIRFLOW_WEBSERVER_PORT}` | 파이프라인 시작/중지/재시작/스케줄 |
 | NiFi | `https://localhost:${NIFI_PUBLIC_HTTPS_PORT}/nifi` | NiFi 캔버스 직접 접속 |
-| Kafka Connect REST | `http://localhost:${CONNECT_REST_PORT}` | 커넥터 상태 조회 |
 
-## 2) 회사 DB 연동 단계 (로컬 컨테이너 → 실제 사내 DB)
+Kafka Connect REST API(:8083)는 인증이 없어 호스트에 노출하지 않습니다 - 상태 조회는
+Cerebro ETL 통합 웹의 Kafka Connect 화면이나 `docker exec kafka-connect curl localhost:8083/connectors`로 확인하세요.
 
-로컬 Oracle/타깃DB 컨테이너 없이, Kafka/Kafka Connect/NiFi만 띄우고 실제 사내
-DB에 연결합니다.
+## 2) 사내 Oracle을 CDC 소스로 연결하기
 
-```bash
-# .env 수정: ORACLE_HOST/PORT, TARGET_DB_HOST/PORT 및 계정 정보를
-# 사내 실제 DB 값으로 변경
-docker compose up -d --build   # --profile poc 를 빼면 오라클/타깃DB 컨테이너는 생성되지 않음
-```
+Cerebro ETL 웹의 "연결정보" 화면에서 사내 Oracle 접속 정보를 등록하면 됩니다.
+등록 전에 DBA와 함께 아래 사항을 사내 Oracle에 반영해야 합니다:
+
+- ARCHIVELOG 모드 활성화 (LogMiner 필수 전제조건)
+- 대상 테이블에 Supplemental Logging (ALL) COLUMNS 설정
+- Debezium 전용 CDC 계정 생성 (CDB 공통 계정 표기법: `C##`로 시작하는 사용자,
+  LogMiner 관련 권한 부여) — appuser 같은 PDB 로컬 사용자는 LogMiner가 CDB
+  레벨에서 인증하기 때문에 비밀번호가 맞아도 인증되지 않습니다.
+- 컨테이너에서 사내 DB로의 네트워크 접근(방화벽/VPN) 확인
 
 주의:
-- 사내 Oracle에도 동일하게 ARCHIVELOG + Supplemental Logging + LogMiner 전용
-  계정/권한이 필요합니다 (`db/oracle-init/*.sql` 내용을 DBA와 함께 반영).
-- 컨테이너에서 사내 DB로의 네트워크 접근(방화벽/VPN) 및 자격 증명 관리(사내 Vault 등)를
-  별도로 검토하세요. `.env`는 git에 포함되지 않지만 평문 저장이므로, 운영 단계에서는
-  비밀 관리 도구 연동을 권장합니다.
+- `.env`는 git에 포함되지 않지만 평문 저장이므로, 운영 단계에서는 비밀 관리
+  도구 연동을 권장합니다(연결정보 자체의 비밀번호는 metadata-db에 암호화되어 저장됩니다).
 - NiFi 2.x는 HTTPS + Single-User 인증으로만 기동됩니다(`NIFI_HTTPS_PORT`/
   `NIFI_PUBLIC_HTTPS_PORT`, 자체 서명 인증서). 사내 배포 시 LDAP 등 다른 인증
   방식이 필요하면 별도 전환이 필요합니다.
 
-## 3) 최종 목표: 타란툴라DB → Oracle 역방향
-
-1단계(Oracle → 타란툴라DB)가 검증되면, `nifi/FLOW_RUNBOOK.md` 4절 안내에 따라
-대칭 구조(Kafka Connect에 Debezium PostgreSQL 커넥터 추가 + NiFi
-`PutDatabaseRecord`로 Oracle 적재)로 확장합니다.
-
 ## 디렉터리 구조
 
 ```
-db/oracle-init/       Oracle CDC 활성화 + 샘플 스키마 (컨테이너 최초 기동 시 1회 실행)
 db/target-init/       타깃 DB(PostgreSQL) 랜딩 스키마
-kafka-connect/         Debezium Oracle 커넥터 포함 Kafka Connect 이미지 + 커넥터 설정 템플릿
+kafka-connect/         Debezium 커넥터 포함 Kafka Connect 이미지
 nifi/                  JDBC 드라이버 포함 NiFi 이미지 + 플로우 구성 가이드 (FLOW_RUNBOOK.md)
 airflow/dags/          Kafka/NiFi 파이프라인 제어용 동적 DAG + 배선 검증용 DAG
 filebeat/              로그파일 실시간 적재 파이프라인의 소스 설정
@@ -136,15 +118,12 @@ web/frontend/          Kafka 파이프라인 전용 웹 UI (생성/배포/삭제
 web/cerebroetl-ui/     NiFi/Airflow/Kafka Connect 통합 웹 UI ("Cerebro ETL")
 docs/                  설계 문서 (kafka-webservice-design.md 등)
 offline/               폐쇄망 배포 패키징 스크립트
-scripts/               로컬 개발환경 셋업, 커넥터 등록 스크립트
+scripts/               로컬 개발환경 셋업 스크립트
 .gitlab-ci.yml         GitLab CI (compose 유효성 검증 + 이미지 빌드 + 백엔드 테스트)
 ```
 
 ## 알려진 제약사항
 
-- Oracle LogMiner 초기화(ARCHIVELOG 전환 등)는 Oracle 이미지/버전에 따라 동작이
-  달라질 수 있어, 최초 기동 시 `docker compose logs oracle-db`로 정상 완료 여부를
-  꼭 확인하세요.
 - NiFi 플로우는 재현성과 안정성을 위해 UI에서 수동으로 구성하도록 안내합니다
   (`nifi/FLOW_RUNBOOK.md`). 자동 임포트용 `flow.json`은 추후 팀 내 검증된 플로우를
   export한 뒤 저장소에 추가하는 것을 권장합니다.

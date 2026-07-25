@@ -9,7 +9,7 @@
   "defaultLocale": "ko",
   "loginWithEmailAllowed": true,
   "browserSecurityHeaders": {
-    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self' https://localhost:13001 https://${PORTAL_PUBLIC_HOST}:13001; object-src 'none';",
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self' http://localhost:5173 https://localhost:13001 https://${PORTAL_PUBLIC_HOST}:13001; object-src 'none';",
     "xFrameOptions": ""
   },
   "roles": {

@@ -4,9 +4,7 @@
 # 폐쇄망 서버에서는 이 스크립트를 실행하지 않는다 - 여기서 나온 tar를 반입해서
 # load-images.sh로 불러오기만 한다.
 #
-# 사용법: APP_VERSION=1.0.0 ./offline/save-images.sh [--with-poc]
-#   --with-poc: 로컬 Oracle POC 컨테이너 이미지(gvenzl/oracle-xe)까지 같이 저장
-#               (실제 회사 DB에 연결하는 운영 배포라면 필요 없음)
+# 사용법: APP_VERSION=1.0.0 ./offline/save-images.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -37,11 +35,10 @@ IMAGE_TAR="${IMAGE_DIR}/data-pipeline-images-${APP_VERSION}.tar"
 mkdir -p "${IMAGE_DIR}"
 
 echo "== 자체 빌드 이미지 빌드 (APP_VERSION=${APP_VERSION}) =="
-APP_VERSION="${APP_VERSION}" docker compose build kafka-connect connect-init nifi pipeline-api pipeline-ui cerebroetl-ui
+APP_VERSION="${APP_VERSION}" docker compose build kafka-connect nifi pipeline-api pipeline-ui cerebroetl-ui
 
 IMAGES=(
   "data-pipeline-kafka-connect:${APP_VERSION}"
-  "data-pipeline-connect-init:${APP_VERSION}"
   "data-pipeline-nifi:${APP_VERSION}"
   "data-pipeline-pipeline-api:${APP_VERSION}"
   "data-pipeline-pipeline-ui:${APP_VERSION}"
@@ -51,11 +48,6 @@ IMAGES=(
   "docker.elastic.co/beats/filebeat:8.15.3"
   "apache/airflow:3.2.2"
 )
-
-if [ "${1:-}" = "--with-poc" ]; then
-  IMAGES+=("gvenzl/oracle-xe:21-slim")
-  echo "== --with-poc: 로컬 POC DB 이미지(gvenzl/oracle-xe)도 함께 저장 =="
-fi
 
 echo "== 다음 이미지를 ${IMAGE_TAR} 로 저장 =="
 printf '  - %s\n' "${IMAGES[@]}"

@@ -151,6 +151,10 @@ def verify_target_db_landing(
     )
 
 
+def sanitize(name: str) -> str:
+    return "".join(c if c.isalnum() else "_" for c in name).strip("_").lower()
+
+
 def build_dag(
     pipeline_id: int,
     pipeline_name: str,
@@ -159,6 +163,10 @@ def build_dag(
 ) -> DAG:
     with DAG(
         dag_id=f"kafka_pipeline_{pipeline_id}_control",
+        # dag_id는 파이프라인 삭제 후 같은 id가 재사용될 일이 없어 안정적이지만, 사람이
+        # 읽을 이름은 NiFi DAG와 동일하게 dag_display_name(화면 표시 전용)으로 분리한다 -
+        # Airflow 화면에서 "kafka_pipeline_13_control" 대신 실제 파이프라인명이 보인다.
+        dag_display_name=f"CDC_{sanitize(pipeline_name)}",
         description=f'Kafka 파이프라인 "{pipeline_name}"(id={pipeline_id}) 시작/중지/재시작 제어',
         schedule=None,
         start_date=datetime(2026, 1, 1),

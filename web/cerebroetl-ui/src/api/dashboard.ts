@@ -17,9 +17,13 @@ export interface DailyLoadSummaryResponse {
   topTasks: KeyedLoadPointResponse[];
 }
 
-export async function getDailyLoadSummary(from: string, to: string): Promise<DailyLoadSummaryResponse> {
+export async function getDailyLoadSummary(
+  from: string,
+  to: string,
+  source?: "NIFI" | "KAFKA",
+): Promise<DailyLoadSummaryResponse> {
   const res = await apiClient.get<ApiResponse<DailyLoadSummaryResponse>>("/metrics/daily-load/summary", {
-    params: { from, to },
+    params: { from, to, source },
   });
   return unwrap(res.data);
 }
@@ -34,6 +38,9 @@ export interface ConnectorDriftEntry {
 export interface PipelineDashboardSummary {
   kafkaConnectHealthy: boolean;
   connectorDrift: ConnectorDriftEntry[];
+  todayCommandTotalCount: number;
+  todayCommandSuccessCount: number;
+  todayCommandFailedCount: number;
 }
 
 // metadata-db는 등록돼 있다고 알고 있는데 실제 Kafka Connect 레지스트리엔 없는 커넥터를

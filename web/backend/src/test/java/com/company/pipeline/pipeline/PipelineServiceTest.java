@@ -12,6 +12,7 @@ import com.company.pipeline.connection.ConnectionRepository;
 import com.company.pipeline.connection.DbType;
 import com.company.pipeline.connection.PipelineConnection;
 import com.company.pipeline.connector.KafkaConnectClient;
+import com.company.pipeline.connector.KafkaTopicCleanupService;
 import com.company.pipeline.connector.PipelineConnector;
 import com.company.pipeline.connector.PipelineConnectorRepository;
 import com.company.pipeline.connector.PostgresReplicationCleanupService;
@@ -44,6 +45,8 @@ class PipelineServiceTest {
     private FilebeatInputFileService filebeatInputFileService;
     @Mock
     private PostgresReplicationCleanupService postgresReplicationCleanupService;
+    @Mock
+    private KafkaTopicCleanupService kafkaTopicCleanupService;
 
     private PipelineService pipelineService;
 
@@ -51,7 +54,7 @@ class PipelineServiceTest {
     void setUp() {
         pipelineService = new PipelineService(pipelineDefinitionRepository, pipelineConnectorRepository,
                 connectionRepository, kafkaConnectClient, logPipelineSourceRepository, filebeatInputFileService,
-                postgresReplicationCleanupService);
+                postgresReplicationCleanupService, kafkaTopicCleanupService);
     }
 
     @Test
@@ -157,6 +160,21 @@ class PipelineServiceTest {
 
         verify(postgresReplicationCleanupService).cleanup(sourceConnector, source);
         verify(postgresReplicationCleanupService, never()).cleanup(eq(sinkConnector), any());
+    }
+
+    @Test
+    void delete_tableCdcPipeline_invokesKafkaTopicCleanupWithCurrentPipelineList() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        PipelineDefinition otherPipeline = newPipeline(2L);
+        when(pipelineDefinitionRepository.findById(1L)).thenReturn(Optional.of(pipeline));
+        when(pipelineDefinitionRepository.findAll()).thenReturn(List.of(pipeline, otherPipeline));
+        PipelineConnector connector = new PipelineConnector(1L, "SOURCE", "source-1-oracle-appuser-customers",
+                "io.debezium.connector.oracle.OracleConnector", "{}");
+        when(pipelineConnectorRepository.findByPipelineId(1L)).thenReturn(List.of(connector));
+
+        pipelineService.delete(1L);
+
+        verify(kafkaTopicCleanupService).cleanup(pipeline, List.of(connector), List.of(pipeline, otherPipeline));
     }
 
     @Test

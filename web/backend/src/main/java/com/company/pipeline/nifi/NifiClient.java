@@ -1,5 +1,7 @@
 package com.company.pipeline.nifi;
 
+import com.company.pipeline.nifi.dto.NifiCountersResponse;
+import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
 import com.company.pipeline.nifi.dto.NifiProcessGroupEntity;
 import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -69,6 +71,37 @@ public class NifiClient {
             return toResponse(entity);
         } catch (RestClientException ex) {
             throw new NifiClientException("NiFi Processor Group 생성 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    /** 적재 건수 집계용 - 프로세스 그룹 트리 전체(재귀)의 프로세서 상태 스냅샷. */
+    public NifiFlowStatusResponse getRootFlowStatus() {
+        String token = getToken();
+        try {
+            return restClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/nifi-api/flow/process-groups/root/status")
+                            .queryParam("recursive", true)
+                            .build())
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .body(NifiFlowStatusResponse.class);
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 프로세스 그룹 상태 조회 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    /** 적재 건수 집계용 - PutDatabaseRecord 등이 등록한 누적 카운터(재시작 전까지 유지). */
+    public NifiCountersResponse getCounters() {
+        String token = getToken();
+        try {
+            return restClient.get()
+                    .uri("/nifi-api/counters")
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .body(NifiCountersResponse.class);
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 카운터 조회 실패: " + ex.getMessage(), ex);
         }
     }
 

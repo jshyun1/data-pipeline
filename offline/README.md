@@ -53,9 +53,9 @@ cd data-pipeline-1.0.0
 # 이미지 로드 (기본 경로: ./images)
 ./offline/load-images.sh
 
-# 환경설정 - 실제 회사 Oracle/Target DB 주소로 채운다
+# 환경설정 - 실제 회사 Target DB 주소로 채운다 (CDC 연결정보는 기동 후 Cerebro ETL 웹 화면에서 등록)
 cp .env.example .env
-vi .env   # ORACLE_HOST/TARGET_DB_HOST 등을 회사 DB로, APP_VERSION을 반입한 버전으로
+vi .env   # TARGET_DB_HOST 등을 회사 DB로, APP_VERSION을 반입한 버전으로
 
 # 서비스 기동 (빌드 없이, load된 이미지만 사용)
 ./offline/install.sh
@@ -64,8 +64,8 @@ vi .env   # ORACLE_HOST/TARGET_DB_HOST 등을 회사 DB로, APP_VERSION을 반�
 ./offline/healthcheck.sh
 ```
 
-로컬 Oracle/Target DB 컨테이너까지 포함해서 반입했다면(`--with-poc`로 저장한 경우) `install.sh --with-poc`로
-그 컨테이너들까지 같이 띄울 수 있다.
+로컬 Target DB 컨테이너까지 포함해서 반입했다면(`--with-poc`로 저장한 경우) `install.sh --with-poc`로
+그 컨테이너까지 같이 띄울 수 있다.
 
 ## 3. 이후 운영
 
@@ -85,5 +85,3 @@ vi .env   # ORACLE_HOST/TARGET_DB_HOST 등을 회사 DB로, APP_VERSION을 반�
 - **`healthcheck.sh`가 특정 서비스에서 실패**: `docker compose logs <서비스명>`으로 원인 확인. 이 프로젝트에서
   실제로 겪었던 문제/원인은 `WORK_LOG.md`의 "알려진 환경 이슈" 절 참고 (예: Oracle 계정 역할 분리, Postgres
   wal_level, Filebeat config 소유권 등 - 폐쇄망에서도 동일한 원인으로 재발할 수 있음).
-- **`--profile poc` 없이 기동했는데 오라클 연결이 안 됨**: 회사 Oracle DB에 연결하는 운영 배포라면
-  `--with-poc` 없이 기동하는 게 맞다 - `.env`의 `ORACLE_HOST` 등이 실제 회사 DB를 가리키는지 확인.

@@ -7,6 +7,7 @@ import com.company.pipeline.connection.DbType;
 import com.company.pipeline.connection.PipelineConnection;
 import com.company.pipeline.connector.DebeziumOracleTemplate;
 import com.company.pipeline.connector.KafkaConnectClient;
+import com.company.pipeline.connector.KafkaTopicCleanupService;
 import com.company.pipeline.connector.PipelineConnector;
 import com.company.pipeline.connector.PipelineConnectorRepository;
 import com.company.pipeline.connector.PostgresReplicationCleanupService;
@@ -31,6 +32,7 @@ public class PipelineService {
     private final LogPipelineSourceRepository logPipelineSourceRepository;
     private final FilebeatInputFileService filebeatInputFileService;
     private final PostgresReplicationCleanupService postgresReplicationCleanupService;
+    private final KafkaTopicCleanupService kafkaTopicCleanupService;
 
     public PipelineService(PipelineDefinitionRepository pipelineDefinitionRepository,
             PipelineConnectorRepository pipelineConnectorRepository,
@@ -38,7 +40,8 @@ public class PipelineService {
             KafkaConnectClient kafkaConnectClient,
             LogPipelineSourceRepository logPipelineSourceRepository,
             FilebeatInputFileService filebeatInputFileService,
-            PostgresReplicationCleanupService postgresReplicationCleanupService) {
+            PostgresReplicationCleanupService postgresReplicationCleanupService,
+            KafkaTopicCleanupService kafkaTopicCleanupService) {
         this.pipelineDefinitionRepository = pipelineDefinitionRepository;
         this.pipelineConnectorRepository = pipelineConnectorRepository;
         this.connectionRepository = connectionRepository;
@@ -46,6 +49,7 @@ public class PipelineService {
         this.logPipelineSourceRepository = logPipelineSourceRepository;
         this.filebeatInputFileService = filebeatInputFileService;
         this.postgresReplicationCleanupService = postgresReplicationCleanupService;
+        this.kafkaTopicCleanupService = kafkaTopicCleanupService;
     }
 
     @Transactional
@@ -145,8 +149,10 @@ public class PipelineService {
     /**
      * 배포된 커넥터가 있으면 Kafka Connect에서도 먼저 삭제한 뒤 메타데이터를 지운다.
      * 소스가 Postgres인 CDC 파이프라인이면 Debezium이 만든 replication slot/publication도
-     * 같이 정리한다(PostgresReplicationCleanupService 참고 - Kafka Connect 리소스가
-     * 아니라서 커넥터 삭제만으로는 안 지워짐).
+     * 같이 정리하고(PostgresReplicationCleanupService), 실제 쓰던 Kafka 토픽(+ Oracle 소스면
+     * 스키마 이력 토픽)도 같이 정리한다(KafkaTopicCleanupService) - 둘 다 Kafka Connect
+     * 리소스가 아니라서 커넥터 삭제만으로는 안 지워짐. 정리 안 하면 아무도 안 쓰는 토픽/slot이
+     * 계속 쌓이는 문제가 있어서(실제로 겪음) 삭제 시점에 확실하게 정리한다.
      */
     @Transactional
     public void delete(Long id) {
@@ -166,6 +172,7 @@ public class PipelineService {
                             .filter(c -> "SOURCE".equals(c.getConnectorRole()))
                             .forEach(c -> postgresReplicationCleanupService.cleanup(c, source)));
         }
+        kafkaTopicCleanupService.cleanup(entity, connectors, pipelineDefinitionRepository.findAll());
         pipelineConnectorRepository.deleteAll(connectors);
         if ("LOG_FILE".equals(entity.getPipelineType())) {
             filebeatInputFileService.delete(id);

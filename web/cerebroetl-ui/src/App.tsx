@@ -6,7 +6,6 @@ import { ConsoleFramePage } from "./pages/ConsoleFramePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EtlCreatePage } from "./pages/EtlCreatePage";
 import { EtlLogsPage } from "./pages/EtlLogsPage";
-import { KafkaConnectPage } from "./pages/EtlPage";
 import { CallbackPage } from "./pages/CallbackPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PipelinesPage } from "./pages/PipelinesPage";
@@ -47,7 +46,6 @@ export function App() {
         />
         <Route path="/etl/logs" element={<EtlLogsPage />} />
         <Route path="/cdc" element={<Navigate to="/cdc/pipelines" replace />} />
-        <Route path="/cdc/kafka-connect" element={<KafkaConnectPage />} />
         <Route path="/cdc/pipelines" element={<PipelinesPage />} />
         <Route path="/cdc/connections" element={<ConnectionsPage />} />
         <Route path="/connections" element={<Navigate to="/cdc/connections" replace />} />

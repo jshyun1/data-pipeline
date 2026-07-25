@@ -40,24 +40,31 @@ public interface PipelineDailyLoadMetricRepository extends JpaRepository<Pipelin
 
     @Query(
             value = "SELECT load_date AS date, SUM(loaded_count) AS count FROM pipeline_daily_load_metric "
-                    + "WHERE load_date BETWEEN :from AND :to GROUP BY load_date ORDER BY load_date",
+                    + "WHERE load_date BETWEEN :from AND :to "
+                    + "AND (CAST(:source AS VARCHAR) IS NULL OR pipeline_source = :source) "
+                    + "GROUP BY load_date ORDER BY load_date",
             nativeQuery = true)
-    List<DailyCountProjection> findDailyTotals(@Param("from") LocalDate from, @Param("to") LocalDate to);
+    List<DailyCountProjection> findDailyTotals(
+            @Param("from") LocalDate from, @Param("to") LocalDate to, @Param("source") String source);
 
     @Query(
             value = "SELECT pipeline_key AS key, MAX(pipeline_label) AS label, SUM(loaded_count) AS count "
                     + "FROM pipeline_daily_load_metric WHERE load_date BETWEEN :from AND :to "
+                    + "AND (CAST(:source AS VARCHAR) IS NULL OR pipeline_source = :source) "
                     + "GROUP BY pipeline_key ORDER BY SUM(loaded_count) DESC LIMIT :limit",
             nativeQuery = true)
     List<KeyedCountProjection> findTopPipelines(
-            @Param("from") LocalDate from, @Param("to") LocalDate to, @Param("limit") int limit);
+            @Param("from") LocalDate from, @Param("to") LocalDate to,
+            @Param("source") String source, @Param("limit") int limit);
 
     @Query(
             value = "SELECT pipeline_key || '.' || task_key AS key, "
                     + "MAX(pipeline_label) || '.' || task_key AS label, SUM(loaded_count) AS count "
                     + "FROM pipeline_daily_load_metric WHERE load_date BETWEEN :from AND :to "
+                    + "AND (CAST(:source AS VARCHAR) IS NULL OR pipeline_source = :source) "
                     + "GROUP BY pipeline_key, task_key ORDER BY SUM(loaded_count) DESC LIMIT :limit",
             nativeQuery = true)
     List<KeyedCountProjection> findTopTasks(
-            @Param("from") LocalDate from, @Param("to") LocalDate to, @Param("limit") int limit);
+            @Param("from") LocalDate from, @Param("to") LocalDate to,
+            @Param("source") String source, @Param("limit") int limit);
 }

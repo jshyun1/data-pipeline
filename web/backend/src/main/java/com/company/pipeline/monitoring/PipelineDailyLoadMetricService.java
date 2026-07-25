@@ -34,11 +34,11 @@ public class PipelineDailyLoadMetricService {
         repository.upsertIncrement(pipelineSource, pipelineKey, taskKey, label, LocalDate.now(), count);
     }
 
-    public DailyLoadSummaryResponse getSummary(LocalDate from, LocalDate to) {
-        var daily = repository.findDailyTotals(from, to).stream().map(DailyPoint::from).toList();
-        var topPipelines = repository.findTopPipelines(from, to, TOP_PIPELINES_LIMIT).stream()
+    public DailyLoadSummaryResponse getSummary(LocalDate from, LocalDate to, String source) {
+        var daily = repository.findDailyTotals(from, to, source).stream().map(DailyPoint::from).toList();
+        var topPipelines = repository.findTopPipelines(from, to, source, TOP_PIPELINES_LIMIT).stream()
                 .map(KeyedPoint::from).toList();
-        var topTasks = repository.findTopTasks(from, to, TOP_TASKS_LIMIT).stream()
+        var topTasks = repository.findTopTasks(from, to, source, TOP_TASKS_LIMIT).stream()
                 .map(KeyedPoint::from).toList();
         return new DailyLoadSummaryResponse(daily, topPipelines, topTasks);
     }

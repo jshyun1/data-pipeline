@@ -39,7 +39,8 @@ public class PipelineDailyLoadMetricController {
     @GetMapping("/summary")
     public ApiResponse<DailyLoadSummaryResponse> summary(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        return ApiResponse.success(service.getSummary(from, to));
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String source) {
+        return ApiResponse.success(service.getSummary(from, to, source));
     }
 }

@@ -26,6 +26,6 @@ done
 
 echo
 echo "== 로드된 이미지 확인 =="
-docker images | grep -E 'data-pipeline|apache/kafka|postgres|elastic/beats|oracle-xe' || true
+docker images | grep -E 'data-pipeline|apache/kafka|postgres|elastic/beats|apache/airflow' || true
 echo
 echo "offline/image-manifest.json과 위 목록을 대조해서 빠진 이미지가 없는지 확인하세요."

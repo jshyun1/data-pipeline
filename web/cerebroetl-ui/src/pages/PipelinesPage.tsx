@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
@@ -44,6 +44,16 @@ const STATUS_COLOR: Record<string, string> = {
   FAILED: "error",
 };
 
+const STATUS_OPTIONS = ["CREATED", "DEPLOYING", "DEPLOYED", "PAUSED", "STOPPED", "FAILED"].map((value) => ({
+  value,
+  label: value,
+}));
+
+const TYPE_OPTIONS = [
+  { value: "TABLE_CDC", label: "TABLE_CDC" },
+  { value: "LOG_FILE", label: "LOG_FILE" },
+];
+
 export function PipelinesPage() {
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
@@ -51,6 +61,10 @@ export function PipelinesPage() {
   const [form] = Form.useForm<PipelineCreateRequest>();
   const [logForm] = Form.useForm<LogPipelineCreateRequest>();
   const [detailPipelineId, setDetailPipelineId] = useState<number | null>(null);
+  const [nameFilter, setNameFilter] = useState("");
+  const [topicFilter, setTopicFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
 
   const { data: pipelines, isLoading } = useQuery({
     queryKey: ["pipelines"],
@@ -119,6 +133,26 @@ export function PipelinesPage() {
     enabled: detailPipelineId !== null,
   });
   const detailPipeline = pipelines?.find((p) => p.id === detailPipelineId) ?? null;
+
+  const filteredPipelines = useMemo(() => {
+    const name = nameFilter.trim().toLowerCase();
+    const topic = topicFilter.trim().toLowerCase();
+    return (pipelines ?? []).filter((p) => {
+      if (name && !p.name.toLowerCase().includes(name)) {
+        return false;
+      }
+      if (topic && !(p.topicName ?? "").toLowerCase().includes(topic)) {
+        return false;
+      }
+      if (statusFilter.length > 0 && !statusFilter.includes(p.status)) {
+        return false;
+      }
+      if (typeFilter.length > 0 && !typeFilter.includes(p.pipelineType)) {
+        return false;
+      }
+      return true;
+    });
+  }, [pipelines, nameFilter, topicFilter, statusFilter, typeFilter]);
 
   const invalidatePipelines = () => queryClient.invalidateQueries({ queryKey: ["pipelines"] });
 
@@ -209,7 +243,41 @@ export function PipelinesPage() {
           }
         />
       ))}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
+        <Space wrap>
+          <Input
+            placeholder="이름 검색"
+            allowClear
+            style={{ width: 200 }}
+            value={nameFilter}
+            onChange={(e) => setNameFilter(e.target.value)}
+          />
+          <Input
+            placeholder="Topic 검색"
+            allowClear
+            style={{ width: 200 }}
+            value={topicFilter}
+            onChange={(e) => setTopicFilter(e.target.value)}
+          />
+          <Select
+            mode="multiple"
+            allowClear
+            placeholder="상태"
+            style={{ minWidth: 160 }}
+            options={STATUS_OPTIONS}
+            value={statusFilter}
+            onChange={setStatusFilter}
+          />
+          <Select
+            mode="multiple"
+            allowClear
+            placeholder="유형"
+            style={{ minWidth: 140 }}
+            options={TYPE_OPTIONS}
+            value={typeFilter}
+            onChange={setTypeFilter}
+          />
+        </Space>
         <Button
           type="primary"
           icon={<PlusOutlined />}
@@ -224,8 +292,8 @@ export function PipelinesPage() {
       <Table<PipelineResponse>
         rowKey="id"
         loading={isLoading}
-        dataSource={pipelines}
-        pagination={false}
+        dataSource={filteredPipelines}
+        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
         columns={[
           { title: "이름", dataIndex: "name" },
           {

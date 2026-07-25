@@ -56,6 +56,11 @@ public class ConnectionController {
         return ApiResponse.success(null);
     }
 
+    @PostMapping("/{id}/test")
+    public ApiResponse<ConnectionResponse> testConnection(@PathVariable Long id) {
+        return ApiResponse.success(connectionService.testConnection(id));
+    }
+
     @GetMapping("/{id}/schemas")
     public ApiResponse<List<String>> listSchemas(@PathVariable Long id) {
         return ApiResponse.success(schemaDiscoveryService.listSchemas(id));

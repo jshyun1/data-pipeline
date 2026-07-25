@@ -1,16 +1,22 @@
 package com.company.pipeline.connection;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import com.company.pipeline.common.BusinessException;
 import com.company.pipeline.common.crypto.PasswordCryptoService;
 import com.company.pipeline.connection.dto.ConnectionCreateRequest;
 import com.company.pipeline.connection.dto.ConnectionResponse;
 import com.company.pipeline.connection.dto.ConnectionUpdateRequest;
+import com.company.pipeline.pipeline.PipelineDefinition;
+import com.company.pipeline.pipeline.PipelineDefinitionRepository;
+import com.company.pipeline.pipeline.PipelineStatus;
 import java.lang.reflect.Field;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,11 +32,18 @@ class ConnectionServiceTest {
     @Mock
     private PasswordCryptoService passwordCryptoService;
 
+    @Mock
+    private SchemaDiscoveryService schemaDiscoveryService;
+
+    @Mock
+    private PipelineDefinitionRepository pipelineDefinitionRepository;
+
     private ConnectionService connectionService;
 
     @BeforeEach
     void setUp() {
-        connectionService = new ConnectionService(connectionRepository, passwordCryptoService);
+        connectionService = new ConnectionService(
+                connectionRepository, passwordCryptoService, schemaDiscoveryService, pipelineDefinitionRepository);
     }
 
     @Test
@@ -78,6 +91,39 @@ class ConnectionServiceTest {
         connectionService.update(1L, request);
 
         assertThat(existing.getEncryptedPassword()).isEqualTo("cipher-new");
+    }
+
+    @Test
+    void delete_withActivePipelineReference_throwsBusinessException() throws Exception {
+        PipelineConnection existing = newConnection(1L, "cipher-original");
+        when(connectionRepository.findById(1L)).thenReturn(java.util.Optional.of(existing));
+        PipelineDefinition activePipeline = new PipelineDefinition(
+                "customers-cdc", "TABLE_CDC", 1L, 2L, DbType.ORACLE, DbType.POSTGRESQL,
+                "schema", "table", "schema", "table", "topic", true, null, null);
+        activePipeline.setStatus(PipelineStatus.DEPLOYED);
+        when(pipelineDefinitionRepository.findBySourceConnectionIdOrTargetConnectionId(1L, 1L))
+                .thenReturn(List.of(activePipeline));
+
+        assertThatThrownBy(() -> connectionService.delete(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("customers-cdc");
+        verify(connectionRepository, org.mockito.Mockito.never()).delete(any());
+    }
+
+    @Test
+    void delete_withOnlyStoppedPipelineReference_deletesSuccessfully() throws Exception {
+        PipelineConnection existing = newConnection(1L, "cipher-original");
+        when(connectionRepository.findById(1L)).thenReturn(java.util.Optional.of(existing));
+        PipelineDefinition stoppedPipeline = new PipelineDefinition(
+                "old-pipeline", "TABLE_CDC", 1L, 2L, DbType.ORACLE, DbType.POSTGRESQL,
+                "schema", "table", "schema", "table", "topic", true, null, null);
+        stoppedPipeline.setStatus(PipelineStatus.STOPPED);
+        when(pipelineDefinitionRepository.findBySourceConnectionIdOrTargetConnectionId(1L, 1L))
+                .thenReturn(List.of(stoppedPipeline));
+
+        connectionService.delete(1L);
+
+        verify(connectionRepository).delete(existing);
     }
 
     @Test

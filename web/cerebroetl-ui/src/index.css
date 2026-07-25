@@ -269,14 +269,26 @@ body {
   gap: 16px;
 }
 
+.dashboard-tile-grid--4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
 @media (max-width: 1200px) {
   .dashboard-tile-grid {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .dashboard-tile-grid--4 {
+    grid-template-columns: repeat(4, 1fr);
   }
 }
 
 @media (max-width: 768px) {
   .dashboard-tile-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .dashboard-tile-grid--4 {
     grid-template-columns: repeat(2, 1fr);
   }
 

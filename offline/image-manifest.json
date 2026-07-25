@@ -1,9 +1,8 @@
 {
   "releaseVersion": "0.1.0",
-  "note": "releaseVersion은 APP_VERSION과 같은 값이어야 한다 (docker-compose.yml의 kafka-connect/connect-init/nifi/pipeline-api/pipeline-ui/cerebroetl-ui 이미지 태그가 APP_VERSION을 따름). save-images.sh를 실행하기 전에 이 파일과 .env의 APP_VERSION을 함께 갱신할 것.",
+  "note": "releaseVersion은 APP_VERSION과 같은 값이어야 한다 (docker-compose.yml의 kafka-connect/nifi/pipeline-api/pipeline-ui/cerebroetl-ui 이미지 태그가 APP_VERSION을 따름). save-images.sh를 실행하기 전에 이 파일과 .env의 APP_VERSION을 함께 갱신할 것.",
   "coreImages": [
     "data-pipeline-kafka-connect:0.1.0",
-    "data-pipeline-connect-init:0.1.0",
     "data-pipeline-nifi:0.1.0",
     "data-pipeline-pipeline-api:0.1.0",
     "data-pipeline-pipeline-ui:0.1.0",
@@ -13,8 +12,6 @@
     "docker.elastic.co/beats/filebeat:8.15.3",
     "apache/airflow:3.2.2"
   ],
-  "pocOnlyImages": [
-    "gvenzl/oracle-xe:21-slim"
-  ],
-  "pocOnlyNote": "pocOnlyImages는 --profile poc로 로컬 Oracle/Target DB 컨테이너까지 폐쇄망에 반입해서 자체완결형으로 데모할 때만 필요하다. 실제 회사 Oracle/Target DB에 연결하는 운영 배포라면 이 이미지들은 반입할 필요 없다 (target-db용 postgres:16-alpine은 metadata-db와 공유하므로 coreImages에 이미 포함됨)."
+  "pocOnlyImages": [],
+  "pocOnlyNote": "CDC 소스(예: Oracle) 연결정보는 이제 Cerebro ETL 웹 화면에서 등록하고 로컬 데모용 소스 DB 컨테이너를 따로 두지 않는다. --profile poc는 target-db(로컬 타깃 DB 스탠드인)만 추가로 띄우며, 그 이미지(postgres:16-alpine)는 metadata-db와 공유하므로 coreImages에 이미 포함되어 있어 별도 반입이 필요 없다."
 }

@@ -2,6 +2,7 @@ package com.company.pipeline.connection;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -9,6 +10,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.company.pipeline.common.BusinessException;
+import com.company.pipeline.common.ErrorCode;
 import com.company.pipeline.connection.dto.ConnectionResponse;
 import com.company.pipeline.user.security.SecurityConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -88,5 +91,15 @@ class ConnectionControllerTest {
         mockMvc.perform(delete("/api/connections/{id}", 1L))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    void delete_connectionInUse_returns409() throws Exception {
+        doThrow(new BusinessException(ErrorCode.CONNECTION_IN_USE, "이 연결정보를 사용 중인 파이프라인이 있어 삭제할 수 없습니다: customers-cdc"))
+                .when(connectionService).delete(1L);
+
+        mockMvc.perform(delete("/api/connections/{id}", 1L))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("CONNECTION_IN_USE"));
     }
 }

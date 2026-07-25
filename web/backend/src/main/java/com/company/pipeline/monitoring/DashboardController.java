@@ -12,6 +12,7 @@ import com.company.pipeline.pipeline.PipelineDefinition;
 import com.company.pipeline.pipeline.PipelineDefinitionRepository;
 import com.company.pipeline.pipeline.PipelineStatus;
 import com.company.pipeline.pipeline.dto.PipelineCommandHistoryResponse;
+import java.time.LocalDate;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -90,9 +91,17 @@ public class DashboardController {
 
         boolean kafkaBrokerHealthy = kafkaBrokerHealthChecker.isHealthy();
 
+        var todayStart = LocalDate.now().atStartOfDay();
+        long todayCommandTotalCount = pipelineCommandHistoryRepository.countByRequestedAtGreaterThanEqual(todayStart);
+        long todayCommandSuccessCount =
+                pipelineCommandHistoryRepository.countByResultAndRequestedAtGreaterThanEqual("SUCCESS", todayStart);
+        long todayCommandFailedCount =
+                pipelineCommandHistoryRepository.countByResultAndRequestedAtGreaterThanEqual("FAILED", todayStart);
+
         return ApiResponse.success(new DashboardSummaryResponse(
                 pipelines.size(), running, failed, paused, kafkaConnectHealthy, kafkaBrokerHealthy,
-                connectorDrift, recentErrors, recentDeployments));
+                connectorDrift, recentErrors, recentDeployments,
+                todayCommandTotalCount, todayCommandSuccessCount, todayCommandFailedCount));
     }
 
     /**

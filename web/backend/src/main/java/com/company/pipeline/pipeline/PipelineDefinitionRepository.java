@@ -6,4 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface PipelineDefinitionRepository extends JpaRepository<PipelineDefinition, Long> {
 
     List<PipelineDefinition> findByStatus(PipelineStatus status);
+
+    List<PipelineDefinition> findBySourceConnectionIdOrTargetConnectionId(
+            Long sourceConnectionId, Long targetConnectionId);
 }

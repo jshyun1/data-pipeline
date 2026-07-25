@@ -81,6 +81,16 @@ public class SchemaDiscoveryService {
         }
     }
 
+    /** 실제로 접속 가능한지 확인만 한다(성공/실패). ConnectionService가 이 결과로 status를 갱신한다. */
+    public boolean testConnection(Long connectionId) {
+        PipelineConnection connection = findOrThrow(connectionId);
+        try (Connection jdbc = open(connection)) {
+            return jdbc.isValid(5);
+        } catch (SQLException e) {
+            return false;
+        }
+    }
+
     private boolean isSystemSchema(DbType dbType, String schema) {
         if (schema == null) {
             return true;
