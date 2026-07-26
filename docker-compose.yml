@@ -428,6 +428,10 @@ services:
     image: data-pipeline-cerebroetl-ui:${APP_VERSION:-latest}
     build:
       context: ./web/cerebroetl-ui
+      args:
+        # Keycloak Authority URL은 Vite 빌드 시점에 번들에 굳어진다(런타임 env로는
+        # 못 바꿈) - PORTAL_PUBLIC_HOST가 바뀌면 이 이미지도 반드시 재빌드해야 한다.
+        VITE_OIDC_AUTHORITY: https://${PORTAL_PUBLIC_HOST}:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
     container_name: cerebroetl-ui
     restart: unless-stopped
     ports:

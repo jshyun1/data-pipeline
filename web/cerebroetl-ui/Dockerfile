@@ -8,6 +8,13 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
+# Vite는 import.meta.env.VITE_*를 빌드 시점에 정적 파일로 굳혀버린다 - 런타임
+# docker-compose environment로는 절대 못 바꾼다. 이 ARG를 안 넘기면 auth/oidc.ts의
+# 기본값(https://localhost:8543/...)이 그대로 박혀서, localhost가 아닌 실제 서버
+# 주소로 접속하는 사용자는 로그인 리다이렉트가 항상 localhost로 튀는 문제가 생긴다
+# (다른 호스트에 배포해보고서야 드러난 버그 - PORTAL_PUBLIC_HOST로 계산해서 넘길 것).
+ARG VITE_OIDC_AUTHORITY
+ENV VITE_OIDC_AUTHORITY=${VITE_OIDC_AUTHORITY}
 RUN npm run build
 
 # ---------------------------------------------------------------------
