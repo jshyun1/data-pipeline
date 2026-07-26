@@ -3,6 +3,7 @@ package com.company.pipeline.monitoring;
 import com.company.pipeline.nifi.NifiClient;
 import com.company.pipeline.nifi.dto.NifiCountersResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -21,6 +22,12 @@ import org.springframework.stereotype.Component;
  * 프로세서는 "INSERT updates performed"라는 누적 카운터를 등록하는데(NiFi 재시작 전까지
  * 유지), 프로세서별 마지막 값을 nifi_counter_snapshot에 남겨두고 직전 값과의 증가분만
  * 반영한다 - Kafka의 committed offset 스냅샷과 동일한 델타 방식.
+ *
+ * ETL 로그 화면(nifi_execution_log)도 같은 델타 감지를 "그 주기(60초)에 한 번 실행됨"으로
+ * 간주해 행을 하나씩 남긴다. NiFi에 Provenance(이 환경에서 인덱스/이벤트파일 불일치로
+ * 조회 불가 확인됨)나 프로세서 단위 Status History(항상 비어있음, 확인됨) 같은 "실행
+ * 이력" 개념이 없어서 택한 차선책 - 정확히 "실행 1번 = 행 1개"는 아니고 "60초 구간 안에
+ * 증가가 있었다 = 행 1개"이지만, 지금 파이프라인들의 실행 빈도상 대부분 근접하게 맞는다.
  */
 @Component
 public class NifiPipelineMetricScheduler {
@@ -38,17 +45,20 @@ public class NifiPipelineMetricScheduler {
     private final NifiClient nifiClient;
     private final NifiCounterSnapshotRepository snapshotRepository;
     private final PipelineDailyLoadMetricService dailyLoadMetricService;
+    private final NifiExecutionLogEntryRepository executionLogRepository;
 
     public NifiPipelineMetricScheduler(
             NifiClient nifiClient,
             NifiCounterSnapshotRepository snapshotRepository,
-            PipelineDailyLoadMetricService dailyLoadMetricService) {
+            PipelineDailyLoadMetricService dailyLoadMetricService,
+            NifiExecutionLogEntryRepository executionLogRepository) {
         this.nifiClient = nifiClient;
         this.snapshotRepository = snapshotRepository;
         this.dailyLoadMetricService = dailyLoadMetricService;
+        this.executionLogRepository = executionLogRepository;
     }
 
-    private record ProcessorRef(String id, String name) {
+    private record ProcessorRef(String id, String name, String groupId, String groupName) {
     }
 
     @Scheduled(fixedRate = 60_000, initialDelay = 60_000)
@@ -92,6 +102,8 @@ public class NifiPipelineMetricScheduler {
             long delta = currentValue >= previousValue ? currentValue - previousValue : currentValue;
             if (delta > 0) {
                 dailyLoadMetricService.incrementLoadedCount(SOURCE, ref.id(), TASK_KEY, ref.name(), delta);
+                executionLogRepository.save(new NifiExecutionLogEntry(ref.id(), ref.name(), ref.groupId(),
+                        ref.groupName(), LocalDateTime.now(), delta, NifiExecutionLogEntry.STATUS_SUCCESS));
             }
         }
         // 처음 보는 프로세서는 이번 값을 기준점으로만 잡고(그 이전 이력은 알 방법이 없음)
@@ -124,19 +136,22 @@ public class NifiPipelineMetricScheduler {
         if (aggregateSnapshot == null) {
             return result;
         }
-        collect(aggregateSnapshot.processorStatusSnapshots(), aggregateSnapshot.processGroupStatusSnapshots(), result);
+        collect(aggregateSnapshot.processorStatusSnapshots(), aggregateSnapshot.processGroupStatusSnapshots(),
+                "root", "root", result);
         return result;
     }
 
     private void collect(
             List<NifiFlowStatusResponse.ProcessorStatusEntry> processors,
             List<NifiFlowStatusResponse.ProcessGroupStatusEntry> groups,
+            String currentGroupId,
+            String currentGroupName,
             List<ProcessorRef> out) {
         if (processors != null) {
             for (var entry : processors) {
                 var processor = entry.processorStatusSnapshot();
                 if (processor != null && PUT_DATABASE_RECORD_TYPE.equals(processor.type())) {
-                    out.add(new ProcessorRef(processor.id(), processor.name()));
+                    out.add(new ProcessorRef(processor.id(), processor.name(), currentGroupId, currentGroupName));
                 }
             }
         }
@@ -144,7 +159,8 @@ public class NifiPipelineMetricScheduler {
             for (var entry : groups) {
                 var group = entry.processGroupStatusSnapshot();
                 if (group != null) {
-                    collect(group.processorStatusSnapshots(), group.processGroupStatusSnapshots(), out);
+                    collect(group.processorStatusSnapshots(), group.processGroupStatusSnapshots(),
+                            group.id(), group.name(), out);
                 }
             }
         }

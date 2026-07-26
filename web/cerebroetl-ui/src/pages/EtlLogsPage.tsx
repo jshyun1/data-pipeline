@@ -1,55 +1,20 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Card, DatePicker, Input, Select, Space, Table, Tag } from "antd";
+import { Button, Card, DatePicker, Input, Space, Table, Tag } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
-import {
-  getNifiRootStatus,
-  listAirflowDagRuns,
-  listAirflowDags,
-  listAirflowTaskInstances,
-} from "../api/platform";
-import { collectNifiJobs } from "../utils/nifiJobs";
+import { listNifiExecutionLogs, type NifiExecutionLogEntry } from "../api/platform";
 
 const { RangePicker } = DatePicker;
 
-type EtlLogState = "all" | "success" | "failed" | "running" | "queued";
-
-const STATE_LABEL: Record<string, string> = {
-  success: "성공",
-  failed: "실패",
-  running: "실행중",
-  queued: "대기",
+const STATUS_LABEL: Record<string, string> = {
+  SUCCESS: "성공",
+  FAILED: "실패",
 };
 
-const STATE_COLOR: Record<string, string> = {
-  success: "success",
-  failed: "error",
-  running: "processing",
-  queued: "default",
+const STATUS_COLOR: Record<string, string> = {
+  SUCCESS: "success",
+  FAILED: "error",
 };
-
-const ACTION_LABEL: Record<string, string> = {
-  start: "시작",
-  stop: "중지",
-};
-
-interface EtlLogRow {
-  id: string;
-  dagId: string;
-  pipelineName: string;
-  action: string;
-  state: string;
-  startedAt?: string;
-  endedAt?: string;
-  failedTask: string;
-}
-
-// nifi_pipelines_dynamic.py가 프로세스 그룹별로 만드는 제어 DAG는 항상
-// "nifi_pipeline_{그룹 id 앞 8자리}_control" 형태다 - 여기서 이름을 되짚어
-// NiFi 프로세스 그룹의 실제 이름과 매칭한다.
-function extractNifiShortId(dagId: string): string {
-  return dagId.replace(/^nifi_pipeline_/, "").replace(/_control$/, "");
-}
 
 function formatDateTime(value?: string) {
   if (!value) {
@@ -61,88 +26,34 @@ function formatDateTime(value?: string) {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hour12: false,
   }).format(new Date(value));
 }
 
-function formatDuration(start?: string, end?: string) {
-  if (!start) {
-    return "-";
-  }
-  const startTime = new Date(start).getTime();
-  const endTime = end ? new Date(end).getTime() : Date.now();
-  const minutes = Math.max(1, Math.round((endTime - startTime) / 60000));
-  return `${minutes}분`;
-}
-
-// ETL 메뉴는 NiFi 전용이다(생성/관리 모두 NiFi 프로세스 그룹을 다룬다) - 로그도
-// nifi_pipeline_*_control DAG의 실행 이력만 대상으로 한다. Kafka 쪽
-// kafka_pipeline_*_control DAG나 1분마다 도는 nifi_pipelines_metrics_collector(집계용,
-// 실행마다 노이즈만 큼)는 의도적으로 제외한다.
-async function getEtlLogs(range: [Dayjs, Dayjs], state: EtlLogState): Promise<EtlLogRow[]> {
-  const [dags, nifiStatus] = await Promise.all([listAirflowDags(), getNifiRootStatus().catch(() => undefined)]);
-  const nifiControlDags = dags.filter(
-    (dag) => dag.dag_id.startsWith("nifi_pipeline_") && dag.dag_id.endsWith("_control"),
+// NiFi에는 Airflow의 dag_run 같은 "실행 이력" 개념이 없다 - Provenance 조회는 이 환경에서
+// 인덱스/이벤트파일 불일치로 구조적으로 안 되는 것으로 확인됐고(재시작/저장소 재구축 후에도
+// 재현), 프로세서 단위 Status History도 항상 비어 있어 조회가 안 된다(그룹 단위는 되지만
+// 그룹 안 여러 테이블이 섞여서 프로세서별 구분이 안 됨). 그래서 적재 프로세서(PutDatabaseRecord)의
+// 누적 카운터가 60초 주기로 증가했는지를 백엔드가 감지해서 남긴 행을 그대로 보여준다 -
+// "실행 1회 = 행 1개"가 정확히는 아니고 "60초 구간 안에 증가가 있었다 = 행 1개"에 가깝지만,
+// 지금 파이프라인들의 실행 빈도상 대부분 실제 실행 횟수와 근접하게 나온다.
+async function getEtlLogs(range: [Dayjs, Dayjs]): Promise<NifiExecutionLogEntry[]> {
+  const entries = await listNifiExecutionLogs(
+    range[0].format("YYYY-MM-DD"),
+    range[1].format("YYYY-MM-DD"),
   );
-  const jobs = collectNifiJobs(nifiStatus?.processGroupStatus?.aggregateSnapshot?.processGroupStatusSnapshots);
-
-  const runGroupResults = await Promise.allSettled(
-    nifiControlDags.map(async (dag) => ({
-      dagId: dag.dag_id,
-      runs: await listAirflowDagRuns(dag.dag_id, {
-        limit: 200,
-        startDateGte: range[0].startOf("day").toISOString(),
-        startDateLte: range[1].endOf("day").toISOString(),
-        state: state === "all" ? undefined : state,
-      }),
-    })),
-  );
-  const runGroups = runGroupResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
-
-  const failedTaskResults = await Promise.allSettled(
-    runGroups.flatMap((group) =>
-      group.runs
-        .filter((run) => run.state === "failed")
-        .map(async (run) => {
-          const tasks = await listAirflowTaskInstances(group.dagId, run.dag_run_id).catch(() => []);
-          const failedTask = tasks.find((task) => task.state === "failed");
-          return { runKey: `${group.dagId}:${run.dag_run_id}`, failedTask: failedTask?.task_id };
-        }),
-    ),
-  );
-  const failedTaskMap = new Map(
-    failedTaskResults
-      .filter((result) => result.status === "fulfilled")
-      .map((result) => [result.value.runKey, result.value.failedTask]),
-  );
-
-  const rows: EtlLogRow[] = runGroups.flatMap((group) => {
-    const shortId = extractNifiShortId(group.dagId);
-    const job = jobs.find((candidate) => candidate.id.startsWith(shortId));
-    return group.runs.map((run) => ({
-      id: `${group.dagId}:${run.dag_run_id}`,
-      dagId: group.dagId,
-      pipelineName: job?.name ?? shortId,
-      action: typeof run.conf?.action === "string" ? (run.conf.action as string) : "-",
-      state: run.state ?? "-",
-      startedAt: run.start_date ?? run.execution_date,
-      endedAt: run.end_date,
-      failedTask: failedTaskMap.get(`${group.dagId}:${run.dag_run_id}`) ?? "-",
-    }));
-  });
-
-  return rows.sort((a, b) => new Date(b.startedAt ?? 0).getTime() - new Date(a.startedAt ?? 0).getTime());
+  return [...entries].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
 }
 
 export function EtlLogsPage() {
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(6, "day"), dayjs()]);
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
-  const [stateFilter, setStateFilter] = useState<EtlLogState>("all");
   const [nameFilter, setNameFilter] = useState("");
 
   const logsQuery = useQuery({
-    queryKey: ["etl-logs", appliedRange[0].toISOString(), appliedRange[1].toISOString(), stateFilter],
-    queryFn: () => getEtlLogs(appliedRange, stateFilter),
+    queryKey: ["etl-logs", appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD")],
+    queryFn: () => getEtlLogs(appliedRange),
     placeholderData: (previousData) => previousData,
   });
 
@@ -152,7 +63,11 @@ export function EtlLogsPage() {
     if (!keyword) {
       return rows;
     }
-    return rows.filter((row) => row.pipelineName.toLowerCase().includes(keyword));
+    return rows.filter(
+      (row) =>
+        row.processorName.toLowerCase().includes(keyword) ||
+        (row.groupName ?? "").toLowerCase().includes(keyword),
+    );
   }, [rows, nameFilter]);
 
   const showInitialLoading = logsQuery.isLoading && !logsQuery.data;
@@ -170,22 +85,10 @@ export function EtlLogsPage() {
             }}
             allowClear={false}
           />
-          <Select<EtlLogState>
-            value={stateFilter}
-            style={{ width: 120 }}
-            onChange={setStateFilter}
-            options={[
-              { value: "all", label: "전체 상태" },
-              { value: "success", label: "성공" },
-              { value: "failed", label: "실패" },
-              { value: "running", label: "실행중" },
-              { value: "queued", label: "대기" },
-            ]}
-          />
           <Input
-            placeholder="이름 검색"
+            placeholder="프로세서/그룹 이름 검색"
             allowClear
-            style={{ width: 200 }}
+            style={{ width: 220 }}
             value={nameFilter}
             onChange={(event) => setNameFilter(event.target.value)}
           />
@@ -193,33 +96,23 @@ export function EtlLogsPage() {
             조회
           </Button>
         </Space>
-        <Table<EtlLogRow>
+        <Table<NifiExecutionLogEntry>
           rowKey="id"
           size="small"
           loading={showInitialLoading}
           dataSource={filteredRows}
           pagination={{ pageSize: 20 }}
           columns={[
-            { title: "이름", dataIndex: "pipelineName" },
-            {
-              title: "액션",
-              dataIndex: "action",
-              width: 100,
-              render: (value: string) => ACTION_LABEL[value] ?? value,
-            },
+            { title: "프로세서", dataIndex: "processorName" },
+            { title: "그룹(파이프라인)", dataIndex: "groupName", render: (value?: string) => value ?? "-" },
             {
               title: "상태",
-              dataIndex: "state",
+              dataIndex: "status",
               width: 100,
-              render: (value: string) => <Tag color={STATE_COLOR[value] ?? "default"}>{STATE_LABEL[value] ?? value}</Tag>,
+              render: (value: string) => <Tag color={STATUS_COLOR[value] ?? "default"}>{STATUS_LABEL[value] ?? value}</Tag>,
             },
-            { title: "실행 시각", dataIndex: "startedAt", width: 170, render: formatDateTime },
-            {
-              title: "소요 시간",
-              width: 100,
-              render: (_, record) => formatDuration(record.startedAt, record.endedAt),
-            },
-            { title: "실패 Task", dataIndex: "failedTask", width: 160 },
+            { title: "실행 시각", dataIndex: "occurredAt", width: 190, render: formatDateTime },
+            { title: "적재 건수", dataIndex: "insertedCount", width: 100, align: "right" },
           ]}
         />
       </Card>

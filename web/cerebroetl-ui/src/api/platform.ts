@@ -1,5 +1,16 @@
 import axios from "axios";
-import { apiClient, unwrap } from "./client";
+import { apiClient, unwrap, type ApiResponse } from "./client";
+
+export interface NifiExecutionLogEntry {
+  id: number;
+  processorId: string;
+  processorName: string;
+  groupId?: string;
+  groupName?: string;
+  occurredAt: string;
+  insertedCount: number;
+  status: string;
+}
 
 export interface AirflowDag {
   dag_id: string;
@@ -229,4 +240,16 @@ export async function getKafkaConnectorTrace(connectorName: string): Promise<Kaf
 export async function createNifiProcessGroup(name: string): Promise<NifiProcessGroupEntity> {
   const res = await apiClient.post("/nifi/process-groups", { name });
   return unwrap<NifiProcessGroupEntity>(res.data);
+}
+
+// NiFi에는 Airflow의 dag_run 같은 "실행 이력" 개념이 없고, Provenance 조회도 이 환경에서
+// 구조적으로 안 되는 것으로 확인돼서(인덱스/이벤트파일 불일치), 적재 프로세서(PutDatabaseRecord)의
+// 누적 카운터 증가분을 60초 주기로 감지해 한 행씩 남긴 것을 백엔드가 대신 제공한다
+// (NifiPipelineMetricScheduler). "실행 1회 = 행 1개"가 아니라 "60초 구간 안에 증가가
+// 있었다 = 행 1개"에 가깝다.
+export async function listNifiExecutionLogs(from: string, to: string): Promise<NifiExecutionLogEntry[]> {
+  const res = await apiClient.get<ApiResponse<NifiExecutionLogEntry[]>>("/nifi/execution-logs", {
+    params: { from, to },
+  });
+  return unwrap(res.data);
 }
