@@ -526,6 +526,11 @@ services:
       # 호스트명/IP와 달라지면 "Invalid or unsafe next URL"로 로그인이 거부되므로,
       # localhost가 아닌 주소로 배포할 땐 AIRFLOW_PUBLIC_BASE_URL을 그 주소로 바꿔야 함.
       AIRFLOW__API__BASE_URL: "${AIRFLOW_PUBLIC_BASE_URL}"
+      # webserver_config.py의 Keycloak OAuth redirect_uri. 기본값이 localhost로
+      # 하드코딩돼 있어서(AIRFLOW_PUBLIC_BASE_URL과 별개 변수라 안 넘기면 계속 localhost로
+      # 감) 로그인 시 "The request to sign in was denied"가 남 - AIRFLOW_PUBLIC_BASE_URL에서
+      # 그대로 파생시켜 새 .env 값을 따로 안 만든다.
+      AIRFLOW_OAUTH_CALLBACK_URL: "${AIRFLOW_PUBLIC_BASE_URL}/auth/oauth-authorized/keycloak"
       # FAB OAuth callback은 Flask/Werkzeug에서 생성되므로 FAB의 ProxyFix도 켠다.
       AIRFLOW__FAB__ENABLE_PROXY_FIX: "true"
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
