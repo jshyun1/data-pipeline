@@ -38,15 +38,26 @@ import type { LogPipelineCreateRequest, PipelineCommandHistoryResponse, Pipeline
 const STATUS_COLOR: Record<string, string> = {
   CREATED: "default",
   DEPLOYING: "processing",
+  READY: "blue",
   DEPLOYED: "success",
   PAUSED: "warning",
   STOPPED: "default",
   FAILED: "error",
 };
 
-const STATUS_OPTIONS = ["CREATED", "DEPLOYING", "DEPLOYED", "PAUSED", "STOPPED", "FAILED"].map((value) => ({
+const STATUS_LABEL: Record<string, string> = {
+  CREATED: "생성됨",
+  DEPLOYING: "준비 중",
+  READY: "실행 대기",
+  DEPLOYED: "실행 중",
+  PAUSED: "일시정지",
+  STOPPED: "Sink 중지",
+  FAILED: "실패",
+};
+
+const STATUS_OPTIONS = ["CREATED", "DEPLOYING", "READY", "DEPLOYED", "PAUSED", "STOPPED", "FAILED"].map((value) => ({
   value,
-  label: value,
+  label: STATUS_LABEL[value],
 }));
 
 const TYPE_OPTIONS = [
@@ -165,11 +176,14 @@ export function PipelinesPage() {
   const createMutation = useMutation({
     mutationFn: createPipeline,
     onSuccess: () => {
-      message.success("파이프라인을 생성했습니다. 이제 배포하세요.");
+      message.success("CDC 파이프라인을 실행 대기 상태로 준비했습니다. Airflow DAG에서 시작하세요.");
       invalidatePipelines();
       closeModal();
     },
-    onError: (error: Error) => message.error(error.message),
+    onError: (error: Error) => {
+      invalidatePipelines();
+      message.error(error.message);
+    },
   });
 
   const createLogMutation = useMutation({
@@ -193,8 +207,12 @@ export function PipelinesPage() {
 
   const deployMutation = useMutation({
     mutationFn: deployPipeline,
-    onSuccess: () => {
-      message.success("배포 완료");
+    onSuccess: (pipeline) => {
+      message.success(
+        pipeline.pipelineType === "TABLE_CDC"
+          ? "Source/Sink Connector를 실행 대기 상태로 다시 준비했습니다."
+          : "배포 완료",
+      );
       invalidatePipelines();
     },
     onError: (error: Error) => message.error(error.message),
@@ -237,7 +255,9 @@ export function PipelinesPage() {
                 loading={deployMutation.isPending}
                 onClick={() => deployMutation.mutate(Number(pipelineId))}
               >
-                지금 재배포
+                {(pipelines ?? []).find((pipeline) => pipeline.id === Number(pipelineId))?.pipelineType === "TABLE_CDC"
+                  ? "다시 준비"
+                  : "지금 재배포"}
               </Button>
             </div>
           }
@@ -313,7 +333,9 @@ export function PipelinesPage() {
           {
             title: "상태",
             dataIndex: "status",
-            render: (value: string) => <Tag color={STATUS_COLOR[value] ?? "default"}>{value}</Tag>,
+            render: (value: string) => (
+              <Tag color={STATUS_COLOR[value] ?? "default"}>{STATUS_LABEL[value] ?? value}</Tag>
+            ),
           },
           {
             title: "제어",
@@ -322,13 +344,15 @@ export function PipelinesPage() {
                 <Button size="small" onClick={() => setDetailPipelineId(record.id)}>
                   상세
                 </Button>
-                <Button
-                  size="small"
-                  loading={deployMutation.isPending}
-                  onClick={() => deployMutation.mutate(record.id)}
-                >
-                  배포
-                </Button>
+                {record.pipelineType === "LOG_FILE" && (
+                  <Button
+                    size="small"
+                    loading={deployMutation.isPending}
+                    onClick={() => deployMutation.mutate(record.id)}
+                  >
+                    배포
+                  </Button>
+                )}
                 <Popconfirm
                   title="이 파이프라인을 삭제할까요?"
                   description="배포된 Kafka Connect 커넥터도 함께 삭제됩니다."
@@ -594,7 +618,9 @@ export function PipelinesPage() {
                     </Descriptions.Item>
                     <Descriptions.Item label="Topic">{detailPipeline.topicName}</Descriptions.Item>
                     <Descriptions.Item label="상태">
-                      <Tag color={STATUS_COLOR[detailPipeline.status] ?? "default"}>{detailPipeline.status}</Tag>
+                      <Tag color={STATUS_COLOR[detailPipeline.status] ?? "default"}>
+                        {STATUS_LABEL[detailPipeline.status] ?? detailPipeline.status}
+                      </Tag>
                     </Descriptions.Item>
                     <Descriptions.Item label="설명">{detailPipeline.description ?? "-"}</Descriptions.Item>
                     <Descriptions.Item label="생성 시각">{detailPipeline.createdAt}</Descriptions.Item>

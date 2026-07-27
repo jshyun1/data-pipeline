@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 로컬/운영 서버 공통 진입점. data-pipeline은 dw-app0X-svr류와 달리 Eureka에
-# 등록되는 단일 JAR 서비스가 아니라, Oracle/Kafka/NiFi/Airflow/Keycloak까지
+# 등록되는 단일 JAR 서비스가 아니라, Oracle/Kafka/NiFi/Airflow까지
 # 포함한 자체완결형 docker-compose 스택이라 이미지 하나를 레지스트리에 올려
 # pull하는 방식이 아니라 이 스크립트가 그 스택을 통째로 기동/종료한다.
 set -euo pipefail

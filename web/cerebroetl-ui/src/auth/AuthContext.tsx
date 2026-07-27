@@ -1,13 +1,13 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { getAccessToken, userManager } from "./oidc";
-import { fetchMe, type AppUser } from "../api/auth";
+import { clearSession, getStoredUser, getToken, saveSession } from "./session";
+import { login as loginApi, type AppUser } from "../api/auth";
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
 interface AuthContextValue {
   status: AuthStatus;
   user: AppUser | null;
-  login: () => Promise<void>;
+  login: (userId: string, password: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -17,40 +17,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [user, setUser] = useState<AppUser | null>(null);
 
-  // 앱 로드 시 Keycloak 세션(로컬 저장된 토큰)이 유효하면 /me로 앱 프로필을 가져온다.
+  // 앱 로드 시 localStorage에 저장된 세션(계정테이블 로그인으로 발급받은 JWT)이 있으면
+  // 그대로 인증된 것으로 취급한다 - 만료/무효 여부는 실제 API 호출에서 401로 드러나며,
+  // client.ts의 응답 인터셉터가 그 시점에 세션을 지우고 로그인 화면으로 보낸다.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const token = await getAccessToken();
-      if (!token) {
-        if (!cancelled) setStatus("unauthenticated");
-        return;
-      }
-      try {
-        const me = await fetchMe();
-        if (!cancelled) {
-          setUser(me);
-          setStatus("authenticated");
-        }
-      } catch {
-        if (!cancelled) setStatus("unauthenticated");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    const token = getToken();
+    const storedUser = getStoredUser();
+    if (token && storedUser) {
+      setUser(storedUser);
+      setStatus("authenticated");
+    } else {
+      setStatus("unauthenticated");
+    }
   }, []);
 
-  // Keycloak 로그인 페이지로 리다이렉트(Authorization Code + PKCE).
-  // signinRedirect는 리다이렉트 전에 Keycloak 메타데이터를 fetch하는데, 자체 서명
-  // 인증서가 브라우저에 신뢰돼 있지 않으면 여기서 실패한다 → 에러를 던져 호출부가 안내하게 한다.
-  const login = async () => {
-    await userManager.signinRedirect();
+  const login = async (userId: string, password: string) => {
+    const result = await loginApi(userId, password);
+    saveSession(result.token, result.user);
+    setUser(result.user);
+    setStatus("authenticated");
   };
 
-  // Keycloak 로그아웃(SSO 세션 종료) 후 /login으로 복귀.
   const logout = () => {
-    void userManager.signoutRedirect();
+    clearSession();
+    setUser(null);
+    setStatus("unauthenticated");
   };
 
   return (

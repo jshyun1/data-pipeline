@@ -50,3 +50,23 @@ export async function getPipelineDashboardSummary(): Promise<PipelineDashboardSu
   const res = await apiClient.get<ApiResponse<PipelineDashboardSummary>>("/dashboard/summary");
   return unwrap(res.data);
 }
+
+export interface RealtimePipelineMetricResponse {
+  pipelineId: number;
+  collectedAt: string | null;
+  partitionCount: number | null;
+  endOffset: number | null;
+  committedOffset: number | null;
+  consumerLag: number | null;
+  throughputPerSecond: number;
+  estimatedRecoverySeconds: number | null;
+  lastProgressAt: string | null;
+  collectionStatus: "COLLECTED" | "NO_DATA";
+}
+
+// committed offset 기반 처리율/미처리량이다. 타깃 DB의 실제 커밋 행 수나 E2E 지연과
+// 혼동하지 않도록 화면에서도 "Sink 소비 추정"으로 표기한다.
+export async function getRealtimePipelineMetrics(): Promise<RealtimePipelineMetricResponse[]> {
+  const res = await apiClient.get<ApiResponse<RealtimePipelineMetricResponse[]>>("/metrics/daily-load/realtime");
+  return unwrap(res.data);
+}

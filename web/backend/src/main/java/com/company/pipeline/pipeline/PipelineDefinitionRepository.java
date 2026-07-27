@@ -7,6 +7,8 @@ public interface PipelineDefinitionRepository extends JpaRepository<PipelineDefi
 
     List<PipelineDefinition> findByStatus(PipelineStatus status);
 
+    List<PipelineDefinition> findByStatusIn(List<PipelineStatus> statuses);
+
     List<PipelineDefinition> findBySourceConnectionIdOrTargetConnectionId(
             Long sourceConnectionId, Long targetConnectionId);
 }

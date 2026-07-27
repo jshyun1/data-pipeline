@@ -41,7 +41,10 @@ public class KafkaPipelineMetricScheduler {
 
     @Scheduled(fixedRate = 20_000, initialDelay = 20_000)
     public void checkDeployedPipelines() {
-        List<PipelineDefinition> deployed = pipelineDefinitionRepository.findByStatus(PipelineStatus.DEPLOYED);
+        // STOPPED는 Sink만 멈추고 Source는 계속 Kafka에 쌓는 상태이므로 lag가 증가하는지
+        // 계속 관측해야 한다. READY는 Source/Sink 모두 정지 상태라 수집 대상이 아니다.
+        List<PipelineDefinition> deployed = pipelineDefinitionRepository.findByStatusIn(
+                List.of(PipelineStatus.DEPLOYED, PipelineStatus.STOPPED));
         for (PipelineDefinition pipeline : deployed) {
             try {
                 checkOne(pipeline);

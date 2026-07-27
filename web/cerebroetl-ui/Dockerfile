@@ -8,22 +8,23 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-# Vite는 import.meta.env.VITE_*를 빌드 시점에 정적 파일로 굳혀버린다 - 런타임
-# docker-compose environment로는 절대 못 바꾼다. 이 ARG를 안 넘기면 auth/oidc.ts의
-# 기본값(https://localhost:8543/...)이 그대로 박혀서, localhost가 아닌 실제 서버
-# 주소로 접속하는 사용자는 로그인 리다이렉트가 항상 localhost로 튀는 문제가 생긴다
-# (다른 호스트에 배포해보고서야 드러난 버그 - PORTAL_PUBLIC_HOST로 계산해서 넘길 것).
-ARG VITE_OIDC_AUTHORITY
-ENV VITE_OIDC_AUTHORITY=${VITE_OIDC_AUTHORITY}
 RUN npm run build
 
 # ---------------------------------------------------------------------
 # 런타임 스테이지: 빌드된 정적 파일만 nginx로 서빙. 런타임 네트워크 접근은
-# /api 리버스 프록시(같은 docker 네트워크 안의 pipeline-api)뿐이다.
+# /api 리버스 프록시(같은 docker 네트워크 안의 pipeline-api)와, NiFi/Airflow
+# 공유 서비스계정 자격증명을 주기적으로 갱신하는 crond뿐이다.
 # ---------------------------------------------------------------------
 FROM nginx:alpine
+RUN apk add --no-cache curl
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY certs/localhost.crt /etc/nginx/certs/localhost.crt
-COPY certs/localhost.key /etc/nginx/certs/localhost.key
+COPY refresh-credentials.sh /docker-entrypoint-credentials/refresh-credentials.sh
+COPY docker-entrypoint-credentials.sh /docker-entrypoint-credentials.sh
+RUN chmod +x /docker-entrypoint-credentials/refresh-credentials.sh /docker-entrypoint-credentials.sh \
+  && mkdir -p /etc/nginx/generated \
+  # nginx가 최초 기동 시(자격증명 갱신 전) include 대상이 없어 죽지 않도록 빈 값 스텁을 둔다.
+  && printf 'set $nifi_shared_bearer "";\nset $airflow_shared_cookie "";\n' > /etc/nginx/generated/shared-credentials.conf \
+  && echo "*/30 * * * * /docker-entrypoint-credentials/refresh-credentials.sh >> /var/log/refresh-credentials.log 2>&1" > /etc/crontabs/root
 EXPOSE 80 8080
+ENTRYPOINT ["/docker-entrypoint-credentials.sh"]

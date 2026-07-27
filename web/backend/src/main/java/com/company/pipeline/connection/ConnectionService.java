@@ -20,10 +20,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class ConnectionService {
 
-    // 이 상태의 파이프라인이 참조 중이면 연결정보 삭제를 막는다 - CREATED/STOPPED/FAILED는
-    // 지금 당장 이 연결정보로 실제 데이터를 주고받는 중이 아니라서 허용한다.
+    // READY는 실행에 필요한 설정이 준비되어 있고, STOPPED도 Source가 계속 CDC 변경분을
+    // Kafka에 적재하므로 연결정보 삭제를 막아야 한다. CREATED/FAILED만 삭제를 허용한다.
     private static final Set<PipelineStatus> ACTIVE_STATUSES =
-            Set.of(PipelineStatus.DEPLOYED, PipelineStatus.DEPLOYING, PipelineStatus.PAUSED);
+            Set.of(PipelineStatus.DEPLOYED, PipelineStatus.DEPLOYING, PipelineStatus.READY,
+                    PipelineStatus.PAUSED, PipelineStatus.STOPPED);
 
     private final ConnectionRepository connectionRepository;
     private final PasswordCryptoService passwordCryptoService;

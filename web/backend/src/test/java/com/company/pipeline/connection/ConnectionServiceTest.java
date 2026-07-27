@@ -111,7 +111,7 @@ class ConnectionServiceTest {
     }
 
     @Test
-    void delete_withOnlyStoppedPipelineReference_deletesSuccessfully() throws Exception {
+    void delete_withStoppedCdcPipelineReference_isRejectedBecauseSourceStillRuns() throws Exception {
         PipelineConnection existing = newConnection(1L, "cipher-original");
         when(connectionRepository.findById(1L)).thenReturn(java.util.Optional.of(existing));
         PipelineDefinition stoppedPipeline = new PipelineDefinition(
@@ -121,9 +121,10 @@ class ConnectionServiceTest {
         when(pipelineDefinitionRepository.findBySourceConnectionIdOrTargetConnectionId(1L, 1L))
                 .thenReturn(List.of(stoppedPipeline));
 
-        connectionService.delete(1L);
-
-        verify(connectionRepository).delete(existing);
+        assertThatThrownBy(() -> connectionService.delete(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("old-pipeline");
+        verify(connectionRepository, org.mockito.Mockito.never()).delete(any());
     }
 
     @Test

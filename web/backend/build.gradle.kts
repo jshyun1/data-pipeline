@@ -23,12 +23,16 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("org.springframework.security:spring-security-crypto")
-    // Keycloak(OIDC) 토큰을 검증하는 리소스 서버. 자체 JWT를 발급하지 않고 Keycloak이
-    // 발급한 액세스 토큰의 서명/issuer/만료를 검증한다(SSO의 단일 인증원은 Keycloak).
-    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
+    // cerebroetl-ui 자체 로그인 JWT 발급/검증 (Keycloak 제거, dw.cloud.auth.2026과 동일한
+    // jjwt 기반 HMAC 서명 방식).
+    implementation("io.jsonwebtoken:jjwt-api:0.12.6")
+    runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
+    runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
     runtimeOnly("org.postgresql:postgresql:42.7.4")
+    // 통합 계정 테이블(ST_USER) 조회 전용 - 로그인 검증에만 쓴다(쓰기 없음).
+    runtimeOnly("com.mysql:mysql-connector-j:8.4.0")
     // 파이프라인 생성 화면에서 소스/타겟 커넥션의 실제 스키마·테이블 목록을 조회하는
     // 용도(SchemaDiscoveryService). kafka-connect/nifi가 쓰는 것과 동일 버전으로 맞춘다.
     runtimeOnly("com.oracle.database.jdbc:ojdbc11:23.26.2.0.0")

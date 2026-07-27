@@ -1,69 +1,56 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Navigate } from "react-router-dom";
-import { Button, Spin } from "antd";
+import { Button, Form, Input } from "antd";
 import { useAuth } from "../auth/AuthContext";
 
-const KEYCLOAK_URL =
-  import.meta.env.VITE_OIDC_AUTHORITY?.replace(/\/realms\/.*$/, "") ?? "https://localhost:8543";
+interface LoginFormValues {
+  userId: string;
+  password: string;
+}
 
-/**
- * 미인증 사용자는 별도 버튼 클릭 없이 CEREBRO 전용 Keycloak 로그인 테마로 이동한다.
- * 자격증명은 포털이 받지 않고 Keycloak에만 입력되며 Authorization Code + PKCE와
- * 브라우저 SSO 세션을 그대로 유지한다.
- */
+/** 통합 계정 테이블(ST_USER) 기반 자체 로그인 폼 (Keycloak 제거). */
 export function LoginPage() {
   const { status, login } = useAuth();
   const [error, setError] = useState<string | null>(null);
-  const loginStarted = useRef(false);
+  const [loading, setLoading] = useState(false);
 
-  const onLogin = async () => {
+  const onFinish = async (values: LoginFormValues) => {
     setError(null);
+    setLoading(true);
     try {
-      await login();
+      await login(values.userId, values.password);
     } catch (e) {
-      // 대개 Keycloak 자체 서명 인증서를 브라우저가 아직 신뢰하지 않아 메타데이터
-      // 조회에 실패한 경우다. 인증서를 한 번 수락하도록 안내한다.
-      console.error("signinRedirect 실패:", e);
-      setError("cert");
+      setError(e instanceof Error ? e.message : "로그인 중 오류가 발생했습니다.");
+    } finally {
+      setLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (status !== "unauthenticated" || loginStarted.current) return;
-    loginStarted.current = true;
-    void onLogin();
-  }, [status]);
 
   if (status === "authenticated") {
     return <Navigate to="/dashboard" replace />;
   }
 
-  if (!error) {
-    return (
-      <div className="login-shell">
-        <div className="login-card" style={{ textAlign: "center" }}>
-          <Spin />
-          <p style={{ color: "#7b8799", fontSize: 13, marginTop: 12 }}>로그인 화면을 준비하고 있습니다.</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="login-shell">
       <div className="login-card">
-        <h1 className="login-title">CEREBRO ETL</h1>
-
-        <div className="login-error" style={{ marginTop: 12 }}>
-          Keycloak 서버 인증서를 먼저 신뢰해야 합니다.{" "}
-          <a href={KEYCLOAK_URL} target="_blank" rel="noreferrer">
-            여기
-          </a>
-          를 새 탭에서 열어 "계속 진행"으로 인증서를 수락한 뒤 다시 로그인하세요.
-          <Button type="primary" danger block onClick={onLogin} style={{ marginTop: 12 }}>
-            다시 시도
+        <div className="login-kicker">CEREBRO ETL</div>
+        <h1 className="login-title">통합 로그인</h1>
+        <Form layout="vertical" onFinish={onFinish} disabled={loading} style={{ marginTop: 16 }}>
+          <Form.Item name="userId" label="아이디" rules={[{ required: true, message: "아이디를 입력하세요." }]}>
+            <Input autoFocus autoComplete="username" />
+          </Form.Item>
+          <Form.Item name="password" label="비밀번호" rules={[{ required: true, message: "비밀번호를 입력하세요." }]}>
+            <Input.Password autoComplete="current-password" />
+          </Form.Item>
+          {error && (
+            <p className="login-error" style={{ marginBottom: 12 }}>
+              {error}
+            </p>
+          )}
+          <Button type="primary" htmlType="submit" block loading={loading}>
+            로그인
           </Button>
-        </div>
+        </Form>
       </div>
     </div>
   );

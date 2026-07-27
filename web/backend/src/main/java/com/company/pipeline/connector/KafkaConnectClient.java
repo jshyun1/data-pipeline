@@ -2,6 +2,7 @@ package com.company.pipeline.connector;
 
 import com.company.pipeline.connector.dto.ConnectorPluginInfo;
 import com.company.pipeline.connector.dto.ConnectorStatusResponse;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -56,6 +57,22 @@ public class KafkaConnectClient {
                 .body(new ParameterizedTypeReference<Map<String, Object>>() { }));
     }
 
+    /**
+     * Kafka 3.7(KIP-980)의 initial_state를 사용해 커넥터를 처음부터 STOPPED로 만든다.
+     * PUT /config는 생성 즉시 실행될 수 있으므로 CDC 준비 단계에서는 사용하지 않는다.
+     */
+    public Map<String, Object> createStopped(String connectorName, Map<String, Object> config) {
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("name", connectorName);
+        request.put("config", config);
+        request.put("initial_state", "STOPPED");
+        return execute(() -> restClient.post()
+                .uri("/connectors")
+                .body(request)
+                .retrieve()
+                .body(new ParameterizedTypeReference<Map<String, Object>>() { }));
+    }
+
     public void pause(String connectorName) {
         execute(() -> restClient.put()
                 .uri("/connectors/{name}/pause", connectorName)
@@ -66,6 +83,13 @@ public class KafkaConnectClient {
     public void resume(String connectorName) {
         execute(() -> restClient.put()
                 .uri("/connectors/{name}/resume", connectorName)
+                .retrieve()
+                .toBodilessEntity());
+    }
+
+    public void stop(String connectorName) {
+        execute(() -> restClient.put()
+                .uri("/connectors/{name}/stop", connectorName)
                 .retrieve()
                 .toBodilessEntity());
     }

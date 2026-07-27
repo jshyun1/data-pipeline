@@ -1,14 +1,6 @@
 spring:
   application:
     name: pipeline-backend
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          # 토큰 iss 검증값(브라우저가 받은 토큰의 iss = localhost).
-          issuer-uri: ${KEYCLOAK_ISSUER_URL:https://localhost:8543}/realms/${KEYCLOAK_REALM:cerebro}
-          # JWKS는 컨테이너가 실제로 도달 가능한 백채널 URL에서 가져온다(iss와 host가 다름).
-          jwk-set-uri: ${KEYCLOAK_BACKCHANNEL_URL:https://host.docker.internal:8543}/realms/${KEYCLOAK_REALM:cerebro}/protocol/openid-connect/certs
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/pipeline_meta}
     username: ${SPRING_DATASOURCE_USERNAME:pipeline_app}
@@ -32,6 +24,19 @@ pipeline:
   crypto:
     secret: ${PIPELINE_CRYPTO_SECRET}
     salt: ${PIPELINE_CRYPTO_SALT}
+  jwt:
+    secret: ${PIPELINE_JWT_SECRET}
+    # 30일 (ms 단위). 공유 계정 성격상 로그인을 자주 다시 안 하도록 길게 잡는다.
+    expiration: 2592000000
+
+# 통합 계정 테이블(ST_USER) - 여러 시스템이 공유하는 실 사용자 디렉터리(MySQL).
+# 로그인 검증(SELECT)에만 쓰고 절대 쓰기하지 않는다.
+account-db:
+  host: ${ACCOUNT_DB_HOST}
+  port: ${ACCOUNT_DB_PORT:3306}
+  name: ${ACCOUNT_DB_NAME}
+  username: ${ACCOUNT_DB_USER}
+  password: ${ACCOUNT_DB_PASSWORD}
 
 kafka-connect:
   base-url: ${KAFKA_CONNECT_URL:http://localhost:8083}
@@ -44,9 +49,7 @@ filebeat:
 
 nifi:
   base-url: ${NIFI_BASE_URL:https://localhost:8443}
-  # NiFi가 OIDC 전용 인증이라 username/password 대신 Keycloak에서 client_credentials로
-  # 토큰을 받아 NiFi에 Bearer로 제시한다 (KEYCLOAK_BACKCHANNEL_URL은 컨테이너가 실제로
-  # 도달 가능한 백채널 호스트 - JwtDecoderConfig의 jwk-set-uri와 동일한 이유).
-  keycloak-token-uri: ${KEYCLOAK_BACKCHANNEL_URL:https://host.docker.internal:8543}/realms/${KEYCLOAK_REALM:cerebro}/protocol/openid-connect/token
-  service-client-id: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID:}
-  service-client-secret: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET:}
+  # NiFi가 Single User 인증(공유 서비스계정)으로 전환됨에 따라 username/password로
+  # 직접 /nifi-api/access/token을 받아 Bearer로 제시한다 (Keycloak 제거).
+  username: ${NIFI_USERNAME:}
+  password: ${NIFI_PASSWORD:}

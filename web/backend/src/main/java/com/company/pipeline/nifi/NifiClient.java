@@ -4,8 +4,6 @@ import com.company.pipeline.nifi.dto.NifiCountersResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
 import com.company.pipeline.nifi.dto.NifiProcessGroupEntity;
 import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import java.net.http.HttpClient;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
@@ -105,37 +103,31 @@ public class NifiClient {
         }
     }
 
-    // NiFi가 OIDC 전용 인증으로 전환되며 username/password 토큰 발급(/nifi-api/access/token)이
-    // 막혀서, Keycloak에서 client_credentials로 직접 토큰을 받아 NiFi에 Bearer로 제시한다.
-    // NiFi는 신뢰하는 realm이 서명한 토큰이면 발급 클라이언트를 가리지 않고 인증을 통과시키고,
-    // 이후 sub 클레임을 identity로 authorizers.xml/users.xml에 등록된 권한을 확인한다.
+    // NiFi가 Keycloak/OIDC를 제거하고 Single User 인증(공유 서비스계정)으로 전환됨에 따라,
+    // /nifi-api/access/token에 username/password를 보내 JWT를 직접 발급받는다.
+    // 이 엔드포인트는 응답 본문이 JSON이 아니라 JWT 문자열 그대로임에 주의.
     private String getToken() {
-        if (!StringUtils.hasText(properties.serviceClientId()) || !StringUtils.hasText(properties.serviceClientSecret())) {
+        if (!StringUtils.hasText(properties.username()) || !StringUtils.hasText(properties.password())) {
             throw new NifiClientException("NiFi 서비스 계정 정보가 설정되지 않았습니다.", null);
         }
 
         try {
             MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
-            form.add("grant_type", "client_credentials");
-            form.add("client_id", properties.serviceClientId());
-            form.add("client_secret", properties.serviceClientSecret());
-            KeycloakTokenResponse response = restClient.post()
-                    .uri(properties.keycloakTokenUri())
+            form.add("username", properties.username());
+            form.add("password", properties.password());
+            String token = restClient.post()
+                    .uri("/nifi-api/access/token")
                     .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                     .body(form)
                     .retrieve()
-                    .body(KeycloakTokenResponse.class);
-            if (response == null || !StringUtils.hasText(response.accessToken())) {
-                throw new NifiClientException("Keycloak 토큰 응답이 비어 있습니다.", null);
+                    .body(String.class);
+            if (!StringUtils.hasText(token)) {
+                throw new NifiClientException("NiFi 토큰 응답이 비어 있습니다.", null);
             }
-            return response.accessToken();
+            return token;
         } catch (RestClientException ex) {
             throw new NifiClientException("NiFi 토큰 발급 실패: " + ex.getMessage(), ex);
         }
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private record KeycloakTokenResponse(@JsonProperty("access_token") String accessToken) {
     }
 
     private NifiProcessGroupResponse toResponse(NifiProcessGroupEntity entity) {

@@ -10,6 +10,7 @@ import com.company.pipeline.connector.KafkaConnectClient;
 import com.company.pipeline.connector.PipelineConnector;
 import com.company.pipeline.connector.PipelineConnectorRepository;
 import com.company.pipeline.connector.dto.ConnectorStatusResponse;
+import com.company.pipeline.connector.dto.ConnectorTaskStatus;
 import com.company.pipeline.connector.dto.LogSinkConnectorRequest;
 import com.company.pipeline.connector.dto.RenderedConnectorConfig;
 import com.company.pipeline.connector.dto.SinkConnectorRequest;
@@ -23,7 +24,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -40,6 +45,12 @@ import org.springframework.stereotype.Service;
 @Service
 public class PipelineDeployService {
 
+    // Oracle Debezium은 최초 시작 시 DB 접속·스키마 히스토리 준비로 수 초 이상 걸릴 수
+    // 있다. Connector만 RUNNING이고 task가 아직 비어 있는 정상 초기화 구간을 실패로
+    // 오판하지 않도록 최대 60초를 기다린다.
+    private static final int STATUS_VERIFY_ATTEMPTS = 120;
+    private static final long STATUS_VERIFY_INTERVAL_MILLIS = 500L;
+
     private final PipelineDefinitionRepository pipelineDefinitionRepository;
     private final PipelineConnectorRepository pipelineConnectorRepository;
     private final PipelineCommandHistoryRecorder commandHistoryRecorder;
@@ -51,6 +62,17 @@ public class PipelineDeployService {
     private final LogPipelineSourceRepository logPipelineSourceRepository;
     private final FilebeatConfigRenderer filebeatConfigRenderer;
     private final FilebeatInputFileService filebeatInputFileService;
+    private final ConcurrentHashMap<Long, ReentrantLock> pipelineLocks = new ConcurrentHashMap<>();
+
+    /**
+     * Debezium task가 최초 RUNNING을 보고한 직후에도 Oracle snapshot 준비(테이블 lock 등)에서
+     * 실패할 수 있다. 이 구간을 통과하기 전에는 파이프라인을 DEPLOYED로 확정하지 않는다.
+     */
+    @Value("${pipeline.cdc.start-stability-millis:10000}")
+    private long startStabilityMillis = 10_000L;
+
+    @Value("${pipeline.cdc.start-stability-check-interval-millis:500}")
+    private long startStabilityCheckIntervalMillis = 500L;
 
     public PipelineDeployService(PipelineDefinitionRepository pipelineDefinitionRepository,
             PipelineConnectorRepository pipelineConnectorRepository,
@@ -77,8 +99,14 @@ public class PipelineDeployService {
     }
 
     public PipelineResponse deploy(Long pipelineId) {
+        return withPipelineLock(pipelineId, () -> deployLocked(pipelineId));
+    }
+
+    private PipelineResponse deployLocked(Long pipelineId) {
         PipelineDefinition pipeline = pipelineDefinitionRepository.findById(pipelineId)
                 .orElseThrow(() -> new PipelineNotFoundException(pipelineId));
+        boolean tableCdc = isTableCdc(pipeline);
+        String command = tableCdc ? "PREPARE" : "DEPLOY";
 
         pipeline.setStatus(PipelineStatus.DEPLOYING);
         pipelineDefinitionRepository.save(pipeline);
@@ -90,17 +118,18 @@ public class PipelineDeployService {
                 deployTableCdcPipeline(pipeline);
             }
 
-            pipeline.setStatus(PipelineStatus.DEPLOYED);
+            pipeline.setStatus(tableCdc ? PipelineStatus.READY : PipelineStatus.DEPLOYED);
             pipelineDefinitionRepository.save(pipeline);
-            commandHistoryRecorder.record(pipeline.getId(), "DEPLOY", "SUCCESS", null);
+            commandHistoryRecorder.record(pipeline.getId(), command, "SUCCESS", null);
         } catch (Exception ex) {
             pipeline.setStatus(PipelineStatus.FAILED);
             pipelineDefinitionRepository.save(pipeline);
-            commandHistoryRecorder.record(pipeline.getId(), "DEPLOY", "FAILED", ex.getMessage());
+            commandHistoryRecorder.record(pipeline.getId(), command, "FAILED", ex.getMessage());
             if (ex instanceof BusinessException businessException) {
                 throw businessException;
             }
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "파이프라인 배포 실패: " + ex.getMessage());
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                    (tableCdc ? "CDC 실행 대기 준비" : "파이프라인 배포") + " 실패: " + ex.getMessage());
         }
 
         return PipelineResponse.from(pipeline, pipelineConnectorRepository.findByPipelineId(pipeline.getId()));
@@ -115,7 +144,7 @@ public class PipelineDeployService {
                 source.getUsername(), passwordCryptoService.decrypt(source.getEncryptedPassword()),
                 source.getDatabaseName(), source.getServiceName(),
                 pipeline.getSourceSchema(), pipeline.getSourceTable(), pipeline.getTopicName()));
-        deployConnector(pipeline.getId(), "SOURCE", sourceConfig);
+        prepareStoppedConnector(pipeline.getId(), "SOURCE", sourceConfig);
 
         RenderedConnectorConfig sinkConfig = connectorConfigRenderer.renderSink(new SinkConnectorRequest(
                 pipeline.getId(), target.getDbType(), target.getHost(), target.getPort(),
@@ -124,7 +153,7 @@ public class PipelineDeployService {
                 pipeline.getTargetSchema(), pipeline.getTargetTable(),
                 source.getDbType(), pipeline.getSourceSchema(), pipeline.getSourceTable(),
                 pipeline.getTopicName(), Boolean.TRUE.equals(pipeline.getDeleteEnabled())));
-        deployConnector(pipeline.getId(), "SINK", sinkConfig);
+        prepareStoppedConnector(pipeline.getId(), "SINK", sinkConfig);
     }
 
     /**
@@ -163,6 +192,33 @@ public class PipelineDeployService {
         connector.setDeployedAt(LocalDateTime.now());
 
         refreshConnectorStatus(connector);
+        pipelineConnectorRepository.save(connector);
+    }
+
+    /**
+     * CDC 커넥터를 등록만 하고 실행하지 않는다. 이미 같은 이름의 커넥터가 있으면 먼저
+     * STOPPED를 확인한 뒤 설정을 갱신하므로 재준비 중 Source가 몰래 실행되는 구간도 없다.
+     */
+    private void prepareStoppedConnector(Long pipelineId, String role, RenderedConnectorConfig rendered) {
+        if (kafkaConnectClient.listConnectors().contains(rendered.connectorName())) {
+            kafkaConnectClient.stop(rendered.connectorName());
+            awaitConnectorState(rendered.connectorName(), "STOPPED", false);
+            kafkaConnectClient.upsertConfig(rendered.connectorName(), rendered.config());
+            kafkaConnectClient.stop(rendered.connectorName());
+        } else {
+            kafkaConnectClient.createStopped(rendered.connectorName(), rendered.config());
+        }
+
+        ConnectorStatusResponse status = awaitConnectorState(rendered.connectorName(), "STOPPED", false);
+        PipelineConnector connector = pipelineConnectorRepository
+                .findByPipelineIdAndConnectorRole(pipelineId, role)
+                .orElseGet(() -> new PipelineConnector(pipelineId, role,
+                        rendered.connectorName(), rendered.connectorClass(), "{}"));
+        connector.setConnectorName(rendered.connectorName());
+        connector.setConnectorClass(rendered.connectorClass());
+        connector.setConnectorConfigJson(toJson(rendered.config()));
+        connector.setDeployedAt(LocalDateTime.now());
+        updateConnectorStatus(connector, status);
         pipelineConnectorRepository.save(connector);
     }
 
@@ -209,18 +265,208 @@ public class PipelineDeployService {
         return applyToAllConnectors(pipelineId, "PAUSE", PipelineStatus.PAUSED, kafkaConnectClient::pause);
     }
 
-    /** 시작/재개: PAUSED/STOPPED 상태의 파이프라인을 다시 돌린다. */
+    /**
+     * TABLE_CDC 시작은 READY(최초 실행) 또는 STOPPED(Sink만 재개) 상태에서만 허용한다.
+     * Source와 Sink가 실제 RUNNING이고 모든 태스크가 RUNNING인 것을 확인한 뒤에만
+     * 파이프라인을 DEPLOYED로 기록한다.
+     */
     public PipelineResponse resume(Long pipelineId) {
-        return applyToAllConnectors(pipelineId, "START", PipelineStatus.DEPLOYED, kafkaConnectClient::resume);
+        return withPipelineLock(pipelineId, () -> {
+            PipelineDefinition pipeline = findPipeline(pipelineId);
+            if (!isTableCdc(pipeline)) {
+                return applyToAllConnectors(pipelineId, "START",
+                        PipelineStatus.DEPLOYED, kafkaConnectClient::resume);
+            }
+            return startTableCdc(pipeline);
+        });
     }
 
     /**
-     * 중지: Kafka Connect에는 pause와 별개의 "정지" 개념이 없어서 내부 동작은 pause와
-     * 동일하다 - 다만 화면/이력에는 "중지"로 남겨서 사용자가 의도적으로 멈춘 것과
-     * 일시정지를 구분할 수 있게 한다.
+     * TABLE_CDC 중지는 Sink에만 Kafka Connect stop을 보낸다. Source는 계속 RUNNING 상태로
+     * DB 변경을 Kafka topic에 적재하므로, 다음 start 때 Sink가 밀린 데이터를 이어받는다.
      */
     public PipelineResponse stop(Long pipelineId) {
-        return applyToAllConnectors(pipelineId, "STOP", PipelineStatus.STOPPED, kafkaConnectClient::pause);
+        return withPipelineLock(pipelineId, () -> {
+            PipelineDefinition pipeline = findPipeline(pipelineId);
+            if (!isTableCdc(pipeline)) {
+                return applyToAllConnectors(pipelineId, "STOP",
+                        PipelineStatus.STOPPED, kafkaConnectClient::stop);
+            }
+            return stopTableCdc(pipeline);
+        });
+    }
+
+    private PipelineResponse startTableCdc(PipelineDefinition pipeline) {
+        Long pipelineId = pipeline.getId();
+        PipelineStatus previousStatus = pipeline.getStatus();
+        PipelineConnector source = requiredConnector(pipelineId, "SOURCE");
+        PipelineConnector sink = requiredConnector(pipelineId, "SINK");
+
+        try {
+            ConnectorStatusResponse sourceBefore = kafkaConnectClient.getStatus(source.getConnectorName());
+            ConnectorStatusResponse sinkBefore = kafkaConnectClient.getStatus(sink.getConnectorName());
+
+            if (previousStatus == PipelineStatus.DEPLOYED) {
+                assertState(sourceBefore, "RUNNING", true, "Source");
+                assertState(sinkBefore, "RUNNING", true, "Sink");
+                saveVerifiedStatus(source, sourceBefore);
+                saveVerifiedStatus(sink, sinkBefore);
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                        "CDC 파이프라인이 이미 실행 중입니다. 중복 start는 허용되지 않습니다.");
+            } else if (previousStatus == PipelineStatus.READY) {
+                assertState(sourceBefore, "STOPPED", false, "Source");
+                assertState(sinkBefore, "STOPPED", false, "Sink");
+                kafkaConnectClient.resume(source.getConnectorName());
+                saveVerifiedStatus(source,
+                        awaitConnectorState(source.getConnectorName(), "RUNNING", true));
+                kafkaConnectClient.resume(sink.getConnectorName());
+                saveVerifiedStatus(sink,
+                        awaitConnectorState(sink.getConnectorName(), "RUNNING", true));
+            } else if (previousStatus == PipelineStatus.STOPPED) {
+                assertState(sourceBefore, "RUNNING", true, "Source");
+                assertState(sinkBefore, "STOPPED", false, "Sink");
+                saveVerifiedStatus(source, sourceBefore);
+                kafkaConnectClient.resume(sink.getConnectorName());
+                saveVerifiedStatus(sink,
+                        awaitConnectorState(sink.getConnectorName(), "RUNNING", true));
+            } else {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                        "CDC 시작은 실행 대기(READY) 또는 중지(STOPPED) 상태에서만 가능합니다. 현재 상태="
+                                + previousStatus);
+            }
+
+            verifyStableRunning(source, sink);
+            pipeline.setStatus(PipelineStatus.DEPLOYED);
+            pipelineDefinitionRepository.save(pipeline);
+            commandHistoryRecorder.record(pipelineId, "START", "SUCCESS", null);
+            return response(pipeline);
+        } catch (Exception startFailure) {
+            boolean rollbackSucceeded = compensateFailedStart(source, sink, previousStatus);
+            pipeline.setStatus(rollbackSucceeded ? previousStatus : PipelineStatus.FAILED);
+            pipelineDefinitionRepository.save(pipeline);
+            String detail = startFailure.getMessage()
+                    + (rollbackSucceeded ? " (이전 상태로 복구됨)" : " (안전 상태 복구 실패)");
+            commandHistoryRecorder.record(pipelineId, "START", "FAILED", detail);
+            if (startFailure instanceof BusinessException businessException) {
+                throw businessException;
+            }
+            throw new BusinessException(ErrorCode.KAFKA_CONNECT_ERROR, "CDC 시작 실패: " + detail);
+        }
+    }
+
+    /**
+     * 두 커넥터와 모든 task가 일정 시간 연속 RUNNING인 경우에만 시작 성공으로 확정한다.
+     * Oracle snapshot의 LOCK TABLE 같은 초기화 오류가 task 시작 직후 발생해도 여기서 잡아
+     * startTableCdc의 보상 로직이 Source/Sink를 이전 안전 상태로 되돌리게 한다.
+     */
+    private void verifyStableRunning(PipelineConnector source, PipelineConnector sink) {
+        long requiredNanos = Math.max(0L, startStabilityMillis) * 1_000_000L;
+        long startedAt = System.nanoTime();
+
+        while (true) {
+            ConnectorStatusResponse sourceStatus =
+                    kafkaConnectClient.getStatus(source.getConnectorName());
+            ConnectorStatusResponse sinkStatus =
+                    kafkaConnectClient.getStatus(sink.getConnectorName());
+            assertState(sourceStatus, "RUNNING", true, "Source");
+            assertState(sinkStatus, "RUNNING", true, "Sink");
+            saveVerifiedStatus(source, sourceStatus);
+            saveVerifiedStatus(sink, sinkStatus);
+
+            long elapsedNanos = System.nanoTime() - startedAt;
+            if (elapsedNanos >= requiredNanos) {
+                return;
+            }
+
+            long remainingMillis = Math.max(1L,
+                    (requiredNanos - elapsedNanos + 999_999L) / 1_000_000L);
+            long sleepMillis = Math.min(
+                    Math.max(1L, startStabilityCheckIntervalMillis), remainingMillis);
+            try {
+                Thread.sleep(sleepMillis);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new BusinessException(ErrorCode.KAFKA_CONNECT_ERROR,
+                        "CDC 시작 안정화 확인이 중단되었습니다.");
+            }
+        }
+    }
+
+    private PipelineResponse stopTableCdc(PipelineDefinition pipeline) {
+        Long pipelineId = pipeline.getId();
+        PipelineConnector source = requiredConnector(pipelineId, "SOURCE");
+        PipelineConnector sink = requiredConnector(pipelineId, "SINK");
+
+        try {
+            ConnectorStatusResponse sourceBefore = kafkaConnectClient.getStatus(source.getConnectorName());
+            ConnectorStatusResponse sinkBefore = kafkaConnectClient.getStatus(sink.getConnectorName());
+
+            if (pipeline.getStatus() == PipelineStatus.STOPPED) {
+                assertState(sourceBefore, "RUNNING", true, "Source");
+                assertState(sinkBefore, "STOPPED", false, "Sink");
+            } else {
+                if (pipeline.getStatus() != PipelineStatus.DEPLOYED) {
+                    throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                            "CDC 중지는 실행 중(DEPLOYED) 상태에서만 가능합니다. 현재 상태="
+                                    + pipeline.getStatus());
+                }
+                assertState(sourceBefore, "RUNNING", true, "Source");
+                assertState(sinkBefore, "RUNNING", true, "Sink");
+                kafkaConnectClient.stop(sink.getConnectorName());
+                sinkBefore = awaitConnectorState(sink.getConnectorName(), "STOPPED", false);
+                sourceBefore = awaitConnectorState(source.getConnectorName(), "RUNNING", true);
+            }
+
+            saveVerifiedStatus(source, sourceBefore);
+            saveVerifiedStatus(sink, sinkBefore);
+            pipeline.setStatus(PipelineStatus.STOPPED);
+            pipelineDefinitionRepository.save(pipeline);
+            commandHistoryRecorder.record(pipelineId, "STOP", "SUCCESS", null);
+            return response(pipeline);
+        } catch (Exception ex) {
+            pipeline.setStatus(PipelineStatus.FAILED);
+            pipelineDefinitionRepository.save(pipeline);
+            commandHistoryRecorder.record(pipelineId, "STOP", "FAILED", ex.getMessage());
+            if (ex instanceof BusinessException businessException) {
+                throw businessException;
+            }
+            throw new BusinessException(ErrorCode.KAFKA_CONNECT_ERROR, "CDC 중지 실패: " + ex.getMessage());
+        }
+    }
+
+    private boolean compensateFailedStart(PipelineConnector source, PipelineConnector sink,
+            PipelineStatus previousStatus) {
+        try {
+            if (previousStatus == PipelineStatus.DEPLOYED) {
+                ConnectorStatusResponse sourceStatus =
+                        awaitConnectorState(source.getConnectorName(), "RUNNING", true);
+                ConnectorStatusResponse sinkStatus =
+                        awaitConnectorState(sink.getConnectorName(), "RUNNING", true);
+                saveVerifiedStatus(source, sourceStatus);
+                saveVerifiedStatus(sink, sinkStatus);
+                return true;
+            }
+            if (previousStatus != PipelineStatus.READY && previousStatus != PipelineStatus.STOPPED) {
+                return false;
+            }
+
+            kafkaConnectClient.stop(sink.getConnectorName());
+            ConnectorStatusResponse sinkStatus =
+                    awaitConnectorState(sink.getConnectorName(), "STOPPED", false);
+            saveVerifiedStatus(sink, sinkStatus);
+
+            ConnectorStatusResponse sourceStatus;
+            if (previousStatus == PipelineStatus.STOPPED) {
+                sourceStatus = awaitConnectorState(source.getConnectorName(), "RUNNING", true);
+            } else {
+                kafkaConnectClient.stop(source.getConnectorName());
+                sourceStatus = awaitConnectorState(source.getConnectorName(), "STOPPED", false);
+            }
+            saveVerifiedStatus(source, sourceStatus);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     /** 재시작: 커넥터의 태스크만 재시작한다 (설정을 다시 만들지 않음, tasks.max=1 고정이라 task 0). */
@@ -229,14 +475,143 @@ public class PipelineDeployService {
                 connectorName -> kafkaConnectClient.restartTask(connectorName, 0));
     }
 
+    private ConnectorStatusResponse awaitConnectorState(String connectorName, String expectedState,
+            boolean requireRunningTasks) {
+        ConnectorStatusResponse lastStatus = null;
+        BusinessException lastFailure = null;
+        for (int attempt = 0; attempt < STATUS_VERIFY_ATTEMPTS; attempt++) {
+            try {
+                lastStatus = kafkaConnectClient.getStatus(connectorName);
+                lastFailure = null;
+                if (matchesState(lastStatus, expectedState, requireRunningTasks)) {
+                    return lastStatus;
+                }
+                if (hasTerminalFailure(lastStatus)) {
+                    throw new BusinessException(ErrorCode.KAFKA_CONNECT_ERROR,
+                            "Kafka Connect가 실패 상태입니다. connector=" + connectorName
+                                    + ", connectorState=" + connectorState(lastStatus)
+                                    + ", taskStates=" + taskStates(lastStatus));
+                }
+            } catch (BusinessException ex) {
+                if (lastStatus != null && hasTerminalFailure(lastStatus)) {
+                    throw ex;
+                }
+                // 생성/stop/resume 직후 분산 워커의 상태 엔드포인트가 잠시 404/409를
+                // 반환할 수 있다. 정해진 시간 동안만 재시도하고 끝까지 안 맞으면 실패시킨다.
+                lastFailure = ex;
+            }
+            if (attempt + 1 < STATUS_VERIFY_ATTEMPTS) {
+                try {
+                    Thread.sleep(STATUS_VERIFY_INTERVAL_MILLIS);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new BusinessException(ErrorCode.KAFKA_CONNECT_ERROR,
+                            "Kafka Connect 상태 확인이 중단되었습니다. connector=" + connectorName);
+                }
+            }
+        }
+        throw new BusinessException(ErrorCode.KAFKA_CONNECT_ERROR,
+                "Kafka Connect 상태가 동기화되지 않았습니다. connector=" + connectorName
+                        + ", expected=" + expectedState
+                        + ", connectorState=" + connectorState(lastStatus)
+                        + ", taskStates=" + taskStates(lastStatus)
+                        + (lastFailure != null ? ", lastError=" + lastFailure.getMessage() : ""));
+    }
+
+    private void assertState(ConnectorStatusResponse status, String expectedState,
+            boolean requireRunningTasks, String role) {
+        if (!matchesState(status, expectedState, requireRunningTasks)) {
+            String actual = status != null && status.connector() != null
+                    ? status.connector().state() : "UNKNOWN";
+            throw new BusinessException(ErrorCode.KAFKA_CONNECT_ERROR,
+                    role + " Connector 상태 불일치: expected=" + expectedState
+                            + ", connectorState=" + actual
+                            + ", taskStates=" + taskStates(status));
+        }
+    }
+
+    private boolean matchesState(ConnectorStatusResponse status, String expectedState,
+            boolean requireRunningTasks) {
+        if (!hasConnectorState(status, expectedState)) {
+            return false;
+        }
+        if (!requireRunningTasks) {
+            return true;
+        }
+        List<ConnectorTaskStatus> tasks = status.tasks();
+        return tasks != null && !tasks.isEmpty()
+                && tasks.stream().allMatch(task -> "RUNNING".equalsIgnoreCase(task.state()));
+    }
+
+    private boolean hasConnectorState(ConnectorStatusResponse status, String expectedState) {
+        return status != null && status.connector() != null
+                && expectedState.equalsIgnoreCase(status.connector().state());
+    }
+
+    private boolean hasTerminalFailure(ConnectorStatusResponse status) {
+        return hasConnectorState(status, "FAILED")
+                || (status != null && status.tasks() != null
+                && status.tasks().stream().anyMatch(task -> "FAILED".equalsIgnoreCase(task.state())));
+    }
+
+    private String connectorState(ConnectorStatusResponse status) {
+        return status != null && status.connector() != null
+                ? status.connector().state() : "UNKNOWN";
+    }
+
+    private List<String> taskStates(ConnectorStatusResponse status) {
+        return status != null && status.tasks() != null
+                ? status.tasks().stream().map(ConnectorTaskStatus::state).toList()
+                : List.of();
+    }
+
+    private PipelineConnector requiredConnector(Long pipelineId, String role) {
+        return pipelineConnectorRepository.findByPipelineIdAndConnectorRole(pipelineId, role)
+                .orElseThrow(() -> new BusinessException(ErrorCode.VALIDATION_ERROR,
+                        role + " Connector가 준비되지 않았습니다. 파이프라인을 다시 준비하세요."));
+    }
+
+    private void saveVerifiedStatus(PipelineConnector connector, ConnectorStatusResponse status) {
+        updateConnectorStatus(connector, status);
+        pipelineConnectorRepository.save(connector);
+    }
+
+    private void updateConnectorStatus(PipelineConnector connector, ConnectorStatusResponse status) {
+        connector.setStatus(status.connector() != null ? status.connector().state() : "UNKNOWN");
+        connector.setLastStatusJson(toJson(status));
+    }
+
     private void refreshConnectorStatus(PipelineConnector connector) {
         try {
             ConnectorStatusResponse status = kafkaConnectClient.getStatus(connector.getConnectorName());
-            connector.setStatus(status.connector() != null ? status.connector().state() : "UNKNOWN");
-            connector.setLastStatusJson(toJson(status));
+            updateConnectorStatus(connector, status);
         } catch (BusinessException ex) {
             // 등록/일시정지 직후라 아직 상태 조회가 안 될 수 있음 - 호출 자체를 실패로 보지 않는다.
             connector.setStatus("UNKNOWN");
+        }
+    }
+
+    private PipelineDefinition findPipeline(Long pipelineId) {
+        return pipelineDefinitionRepository.findById(pipelineId)
+                .orElseThrow(() -> new PipelineNotFoundException(pipelineId));
+    }
+
+    private boolean isTableCdc(PipelineDefinition pipeline) {
+        return "TABLE_CDC".equals(pipeline.getPipelineType());
+    }
+
+    private PipelineResponse response(PipelineDefinition pipeline) {
+        return PipelineResponse.from(pipeline,
+                pipelineConnectorRepository.findByPipelineId(pipeline.getId()));
+    }
+
+    private PipelineResponse withPipelineLock(Long pipelineId, Supplier<PipelineResponse> action) {
+        ReentrantLock lock = pipelineLocks.computeIfAbsent(pipelineId, ignored -> new ReentrantLock());
+        lock.lock();
+        try {
+            return action.get();
+        } finally {
+            lock.unlock();
         }
     }
 

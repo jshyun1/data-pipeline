@@ -1,6 +1,6 @@
 # WORK LOG — Kafka 파이프라인 웹서비스 구축
 
-> 갱신: 2026-07-22 (Keycloak 기반 포털/NiFi/Airflow SSO + Airflow 통합 웹 iframe + GitLab CI 보안 테스트 수정 — 16~17절 참고. 그 이전 갱신: 2026-07-21, NiFi 유실/미완성 플로우 3건 복구 + WSL2 메모리 부족 이슈 진단 — 15절 참고)
+> 갱신: 2026-07-26 (Keycloak 완전 제거 → 계정 테이블 기반 자체 JWT 인증 전환, cerebroetl-ui HTTPS→HTTP 전환 — 18절 참고. 그 이전 갱신: 2026-07-22, Keycloak 기반 포털/NiFi/Airflow SSO + Airflow 통합 웹 iframe + GitLab CI 보안 테스트 수정 — 16~17절 참고)
 > 상세 증분 이력/검증 로그의 원본은 `/home/user/.claude/plans/peppy-plotting-quasar.md` (계속 갱신됨, 이 파일과 같이 볼 것).
 > 설계서 원문: `docs/kafka-webservice-design.md`
 
@@ -521,4 +521,36 @@ cd web/backend && ./gradlew test   # ConnectionRepositoryIT만 실패하면 정�
   통과했으므로 코드 회귀가 아님.
 - `.gitlab-ci.yml` rules가 `main || develop`만 대상으로 하고 실제 공유 브랜치 `dev`를 빠뜨려,
   `dev` 직접 push가 CI를 우회하는 문제도 발견. validate/test/build 네 job 모두 `dev`를 포함하도록 수정.
+
+## 18. Keycloak 완전 제거 → 계정 테이블 기반 자체 JWT 인증 전환 (2026-07-26) — ✅ 완료
+
+- **배경**: Keycloak SSO의 크로스오리진 iframe 로그인 실패(`KC_STATE_CHECKER` 쿠키 SameSite=Strict가
+  크로스사이트 iframe 임베딩과 근본적으로 불호환)를 조사하다, 우회 대신 Keycloak 자체를 제거하기로 결정.
+- **결정된 아키텍처**: 인증은 실제 회사 공유 계정 테이블(MySQL `ST_USER`, host 192.168.50.30)을
+  조회해 pipeline-api가 자체 서명 JWT(jjwt)를 발급하는 방식으로 전환. NiFi/Airflow는 개인 계정 대신
+  공유 서비스계정(NiFi Single User, Airflow FAB DB auth)으로 바꾸고, 그 자격증명은 cerebroetl-ui의
+  nginx가 서버사이드에서 모든 프록시 요청에 주입(브라우저는 자격증명을 들고 다니지 않음 - JWT 검증
+  없이 무조건 통과, 사용자 명시 결정). **ST_USER는 여러 시스템이 공유하는 실제 사용자 디렉터리라
+  절대 쓰기(INSERT/UPDATE/DELETE) 없이 조회만 한다** - 이 제약은 향후에도 반드시 지킬 것.
+- **NiFi**: OIDC → Single User 전환(`nifi.sh set-single-user-credentials`), `users.xml`/
+  `authorizations.xml`에 기존 admin의 13개 정책을 새 identity로 수동 복제(Initial Admin Identity
+  부트스트랩은 최초 1회만 동작해서 재사용 불가였음).
+- **Airflow**: FAB `AUTH_OAUTH`(Keycloak) → `AUTH_DB`. `_get_nifi_token()`(DAG)과 pipeline-api의
+  `NifiClient`도 NiFi Bearer 토큰 발급 방식이 바뀌어 함께 수정 필요했음(원래 7개 작업 항목에
+  없었던 필수 동반 수정).
+- **cerebroetl-ui**: `oidc-client-ts`/`PlatformSessionBootstrap` 제거, `ST_USER` 기반 로그인 폼 +
+  로그인 성공 시 JWT를 localStorage에 저장해 `Authorization` 헤더로 붙이는 방식으로 재작성
+  (web-client-svr과 동일 패턴). 외부 포트도 이 작업 직후 HTTPS→HTTP로 전환(내부 NiFi HTTPS는 유지 -
+  MSA 포털도 http라 scheme 통일 목적, 브라우저의 Secure 쿠키 제약이 사라져서 가능해짐).
+- **소스 정리**: `keycloak` 서비스 블록/`extra_hosts`/전 서비스의 `KEYCLOAK_*` 환경변수·볼륨마운트를
+  `docker-compose.yml`에서 전부 제거, `.env`/`.env.example`의 `KEYCLOAK_*`·`PORTAL_PUBLIC_HOST` 변수
+  전부 삭제(`.env.example`엔 새로 필요해진 `PIPELINE_JWT_SECRET`/`ACCOUNT_DB_*` 자리도 추가),
+  `db/metadata-init/01_create_keycloak_db.sql`과 `keycloak/`(realm-export.json/certs/themes) 디렉토리
+  삭제. 코드 내 "Keycloak 제거"를 근거로 남긴 설명용 주석(왜 필드가 nullable인지 등)은 그대로 둠.
+- **미반영 상태로 남겨둔 것**: `docs/poc-presentation.md`, `docs/project-demo-guide.md`는 여전히
+  Keycloak 기반 로그인 흐름/데모 스크립트를 현재형으로 서술 중 - 발표 자료 성격이라 재작성 방향은
+  사용자 확인 후 진행하기로 함. `db/metadata-init`는 볼륨 최초 생성 시에만 실행되므로, 이미 만들어진
+  로컬 metadata-db의 `keycloak` DB 자체는 orphan으로 남아있음(운영 영향 없음, 필요시 수동 DROP).
+- **범위 제약**: 이번 작업은 로컬 docker-compose 환경에 한정 - MSA 서버(192.168.50.30) 배포/빌드는
+  일절 하지 않음(사용자 지시, 별도 요청 시에만 진행).
 - 커밋 `2c0bbd4` 후 `feature/airflow-oidc`를 `dev`에 fast-forward 병합하고 원격 push 완료.

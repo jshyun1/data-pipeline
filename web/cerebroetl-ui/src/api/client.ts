@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getAccessToken, userManager } from "../auth/oidc";
+import { clearSession, getToken } from "../auth/session";
 
 // 상대경로 그대로 둔다: 로컬 개발에서는 vite.config.ts의 dev proxy가,
 // 운영(Docker)에서는 nginx.conf의 reverse proxy가 각각 pipeline-api로 넘겨준다.
@@ -23,9 +23,9 @@ export function unwrap<T>(response: ApiResponse<T>): T {
   return response.data as T;
 }
 
-// Keycloak이 발급한 액세스 토큰을 모든 pipeline-api 요청에 Authorization 헤더로 붙인다.
-apiClient.interceptors.request.use(async (config) => {
-  const token = await getAccessToken();
+// 계정테이블 로그인으로 발급받은 자체 JWT를 모든 pipeline-api 요청에 Authorization 헤더로 붙인다.
+apiClient.interceptors.request.use((config) => {
+  const token = getToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -37,9 +37,12 @@ apiClient.interceptors.request.use(async (config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    // 토큰 만료 등으로 401이면 Keycloak 로그인으로 다시 보낸다.
+    // 토큰 만료/무효화 등으로 401이면 세션을 지우고 로그인 화면으로 보낸다.
     if (error?.response?.status === 401) {
-      void userManager.signinRedirect();
+      clearSession();
+      if (window.location.pathname !== "/login") {
+        window.location.assign("/login");
+      }
     }
     const message = error?.response?.data?.error?.message;
     if (message) {

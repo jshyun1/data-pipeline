@@ -77,6 +77,37 @@ class KafkaConnectClientTest {
     }
 
     @Test
+    void createStopped_postsInitialStoppedState() throws Exception {
+        server.enqueue(new MockResponse()
+                .setResponseCode(201)
+                .setBody("""
+                        {"name":"source-1","config":{},"tasks":[]}
+                        """)
+                .addHeader("Content-Type", "application/json"));
+
+        client.createStopped("source-1", Map.of("connector.class", "x"));
+
+        var recorded = server.takeRequest();
+        assertThat(recorded.getMethod()).isEqualTo("POST");
+        assertThat(recorded.getPath()).isEqualTo("/connectors");
+        assertThat(recorded.getBody().readUtf8())
+                .contains("\"name\":\"source-1\"")
+                .contains("\"initial_state\":\"STOPPED\"")
+                .contains("\"connector.class\":\"x\"");
+    }
+
+    @Test
+    void stop_sendsKafkaConnectStopRequest() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        client.stop("sink-1");
+
+        var recorded = server.takeRequest();
+        assertThat(recorded.getMethod()).isEqualTo("PUT");
+        assertThat(recorded.getPath()).isEqualTo("/connectors/sink-1/stop");
+    }
+
+    @Test
     void kafkaConnectError_wrapsIntoKafkaConnectClientException() {
         server.enqueue(new MockResponse()
                 .setResponseCode(500)

@@ -8,6 +8,8 @@ package com.company.pipeline.pipeline;
 public enum PipelineStatus {
     CREATED,
     DEPLOYING,
+    /** Source/Sink Connector가 모두 STOPPED로 준비되어 Airflow의 최초 start를 기다리는 상태. */
+    READY,
     DEPLOYED,
     PAUSED,
     STOPPED,

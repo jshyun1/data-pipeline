@@ -96,26 +96,21 @@ PIPELINE_API_BASE_URL = "http://pipeline-api:8081"
 
 
 def _get_nifi_token() -> str:
-    # NiFi가 OIDC 전용 인증으로 전환되며 username/password 토큰 발급(/nifi-api/access/token)이
-    # 막혀서, Keycloak에서 client_credentials로 직접 토큰을 받아 NiFi에 Bearer로 제시한다.
-    # NiFi는 신뢰하는 realm이 서명한 토큰이면 발급 클라이언트를 가리지 않고 인증을 통과시키고,
-    # 이후 sub 클레임을 identity로 authorizers.xml/users.xml에 등록된 권한을 확인한다
-    # (pipeline-api의 NifiClient.getToken()과 동일한 방식).
-    backchannel_url = os.environ.get("KEYCLOAK_BACKCHANNEL_URL", "https://host.docker.internal:8543")
-    realm = os.environ.get("KEYCLOAK_REALM", "cerebro")
-    client_id = os.environ.get("KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID", "")
-    client_secret = os.environ.get("KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET", "")
+    # NiFi가 Keycloak/OIDC를 제거하고 Single User 인증(공유 서비스계정)으로 전환됨에 따라,
+    # /nifi-api/access/token에 username/password를 보내 JWT를 직접 발급받는다.
+    # 이 엔드포인트는 응답 본문이 JSON이 아니라 JWT 문자열 그대로임에 주의.
+    base_url = os.environ.get("NIFI_BASE_URL", NIFI_BASE_URL_DEFAULT)
+    username = os.environ.get("NIFI_USERNAME", "")
+    password = os.environ.get("NIFI_PASSWORD", "")
     response = requests.post(
-        f"{backchannel_url}/realms/{realm}/protocol/openid-connect/token",
-        data={
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        },
+        f"{base_url}/nifi-api/access/token",
+        data={"username": username, "password": password},
+        headers={"Host": os.environ.get("NIFI_HOST_HEADER", NIFI_HOST_HEADER_DEFAULT)},
+        verify=False,
         timeout=10,
     )
     response.raise_for_status()
-    return response.json()["access_token"]
+    return response.text
 
 
 def apply_process_group_action(pg_id: str, base_url: str, host_header: str, **context):
@@ -134,6 +129,28 @@ def apply_process_group_action(pg_id: str, base_url: str, host_header: str, **co
     )
     response.raise_for_status()
     print(f"NiFi 프로세스 그룹 {pg_id} {action}({state}) 완료: {response.json()}")
+
+
+def stop_process_group_after_run(pg_id: str, base_url: str, host_header: str, **context):
+    # 배치성 그룹(DZ 등)은 "하루 1번 돌고 다음날 그 시각에 다시" 동작이 되려면
+    # 실행이 끝난 뒤 반드시 STOPPED로 돌아가야 한다 - NiFi의 GenerateFlowFile은
+    # STOPPED -> RUNNING으로 전환되는 순간 주기와 무관하게 즉시 1회 실행되는
+    # 것으로 관측됐고(2026-07-26), 이 특성을 이용해 "다음 Airflow 스케줄 실행
+    # = 다음 날의 1회 실행"이 되도록 만든다. 계속 RUNNING으로 남겨두면 그룹이
+    # 이미 실행 중이라 다음날 apply_action(start)이 아무 효과가 없다.
+    # context["params"]["action"]과 무관하게 무조건 STOPPED로 보낸다 - 이 태스크
+    # 자체가 "실행 후 정리" 목적이라 수동 stop 트리거일 때도 정지 상태를 재확인하는
+    # 것뿐이라 안전하다.
+    token = _get_nifi_token()
+    response = requests.put(
+        f"{base_url}/nifi-api/flow/process-groups/{pg_id}",
+        json={"id": pg_id, "state": "STOPPED"},
+        headers={"Authorization": f"Bearer {token}", "Host": host_header},
+        verify=False,
+        timeout=15,
+    )
+    response.raise_for_status()
+    print(f"NiFi 프로세스 그룹 {pg_id} 실행 후 자동 정지 완료: {response.json()}")
 
 
 def verify_process_group_action(pg_id: str, base_url: str, host_header: str, **context):
@@ -274,6 +291,11 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str) -> DAG:
         if target_schema and target_table
         else []
     )
+    # 배치성 그룹(예: DZ)을 "그 시각에 한 번 돌고 다음날 같은 시각에 다시" 동작시키려면
+    # Admin > Variables에서 "{dag_id}__auto_stop_after_run"을 "true"로 설정한다.
+    # 기본값(미설정)은 기존과 동일하게 실행 후에도 계속 RUNNING으로 남겨두는 상시 동작
+    # (logfile/http-ingest처럼 항상 대기해야 하는 그룹에 적합).
+    auto_stop_after_run = Variable.get(f"{dag_id}__auto_stop_after_run", default_var="false").lower() == "true"
     with DAG(
         dag_id=dag_id,
         dag_display_name=f"ETL_{sanitize(pg_name)}",
@@ -314,7 +336,16 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str) -> DAG:
             },
             outlets=target_outlets,
         )
-        apply >> verify >> verify_target
+        if auto_stop_after_run:
+            stop_after = PythonOperator(
+                task_id="stop_after_run",
+                python_callable=stop_process_group_after_run,
+                op_kwargs=_op_kwargs,
+                trigger_rule="all_done",
+            )
+            apply >> verify >> verify_target >> stop_after
+        else:
+            apply >> verify >> verify_target
     return dag
 
 

@@ -3,7 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, DatePicker, Space, Statistic } from "antd";
 import { Column, Line } from "@ant-design/plots";
 import dayjs, { type Dayjs } from "dayjs";
-import { getDailyLoadSummary, getPipelineDashboardSummary } from "../api/dashboard";
+import {
+  getDailyLoadSummary,
+  getPipelineDashboardSummary,
+  getRealtimePipelineMetrics,
+} from "../api/dashboard";
 import {
   getAirflowTaskLog,
   getKafkaConnectorTrace,
@@ -14,6 +18,7 @@ import {
   listAirflowDags,
   listAirflowTaskInstances,
   listKafkaConnectorsWithStatus,
+  listNifiExecutionLogs,
 } from "../api/platform";
 import type { AirflowTaskInstance } from "../api/platform";
 import { listPipelines } from "../api/pipelines";
@@ -22,6 +27,7 @@ import { collectNifiJobs, extractErrorGroupMessages } from "../utils/nifiJobs";
 import { summarizeKafkaConnectors } from "../utils/kafkaConnectors";
 import { categorizeDag, NIFI_METRICS_COLLECTOR_DAG_ID, resolveDagDisplayName, type DagCategory } from "../utils/dagHistory";
 import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
+import { OperationsOverview } from "../components/OperationsOverview";
 
 const { RangePicker } = DatePicker;
 
@@ -326,6 +332,23 @@ export function DashboardPage() {
     placeholderData: (previousData) => previousData,
   });
 
+  const operationsPipelineQuery = useQuery({
+    queryKey: ["dashboard-operations-pipelines"],
+    queryFn: async () => {
+      const [pipelines, metrics] = await Promise.all([listPipelines(), getRealtimePipelineMetrics()]);
+      return { pipelines, metrics };
+    },
+    refetchInterval: 20000,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const nifiExecutionLogsQuery = useQuery({
+    queryKey: ["dashboard-operations-nifi-logs", dayjs().format("YYYY-MM-DD")],
+    queryFn: () => listNifiExecutionLogs(dayjs().format("YYYY-MM-DD"), dayjs().format("YYYY-MM-DD")),
+    refetchInterval: 30000,
+    placeholderData: (previousData) => previousData,
+  });
+
   const nifiJobs = nifiJobsQuery.data ?? [];
   const kafkaConnectors = kafkaConnectorsQuery.data ?? [];
   const commandSummary = commandSummaryQuery.data;
@@ -351,6 +374,10 @@ export function DashboardPage() {
 
   const nifiLoadDaily = useMemo(
     () => (nifiLoadQuery.data?.daily ?? []).map((point) => ({ date: formatLoadDate(point.date), count: point.count })),
+    [nifiLoadQuery.data],
+  );
+  const nifiLoadTop = useMemo(
+    () => (nifiLoadQuery.data?.topPipelines ?? []).map((point) => ({ label: point.label, count: point.count })),
     [nifiLoadQuery.data],
   );
   const kafkaLoadTop = useMemo(
@@ -416,26 +443,38 @@ export function DashboardPage() {
   return (
     <div>
       <div className="dashboard-stack">
-        <div className="section-heading">
-          <div>
-            <div className="section-kicker">DASHBOARD</div>
-            <h3>데이터 파이프라인 현황</h3>
-          </div>
-          <Space>
-            <RangePicker
-              value={dateRange}
-              onChange={(value) => {
-                if (value && value[0] && value[1]) {
-                  setDateRange([value[0], value[1]]);
-                }
-              }}
-              allowClear={false}
-            />
-            <Button type="primary" onClick={() => setAppliedRange(dateRange)}>
-              검색
-            </Button>
-          </Space>
-        </div>
+        <OperationsOverview
+          pipelines={operationsPipelineQuery.data?.pipelines ?? []}
+          realtimeMetrics={operationsPipelineQuery.data?.metrics ?? []}
+          kafkaConnectors={kafkaConnectors}
+          nifiJobs={nifiJobs}
+          nifiExecutionLogs={nifiExecutionLogsQuery.data ?? []}
+          nifiDaily={nifiLoadDaily}
+          kafkaDaily={kafkaLoadDaily}
+          nifiTop={nifiLoadTop}
+          kafkaTop={kafkaLoadTop}
+          headerExtra={
+            <Space>
+              <RangePicker
+                value={dateRange}
+                onChange={(value) => {
+                  if (value && value[0] && value[1]) {
+                    setDateRange([value[0], value[1]]);
+                  }
+                }}
+                allowClear={false}
+              />
+              <Button type="primary" onClick={() => setAppliedRange(dateRange)}>
+                검색
+              </Button>
+            </Space>
+          }
+          loading={
+            (operationsPipelineQuery.isLoading && !operationsPipelineQuery.data) ||
+            (nifiJobsQuery.isLoading && !nifiJobsQuery.data) ||
+            (kafkaConnectorsQuery.isLoading && !kafkaConnectorsQuery.data)
+          }
+        />
 
         {/* NiFi는 Airflow를 거치지 않고 자신의 REST API(프로세스 그룹 상태, bulletin board)를
             직접 조회한 실시간 값이다 - 실행중/실패는 지금 이 순간의 상태, 적재 건수 차트만

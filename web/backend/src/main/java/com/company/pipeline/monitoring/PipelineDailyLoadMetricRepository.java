@@ -4,6 +4,7 @@ import com.company.pipeline.monitoring.dto.DailyCountProjection;
 import com.company.pipeline.monitoring.dto.KeyedCountProjection;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -11,6 +12,9 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 public interface PipelineDailyLoadMetricRepository extends JpaRepository<PipelineDailyLoadMetric, Long> {
+
+    Optional<PipelineDailyLoadMetric> findTopByPipelineSourceAndPipelineKeyOrderByUpdatedAtDesc(
+            String pipelineSource, String pipelineKey);
 
     /**
      * 오늘 날짜 row가 없으면 만들고, 있으면 loaded_count에 더한다(원자적 UPSERT).

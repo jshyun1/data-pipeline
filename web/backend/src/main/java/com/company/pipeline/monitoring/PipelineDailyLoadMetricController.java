@@ -3,8 +3,10 @@ package com.company.pipeline.monitoring;
 import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.monitoring.dto.DailyLoadIncrementRequest;
 import com.company.pipeline.monitoring.dto.DailyLoadSummaryResponse;
+import com.company.pipeline.monitoring.dto.RealtimePipelineMetricResponse;
 import jakarta.validation.Valid;
 import java.time.LocalDate;
+import java.util.List;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -23,9 +25,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class PipelineDailyLoadMetricController {
 
     private final PipelineDailyLoadMetricService service;
+    private final RealtimePipelineMetricService realtimeMetricService;
 
-    public PipelineDailyLoadMetricController(PipelineDailyLoadMetricService service) {
+    public PipelineDailyLoadMetricController(
+            PipelineDailyLoadMetricService service,
+            RealtimePipelineMetricService realtimeMetricService) {
         this.service = service;
+        this.realtimeMetricService = realtimeMetricService;
     }
 
     @PostMapping("/increment")
@@ -42,5 +48,10 @@ public class PipelineDailyLoadMetricController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false) String source) {
         return ApiResponse.success(service.getSummary(from, to, source));
+    }
+
+    @GetMapping("/realtime")
+    public ApiResponse<List<RealtimePipelineMetricResponse>> realtime() {
+        return ApiResponse.success(realtimeMetricService.getMetrics());
     }
 }

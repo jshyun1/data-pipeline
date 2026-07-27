@@ -20,6 +20,7 @@ import com.company.pipeline.connector.KafkaConnectClientException;
 import com.company.pipeline.connector.PipelineConnectorRepository;
 import com.company.pipeline.connector.dto.ConnectorState;
 import com.company.pipeline.connector.dto.ConnectorStatusResponse;
+import com.company.pipeline.connector.dto.ConnectorTaskStatus;
 import com.company.pipeline.connector.dto.RenderedConnectorConfig;
 import com.company.pipeline.logpipeline.FilebeatConfigRenderer;
 import com.company.pipeline.logpipeline.FilebeatInputFileService;
@@ -35,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class PipelineDeployServiceTest {
@@ -68,10 +70,12 @@ class PipelineDeployServiceTest {
                 commandHistoryRecorder, connectionRepository, passwordCryptoService,
                 connectorConfigRenderer, kafkaConnectClient, new ObjectMapper(),
                 logPipelineSourceRepository, filebeatConfigRenderer, filebeatInputFileService);
+        // 단위 테스트에서는 실제 대기 없이 안정화 상태를 한 번 더 검증한다.
+        ReflectionTestUtils.setField(deployService, "startStabilityMillis", 0L);
     }
 
     @Test
-    void deploy_success_registersBothConnectorsAndMarksDeployed() throws Exception {
+    void deploy_tableCdc_createsBothConnectorsStoppedAndMarksReady() throws Exception {
         PipelineDefinition pipeline = newPipeline(1L);
         when(pipelineDefinitionRepository.findById(1L)).thenReturn(Optional.of(pipeline));
         when(pipelineDefinitionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -93,15 +97,19 @@ class PipelineDeployServiceTest {
 
         when(pipelineConnectorRepository.findByPipelineIdAndConnectorRole(eq(1L), anyString()))
                 .thenReturn(Optional.empty());
-        when(kafkaConnectClient.getStatus(anyString())).thenReturn(
-                new ConnectorStatusResponse("x", new ConnectorState("RUNNING", "w"), List.of(), "source"));
+        when(kafkaConnectClient.listConnectors()).thenReturn(List.of());
+        when(kafkaConnectClient.getStatus("source-1-oracle-appuser-customers"))
+                .thenThrow(new KafkaConnectClientException("status not found"))
+                .thenReturn(stoppedStatus());
+        when(kafkaConnectClient.getStatus("sink-1-postgresql-cdc_landing-customers"))
+                .thenReturn(stoppedStatus());
 
         deployService.deploy(1L);
 
-        verify(kafkaConnectClient).upsertConfig(eq("source-1-oracle-appuser-customers"), any());
-        verify(kafkaConnectClient).upsertConfig(eq("sink-1-postgresql-cdc_landing-customers"), any());
-        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.DEPLOYED);
-        verify(commandHistoryRecorder).record(1L, "DEPLOY", "SUCCESS", null);
+        verify(kafkaConnectClient).createStopped(eq("source-1-oracle-appuser-customers"), any());
+        verify(kafkaConnectClient).createStopped(eq("sink-1-postgresql-cdc_landing-customers"), any());
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.READY);
+        verify(commandHistoryRecorder).record(1L, "PREPARE", "SUCCESS", null);
         verify(pipelineConnectorRepository, times(2)).save(any());
     }
 
@@ -121,14 +129,15 @@ class PipelineDeployServiceTest {
                 "source-1-oracle-appuser-customers", "SOURCE", "io.debezium.connector.oracle.OracleConnector",
                 Map.of("k", "v"));
         when(connectorConfigRenderer.renderSource(any())).thenReturn(sourceRendered);
+        when(kafkaConnectClient.listConnectors()).thenReturn(List.of());
         doThrow(new KafkaConnectClientException("connection refused"))
-                .when(kafkaConnectClient).upsertConfig(anyString(), any());
+                .when(kafkaConnectClient).createStopped(anyString(), any());
 
         org.junit.jupiter.api.Assertions.assertThrows(KafkaConnectClientException.class,
                 () -> deployService.deploy(1L));
 
         assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.FAILED);
-        verify(commandHistoryRecorder).record(eq(1L), eq("DEPLOY"), eq("FAILED"), anyString());
+        verify(commandHistoryRecorder).record(eq(1L), eq("PREPARE"), eq("FAILED"), anyString());
         // 소스 등록 시도 전에 실패했으니 싱크 렌더링까지는 안 가야 함
         verify(connectorConfigRenderer, never()).renderSink(any());
     }
@@ -215,6 +224,131 @@ class PipelineDeployServiceTest {
         assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.DEPLOYED);
     }
 
+    @Test
+    void start_fromReady_resumesSourceThenSinkAndMarksDeployed() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        pipeline.setStatus(PipelineStatus.READY);
+        var source = connector("SOURCE", "source-1");
+        var sink = connector("SINK", "sink-1");
+        stubPipelineAndConnectors(pipeline, source, sink);
+        when(kafkaConnectClient.getStatus("source-1"))
+                .thenReturn(stoppedStatus(), startingStatus(), runningStatus());
+        when(kafkaConnectClient.getStatus("sink-1"))
+                .thenReturn(stoppedStatus(), runningStatus());
+
+        deployService.resume(1L);
+
+        var order = org.mockito.Mockito.inOrder(kafkaConnectClient);
+        order.verify(kafkaConnectClient).resume("source-1");
+        order.verify(kafkaConnectClient).resume("sink-1");
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.DEPLOYED);
+        verify(commandHistoryRecorder).record(1L, "START", "SUCCESS", null);
+    }
+
+    @Test
+    void start_fromStopped_resumesOnlySinkAndKeepsSourceRunning() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        pipeline.setStatus(PipelineStatus.STOPPED);
+        var source = connector("SOURCE", "source-1");
+        var sink = connector("SINK", "sink-1");
+        stubPipelineAndConnectors(pipeline, source, sink);
+        when(kafkaConnectClient.getStatus("source-1")).thenReturn(runningStatus());
+        when(kafkaConnectClient.getStatus("sink-1"))
+                .thenReturn(stoppedStatus(), runningStatus());
+
+        deployService.resume(1L);
+
+        verify(kafkaConnectClient, never()).resume("source-1");
+        verify(kafkaConnectClient).resume("sink-1");
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.DEPLOYED);
+    }
+
+    @Test
+    void start_fromDeployed_rejectsDuplicateMonitorRunWithoutChangingConnectors() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        pipeline.setStatus(PipelineStatus.DEPLOYED);
+        var source = connector("SOURCE", "source-1");
+        var sink = connector("SINK", "sink-1");
+        stubPipelineAndConnectors(pipeline, source, sink);
+        when(kafkaConnectClient.getStatus("source-1")).thenReturn(runningStatus());
+        when(kafkaConnectClient.getStatus("sink-1")).thenReturn(runningStatus());
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                com.company.pipeline.common.BusinessException.class,
+                () -> deployService.resume(1L));
+
+        verify(kafkaConnectClient, never()).resume(anyString());
+        verify(kafkaConnectClient, never()).stop(anyString());
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.DEPLOYED);
+        verify(commandHistoryRecorder).record(eq(1L), eq("START"), eq("FAILED"),
+                org.mockito.ArgumentMatchers.contains("이미 실행 중"));
+    }
+
+    @Test
+    void start_sinkFailure_stopsBothAndRestoresReady() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        pipeline.setStatus(PipelineStatus.READY);
+        var source = connector("SOURCE", "source-1");
+        var sink = connector("SINK", "sink-1");
+        stubPipelineAndConnectors(pipeline, source, sink);
+        when(kafkaConnectClient.getStatus("source-1"))
+                .thenReturn(stoppedStatus(), runningStatus(), stoppedStatus());
+        when(kafkaConnectClient.getStatus("sink-1"))
+                .thenReturn(stoppedStatus())
+                .thenReturn(failedTaskStatus())
+                .thenReturn(stoppedStatus());
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                com.company.pipeline.common.BusinessException.class,
+                () -> deployService.resume(1L));
+
+        verify(kafkaConnectClient).stop("sink-1");
+        verify(kafkaConnectClient).stop("source-1");
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.READY);
+        verify(commandHistoryRecorder).record(eq(1L), eq("START"), eq("FAILED"), anyString());
+    }
+
+    @Test
+    void start_sourceFailsImmediatelyAfterRunning_stopsBothAndRestoresReady() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        pipeline.setStatus(PipelineStatus.READY);
+        var source = connector("SOURCE", "source-1");
+        var sink = connector("SINK", "sink-1");
+        stubPipelineAndConnectors(pipeline, source, sink);
+        when(kafkaConnectClient.getStatus("source-1"))
+                .thenReturn(stoppedStatus(), runningStatus(), failedTaskStatus(), stoppedStatus());
+        when(kafkaConnectClient.getStatus("sink-1"))
+                .thenReturn(stoppedStatus(), runningStatus(), stoppedStatus());
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                com.company.pipeline.common.BusinessException.class,
+                () -> deployService.resume(1L));
+
+        verify(kafkaConnectClient).stop("sink-1");
+        verify(kafkaConnectClient).stop("source-1");
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.READY);
+        verify(commandHistoryRecorder).record(eq(1L), eq("START"), eq("FAILED"),
+                org.mockito.ArgumentMatchers.contains("taskStates=[FAILED]"));
+    }
+
+    @Test
+    void stop_stopsOnlySinkAndVerifiesSourceStillRunning() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        pipeline.setStatus(PipelineStatus.DEPLOYED);
+        var source = connector("SOURCE", "source-1");
+        var sink = connector("SINK", "sink-1");
+        stubPipelineAndConnectors(pipeline, source, sink);
+        when(kafkaConnectClient.getStatus("source-1")).thenReturn(runningStatus(), runningStatus());
+        when(kafkaConnectClient.getStatus("sink-1")).thenReturn(runningStatus(), stoppedStatus());
+
+        deployService.stop(1L);
+
+        verify(kafkaConnectClient, never()).stop("source-1");
+        verify(kafkaConnectClient).stop("sink-1");
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.STOPPED);
+        verify(commandHistoryRecorder).record(1L, "STOP", "SUCCESS", null);
+    }
+
     private PipelineDefinition newPipeline(Long id) throws Exception {
         PipelineDefinition pipeline = new PipelineDefinition(
                 "test-pipeline", "TABLE_CDC", 10L, 20L, DbType.ORACLE, DbType.POSTGRESQL,
@@ -236,6 +370,43 @@ class PipelineDeployServiceTest {
                 "conn", dbType, "host", 1234, "db", "svc", null, "user", encryptedPassword, null);
         setId(connection, PipelineConnection.class, id);
         return connection;
+    }
+
+    private com.company.pipeline.connector.PipelineConnector connector(String role, String name) {
+        return new com.company.pipeline.connector.PipelineConnector(1L, role, name, "x", "{}");
+    }
+
+    private void stubPipelineAndConnectors(PipelineDefinition pipeline,
+            com.company.pipeline.connector.PipelineConnector source,
+            com.company.pipeline.connector.PipelineConnector sink) {
+        when(pipelineDefinitionRepository.findById(1L)).thenReturn(Optional.of(pipeline));
+        when(pipelineDefinitionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(pipelineConnectorRepository.findByPipelineIdAndConnectorRole(1L, "SOURCE"))
+                .thenReturn(Optional.of(source));
+        when(pipelineConnectorRepository.findByPipelineIdAndConnectorRole(1L, "SINK"))
+                .thenReturn(Optional.of(sink));
+        org.mockito.Mockito.lenient()
+                .when(pipelineConnectorRepository.findByPipelineId(1L))
+                .thenReturn(List.of(source, sink));
+    }
+
+    private ConnectorStatusResponse stoppedStatus() {
+        return new ConnectorStatusResponse("x", new ConnectorState("STOPPED", "w"), List.of(), "source");
+    }
+
+    private ConnectorStatusResponse runningStatus() {
+        return new ConnectorStatusResponse("x", new ConnectorState("RUNNING", "w"),
+                List.of(new ConnectorTaskStatus(0, "RUNNING", "w", null)), "source");
+    }
+
+    private ConnectorStatusResponse startingStatus() {
+        return new ConnectorStatusResponse("x", new ConnectorState("RUNNING", "w"),
+                List.of(), "source");
+    }
+
+    private ConnectorStatusResponse failedTaskStatus() {
+        return new ConnectorStatusResponse("x", new ConnectorState("RUNNING", "w"),
+                List.of(new ConnectorTaskStatus(0, "FAILED", "w", "boom")), "source");
     }
 
     private void setId(Object entity, Class<?> type, Long id) throws Exception {

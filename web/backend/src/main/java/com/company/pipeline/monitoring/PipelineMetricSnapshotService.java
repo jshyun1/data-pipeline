@@ -48,6 +48,8 @@ public class PipelineMetricSnapshotService {
         String consumerGroupId = "connect-" + sink.getConnectorName();
 
         long committedOffset = kafkaTopicOffsetReader.getCommittedOffsetSum(consumerGroupId, topicName);
+        KafkaTopicOffsetReader.TopicEndOffsetSummary endOffsetSummary =
+                kafkaTopicOffsetReader.getEndOffsetSummary(topicName);
 
         PipelineMetricSnapshot snapshot = new PipelineMetricSnapshot();
         snapshot.setPipelineId(pipelineId);
@@ -55,6 +57,9 @@ public class PipelineMetricSnapshotService {
         snapshot.setConnectorState(sink.getStatus());
         snapshot.setTopicName(topicName);
         snapshot.setCommittedOffset(committedOffset);
+        snapshot.setPartitionCount(endOffsetSummary.partitionCount());
+        snapshot.setEndOffset(endOffsetSummary.endOffset());
+        snapshot.setConsumerLag(Math.max(0L, endOffsetSummary.endOffset() - committedOffset));
         return pipelineMetricSnapshotRepository.save(snapshot);
     }
 

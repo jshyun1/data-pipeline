@@ -40,7 +40,8 @@ public class PipelineController {
 
     @PostMapping
     public ApiResponse<PipelineResponse> create(@Valid @RequestBody PipelineCreateRequest request) {
-        return ApiResponse.success(pipelineService.create(request));
+        PipelineResponse created = pipelineService.create(request);
+        return ApiResponse.success(pipelineDeployService.deploy(created.id()));
     }
 
     @PostMapping("/log-file")

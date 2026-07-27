@@ -166,29 +166,25 @@ services:
       NIFI_JVM_HEAP_INIT: ${NIFI_JVM_HEAP_INIT}
       NIFI_JVM_HEAP_MAX: ${NIFI_JVM_HEAP_MAX}
       NIFI_WEB_PROXY_HOST: ${NIFI_WEB_PROXY_HOST}
-      # --- Keycloak OIDC 인증(single-user 대체) ---
-      # 이미지의 secure.sh(AUTH=oidc)가 기존 keystore/truststore를 그대로 쓰도록 경로/비번을 넘긴다.
-      # (truststore.p12에는 Keycloak 자체 서명 인증서를 미리 import 해둠)
-      AUTH: oidc
+      # --- Single User 인증(Keycloak/OIDC 제거, 공유 서비스계정으로 전환) ---
+      # AUTH=tls는 실제 양방향 TLS를 쓰겠다는 뜻이 아니라, 이 이미지의 secure.sh가
+      # tls/ldap/oidc 세 case에서만 호출되기 때문에 그 경로를 빌려 keystore/truststore와
+      # login-identity-provider 설정을 재기동 때마다 멱등하게 재적용하기 위함이다.
+      AUTH: tls
       KEYSTORE_PATH: /opt/nifi/nifi-current/conf/keystore.p12
       KEYSTORE_TYPE: PKCS12
       KEYSTORE_PASSWORD: ${NIFI_KEYSTORE_PASSWORD}
       TRUSTSTORE_PATH: /opt/nifi/nifi-current/conf/truststore.p12
       TRUSTSTORE_TYPE: PKCS12
       TRUSTSTORE_PASSWORD: ${NIFI_TRUSTSTORE_PASSWORD}
-      # 첫 로그인 관리자 = Keycloak preferred_username. 틀리면 아무도 못 들어감(주의)
-      INITIAL_ADMIN_IDENTITY: ${KEYCLOAK_SEED_USER_ID}
-      NIFI_SECURITY_USER_OIDC_DISCOVERY_URL: ${KEYCLOAK_BACKCHANNEL_URL}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration
-      NIFI_SECURITY_USER_OIDC_CLIENT_ID: nifi
-      NIFI_SECURITY_USER_OIDC_CLIENT_SECRET: ${KEYCLOAK_NIFI_CLIENT_SECRET}
-      NIFI_SECURITY_USER_OIDC_CLAIM_IDENTIFYING_USER: preferred_username
-      # NIFI = nifi.security.truststore를 IdP TLS 신뢰에 사용(Keycloak 자체 서명 인증서)
-      NIFI_SECURITY_USER_OIDC_TRUSTSTORE_STRATEGY: NIFI
-    # host.docker.internal은 Docker Desktop(Mac/Win/WSL2)에서만 자동 제공되고,
-    # 일반 Linux Docker Engine에서는 명시적으로 매핑해야 함(host-gateway는
-    # Docker 20.10+ 공식 지원) - 없으면 Keycloak 백채널 호출이 UnresolvedAddressException으로 실패.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # authorizers.xml의 Initial Admin Identity는 정책이 이미 만들어진 뒤엔 재적용되지
+      # 않는다(최초 부트스트랩 전용) - 실제로는 users.xml/authorizations.xml에 admin
+      # 사용자를 cerebro-admin과 동일한 정책으로 수동 추가해뒀다. 이 값은 볼륨을 새로
+      # 만드는 경우를 위한 문서화 목적.
+      INITIAL_ADMIN_IDENTITY: ${NIFI_SINGLE_USER_USERNAME}
+      NIFI_SECURITY_USER_LOGIN_IDENTITY_PROVIDER: single-user-provider
+      SINGLE_USER_CREDENTIALS_USERNAME: ${NIFI_SINGLE_USER_USERNAME}
+      SINGLE_USER_CREDENTIALS_PASSWORD: ${NIFI_SINGLE_USER_PASSWORD}
     expose:
       - "${NIFI_HTTPS_PORT}"
     ports:
@@ -218,8 +214,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"
-          memory: 1536m
+          cpus: "2.0"
+          memory: 3072m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -238,7 +234,6 @@ services:
       - "${METADATA_DB_PORT}:5432"
     volumes:
       - metadata-db-data:/var/lib/postgresql/data
-      # 최초 기동 시 keycloak database를 함께 생성(Keycloak 전용 컨테이너 절약)
       - ./db/metadata-init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${METADATA_DB_USER} -d ${METADATA_DB_NAME}"]
@@ -250,75 +245,6 @@ services:
       resources:
         limits:
           memory: 384m
-    networks: [pipeline-net]
-
-  # ---------------------------------------------------------------------
-  # Keycloak: 통합 SSO IdP. 포털/NiFi/Airflow가 모두 이 realm(cerebro)의 OIDC로
-  # 인증한다. issuer는 브라우저·컨테이너 양쪽에서 동일하게 해석되는
-  # host.docker.internal:${KEYCLOAK_PORT}로 고정해 issuer 불일치를 피한다.
-  # DB는 metadata-db의 keycloak database를 재사용(컨테이너 절약). POC라 start-dev.
-  # ---------------------------------------------------------------------
-  keycloak:
-    image: quay.io/keycloak/keycloak:${KEYCLOAK_IMAGE_TAG}
-    container_name: keycloak
-    restart: unless-stopped
-    depends_on:
-      metadata-db:
-        condition: service_healthy
-    command: ["start-dev", "--import-realm"]
-    environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://${METADATA_DB_HOST}:5432/${KEYCLOAK_DB_NAME}
-      KC_DB_USERNAME: ${METADATA_DB_USER}
-      KC_DB_PASSWORD: ${METADATA_DB_PASSWORD}
-      # 프론트(브라우저)용 URL = issuer. 브라우저는 localhost:8543만 도달 가능하므로
-      # issuer/frontend는 localhost로 둔다(토큰 iss도 이 값).
-      KC_HOSTNAME: ${KEYCLOAK_ISSUER_URL}
-      # 백채널(컨테이너→Keycloak) URL은 요청 호스트를 따라가게 한다: 컨테이너가
-      # host.docker.internal:8543로 부르면 token/JWKS 등 백채널 엔드포인트가 그 호스트로
-      # 나온다. 브라우저(localhost)와 컨테이너(host.docker.internal) 도달성을 동시에 만족.
-      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
-      KC_HOSTNAME_STRICT: "false"
-      # 자체 서명 인증서(SAN=host.docker.internal). 소비자(pipeline-api/NiFi/Airflow)는
-      # 이 인증서를 신뢰하도록 각자 설정한다.
-      KC_HTTPS_CERTIFICATE_FILE: /opt/keycloak/certs/keycloak.crt
-      KC_HTTPS_CERTIFICATE_KEY_FILE: /opt/keycloak/certs/keycloak.key
-      KC_HTTP_ENABLED: "true"
-      KC_HEALTH_ENABLED: "true"
-      # POC에서 로그인 테마를 수정하면 브라우저/서버 캐시 없이 즉시 반영한다.
-      KC_SPI_THEME_STATIC_MAX_AGE: "-1"
-      KC_SPI_THEME_CACHE_THEMES: "false"
-      KC_SPI_THEME_CACHE_TEMPLATES: "false"
-      # realm-export.json의 ${...} 치환에 쓰인다(시크릿을 파일에 하드코딩하지 않기 위함).
-      # PORTAL_PUBLIC_HOST는 이 배포를 실제로 접속하는 호스트명/IP - 서버가 바뀌면
-      # 이 값만 바꾸면 되고 realm-export.json은 다시 안 고쳐도 됨(--import-realm이
-      # 매 기동마다 이 값으로 다시 치환해서 재적용함).
-      KEYCLOAK_NIFI_CLIENT_SECRET: ${KEYCLOAK_NIFI_CLIENT_SECRET}
-      KEYCLOAK_AIRFLOW_CLIENT_SECRET: ${KEYCLOAK_AIRFLOW_CLIENT_SECRET}
-      KEYCLOAK_SEED_USER_ID: ${KEYCLOAK_SEED_USER_ID}
-      KEYCLOAK_SEED_USER_PASSWORD: ${KEYCLOAK_SEED_USER_PASSWORD}
-      PORTAL_PUBLIC_HOST: ${PORTAL_PUBLIC_HOST}
-    ports:
-      - "${KEYCLOAK_PORT}:8443"
-    volumes:
-      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
-      - ./keycloak/certs:/opt/keycloak/certs:ro
-      - ./keycloak/themes:/opt/keycloak/themes:ro
-    healthcheck:
-      # 이 이미지엔 curl/wget이 없고, 인증서를 붙이면 관리 포트(9000)도 HTTPS가 되어
-      # 평문 HTTP 헬스 요청이 안 된다. HTTPS 리스너(8443)에 TCP 연결이 열리는지만 확인한다.
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8443"]
-      interval: 15s
-      timeout: 5s
-      retries: 20
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 896m
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
@@ -337,39 +263,39 @@ services:
         condition: service_healthy
       kafka-connect:
         condition: service_healthy
-      # OAuth2 Resource Server가 부팅 시 issuer discovery를 조회하므로 Keycloak이 먼저 떠야 함
-      keycloak:
+      nifi:
         condition: service_healthy
     environment:
+      # 미설정시 컨테이너 기본 타임존(UTC)로 LocalDateTime.now()가 기록되어 이력 화면의
+      # 시각이 실제 KST와 9시간 어긋나던 문제 수정.
+      TZ: Asia/Seoul
       SPRING_DATASOURCE_URL: jdbc:postgresql://${METADATA_DB_HOST}:5432/${METADATA_DB_NAME}
       SPRING_DATASOURCE_USERNAME: ${METADATA_DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${METADATA_DB_PASSWORD}
       SERVER_PORT: ${PIPELINE_API_PORT}
       PIPELINE_CRYPTO_SECRET: ${PIPELINE_CRYPTO_SECRET}
       PIPELINE_CRYPTO_SALT: ${PIPELINE_CRYPTO_SALT}
-      # 토큰 iss 검증용(브라우저가 받은 토큰의 iss = localhost). JWKS 실제 fetch는 컨테이너가
-      # 도달 가능한 백채널 URL(host.docker.internal)로 한다 - JwtDecoderConfig가 둘을 분리 사용.
-      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL}
-      KEYCLOAK_BACKCHANNEL_URL: ${KEYCLOAK_BACKCHANNEL_URL}
-      KEYCLOAK_REALM: ${KEYCLOAK_REALM}
+      # cerebroetl-ui 자체 로그인(Keycloak 제거 후 계정테이블 기반) JWT 서명 키.
+      PIPELINE_JWT_SECRET: ${PIPELINE_JWT_SECRET}
+      # 통합 계정 테이블(ST_USER, MySQL) - 로그인 검증 전용, 쓰기 없음.
+      ACCOUNT_DB_HOST: ${ACCOUNT_DB_HOST}
+      ACCOUNT_DB_PORT: ${ACCOUNT_DB_PORT}
+      ACCOUNT_DB_NAME: ${ACCOUNT_DB_NAME}
+      ACCOUNT_DB_USER: ${ACCOUNT_DB_USER}
+      ACCOUNT_DB_PASSWORD: ${ACCOUNT_DB_PASSWORD}
       KAFKA_CONNECT_URL: http://kafka-connect:8083
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       FILEBEAT_INPUTS_DIR: /filebeat-inputs
       NIFI_BASE_URL: https://nifi:${NIFI_HTTPS_PORT}
-      # NiFi가 OIDC 전용 인증이라 username/password 대신 Keycloak service account
-      # (client_credentials)로 토큰을 받아 NiFi에 Bearer로 제시한다.
-      KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID}
-      KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET}
+      # NiFi가 Single User 인증(공유 서비스계정)으로 전환됨에 따라 username/password로
+      # 직접 /nifi-api/access/token을 받아 Bearer로 제시한다 (Keycloak 제거).
+      NIFI_USERNAME: ${NIFI_SINGLE_USER_USERNAME}
+      NIFI_PASSWORD: ${NIFI_SINGLE_USER_PASSWORD}
       # 컨테이너에 메모리 상한(deploy.limits.memory)이 없으면 JVM이 host 전체 메모리
       # 기준으로 힙 상한(기본 25%)을 잡아서 다른 서비스와 상관없이 자율적으로 커질 수
       # 있다 - 명시적으로 캡을 걸어 아래 memory 상한 안에서 여유(메타스페이스/스레드/
       # 네이티브용)를 확보한다.
       JAVA_TOOL_OPTIONS: "-Xmx384m"
-    # host.docker.internal은 Docker Desktop(Mac/Win/WSL2)에서만 자동 제공되고,
-    # 일반 Linux Docker Engine에서는 명시적으로 매핑해야 함(host-gateway는
-    # Docker 20.10+ 공식 지원) - 없으면 Keycloak 백채널 호출이 실패.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       # 로그 파이프라인 배포 시 여기 파이프라인별 Filebeat input YAML을 쓴다 -
       # filebeat 컨테이너가 같은 볼륨을 읽기 전용으로 마운트해서 재시작 없이 반영한다.
@@ -428,12 +354,21 @@ services:
     image: data-pipeline-cerebroetl-ui:${APP_VERSION:-latest}
     build:
       context: ./web/cerebroetl-ui
-      args:
-        # Keycloak Authority URL은 Vite 빌드 시점에 번들에 굳어진다(런타임 env로는
-        # 못 바꿈) - PORTAL_PUBLIC_HOST가 바뀌면 이 이미지도 반드시 재빌드해야 한다.
-        VITE_OIDC_AUTHORITY: https://${PORTAL_PUBLIC_HOST}:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
     container_name: cerebroetl-ui
     restart: unless-stopped
+    depends_on:
+      nifi:
+        condition: service_healthy
+      airflow-apiserver:
+        condition: service_healthy
+    environment:
+      # NiFi/Airflow 공유 서비스계정 - 컨테이너 안의 crond가 주기적으로 이 계정으로
+      # 재로그인해서 nginx가 모든 요청에 얹어 보낼 토큰을 갱신한다(refresh-credentials.sh).
+      NIFI_USERNAME: ${NIFI_SINGLE_USER_USERNAME}
+      NIFI_PASSWORD: ${NIFI_SINGLE_USER_PASSWORD}
+      NIFI_HOST_HEADER: localhost:8443
+      AIRFLOW_USERNAME: ${AIRFLOW_ADMIN_USERNAME}
+      AIRFLOW_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
     ports:
       - "${CEREBROETL_UI_PORT}:80"
     healthcheck:
@@ -512,6 +447,12 @@ services:
         condition: service_healthy
     environment: &airflow-common-env
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      # 호스트 메모리가 빠듯해 LocalExecutor의 태스크당 fork+exec(Task SDK 재import)
+      # 부담이 큼 - 동시 fork 수를 낮춰 순간 메모리 버스트가 겹치는 걸 줄인다.
+      # (근본 해결은 아님 - 근본 원인은 WSL2 메모리/스왑 자체가 부족한 것)
+      AIRFLOW__CORE__PARALLELISM: "4"
+      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "2"
+      AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: "1"
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       # METADATA_DB_PASSWORD를 그대로 재사용하지 않는다 - 비밀번호에 URL 예약문자(!@#)가
       # 들어있어서 SQLAlchemy 연결 문자열에 그대로 넣으면 파싱이 깨진다(AIRFLOW_CONN_TARGET_DB_POSTGRES에서
@@ -526,34 +467,22 @@ services:
       # 호스트명/IP와 달라지면 "Invalid or unsafe next URL"로 로그인이 거부되므로,
       # localhost가 아닌 주소로 배포할 땐 AIRFLOW_PUBLIC_BASE_URL을 그 주소로 바꿔야 함.
       AIRFLOW__API__BASE_URL: "${AIRFLOW_PUBLIC_BASE_URL}"
-      # webserver_config.py의 Keycloak OAuth redirect_uri. 기본값이 localhost로
-      # 하드코딩돼 있어서(AIRFLOW_PUBLIC_BASE_URL과 별개 변수라 안 넘기면 계속 localhost로
-      # 감) 로그인 시 "The request to sign in was denied"가 남 - AIRFLOW_PUBLIC_BASE_URL에서
-      # 그대로 파생시켜 새 .env 값을 따로 안 만든다.
-      AIRFLOW_OAUTH_CALLBACK_URL: "${AIRFLOW_PUBLIC_BASE_URL}/auth/oauth-authorized/keycloak"
-      # FAB OAuth callback은 Flask/Werkzeug에서 생성되므로 FAB의 ProxyFix도 켠다.
       AIRFLOW__FAB__ENABLE_PROXY_FIX: "true"
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       # api-server 컨테이너 이름으로 명시(localhost 아님) - 태스크/스케줄러가
       # 이 주소로 Task Execution API를 호출한다.
-      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/airflow/execution/"
       AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+      # 공유 서비스계정 방식으로 전환하며 짧은 기본 만료(24시간)로 매번 재로그인할
+      # 필요가 없도록 30일로 늘림 (자격증명 갱신 스크립트 부담도 줄어듦).
+      AIRFLOW__API_AUTH__JWT_EXPIRATION_TIME: "2592000"
       AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
-      # NiFi 파이프라인 동적 DAG 생성/제어용. NiFi가 OIDC 전용 인증으로 전환되며
-      # username/password 토큰 발급이 막혀서, pipeline-api와 동일하게 Keycloak service
-      # account(client_credentials)로 토큰을 받아 NiFi에 Bearer로 제시한다.
+      # NiFi 파이프라인 동적 DAG 생성/제어용. NiFi가 Single User 인증으로 전환되어
+      # (Keycloak 제거) username/password로 직접 /nifi-api/access/token을 받아 Bearer로 제시한다.
       NIFI_BASE_URL: "https://nifi:${NIFI_HTTPS_PORT}"
-      # --- Keycloak OIDC 로그인(webserver_config.py가 사용) ---
-      KEYCLOAK_REALM: ${KEYCLOAK_REALM}
-      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL}
-      KEYCLOAK_BACKCHANNEL_URL: ${KEYCLOAK_BACKCHANNEL_URL}
-      KEYCLOAK_AIRFLOW_CLIENT_SECRET: ${KEYCLOAK_AIRFLOW_CLIENT_SECRET}
-      KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_ID}
-      KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET: ${KEYCLOAK_PIPELINE_SERVICE_CLIENT_SECRET}
-      # 자체 서명 Keycloak 인증서를 requests(authlib)가 신뢰하도록. Airflow의 다른 HTTPS
-      # 호출은 pipeline-api(http)/NiFi(verify=False DAG)라 이 번들 한정이 문제되지 않음.
-      REQUESTS_CA_BUNDLE: /opt/airflow/certs/keycloak.crt
+      NIFI_USERNAME: ${NIFI_SINGLE_USER_USERNAME}
+      NIFI_PASSWORD: ${NIFI_SINGLE_USER_PASSWORD}
       # nifi_pipelines_dynamic.py의 verify_target_db_landing이 NiFi가 실제로 적재한
       # 타겟 테이블을 직접 조회할 때 쓰는 Connection. AIRFLOW_CONN_* 형태로 주면
       # airflow-init의 db migrate만으로 별도 `airflow connections add` 없이 바로 쓸 수 있다.
@@ -599,10 +528,7 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
-      - ./keycloak/certs/keycloak.crt:/opt/airflow/certs/keycloak.crt:ro
-      # FAB OIDC 로그인 설정 + Keycloak 자체 서명 인증서(REQUESTS_CA_BUNDLE 대상)
       - ./airflow/webserver_config.py:/opt/airflow/webserver_config.py:ro
-      - ./keycloak/certs/keycloak.crt:/opt/airflow/certs/keycloak.crt:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -634,7 +560,6 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
-      - ./keycloak/certs/keycloak.crt:/opt/airflow/certs/keycloak.crt:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -668,7 +593,6 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
-      - ./keycloak/certs/keycloak.crt:/opt/airflow/certs/keycloak.crt:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

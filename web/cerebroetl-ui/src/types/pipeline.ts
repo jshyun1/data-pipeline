@@ -1,7 +1,7 @@
 import type { DbType } from "./connection";
 
 // web/backend의 com.company.pipeline.pipeline.dto.* / PipelineStatus 와 1:1로 맞춘 타입.
-export type PipelineStatus = "CREATED" | "DEPLOYING" | "DEPLOYED" | "PAUSED" | "STOPPED" | "FAILED";
+export type PipelineStatus = "CREATED" | "DEPLOYING" | "READY" | "DEPLOYED" | "PAUSED" | "STOPPED" | "FAILED";
 
 export interface PipelineConnectorSummary {
   id: number;
