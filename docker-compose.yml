@@ -161,6 +161,10 @@ services:
       kafka:
         condition: service_healthy
     environment:
+      # NiFi 컨테이너와 JVM의 기본 시간대를 모두 한국시간으로 고정한다.
+      # TZ는 OS/로그 시간에, user.timezone은 NiFi가 생성하는 화면·API 시간값에 적용된다.
+      TZ: Asia/Seoul
+      JAVA_TOOL_OPTIONS: "-Duser.timezone=Asia/Seoul"
       NIFI_WEB_HTTPS_HOST: 0.0.0.0
       NIFI_WEB_HTTPS_PORT: ${NIFI_HTTPS_PORT}
       NIFI_JVM_HEAP_INIT: ${NIFI_JVM_HEAP_INIT}

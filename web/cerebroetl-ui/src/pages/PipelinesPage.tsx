@@ -4,6 +4,7 @@ import {
   Alert,
   AutoComplete,
   Button,
+  Card,
   Checkbox,
   Collapse,
   Descriptions,
@@ -236,80 +237,81 @@ export function PipelinesPage() {
 
   return (
     <div>
-      {Object.entries(driftByPipeline).map(([pipelineId, info]) => (
-        <Alert
-          key={pipelineId}
-          type="warning"
-          showIcon
-          closable
-          onClose={() => dismissDriftMutation.mutate(Number(pipelineId))}
-          style={{ marginBottom: 12 }}
-          message="파이프라인 커넥터가 Kafka Connect에서 사라졌습니다"
-          description={
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span>
-                <b>{info.pipelineName}</b> — {info.connectorNames.join(", ")} 없음
-              </span>
-              <Button
-                size="small"
-                loading={deployMutation.isPending}
-                onClick={() => deployMutation.mutate(Number(pipelineId))}
-              >
-                {(pipelines ?? []).find((pipeline) => pipeline.id === Number(pipelineId))?.pipelineType === "TABLE_CDC"
-                  ? "다시 준비"
-                  : "지금 재배포"}
-              </Button>
-            </div>
-          }
-        />
-      ))}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
-        <Space wrap>
-          <Input
-            placeholder="이름 검색"
-            allowClear
-            style={{ width: 200 }}
-            value={nameFilter}
-            onChange={(e) => setNameFilter(e.target.value)}
+      <Card title="CDC 파이프라인">
+        {Object.entries(driftByPipeline).map(([pipelineId, info]) => (
+          <Alert
+            key={pipelineId}
+            type="warning"
+            showIcon
+            closable
+            onClose={() => dismissDriftMutation.mutate(Number(pipelineId))}
+            style={{ marginBottom: 12 }}
+            message="파이프라인 커넥터가 Kafka Connect에서 사라졌습니다"
+            description={
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span>
+                  <b>{info.pipelineName}</b> — {info.connectorNames.join(", ")} 없음
+                </span>
+                <Button
+                  size="small"
+                  loading={deployMutation.isPending}
+                  onClick={() => deployMutation.mutate(Number(pipelineId))}
+                >
+                  {(pipelines ?? []).find((pipeline) => pipeline.id === Number(pipelineId))?.pipelineType === "TABLE_CDC"
+                    ? "다시 준비"
+                    : "지금 재배포"}
+                </Button>
+              </div>
+            }
           />
-          <Input
-            placeholder="Topic 검색"
-            allowClear
-            style={{ width: 200 }}
-            value={topicFilter}
-            onChange={(e) => setTopicFilter(e.target.value)}
-          />
-          <Select
-            mode="multiple"
-            allowClear
-            placeholder="상태"
-            style={{ minWidth: 160 }}
-            options={STATUS_OPTIONS}
-            value={statusFilter}
-            onChange={setStatusFilter}
-          />
-          <Select
-            mode="multiple"
-            allowClear
-            placeholder="유형"
-            style={{ minWidth: 140 }}
-            options={TYPE_OPTIONS}
-            value={typeFilter}
-            onChange={setTypeFilter}
-          />
-        </Space>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => setModalOpen(true)}
-          disabled={!connections || connections.length < 1}
-          title={!connections || connections.length < 1 ? "연결정보가 최소 1개는 있어야 합니다" : undefined}
-        >
-          신규 생성
-        </Button>
-      </div>
+        ))}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
+          <Space wrap>
+            <Input
+              placeholder="이름 검색"
+              allowClear
+              style={{ width: 200 }}
+              value={nameFilter}
+              onChange={(e) => setNameFilter(e.target.value)}
+            />
+            <Input
+              placeholder="Topic 검색"
+              allowClear
+              style={{ width: 200 }}
+              value={topicFilter}
+              onChange={(e) => setTopicFilter(e.target.value)}
+            />
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder="상태"
+              style={{ minWidth: 160 }}
+              options={STATUS_OPTIONS}
+              value={statusFilter}
+              onChange={setStatusFilter}
+            />
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder="유형"
+              style={{ minWidth: 140 }}
+              options={TYPE_OPTIONS}
+              value={typeFilter}
+              onChange={setTypeFilter}
+            />
+          </Space>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setModalOpen(true)}
+            disabled={!connections || connections.length < 1}
+            title={!connections || connections.length < 1 ? "연결정보가 최소 1개는 있어야 합니다" : undefined}
+          >
+            신규 생성
+          </Button>
+        </div>
 
-      <Table<PipelineResponse>
+        <Table<PipelineResponse>
         rowKey="id"
         loading={isLoading}
         dataSource={filteredPipelines}
@@ -366,7 +368,8 @@ export function PipelinesPage() {
             ),
           },
         ]}
-      />
+        />
+      </Card>
 
       <Modal
         title="파이프라인 신규 생성"

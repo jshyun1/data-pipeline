@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from "antd";
+import { Alert, Button, Card, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { createConnection, deleteConnection, listConnections, testConnection, updateConnection } from "../api/connections";
 import { listPipelines } from "../api/pipelines";
@@ -126,70 +126,72 @@ export function ConnectionsPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
-          신규 등록
-        </Button>
-      </div>
+      <Card title="CDC 연결정보">
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
+            신규 등록
+          </Button>
+        </div>
 
-      <Table<ConnectionResponse>
-        rowKey="id"
-        loading={isLoading}
-        dataSource={connections}
-        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
-        columns={[
-          { title: "이름", dataIndex: "name" },
-          {
-            title: "DB 유형",
-            dataIndex: "dbType",
-            render: (value: DbType) => <Tag>{value}</Tag>,
-          },
-          {
-            title: "접속 정보",
-            render: (_, record) => `${record.host}:${record.port}`,
-          },
-          { title: "Service/DB명", render: (_, r) => r.serviceName ?? r.databaseName ?? "-" },
-          { title: "사용자", dataIndex: "username" },
-          {
-            title: "상태",
-            dataIndex: "status",
-            render: (value: string, record) => (
-              <Tooltip title={record.lastTestedAt ? `마지막 테스트: ${record.lastTestedAt}` : "아직 테스트 안 함"}>
-                <Tag color={STATUS_COLOR[value] ?? "default"}>{value}</Tag>
-              </Tooltip>
-            ),
-          },
-          {
-            title: "관리",
-            render: (_, record) => (
-              <Space>
-                <Button size="small" onClick={() => openDetailModal(record)}>
-                  상세
-                </Button>
-                <Button
-                  size="small"
-                  loading={testMutation.isPending && testMutation.variables === record.id}
-                  onClick={() => testMutation.mutate(record.id)}
-                >
-                  테스트
-                </Button>
-                <Button size="small" onClick={() => openEditModal(record)}>
-                  수정
-                </Button>
-                <Popconfirm
-                  title="이 연결정보를 삭제할까요?"
-                  description="이 연결정보를 쓰는 파이프라인이 있으면 먼저 정리해야 합니다."
-                  onConfirm={() => deleteMutation.mutate(record.id)}
-                >
-                  <Button danger size="small" loading={deleteMutation.isPending}>
-                    삭제
+        <Table<ConnectionResponse>
+          rowKey="id"
+          loading={isLoading}
+          dataSource={connections}
+          pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
+          columns={[
+            { title: "이름", dataIndex: "name" },
+            {
+              title: "DB 유형",
+              dataIndex: "dbType",
+              render: (value: DbType) => <Tag>{value}</Tag>,
+            },
+            {
+              title: "접속 정보",
+              render: (_, record) => `${record.host}:${record.port}`,
+            },
+            { title: "Service/DB명", render: (_, r) => r.serviceName ?? r.databaseName ?? "-" },
+            { title: "사용자", dataIndex: "username" },
+            {
+              title: "상태",
+              dataIndex: "status",
+              render: (value: string, record) => (
+                <Tooltip title={record.lastTestedAt ? `마지막 테스트: ${record.lastTestedAt}` : "아직 테스트 안 함"}>
+                  <Tag color={STATUS_COLOR[value] ?? "default"}>{value}</Tag>
+                </Tooltip>
+              ),
+            },
+            {
+              title: "관리",
+              render: (_, record) => (
+                <Space>
+                  <Button size="small" onClick={() => openDetailModal(record)}>
+                    상세
                   </Button>
-                </Popconfirm>
-              </Space>
-            ),
-          },
-        ]}
-      />
+                  <Button
+                    size="small"
+                    loading={testMutation.isPending && testMutation.variables === record.id}
+                    onClick={() => testMutation.mutate(record.id)}
+                  >
+                    테스트
+                  </Button>
+                  <Button size="small" onClick={() => openEditModal(record)}>
+                    수정
+                  </Button>
+                  <Popconfirm
+                    title="이 연결정보를 삭제할까요?"
+                    description="이 연결정보를 쓰는 파이프라인이 있으면 먼저 정리해야 합니다."
+                    onConfirm={() => deleteMutation.mutate(record.id)}
+                  >
+                    <Button danger size="small" loading={deleteMutation.isPending}>
+                      삭제
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+      </Card>
 
       <Modal
         title={editingId === null ? "연결정보 신규 등록" : readOnly ? "연결정보 상세" : "연결정보 수정"}

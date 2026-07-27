@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./components/AppLayout";
 import { RequireAuth } from "./auth/RequireAuth";
 import { ConnectionsPage } from "./pages/ConnectionsPage";
+import { CdcLogsPage } from "./pages/CdcLogsPage";
 import { ConsoleFramePage } from "./pages/ConsoleFramePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EtlCreatePage } from "./pages/EtlCreatePage";
@@ -46,6 +47,7 @@ export function App() {
         <Route path="/cdc" element={<Navigate to="/cdc/pipelines" replace />} />
         <Route path="/cdc/pipelines" element={<PipelinesPage />} />
         <Route path="/cdc/connections" element={<ConnectionsPage />} />
+        <Route path="/cdc/logs" element={<CdcLogsPage />} />
         <Route path="/connections" element={<Navigate to="/cdc/connections" replace />} />
         <Route path="/pipelines" element={<Navigate to="/cdc/pipelines" replace />} />
         </Route>

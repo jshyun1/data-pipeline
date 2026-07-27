@@ -44,6 +44,7 @@ const NAV_ITEMS: NavItem[] = [
     children: [
       { path: "/cdc/pipelines", label: "파이프라인" },
       { path: "/cdc/connections", label: "연결정보" },
+      { path: "/cdc/logs", label: "처리 로그" },
     ],
   },
 ];

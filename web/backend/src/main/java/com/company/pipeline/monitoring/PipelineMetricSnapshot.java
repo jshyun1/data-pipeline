@@ -33,6 +33,12 @@ public class PipelineMetricSnapshot {
     @Column(name = "connector_state", length = 30)
     private String connectorState;
 
+    @Column(name = "source_connector_state", length = 30)
+    private String sourceConnectorState;
+
+    @Column(name = "sink_connector_state", length = 30)
+    private String sinkConnectorState;
+
     @Column(name = "task_state", length = 30)
     private String taskState;
 

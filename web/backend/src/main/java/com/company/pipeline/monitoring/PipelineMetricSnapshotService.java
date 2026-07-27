@@ -41,6 +41,9 @@ public class PipelineMetricSnapshotService {
                 .findByPipelineIdAndConnectorRole(pipelineId, SINK_ROLE)
                 .orElseThrow(() -> new BusinessException(
                         ErrorCode.PIPELINE_NOT_FOUND, "파이프라인 " + pipelineId + "에 싱크 커넥터가 없습니다."));
+        PipelineConnector source = pipelineConnectorRepository
+                .findByPipelineIdAndConnectorRole(pipelineId, "SOURCE")
+                .orElse(null);
 
         Map<String, Object> config = kafkaConnectClient.getConfig(sink.getConnectorName());
         String topicName = extractTopicName(config, sink.getConnectorName());
@@ -55,6 +58,8 @@ public class PipelineMetricSnapshotService {
         snapshot.setPipelineId(pipelineId);
         snapshot.setCollectedAt(LocalDateTime.now());
         snapshot.setConnectorState(sink.getStatus());
+        snapshot.setSourceConnectorState(source != null ? source.getStatus() : null);
+        snapshot.setSinkConnectorState(sink.getStatus());
         snapshot.setTopicName(topicName);
         snapshot.setCommittedOffset(committedOffset);
         snapshot.setPartitionCount(endOffsetSummary.partitionCount());

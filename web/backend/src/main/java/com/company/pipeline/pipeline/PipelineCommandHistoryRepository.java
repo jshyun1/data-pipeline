@@ -15,6 +15,9 @@ public interface PipelineCommandHistoryRepository extends JpaRepository<Pipeline
 
     Optional<PipelineCommandHistory> findFirstByPipelineIdOrderByRequestedAtDesc(Long pipelineId);
 
+    List<PipelineCommandHistory> findByPipelineIdInAndRequestedAtBetweenOrderByRequestedAtDesc(
+            List<Long> pipelineIds, LocalDateTime from, LocalDateTime to);
+
     long countByRequestedAtGreaterThanEqual(LocalDateTime since);
 
     long countByResultAndRequestedAtGreaterThanEqual(String result, LocalDateTime since);
