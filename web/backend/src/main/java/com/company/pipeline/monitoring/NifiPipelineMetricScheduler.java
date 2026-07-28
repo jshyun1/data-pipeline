@@ -29,6 +29,16 @@ import org.springframework.stereotype.Component;
  * 조회 불가 확인됨)나 프로세서 단위 Status History(항상 비어있음, 확인됨) 같은 "실행
  * 이력" 개념이 없어서 택한 차선책 - 정확히 "실행 1번 = 행 1개"는 아니고 "60초 구간 안에
  * 증가가 있었다 = 행 1개"이지만, 지금 파이프라인들의 실행 빈도상 대부분 근접하게 맞는다.
+ *
+ * <p>NiFi 카운터는 재시작하면 초기화되므로, 스냅샷과 비교하는 이 방식은 초기화를
+ * 반드시 인지해야 한다. 놓치면 두 방향으로 다 틀어진다 - 낡은 기준점이 남아 증가분을
+ * 통째로 놓치거나(같은 값까지 다시 올라오면 delta가 0), 반대로 이미 센 구간을 다시
+ * 세서 부풀린다. 초기화 감지는 두 경로로 한다.
+ * <ul>
+ *   <li>카운터가 응답에서 사라짐 → 초기화된 것이므로 기준점을 0으로 내린다.</li>
+ *   <li>카운터가 이전 값보다 작아짐 → 이미 다시 세기 시작한 것이므로 현재값 전체를
+ *       증가분으로 잡는다.</li>
+ * </ul>
  */
 @Component
 public class NifiPipelineMetricScheduler {
@@ -146,12 +156,29 @@ public class NifiPipelineMetricScheduler {
         for (ProcessorRef ref : putDatabaseRecordProcessors) {
             Long currentValue = insertCountByProcessorId.get(ref.id());
             if (currentValue == null) {
-                // 이 프로세서가 마지막 NiFi 재시작 이후 아직 한 번도 실행되지 않아
-                // 카운터 자체가 생성되지 않은 상태 - 다음 실행 후 카운터가 생기면 잡힌다.
+                // 카운터가 응답에 통째로 없다 = NiFi가 재시작되며 카운터가 초기화된 것
+                // (프로세서는 그대로 있는데 카운터만 사라진다).
+                //
+                // 예전에는 여기서 그냥 넘어갔는데, 그러면 재시작 이전의 낡은 스냅샷이
+                // 그대로 남는다. 이 플로우는 TRUNCATE 후 전량 재적재라 카운터가 결국
+                // 예전과 "똑같은 값"까지 올라오고, 그 시점에 delta가 0으로 계산되어
+                // 적재가 통째로 누락됐다(실측: 430만건 적재가 로그에 한 줄도 안 남음).
+                // 그래서 초기화를 감지한 시점에 스냅샷도 0으로 내려둔다.
+                resetSnapshotForClearedCounter(ref);
                 continue;
             }
             checkOne(ref, currentValue);
         }
+    }
+
+    private void resetSnapshotForClearedCounter(ProcessorRef ref) {
+        snapshotRepository.findById(ref.id())
+                .filter(snapshot -> snapshot.getLastValue() != null && snapshot.getLastValue() != 0L)
+                .ifPresent(snapshot -> {
+                    log.info("NiFi 카운터 초기화 감지 - {} 기준점을 0으로 재설정(이전 {})",
+                            ref.name(), snapshot.getLastValue());
+                    snapshotRepository.save(new NifiCounterSnapshot(ref.id(), ref.name(), 0L));
+                });
     }
 
     private void checkOne(ProcessorRef ref, long currentValue) {

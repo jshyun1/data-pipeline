@@ -104,4 +104,66 @@ class NifiPipelineMetricSchedulerTest {
 
         verify(executionLogRepository, never()).save(any());
     }
+
+    @Test
+    void checkCounters_counterClearedByRestart_resetsSnapshotSoNextLoadIsNotSwallowed() {
+        // NiFi를 재시작하면 카운터가 통째로 사라진다(프로세서는 그대로). 이때 예전
+        // 기준점을 남겨두면, TRUNCATE 후 전량 재적재해서 카운터가 예전과 똑같은 값까지
+        // 올라왔을 때 delta가 0이 되어 적재가 로그에 한 줄도 안 남는다(실측으로 확인).
+        scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
+                executionLogRepository);
+
+        String processorId = "9e2dd726-019f-1000-338b-b3f02d4d9673";
+        var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "load-dz-POP002L",
+                "PutDatabaseRecord");
+        var processorEntry = new NifiFlowStatusResponse.ProcessorStatusEntry(processor);
+        var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
+                "9e2da75d-019f-1000-1f21-9e2ab492cf11", "DZ", List.of(processorEntry), List.of());
+        var groupEntry = new NifiFlowStatusResponse.ProcessGroupStatusEntry(group);
+        var rootAggregate = new NifiFlowStatusResponse.AggregateSnapshot(List.of(), List.of(groupEntry));
+        var flow = new NifiFlowStatusResponse(new NifiFlowStatusResponse.ProcessGroupStatus(rootAggregate));
+        when(nifiClient.getRootFlowStatus()).thenReturn(flow);
+
+        // 재시작 직후: 이 프로세서의 카운터가 응답에 아예 없다.
+        var counters = new NifiCountersResponse(
+                new NifiCountersResponse.Counters(new NifiCountersResponse.AggregateSnapshot(List.of())));
+        when(nifiClient.getCounters()).thenReturn(counters);
+
+        when(snapshotRepository.findById(processorId))
+                .thenReturn(Optional.of(new NifiCounterSnapshot(processorId, "load-dz-POP002L", 4_305_006L)));
+
+        scheduler.checkCounters();
+
+        ArgumentCaptor<NifiCounterSnapshot> captor = ArgumentCaptor.forClass(NifiCounterSnapshot.class);
+        verify(snapshotRepository).save(captor.capture());
+        assertThat(captor.getValue().getLastValue()).isZero();
+        // 이 주기 자체는 적재가 없었으므로 로그도 남기지 않는다.
+        verify(executionLogRepository, never()).save(any());
+    }
+
+    @Test
+    void checkCounters_counterAbsentAndSnapshotAlreadyZero_doesNotRewriteSnapshot() {
+        // 아직 한 번도 안 돈 프로세서까지 매 주기 DB에 쓰지 않도록.
+        scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
+                executionLogRepository);
+
+        String processorId = "9e2dd726-019f-1000-338b-b3f02d4d9673";
+        var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "load-dz-POP002L",
+                "PutDatabaseRecord");
+        var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
+                "9e2da75d-019f-1000-1f21-9e2ab492cf11", "DZ",
+                List.of(new NifiFlowStatusResponse.ProcessorStatusEntry(processor)), List.of());
+        var rootAggregate = new NifiFlowStatusResponse.AggregateSnapshot(
+                List.of(), List.of(new NifiFlowStatusResponse.ProcessGroupStatusEntry(group)));
+        when(nifiClient.getRootFlowStatus())
+                .thenReturn(new NifiFlowStatusResponse(new NifiFlowStatusResponse.ProcessGroupStatus(rootAggregate)));
+        when(nifiClient.getCounters()).thenReturn(new NifiCountersResponse(
+                new NifiCountersResponse.Counters(new NifiCountersResponse.AggregateSnapshot(List.of()))));
+        when(snapshotRepository.findById(processorId))
+                .thenReturn(Optional.of(new NifiCounterSnapshot(processorId, "load-dz-POP002L", 0L)));
+
+        scheduler.checkCounters();
+
+        verify(snapshotRepository, never()).save(any());
+    }
 }
