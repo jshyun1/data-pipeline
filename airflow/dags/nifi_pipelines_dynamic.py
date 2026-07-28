@@ -88,11 +88,67 @@ ACTIONS = ["start", "stop"]
 VERIFY_ATTEMPTS = 6
 VERIFY_INTERVAL_SECONDS = 5
 
+# 완료 대기(wait_for_group_completion) 튜닝값. 실측 근거: 테이블 하나의 추출
+# 쿼리가 56초, 1,565만 건 전체 적재가 약 20분 걸렸다. 폴링을 너무 촘촘히 하면
+# NiFi API에 부담만 주고, 타임아웃이 짧으면 정상 적재를 실패로 만든다.
+WAIT_POLL_INTERVAL_SECONDS = 15
+# 연속 몇 번 유휴여야 완료로 볼지. 프로세서 사이를 넘어가는 짧은 순간에도
+# queued/active가 0으로 보일 수 있어서 한 번만 보고 끝내면 안 된다.
+IDLE_SETTLE_CHECKS = 3
+# 시작 후 이 시간까지 아무 활동도 없으면 "처리할 데이터가 없었다"로 보고 끝낸다.
+WAIT_START_GRACE_SECONDS = 180
+WAIT_COMPLETION_TIMEOUT_SECONDS = 7200
+
 # docker-compose.yml의 AIRFLOW_CONN_TARGET_DB_POSTGRES 환경변수로 등록되는 Connection.
 TARGET_DB_CONN_ID = "target_db_postgres"
 TARGET_DB_NAME = os.environ.get("TARGET_DB_NAME", "tarantula")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PIPELINE_API_BASE_URL = "http://pipeline-api:8081"
+
+
+def _as_int(value) -> int:
+    """NiFi status 응답의 건수는 정수일 때도 있고 "1,234" 같은 문자열일 때도 있다."""
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    return int(str(value).replace(",", "").strip() or 0)
+
+
+def _downstream_group_ids(pg_id: str, connections: list[dict]) -> set[str]:
+    """pg_id의 출력포트가 곧바로 이어지는 다른 그룹들의 id."""
+    result = set()
+    for entry in connections:
+        component = entry.get("component", entry)
+        source = component.get("source", {})
+        destination = component.get("destination", {})
+        if source.get("groupId") == pg_id and source.get("type") == "OUTPUT_PORT":
+            dest_group = destination.get("groupId")
+            if dest_group and dest_group != pg_id:
+                result.add(dest_group)
+    return result
+
+
+def build_group_chain(pg_id: str, connections: list[dict]) -> list[str]:
+    """pg_id에서 출력포트를 따라 도달하는 그룹들을 상류->하류 순서로 반환.
+
+    NiFi의 커넥션은 데이터를 넘겨줄 뿐 실행 상태를 전파하지 않는다. 그래서 DZ만
+    켜면 DW는 STOPPED 그대로이고, DZ가 보낸 FlowFile은 DW 입력포트 앞에 쌓이기만
+    한다. 이 함수로 연결된 그룹을 찾아 한 DAG가 체인 전체를 제어하게 한다.
+    """
+    ordered = [pg_id]
+    visited = {pg_id}
+    frontier = [pg_id]
+    # 캔버스에서 실수로 순환을 만들 수 있으므로 visited로 끊는다.
+    while frontier:
+        current = frontier.pop(0)
+        for nxt in sorted(_downstream_group_ids(current, connections)):
+            if nxt in visited:
+                continue
+            visited.add(nxt)
+            ordered.append(nxt)
+            frontier.append(nxt)
+    return ordered
 
 
 def _get_nifi_token() -> str:
@@ -113,13 +169,7 @@ def _get_nifi_token() -> str:
     return response.text
 
 
-def apply_process_group_action(pg_id: str, base_url: str, host_header: str, **context):
-    action = context["params"]["action"]
-    if action not in ACTIONS:
-        raise ValueError(f"알 수 없는 action: {action}")
-    state = "RUNNING" if action == "start" else "STOPPED"
-
-    token = _get_nifi_token()
+def _set_group_state(pg_id: str, state: str, base_url: str, host_header: str, token: str):
     response = requests.put(
         f"{base_url}/nifi-api/flow/process-groups/{pg_id}",
         json={"id": pg_id, "state": state},
@@ -128,10 +178,97 @@ def apply_process_group_action(pg_id: str, base_url: str, host_header: str, **co
         timeout=15,
     )
     response.raise_for_status()
-    print(f"NiFi 프로세스 그룹 {pg_id} {action}({state}) 완료: {response.json()}")
+    return response.json()
 
 
-def stop_process_group_after_run(pg_id: str, base_url: str, host_header: str, **context):
+def apply_process_group_action(pg_ids: list[str], base_url: str, host_header: str, **context):
+    """체인에 속한 그룹을 한꺼번에 제어한다.
+
+    체인 전체를 "동시에" 켜는 것이 중요하다. DZ -> DW처럼 출력포트로 이어진
+    구조에서 상류만 켜고 하류를 나중에 켜면, 상류가 내보낸 FlowFile이 인계 큐에
+    쌓이다가 백프레셔 임계치(기본 1GB)에 걸려 상류까지 통째로 멈춘다(실측으로
+    확인함 - to-dw 큐가 1GB에 도달하자 DZ 40개 프로세서가 전부 정지).
+    """
+    action = context["params"]["action"]
+    if action not in ACTIONS:
+        raise ValueError(f"알 수 없는 action: {action}")
+    state = "RUNNING" if action == "start" else "STOPPED"
+
+    token = _get_nifi_token()
+    for pg_id in pg_ids:
+        result = _set_group_state(pg_id, state, base_url, host_header, token)
+        print(f"NiFi 프로세스 그룹 {pg_id} {action}({state}) 완료: {result}")
+
+
+def wait_for_group_completion(
+    pg_id: str, pg_name: str, base_url: str, host_header: str, **context
+):
+    """프로세스 그룹이 이번 작업을 다 끝낼 때까지 기다린다.
+
+    NiFi에는 배치 잡 같은 "실행 완료" 개념이 없어서(Provenance는 이 환경에서 조회
+    불가, 프로세서 단위 Status History는 항상 비어 있음), 그룹 전체가 유휴 상태
+    - 대기 중인 FlowFile이 0이고 돌고 있는 스레드도 0 - 가 되는 것으로 완료를
+    판정한다.
+
+    함정: 시작 직후에도 이 두 값이 0이다(아직 아무것도 안 흘렀으니). 그대로 보면
+    즉시 완료로 오판하므로, 한 번이라도 활동을 관측한 뒤부터 판정을 시작하고,
+    그마저도 연속 IDLE_SETTLE_CHECKS회 유휴여야 완료로 인정한다. 시작 자체가
+    늦는 경우를 위해 활동을 못 본 채 WAIT_START_GRACE_SECONDS가 지나면 "이번엔
+    처리할 게 없었다"로 보고 정상 종료한다.
+    """
+    action = context["params"]["action"]
+    if action != "start":
+        raise AirflowSkipException(f"action={action}이라 완료 대기를 건너뜀 (start일 때만 대기)")
+
+    token = _get_nifi_token()
+    deadline = time.time() + WAIT_COMPLETION_TIMEOUT_SECONDS
+    started_at = time.time()
+    idle_streak = 0
+    seen_activity = False
+
+    while time.time() < deadline:
+        response = requests.get(
+            f"{base_url}/nifi-api/flow/process-groups/{pg_id}/status",
+            params={"recursive": "true"},
+            headers={"Authorization": f"Bearer {token}", "Host": host_header},
+            verify=False,
+            timeout=15,
+        )
+        if response.status_code == 401:  # 장시간 대기 중 토큰 만료 시 재발급
+            token = _get_nifi_token()
+            continue
+        response.raise_for_status()
+        snapshot = response.json()["processGroupStatus"]["aggregateSnapshot"]
+        queued = _as_int(snapshot.get("queuedCount"))
+        active = _as_int(snapshot.get("activeThreadCount"))
+
+        if queued > 0 or active > 0:
+            seen_activity = True
+            idle_streak = 0
+        else:
+            idle_streak += 1
+
+        print(
+            f"[{pg_name}] queued={queued} activeThreads={active} "
+            f"idle={idle_streak}/{IDLE_SETTLE_CHECKS} activity={seen_activity}"
+        )
+
+        if seen_activity and idle_streak >= IDLE_SETTLE_CHECKS:
+            print(f"[{pg_name}] 완료 - 대기 FlowFile 0, 활성 스레드 0")
+            return
+        if not seen_activity and time.time() - started_at > WAIT_START_GRACE_SECONDS:
+            print(f"[{pg_name}] 유예시간 내 아무 활동이 없어 처리할 데이터가 없었던 것으로 봄")
+            return
+        time.sleep(WAIT_POLL_INTERVAL_SECONDS)
+
+    raise RuntimeError(
+        f"[{pg_name}] {WAIT_COMPLETION_TIMEOUT_SECONDS}초 안에 완료되지 않음 "
+        f"(queued={queued}, activeThreads={active}). 백프레셔로 막혔거나 하류 그룹이 "
+        f"소비하지 못하고 있을 수 있음 - NiFi 캔버스에서 큐 상태를 확인할 것"
+    )
+
+
+def stop_process_group_after_run(pg_ids: list[str], base_url: str, host_header: str, **context):
     # 배치성 그룹(DZ 등)은 "하루 1번 돌고 다음날 그 시각에 다시" 동작이 되려면
     # 실행이 끝난 뒤 반드시 STOPPED로 돌아가야 한다 - NiFi의 GenerateFlowFile은
     # STOPPED -> RUNNING으로 전환되는 순간 주기와 무관하게 즉시 1회 실행되는
@@ -142,46 +279,49 @@ def stop_process_group_after_run(pg_id: str, base_url: str, host_header: str, **
     # 자체가 "실행 후 정리" 목적이라 수동 stop 트리거일 때도 정지 상태를 재확인하는
     # 것뿐이라 안전하다.
     token = _get_nifi_token()
-    response = requests.put(
-        f"{base_url}/nifi-api/flow/process-groups/{pg_id}",
-        json={"id": pg_id, "state": "STOPPED"},
-        headers={"Authorization": f"Bearer {token}", "Host": host_header},
-        verify=False,
-        timeout=15,
-    )
-    response.raise_for_status()
-    print(f"NiFi 프로세스 그룹 {pg_id} 실행 후 자동 정지 완료: {response.json()}")
+    # 하류부터 거꾸로 멈춘다. 상류를 먼저 멈추면 하류가 아직 처리 중인 FlowFile을
+    # 남긴 채 인계 큐만 붙잡고 있게 된다.
+    for pg_id in reversed(pg_ids):
+        result = _set_group_state(pg_id, "STOPPED", base_url, host_header, token)
+        print(f"NiFi 프로세스 그룹 {pg_id} 실행 후 자동 정지 완료: {result}")
 
 
-def verify_process_group_action(pg_id: str, base_url: str, host_header: str, **context):
+def verify_process_group_action(pg_ids: list[str], base_url: str, host_header: str, **context):
     action = context["params"]["action"]
     token = _get_nifi_token()
 
+    pending = list(pg_ids)
     counts = {}
     for attempt in range(VERIFY_ATTEMPTS):
-        response = requests.get(
-            f"{base_url}/nifi-api/process-groups/{pg_id}",
-            headers={"Authorization": f"Bearer {token}", "Host": host_header},
-            verify=False,
-            timeout=15,
-        )
-        response.raise_for_status()
-        entity = response.json()
-        counts = {
-            key: entity.get(key, 0)
-            for key in ("runningCount", "stoppedCount", "invalidCount", "disabledCount")
-        }
-        if action == "start":
-            # invalid가 하나라도 있으면 그 프로세서는 시작되지 못한 것 (호출은 성공했어도)
-            ok = counts["invalidCount"] == 0 and counts["stoppedCount"] == 0 and counts["runningCount"] > 0
-        else:
-            ok = counts["runningCount"] == 0
-        if ok:
-            print(f"검증 통과: {action} 반영 확인 {counts}")
+        still_pending = []
+        for pg_id in pending:
+            response = requests.get(
+                f"{base_url}/nifi-api/process-groups/{pg_id}",
+                headers={"Authorization": f"Bearer {token}", "Host": host_header},
+                verify=False,
+                timeout=15,
+            )
+            response.raise_for_status()
+            entity = response.json()
+            counts = {
+                key: entity.get(key, 0)
+                for key in ("runningCount", "stoppedCount", "invalidCount", "disabledCount")
+            }
+            if action == "start":
+                # invalid가 하나라도 있으면 그 프로세서는 시작되지 못한 것 (호출은 성공했어도)
+                ok = counts["invalidCount"] == 0 and counts["stoppedCount"] == 0 and counts["runningCount"] > 0
+            else:
+                ok = counts["runningCount"] == 0
+            if ok:
+                print(f"검증 통과: {pg_id} {action} 반영 확인 {counts}")
+            else:
+                still_pending.append(pg_id)
+        pending = still_pending
+        if not pending:
             return
         time.sleep(VERIFY_INTERVAL_SECONDS)
 
-    raise RuntimeError(f"{action} 후에도 프로세스 그룹 상태가 기대와 다름: {counts}")
+    raise RuntimeError(f"{action} 후에도 상태가 기대와 다른 그룹이 있음: {pending} (마지막 관측 {counts})")
 
 
 def verify_target_db_landing(
@@ -267,7 +407,14 @@ def sanitize(name: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in name).strip("_").lower()
 
 
-def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str) -> DAG:
+def build_dag(
+    pg_id: str,
+    pg_name: str,
+    base_url: str,
+    host_header: str,
+    chain: list[str] | None = None,
+    group_names: dict[str, str] | None = None,
+) -> DAG:
     # dag_id에는 그룹 "이름"을 넣지 않는다 - 캔버스에서 이름을 바꾸면 dag_id가
     # 통째로 바뀌어서 스케줄 Variable과 실행 이력이 조용히 끊어지기 때문.
     # 프로세스 그룹 id(앞 8자리)는 불변이라 이것만으로 dag_id를 만들고,
@@ -296,10 +443,21 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str) -> DAG:
     # 기본값(미설정)은 기존과 동일하게 실행 후에도 계속 RUNNING으로 남겨두는 상시 동작
     # (logfile/http-ingest처럼 항상 대기해야 하는 그룹에 적합).
     auto_stop_after_run = Variable.get(f"{dag_id}__auto_stop_after_run", default_var="false").lower() == "true"
+    # 출력포트로 이어진 하류 그룹까지 이 DAG가 함께 제어한다(build_group_chain).
+    # chain[0]은 항상 자기 자신. NiFi 조회가 실패해 체인을 못 구했으면 자기 자신만.
+    chain = chain or [pg_id]
+    group_names = group_names or {}
+    downstream = chain[1:]
     with DAG(
         dag_id=dag_id,
         dag_display_name=f"ETL_{sanitize(pg_name)}",
         description=f'NiFi 프로세스 그룹 "{pg_name}"({pg_id}) 시작/중지 제어'
+        + (
+            " / 연결된 하류 그룹 함께 제어: "
+            + ", ".join(group_names.get(g, g[:8]) for g in downstream)
+            if downstream
+            else ""
+        )
         + (f" (스케줄: {schedule})" if schedule else " (수동 트리거 전용)"),
         schedule=schedule,
         start_date=datetime(2026, 1, 1),
@@ -307,21 +465,41 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str) -> DAG:
         tags=["nifi", "pipeline-control"],
         params={"action": Param("start", enum=ACTIONS, description="수행할 동작을 선택하세요")},
     ) as dag:
-        _op_kwargs = {
-            "pg_id": pg_id,
+        _chain_kwargs = {
+            "pg_ids": chain,
             "base_url": base_url,
             "host_header": host_header,
         }
         apply = PythonOperator(
             task_id="apply_action",
             python_callable=apply_process_group_action,
-            op_kwargs=_op_kwargs,
+            op_kwargs=_chain_kwargs,
         )
         verify = PythonOperator(
             task_id="verify_action",
             python_callable=verify_process_group_action,
-            op_kwargs=_op_kwargs,
+            op_kwargs=_chain_kwargs,
         )
+        # 그룹마다 완료 대기 태스크를 따로 둔다 - Airflow 화면에서 "어느 그룹이
+        # 얼마나 걸렸는지"가 그대로 보이게 하기 위함. task_id에는 이름 대신
+        # 그룹 id를 쓴다(dag_id와 같은 이유: 캔버스에서 이름을 바꿔도 이력이
+        # 끊기지 않도록). 사람이 읽을 이름은 task_display_name으로만 준다.
+        waits = []
+        for member in chain:
+            member_name = group_names.get(member, member[:8])
+            waits.append(
+                PythonOperator(
+                    task_id=f"wait_{member[:8]}",
+                    task_display_name=f"wait_{sanitize(member_name)}",
+                    python_callable=wait_for_group_completion,
+                    op_kwargs={
+                        "pg_id": member,
+                        "pg_name": member_name,
+                        "base_url": base_url,
+                        "host_header": host_header,
+                    },
+                )
+            )
         verify_target = PythonOperator(
             task_id="verify_target_db_landing",
             python_callable=verify_target_db_landing,
@@ -336,16 +514,24 @@ def build_dag(pg_id: str, pg_name: str, base_url: str, host_header: str) -> DAG:
             },
             outlets=target_outlets,
         )
+        # apply -> verify -> (상류부터 순서대로 완료 대기) -> 적재 검증 -> 정지.
+        # 완료 대기가 verify_target보다 앞에 오는 것이 중요하다. 예전에는 시작
+        # 직후 바로 적재를 확인해서, 실제로는 20분 넘게 걸리는 작업을 DAG가 14초
+        # 만에 success로 끝내버렸다(그 사이 실패해도 아무도 모름).
+        chain_tail = verify
+        for wait_task in waits:
+            chain_tail >> wait_task
+            chain_tail = wait_task
+        chain_tail >> verify_target
         if auto_stop_after_run:
             stop_after = PythonOperator(
                 task_id="stop_after_run",
                 python_callable=stop_process_group_after_run,
-                op_kwargs=_op_kwargs,
+                op_kwargs=_chain_kwargs,
                 trigger_rule="all_done",
             )
-            apply >> verify >> verify_target >> stop_after
-        else:
-            apply >> verify >> verify_target
+            verify_target >> stop_after
+        apply >> verify
     return dag
 
 
@@ -356,6 +542,10 @@ _host_header = os.environ.get("NIFI_HOST_HEADER", NIFI_HOST_HEADER_DEFAULT)
 # NiFi가 잠깐 죽어있는 동안 파싱이 돌면 예전엔 DAG가 통째로 사라져서
 # (= 그 사이 스케줄 실행이 조용히 누락) 마지막 성공 조회를 캐시로 재사용한다.
 PG_CACHE_VARIABLE_KEY = "nifi_process_groups_cache"
+# 그룹 사이 연결(출력포트 -> 입력포트)도 같은 이유로 캐시한다. 연결을 못 읽으면
+# 체인을 모르는 채 DAG가 만들어져서, 어제까지처럼 상류만 켜고 하류는 방치하는
+# 동작으로 조용히 되돌아가기 때문에 캐시가 특히 중요하다.
+CONN_CACHE_VARIABLE_KEY = "nifi_root_connections_cache"
 
 try:
     _token = _get_nifi_token()
@@ -366,24 +556,64 @@ try:
         timeout=10,
     )
     _resp.raise_for_status()
+    _flow = _resp.json()["processGroupFlow"]
+    _root_id = _flow["id"]
     _process_groups = [
         {"id": pg["component"]["id"], "name": pg["component"]["name"]}
-        for pg in _resp.json()["processGroupFlow"]["flow"]["processGroups"]
+        for pg in _flow["flow"]["processGroups"]
+    ]
+    _conn_resp = requests.get(
+        f"{_base_url}/nifi-api/process-groups/{_root_id}/connections",
+        headers={"Authorization": f"Bearer {_token}", "Host": _host_header},
+        verify=False,
+        timeout=10,
+    )
+    _conn_resp.raise_for_status()
+    # 체인 계산에 필요한 필드만 남겨서 캐시한다(전체 응답은 크고 자주 바뀜).
+    _connections = [
+        {
+            "component": {
+                "source": {
+                    "groupId": c["component"]["source"].get("groupId"),
+                    "type": c["component"]["source"].get("type"),
+                },
+                "destination": {
+                    "groupId": c["component"]["destination"].get("groupId"),
+                    "type": c["component"]["destination"].get("type"),
+                },
+            }
+        }
+        for c in _conn_resp.json().get("connections", [])
     ]
     # 매 파싱(기본 30초)마다 DB에 쓰지 않도록 내용이 바뀐 경우에만 캐시 갱신
     _cached = Variable.get(PG_CACHE_VARIABLE_KEY, default_var=None, deserialize_json=True)
     if _cached != _process_groups:
         Variable.set(PG_CACHE_VARIABLE_KEY, _process_groups, serialize_json=True)
+    _cached_conn = Variable.get(CONN_CACHE_VARIABLE_KEY, default_var=None, deserialize_json=True)
+    if _cached_conn != _connections:
+        Variable.set(CONN_CACHE_VARIABLE_KEY, _connections, serialize_json=True)
 except Exception as exc:  # NiFi가 잠시 안 뜬 상태라도 DAG 파싱 전체가 죽지 않게
     _process_groups = Variable.get(PG_CACHE_VARIABLE_KEY, default_var=[], deserialize_json=True)
+    _connections = Variable.get(CONN_CACHE_VARIABLE_KEY, default_var=[], deserialize_json=True)
     print(
         f"NiFi 조회 실패, 캐시된 프로세스 그룹 {len(_process_groups)}개로 DAG를 유지함"
         f" (스케줄 누락 방지, 그룹 추가/삭제는 NiFi 복구 후 반영): {exc}"
     )
 
+_group_names = {pg["id"]: pg["name"] for pg in _process_groups}
+# 하류 그룹은 상류 DAG가 통째로 제어하므로 자기 이름의 DAG를 따로 만들지 않는다.
+# (DW용 DAG를 남겨두면 DZ가 이미 켠 그룹을 다시 켜려 하거나, 사람이 DW만 단독
+#  실행해서 dz_* 테이블이 아직 안 찬 상태로 dw_*를 덮어쓰는 사고가 난다.)
+_chains = {pg["id"]: build_group_chain(pg["id"], _connections) for pg in _process_groups}
+_downstream_only = {m for head, ch in _chains.items() for m in ch[1:]}
+
 for _pg in _process_groups:
+    if _pg["id"] in _downstream_only:
+        print(f"프로세스 그룹 {_pg['name']}({_pg['id'][:8]})은 상류 DAG가 함께 제어하므로 단독 DAG를 만들지 않음")
+        continue
     globals()[f"nifi_pg_{_pg['id'][:8]}_control_dag"] = build_dag(
-        _pg["id"], _pg["name"], _base_url, _host_header
+        _pg["id"], _pg["name"], _base_url, _host_header,
+        chain=_chains[_pg["id"]], group_names=_group_names,
     )
 
 # 예전엔 여기서 nifi_pipelines_metrics_collector DAG가 1시간마다 모든 파이프라인의
