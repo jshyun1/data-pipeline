@@ -1,0 +1,11 @@
+id,pipeline_source,pipeline_key,task_key,pipeline_label,load_date,loaded_count,updated_at
+54,NIFI,9e2dd726-019f-1000-338b-b3f02d4d9673,put_database_record_counter,load-dz-POP002L,2026-07-28,4305006,2026-07-28 09:24:24.873442
+117,NIFI,9e2de6ca-019f-1000-087d-e973d4e60975,put_database_record_counter,load-dw-POP004L,2026-07-28,69505980,2026-07-28 14:40:21.414794
+52,NIFI,9e2dcbd8-019f-1000-12c9-fed871dfcfdd,put_database_record_counter,load-dz-COM003M,2026-07-28,298782,2026-07-28 15:00:22.790893
+110,NIFI,9e2dcda4-019f-1000-0fe0-54466abf84f5,put_database_record_counter,load-dw-COM003M,2026-07-28,896346,2026-07-28 15:00:22.814249
+53,NIFI,9e2de0cc-019f-1000-47ff-4b73b848ad3d,put_database_record_counter,load-dz-POP004L,2026-07-28,4214420,2026-07-28 15:02:34.842266
+55,NIFI,9e2dd38c-019f-1000-790a-01beb1c3a202,put_database_record_counter,load-dz-POP001L,2026-07-28,36917420,2026-07-28 15:10:21.59984
+118,NIFI,9e2dd919-019f-1000-2e63-52a035885790,put_database_record_counter,load-dw-POP002L,2026-07-28,67165084,2026-07-28 15:17:01.460752
+142,NIFI,9e2dd558-019f-1000-cd09-2347ae35d352,put_database_record_counter,load-dw-POP001L,2026-07-28,75390356,2026-07-28 15:20:21.35877
+51,NIFI,9e2ddb56-019f-1000-0c9c-bc9db43c4455,put_database_record_counter,load-dz-POP003L,2026-07-28,3321180,2026-07-28 15:54:03.625552
+112,NIFI,9e2dde59-019f-1000-b782-984d04cec309,put_database_record_counter,load-dw-POP003L,2026-07-28,30290620,2026-07-28 15:57:22.940253

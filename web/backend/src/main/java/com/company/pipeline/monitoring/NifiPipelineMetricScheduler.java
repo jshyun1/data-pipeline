@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
@@ -19,9 +20,9 @@ import org.springframework.stereotype.Component;
 
 /**
  * 대시보드 "NiFi 적재 건수"를 Airflow DAG(nifi_pipelines_metrics_collector, 타겟 DB를
- * 타임스탬프로 훑는 방식) 없이 NiFi 자신의 REST API만으로 직접 채운다. PutDatabaseRecord
- * 프로세서는 "INSERT updates performed"라는 누적 카운터를 등록하는데(NiFi 재시작 전까지
- * 유지), 프로세서별 마지막 값을 nifi_counter_snapshot에 남겨두고 직전 값과의 증가분만
+ * 타임스탬프로 훑는 방식) 없이 NiFi 자신의 REST API만으로 직접 채운다. 적재 프로세서는
+ * "INSERT updates performed"라는 누적 카운터를 등록하는데(NiFi 재시작 전까지 유지),
+ * 프로세서별 마지막 값을 nifi_counter_snapshot에 남겨두고 직전 값과의 증가분만
  * 반영한다 - Kafka의 committed offset 스냅샷과 동일한 델타 방식.
  *
  * ETL 로그 화면(nifi_execution_log)도 같은 델타 감지를 "그 주기(60초)에 한 번 실행됨"으로
@@ -45,11 +46,21 @@ public class NifiPipelineMetricScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(NifiPipelineMetricScheduler.class);
     private static final String SOURCE = "NIFI";
+    // 이름은 PutDatabaseRecord만 보던 시절의 잔재지만 그대로 둔다 - 이미 쌓인
+    // pipeline_daily_load_metric 행들의 task_key라 바꾸면 같은 파이프라인의 이력이 갈린다.
     private static final String TASK_KEY = "put_database_record_counter";
     // /nifi-api/flow/process-groups/.../status(recursive)는 프로세서 타입을 전체 클래스명이
     // 아니라 짧은 이름으로 돌려준다(다른 NiFi API, 예: /process-groups/{id}/processors는
     // 전체 클래스명을 쓰는 것과 다름 - 실측으로 확인).
-    private static final String PUT_DATABASE_RECORD_TYPE = "PutDatabaseRecord";
+    //
+    // "INSERT updates performed" 카운터를 올리는 프로세서 타입들. PutDatabaseRecord는
+    // NiFi가 알아서 올려주고, ExecuteGroovyScript는 비정형 그룹의 이미지/동영상 적재가
+    // 스크립트 안에서 session.adjustCounter()로 같은 이름을 직접 올린다(바이너리는
+    // 레코드 기반인 PutDatabaseRecord로 넣으면 파일 전체가 힙에 올라와서 못 씀).
+    //
+    // 카운터를 안 올리는 ExecuteGroovyScript가 섞여 있어도 문제되지 않는다 - 카운터가
+    // 없으면 스냅샷도 없어서 아래 초기화 감지가 아무것도 하지 않는다.
+    private static final Set<String> LOAD_PROCESSOR_TYPES = Set.of("PutDatabaseRecord", "ExecuteGroovyScript");
     private static final String INSERT_COUNTER_NAME = "INSERT updates performed";
     private static final Pattern PROCESSOR_ID_IN_CONTEXT = Pattern.compile("\\(([0-9a-fA-F-]{36})\\)\\s*$");
 
@@ -146,14 +157,14 @@ public class NifiPipelineMetricScheduler {
             return;
         }
 
-        List<ProcessorRef> putDatabaseRecordProcessors = collectPutDatabaseRecordProcessors(flow);
-        if (putDatabaseRecordProcessors.isEmpty()) {
+        List<ProcessorRef> loadProcessors = collectLoadProcessors(flow);
+        if (loadProcessors.isEmpty()) {
             return;
         }
 
         Map<String, Long> insertCountByProcessorId = extractInsertCounters(counters);
 
-        for (ProcessorRef ref : putDatabaseRecordProcessors) {
+        for (ProcessorRef ref : loadProcessors) {
             Long currentValue = insertCountByProcessorId.get(ref.id());
             if (currentValue == null) {
                 // 카운터가 응답에 통째로 없다 = NiFi가 재시작되며 카운터가 초기화된 것
@@ -218,7 +229,7 @@ public class NifiPipelineMetricScheduler {
         return result;
     }
 
-    private List<ProcessorRef> collectPutDatabaseRecordProcessors(NifiFlowStatusResponse flow) {
+    private List<ProcessorRef> collectLoadProcessors(NifiFlowStatusResponse flow) {
         List<ProcessorRef> result = new ArrayList<>();
         var aggregateSnapshot = flow.processGroupStatus() == null ? null : flow.processGroupStatus().aggregateSnapshot();
         if (aggregateSnapshot == null) {
@@ -238,7 +249,7 @@ public class NifiPipelineMetricScheduler {
         if (processors != null) {
             for (var entry : processors) {
                 var processor = entry.processorStatusSnapshot();
-                if (processor != null && PUT_DATABASE_RECORD_TYPE.equals(processor.type())) {
+                if (processor != null && LOAD_PROCESSOR_TYPES.contains(processor.type())) {
                     out.add(new ProcessorRef(processor.id(), processor.name(), currentGroupId, currentGroupName));
                 }
             }

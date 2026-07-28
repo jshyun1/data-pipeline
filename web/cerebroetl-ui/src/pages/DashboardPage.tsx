@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Card, DatePicker, Space, Statistic } from "antd";
+import { Button, Card, DatePicker, Empty, Space, Tag } from "antd";
 import { Column, Line } from "@ant-design/plots";
 import dayjs, { type Dayjs } from "dayjs";
 import {
@@ -27,7 +27,6 @@ import { collectNifiJobs, extractErrorGroupMessages } from "../utils/nifiJobs";
 import { summarizeKafkaConnectors } from "../utils/kafkaConnectors";
 import { categorizeDag, NIFI_METRICS_COLLECTOR_DAG_ID, resolveDagDisplayName, type DagCategory } from "../utils/dagHistory";
 import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
-import { OperationsOverview } from "../components/OperationsOverview";
 
 const { RangePicker } = DatePicker;
 
@@ -64,6 +63,9 @@ const EMPTY_AIRFLOW_HISTORY: AirflowHistoryData = {
   successEntries: [],
   failedEntries: [],
 };
+
+const EMPTY_NIFI_JOBS: ReturnType<typeof collectNifiJobs> = [];
+const EMPTY_KAFKA_CONNECTORS: ReturnType<typeof summarizeKafkaConnectors> = [];
 
 async function fetchTaskLogText(dagId: string, runId: string, taskId: string, tryNumber?: number): Promise<string> {
   try {
@@ -277,6 +279,21 @@ function formatLoadDate(date: string) {
   return dayjs(date).format("YYYY.MM.DD");
 }
 
+function formatCount(value: number) {
+  return new Intl.NumberFormat("ko-KR").format(value);
+}
+
+function formatCompactCount(value: number) {
+  return new Intl.NumberFormat("ko-KR", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function formatDashboardDateTime(value?: string) {
+  return value ? dayjs(value).format("MM.DD HH:mm:ss") : "-";
+}
+
 export function DashboardPage() {
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(6, "day"), dayjs()]);
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
@@ -343,14 +360,19 @@ export function DashboardPage() {
   });
 
   const nifiExecutionLogsQuery = useQuery({
-    queryKey: ["dashboard-operations-nifi-logs", dayjs().format("YYYY-MM-DD")],
-    queryFn: () => listNifiExecutionLogs(dayjs().format("YYYY-MM-DD"), dayjs().format("YYYY-MM-DD")),
+    queryKey: [
+      "dashboard-operations-nifi-logs",
+      appliedRange[0].format("YYYY-MM-DD"),
+      appliedRange[1].format("YYYY-MM-DD"),
+    ],
+    queryFn: () =>
+      listNifiExecutionLogs(appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD")),
     refetchInterval: 30000,
     placeholderData: (previousData) => previousData,
   });
 
-  const nifiJobs = nifiJobsQuery.data ?? [];
-  const kafkaConnectors = kafkaConnectorsQuery.data ?? [];
+  const nifiJobs = nifiJobsQuery.data ?? EMPTY_NIFI_JOBS;
+  const kafkaConnectors = kafkaConnectorsQuery.data ?? EMPTY_KAFKA_CONNECTORS;
   const commandSummary = commandSummaryQuery.data;
   const airflowHistory = airflowHistoryQuery.data ?? EMPTY_AIRFLOW_HISTORY;
   const showAirflowInitialLoading = airflowHistoryQuery.isLoading && !airflowHistoryQuery.data;
@@ -390,16 +412,26 @@ export function DashboardPage() {
   );
 
   const nifiFailedRows: HistoryEntry[] = useMemo(
-    () =>
-      nifiJobs
+    () => [
+      ...(nifiExecutionLogsQuery.data ?? [])
+        .filter((entry) => entry.status === "FAILED")
+        .map((entry) => ({
+          id: `log-${entry.id}`,
+          basicContent: `${entry.processorName}: ${entry.message ?? "NiFi 처리 오류"}`,
+          category: "ETL" as DagCategory,
+          datetime: entry.occurredAt,
+          fetchLog: async () => entry.message ?? "오류 메시지를 찾을 수 없습니다.",
+        })),
+      ...nifiJobs
         .filter((job) => job.status === "FAILED")
         .map((job) => ({
-          id: job.id,
-          basicContent: job.name,
+          id: `current-${job.id}`,
+          basicContent: `${job.name} (현재 오류)`,
           category: "ETL" as DagCategory,
           fetchLog: async () => job.errorMessage ?? "오류 메시지를 찾을 수 없습니다.",
         })),
-    [nifiJobs],
+    ],
+    [nifiExecutionLogsQuery.data, nifiJobs],
   );
 
   const kafkaFailedRows: HistoryEntry[] = useMemo(
@@ -440,232 +472,318 @@ export function DashboardPage() {
     }
   }, [airflowActiveTile, airflowHistory]);
 
+  const selectedPeriodLabel = `${appliedRange[0].format("YYYY.MM.DD")} – ${appliedRange[1].format("YYYY.MM.DD")}`;
+  const nifiPeriodTotal = nifiLoadDaily.reduce((sum, point) => sum + point.count, 0);
+  const kafkaPeriodTotal = kafkaLoadDaily.reduce((sum, point) => sum + point.count, 0);
+  const realtimeMetrics = operationsPipelineQuery.data?.metrics ?? [];
+  const kafkaThroughput = realtimeMetrics.reduce((sum, metric) => sum + Number(metric.throughputPerSecond ?? 0), 0);
+  const kafkaBacklog = realtimeMetrics.reduce((sum, metric) => sum + Number(metric.consumerLag ?? 0), 0);
+  const nifiQueued = nifiJobs.reduce((sum, job) => sum + job.flowFilesQueued, 0);
+  const nifiActiveThreads = nifiJobs.reduce((sum, job) => sum + job.activeThreadCount, 0);
+  const airflowCompleted = airflowHistory.successEntries.length + airflowHistory.failedEntries.length;
+  const airflowSuccessRate =
+    airflowCompleted > 0 ? Math.round((airflowHistory.successEntries.length / airflowCompleted) * 1000) / 10 : 0;
+
+  const dailyTrendChart = [
+    ...nifiLoadDaily.map((point) => ({ ...point, engine: "NIFI" })),
+    ...kafkaLoadDaily.map((point) => ({ ...point, engine: "KAFKA" })),
+  ];
+
+  const loadTop5 = [
+    ...nifiLoadTop.map((point) => ({ name: point.label, value: point.count, engine: "NIFI" })),
+    ...kafkaLoadTop.map((point) => ({ name: point.label, value: point.count, engine: "KAFKA" })),
+  ]
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 5);
+
+  const recentAirflowRuns = [
+    ...airflowHistory.runningEntries.map((entry) => ({ ...entry, state: "RUNNING" as const })),
+    ...airflowHistory.failedEntries.map((entry) => ({ ...entry, state: "FAILED" as const })),
+    ...airflowHistory.successEntries.map((entry) => ({ ...entry, state: "SUCCESS" as const })),
+  ]
+    .sort((a, b) => new Date(b.datetime ?? 0).getTime() - new Date(a.datetime ?? 0).getTime())
+    .slice(0, 7);
+
+  const recentFailureEvents = [
+    ...(nifiExecutionLogsQuery.data ?? [])
+      .filter((entry) => entry.status === "FAILED")
+      .map((entry) => ({
+        id: `nifi-${entry.id}`,
+        source: "NIFI",
+        datetime: entry.occurredAt,
+        title: entry.processorName,
+        message: entry.message ?? "NiFi 처리 오류",
+      })),
+    ...airflowHistory.failedEntries.map((entry) => ({
+      id: `airflow-${entry.id}`,
+      source: "AIRFLOW",
+      datetime: entry.datetime,
+      title: entry.basicContent,
+      message: "Airflow 실행 실패",
+    })),
+  ]
+    .sort((a, b) => new Date(b.datetime ?? 0).getTime() - new Date(a.datetime ?? 0).getTime())
+    .slice(0, 7);
+
+  const selectedDataLoading =
+    (nifiLoadQuery.isLoading && !nifiLoadQuery.data) ||
+    (kafkaLoadQuery.isLoading && !kafkaLoadQuery.data) ||
+    showAirflowInitialLoading;
+
   return (
-    <div>
-      <div className="dashboard-stack">
-        <OperationsOverview
-          pipelines={operationsPipelineQuery.data?.pipelines ?? []}
-          realtimeMetrics={operationsPipelineQuery.data?.metrics ?? []}
-          kafkaConnectors={kafkaConnectors}
-          nifiJobs={nifiJobs}
-          nifiExecutionLogs={nifiExecutionLogsQuery.data ?? []}
-          nifiDaily={nifiLoadDaily}
-          kafkaDaily={kafkaLoadDaily}
-          nifiTop={nifiLoadTop}
-          kafkaTop={kafkaLoadTop}
-          headerExtra={
-            <Space>
-              <RangePicker
-                value={dateRange}
-                onChange={(value) => {
-                  if (value && value[0] && value[1]) {
-                    setDateRange([value[0], value[1]]);
-                  }
-                }}
-                allowClear={false}
+    <div className="dashboard-page">
+      <header className="dashboard-filter-bar">
+        <div>
+          <h2>통합 운영 대시보드</h2>
+          <p>
+            처리·실행 이력은 <strong>{selectedPeriodLabel}</strong> 기준이며, 큐와 실행 상태는 현재 기준입니다.
+          </p>
+        </div>
+        <Space className="dashboard-date-filter" wrap>
+          <RangePicker
+            value={dateRange}
+            onChange={(value) => {
+              if (value && value[0] && value[1]) {
+                setDateRange([value[0], value[1]]);
+              }
+            }}
+            allowClear={false}
+          />
+          <Button type="primary" loading={selectedDataLoading} onClick={() => setAppliedRange(dateRange)}>
+            검색
+          </Button>
+        </Space>
+      </header>
+
+      <section className="dashboard-summary-grid">
+        <Card
+          className="dashboard-summary-card dashboard-summary-card--cdc"
+          loading={kafkaLoadQuery.isLoading && !kafkaLoadQuery.data}
+        >
+          <div className="summary-card-heading">
+            <span>스트림 · CDC</span>
+            <button type="button" className="summary-status-button" onClick={() => setKafkaFailedOpen(true)}>
+              <Tag color={kafkaFailed > 0 ? "error" : "success"}>
+                {kafkaFailed > 0 ? `장애 ${kafkaFailed}` : `정상 ${kafkaRunning}/${kafkaConnectors.length}`}
+              </Tag>
+            </button>
+          </div>
+          <div className="summary-card-value" title={`${formatCount(kafkaPeriodTotal)}건`}>
+            {formatCompactCount(kafkaPeriodTotal)}
+            <small>건</small>
+          </div>
+          <div className="summary-card-caption">선택 기간 적재 건수</div>
+          <div className="summary-card-details">
+            <span>현재 처리율 <strong>{formatCompactCount(Math.round(kafkaThroughput))}</strong> rows/s</span>
+            <span>미처리 <strong>{formatCompactCount(kafkaBacklog)}</strong></span>
+            <span>일시정지 <strong>{kafkaPaused}</strong></span>
+          </div>
+        </Card>
+
+        <Card
+          className="dashboard-summary-card dashboard-summary-card--nifi"
+          loading={nifiLoadQuery.isLoading && !nifiLoadQuery.data}
+        >
+          <div className="summary-card-heading">
+            <span>플로우 · NiFi</span>
+            <button type="button" className="summary-status-button" onClick={() => setNifiFailedOpen(true)}>
+              <Tag color={nifiFailed > 0 ? "error" : "success"}>
+                {nifiFailed > 0 ? `오류 그룹 ${nifiFailed}` : "정상"}
+              </Tag>
+            </button>
+          </div>
+          <div className="summary-card-value" title={`${formatCount(nifiPeriodTotal)}건`}>
+            {formatCompactCount(nifiPeriodTotal)}
+            <small>건</small>
+          </div>
+          <div className="summary-card-caption">선택 기간 적재 건수</div>
+          <div className="summary-card-details">
+            <span>활성 스레드 <strong>{nifiActiveThreads}</strong></span>
+            <span>대기 <strong>{formatCompactCount(nifiQueued)}</strong> FlowFiles</span>
+            <span>실행 그룹 <strong>{nifiRunning}</strong></span>
+            <span>중지 <strong>{nifiStopped}</strong></span>
+          </div>
+        </Card>
+
+        <Card className="dashboard-summary-card dashboard-summary-card--airflow" loading={showAirflowInitialLoading}>
+          <div className="summary-card-heading">
+            <span>배치 · Airflow</span>
+            <Tag color={airflowHistory.failedEntries.length > 0 ? "warning" : "success"}>
+              실패 {airflowHistory.failedEntries.length}
+            </Tag>
+          </div>
+          <div className="summary-card-value">
+            {airflowSuccessRate}
+            <small>% 성공</small>
+          </div>
+          <div className="summary-card-caption">선택 기간 완료 실행 기준</div>
+          <div className="summary-card-details">
+            <button type="button" onClick={() => setAirflowActiveTile("success")}>
+              성공 <strong>{airflowHistory.successEntries.length}</strong>
+            </button>
+            <button type="button" onClick={() => setAirflowActiveTile("running")}>
+              실행 중 <strong>{airflowHistory.runningEntries.length}</strong>
+            </button>
+            <button type="button" onClick={() => setAirflowActiveTile("failed")}>
+              실패 <strong>{airflowHistory.failedEntries.length}</strong>
+            </button>
+          </div>
+          <div className="airflow-run-strip" aria-label="최근 Airflow 실행 상태">
+            {recentAirflowRuns.slice(0, 10).map((entry) => (
+              <span key={entry.id} className={`airflow-run-block airflow-run-block--${entry.state.toLowerCase()}`} />
+            ))}
+          </div>
+        </Card>
+      </section>
+
+      <div className="dashboard-main-grid">
+        <main className="dashboard-primary-column">
+          <Card
+            className="dashboard-panel dashboard-panel--wide"
+            title={`선택 기간 일별 처리 건수 추이 · ${selectedPeriodLabel}`}
+            loading={selectedDataLoading}
+          >
+            {dailyTrendChart.length > 0 ? (
+              <Line data={dailyTrendChart} xField="date" yField="count" colorField="engine" height={270} />
+            ) : (
+              <div className="empty-chart-placeholder">
+                <Empty description="선택한 기간에 적재 이력이 없습니다." />
+              </div>
+            )}
+          </Card>
+
+          <div className="dashboard-chart-pair">
+            <Card className="dashboard-panel" title="파이프라인별 적재 건수 Top 5" loading={selectedDataLoading}>
+              {loadTop5.length > 0 ? (
+                <Column
+                  data={loadTop5}
+                  xField="name"
+                  yField="value"
+                  colorField="engine"
+                  height={245}
+                  axis={{ x: { labelAutoRotate: false, labelAutoHide: false, labelAutoEllipsis: true } }}
+                />
+              ) : (
+                <div className="empty-chart-placeholder">
+                  <Empty description="선택한 기간에 적재 이력이 없습니다." />
+                </div>
+              )}
+            </Card>
+
+            <Card
+              className="dashboard-panel"
+              title="현재 Job별 대기 FlowFile Top 5"
+              loading={nifiJobsQuery.isLoading && !nifiJobsQuery.data}
+            >
+              {nifiQueueChartData.some((point) => point.queued > 0) ? (
+                <Column
+                  data={nifiQueueChartData}
+                  xField="name"
+                  yField="queued"
+                  height={245}
+                  axis={{ x: { labelAutoRotate: false, labelAutoHide: false, labelAutoEllipsis: true } }}
+                />
+              ) : (
+                <div className="empty-chart-placeholder">
+                  <Empty description="현재 대기 중인 FlowFile이 없습니다." />
+                </div>
+              )}
+            </Card>
+          </div>
+
+          <Card className="dashboard-panel" title="선택 기간 Airflow 태스크 수행시간 Top 5" loading={showAirflowInitialLoading}>
+            {airflowHistory.topDurationTasks.length > 0 ? (
+              <Column
+                data={airflowHistory.topDurationTasks}
+                xField="taskKey"
+                yField="minutes"
+                height={235}
+                axis={{ x: { labelAutoRotate: false, labelAutoHide: false, labelAutoEllipsis: true } }}
               />
-              <Button type="primary" onClick={() => setAppliedRange(dateRange)}>
-                검색
+            ) : (
+              <div className="empty-chart-placeholder">
+                <Empty description="선택한 기간에 실행 이력이 없습니다." />
+              </div>
+            )}
+          </Card>
+        </main>
+
+        <aside className="dashboard-side-column">
+          <Card
+            className="dashboard-feed-card"
+            title="배치 · 최근 실행"
+            extra={
+              <Button type="link" size="small" onClick={() => setAirflowActiveTile("dag")}>
+                DAG {airflowHistory.dagCount}개
               </Button>
-            </Space>
-          }
-          loading={
-            (operationsPipelineQuery.isLoading && !operationsPipelineQuery.data) ||
-            (nifiJobsQuery.isLoading && !nifiJobsQuery.data) ||
-            (kafkaConnectorsQuery.isLoading && !kafkaConnectorsQuery.data)
-          }
-        />
+            }
+            loading={showAirflowInitialLoading}
+          >
+            {recentAirflowRuns.length > 0 ? (
+              <div className="dashboard-feed-list">
+                {recentAirflowRuns.map((entry) => (
+                  <button
+                    type="button"
+                    key={entry.id}
+                    className="dashboard-feed-row"
+                    onClick={() =>
+                      setAirflowActiveTile(
+                        entry.state === "FAILED" ? "failed" : entry.state === "RUNNING" ? "running" : "success",
+                      )
+                    }
+                  >
+                    <span className={`feed-state-dot feed-state-dot--${entry.state.toLowerCase()}`} />
+                    <span className="feed-row-content">
+                      <strong>{entry.basicContent}</strong>
+                      <small>{formatDashboardDateTime(entry.datetime)}</small>
+                    </span>
+                    <Tag color={entry.state === "FAILED" ? "error" : entry.state === "RUNNING" ? "processing" : "success"}>
+                      {entry.state === "FAILED" ? "실패" : entry.state === "RUNNING" ? "실행중" : "성공"}
+                    </Tag>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="선택한 기간에 실행 이력이 없습니다." />
+            )}
+          </Card>
 
-        {/* NiFi는 Airflow를 거치지 않고 자신의 REST API(프로세스 그룹 상태, bulletin board)를
-            직접 조회한 실시간 값이다 - 실행중/실패는 지금 이 순간의 상태, 적재 건수 차트만
-            위에서 고른 기간을 따른다. */}
-        <section className="dashboard-section">
-          <div className="section-heading">
-            <div>
-              <h3>NiFi 실시간 현황</h3>
-            </div>
-          </div>
-          <div className="dashboard-grid-stack">
-            <div className="dashboard-tile-grid dashboard-tile-grid--4">
-              <Card className="metric-card metric-card--static" loading={nifiJobsQuery.isLoading && !nifiJobsQuery.data}>
-                <Statistic title="실행중 Job" value={nifiRunning} valueStyle={{ color: "#1677ff" }} />
-              </Card>
-              <Card
-                className="metric-card"
-                loading={nifiJobsQuery.isLoading && !nifiJobsQuery.data}
-                onClick={() => setNifiFailedOpen(true)}
-              >
-                <Statistic title="실패 Job" value={nifiFailed} valueStyle={{ color: "#c62828" }} />
-              </Card>
-              <Card className="metric-card metric-card--static" loading={nifiJobsQuery.isLoading && !nifiJobsQuery.data}>
-                <Statistic title="중지 Job" value={nifiStopped} valueStyle={{ color: "#8c8c8c" }} />
-              </Card>
-              <Card className="metric-card metric-card--static" loading={nifiJobsQuery.isLoading && !nifiJobsQuery.data}>
-                <Statistic title="전체 Job" value={nifiJobs.length} valueStyle={{ color: "#08979c" }} />
-              </Card>
-            </div>
-            <div className="dashboard-chart-grid">
-              <Card title="Job별 대기 중 FlowFile Top 5" size="small" loading={nifiJobsQuery.isLoading && !nifiJobsQuery.data}>
-                {nifiQueueChartData.length > 0 ? (
-                  <Column
-                    data={nifiQueueChartData}
-                    xField="name"
-                    yField="queued"
-                    height={240}
-                    axis={{ x: { labelAutoRotate: false, labelAutoHide: false, labelAutoEllipsis: true } }}
-                  />
-                ) : (
-                  <div className="empty-chart-placeholder">대기 중인 FlowFile이 없습니다.</div>
-                )}
-              </Card>
-              <Card title="NiFi 일별 적재 건수" size="small" loading={nifiLoadQuery.isLoading && !nifiLoadQuery.data}>
-                {nifiLoadDaily.length > 0 ? (
-                  <Line data={nifiLoadDaily} xField="date" yField="count" height={240} />
-                ) : (
-                  <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
-                )}
-              </Card>
-            </div>
-          </div>
-        </section>
-
-        {/* Kafka도 마찬가지로 Kafka Connect REST API(/connectors?expand=status)를 직접
-            조회한다 - 커넥터 상태가 RUNNING이어도 태스크 하나가 FAILED면 실패로 잡는다. */}
-        <section className="dashboard-section">
-          <div className="section-heading">
-            <div>
-              <h3>Kafka 실시간 현황</h3>
-            </div>
-          </div>
-          <div className="dashboard-grid-stack">
-            <div className="dashboard-tile-grid dashboard-tile-grid--4">
-              <Card
-                className="metric-card metric-card--static"
-                loading={kafkaConnectorsQuery.isLoading && !kafkaConnectorsQuery.data}
-              >
-                <Statistic title="실행중 Connector" value={kafkaRunning} valueStyle={{ color: "#1677ff" }} />
-              </Card>
-              <Card
-                className="metric-card"
-                loading={kafkaConnectorsQuery.isLoading && !kafkaConnectorsQuery.data}
-                onClick={() => setKafkaFailedOpen(true)}
-              >
-                <Statistic title="실패 Connector" value={kafkaFailed} valueStyle={{ color: "#c62828" }} />
-              </Card>
-              <Card
-                className="metric-card metric-card--static"
-                loading={kafkaConnectorsQuery.isLoading && !kafkaConnectorsQuery.data}
-              >
-                <Statistic title="일시정지 Connector" value={kafkaPaused} valueStyle={{ color: "#8c8c8c" }} />
-              </Card>
-              <Card
-                className="metric-card metric-card--static"
-                loading={kafkaConnectorsQuery.isLoading && !kafkaConnectorsQuery.data}
-              >
-                <Statistic title="전체 Connector" value={kafkaConnectors.length} valueStyle={{ color: "#08979c" }} />
-              </Card>
-            </div>
-            <div className="dashboard-chart-grid">
-              <Card title="Kafka 적재 건수 Top 5 파이프라인" size="small" loading={kafkaLoadQuery.isLoading && !kafkaLoadQuery.data}>
-                {kafkaLoadTop.length > 0 ? (
-                  <Column
-                    data={kafkaLoadTop}
-                    xField="label"
-                    yField="count"
-                    height={240}
-                    axis={{ x: { labelAutoRotate: false, labelAutoHide: false, labelAutoEllipsis: true } }}
-                  />
-                ) : (
-                  <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
-                )}
-              </Card>
-              <Card title="Kafka 일별 적재 건수" size="small" loading={kafkaLoadQuery.isLoading && !kafkaLoadQuery.data}>
-                {kafkaLoadDaily.length > 0 ? (
-                  <Line data={kafkaLoadDaily} xField="date" yField="count" height={240} />
-                ) : (
-                  <div className="empty-chart-placeholder">선택한 기간에 적재 이력이 없습니다.</div>
-                )}
-              </Card>
-            </div>
-          </div>
-        </section>
-
-        {/* Airflow 섹션은 "제어 명령(DAG) 실행 이력"이다 - DAG 실행 성공/실패는 시작/중지
-            명령 자체가 잘 전달됐는지를 뜻할 뿐, 그 뒤 NiFi/Kafka가 실제로 데이터를 어떻게
-            처리했는지는 위 두 섹션을 봐야 한다. */}
-        <section className="dashboard-section">
-          <div className="section-heading">
-            <div>
-              <h3>Airflow 제어 현황</h3>
-            </div>
-          </div>
-          <div className="dashboard-grid-stack">
-            <div className="dashboard-tile-grid">
-              <Card className="metric-card" loading={showAirflowInitialLoading} onClick={() => setAirflowActiveTile("dag")}>
-                <Statistic title="DAG" value={airflowHistory.dagCount} valueStyle={{ color: "#08979c" }} />
-              </Card>
-              <Card className="metric-card" loading={showAirflowInitialLoading} onClick={() => setAirflowActiveTile("task")}>
-                <Statistic title="태스크" value={airflowHistory.taskCount} valueStyle={{ color: "#5cdbd3" }} />
-              </Card>
-              <Card
-                className="metric-card"
-                loading={showAirflowInitialLoading}
-                onClick={() => setAirflowActiveTile("running")}
-              >
-                <Statistic
-                  title="제어 명령 실행중"
-                  value={airflowHistory.runningEntries.length}
-                  valueStyle={{ color: "#1677ff" }}
-                />
-              </Card>
-              <Card
-                className="metric-card"
-                loading={showAirflowInitialLoading}
-                onClick={() => setAirflowActiveTile("success")}
-              >
-                <Statistic
-                  title="제어 명령 성공"
-                  value={airflowHistory.successEntries.length}
-                  valueStyle={{ color: "#2f7d32" }}
-                />
-              </Card>
-              <Card
-                className="metric-card"
-                loading={showAirflowInitialLoading}
-                onClick={() => setAirflowActiveTile("failed")}
-              >
-                <Statistic
-                  title="제어 명령 실패"
-                  value={airflowHistory.failedEntries.length}
-                  valueStyle={{ color: "#c62828" }}
-                />
-              </Card>
-              <Card className="metric-card metric-card--static" loading={commandSummaryQuery.isLoading}>
-                <Statistic
-                  title="오늘 명령 성공/실패"
-                  value={commandSummary?.todayCommandSuccessCount ?? 0}
-                  suffix={`/ ${commandSummary?.todayCommandFailedCount ?? 0} 실패`}
-                  valueStyle={{ color: "#d4380d" }}
-                />
-              </Card>
-            </div>
-            <div className="dashboard-chart-grid">
-              <Card title="Top 5 수행시간 태스크" size="small" loading={showAirflowInitialLoading}>
-                {airflowHistory.topDurationTasks.length > 0 ? (
-                  <Column
-                    data={airflowHistory.topDurationTasks}
-                    xField="taskKey"
-                    yField="minutes"
-                    height={240}
-                    axis={{ x: { labelAutoRotate: false, labelAutoHide: false, labelAutoEllipsis: true } }}
-                  />
-                ) : (
-                  <div className="empty-chart-placeholder">선택한 기간에 실행 이력이 없습니다.</div>
-                )}
-              </Card>
-            </div>
-          </div>
-        </section>
+          <Card
+            className="dashboard-feed-card dashboard-feed-card--issues"
+            title="선택 기간 장애 이벤트"
+            extra={
+              commandSummary && commandSummary.connectorDrift.length > 0 ? (
+                <Tag color="warning">커넥터 불일치 {commandSummary.connectorDrift.length}</Tag>
+              ) : null
+            }
+            loading={(nifiExecutionLogsQuery.isLoading && !nifiExecutionLogsQuery.data) || showAirflowInitialLoading}
+          >
+            {recentFailureEvents.length > 0 ? (
+              <div className="dashboard-feed-list">
+                {recentFailureEvents.map((event) => (
+                  <button
+                    type="button"
+                    key={event.id}
+                    className="dashboard-event-row"
+                    onClick={() => (event.source === "NIFI" ? setNifiFailedOpen(true) : setAirflowActiveTile("failed"))}
+                  >
+                    <span className="event-time">{formatDashboardDateTime(event.datetime)}</span>
+                    <Tag color="error">{event.source}</Tag>
+                    <span className="event-content">
+                      <strong>{event.title}</strong>
+                      <small>{event.message}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="dashboard-no-issues">
+                <span>✓</span>
+                <strong>선택한 기간에 수집된 장애가 없습니다.</strong>
+              </div>
+            )}
+          </Card>
+        </aside>
       </div>
 
       <HistoryModal
@@ -678,7 +796,7 @@ export function DashboardPage() {
       <HistoryModal
         open={nifiFailedOpen}
         onClose={() => setNifiFailedOpen(false)}
-        title="NiFi 실패 Job 상세"
+        title={`NiFi 오류 상세 · ${selectedPeriodLabel}`}
         loading={nifiJobsQuery.isLoading && !nifiJobsQuery.data}
         rows={nifiFailedRows}
       />

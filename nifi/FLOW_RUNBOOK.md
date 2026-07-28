@@ -79,27 +79,164 @@ Process Group 우클릭 → Configure → Controller Services 탭에서 추가:
 | `cp-oracle-db` | `DBCPConnectionPool` | URL: `jdbc:oracle:thin:@oracle-db:1521/XEPDB1`<br>Driver Class Name: `oracle.jdbc.OracleDriver`<br>Driver Location(s): `/opt/nifi/nifi-current/drivers/ojdbc11-*.jar`<br>(0-2 섹션의 EMPLOYEES 배치 동기화와 역방향 동기화 양쪽에 사용) |
 | `avro-reader` | `AvroReader` | 기본값 그대로 (QueryDatabaseTable 출력용) |
 
-## 1. Process Group: 비정형 데이터 수집
+## 1. Process Group: 비정형 (구축 완료, 5종 검증 완료)
+
+HTTP로 파일을 받아서 **종류별로 나눠 타란툴라DB에 적재**하는 그룹이다.
+이미지/동영상은 원본 바이트를 그대로, 로그/XML/CSV는 파싱해서 컬럼 단위 레코드로
+넣는다. 적재 대상은 `192.168.50.12:7432 / postgres` 의 `unstructured` 스키마
+(DDL은 `db/tarantula-init/01_unstructured_schema.sql`).
 
 ```
-ListFile / ListenHTTP (또는 GetFTP 등 소스에 맞게 선택)
+ListenHTTP-unstructured   (포트 8444, Base Path: unstructured, 모든 요청헤더를 attribute로)
+        │ success
+        ▼
+UpdateAttribute-normalize  raw POST(Content-Type/filename 헤더)와 multipart(http.multipart.*)의
+        │                  이름·MIME을 orig.filename / orig.mime 하나로 통일
+        ▼
+UpdateAttribute-classify   data.type 결정: X-Data-Type 헤더 > Content-Type > 파일 확장자 순
         │
         ▼
-FetchFile
-        │
-        ▼
-(선택) ExtractText / Apache Tika(PutTikaExtract 등) 로 텍스트 추출
-        │
-        ▼
-PutDatabaseRecord 또는 PutSQL
-  └─ cp-target-db 사용, unstructured_landing.file_objects 테이블에 메타데이터 +
-     추출 텍스트 적재. 원본 바이너리는 raw_object(BYTEA) 컬럼 또는 별도 오브젝트
-     스토리지(S3/MinIO 등)에 저장 후 경로만 적재하는 방식으로 확장 가능.
+RouteOnAttribute-type ──image──▶ [unstructured-image] ─▶ unstructured.image_files
+        │             ──video──▶ [unstructured-video] ─▶ unstructured.video_files
+        │             ──log────▶ [unstructured-log]   ─▶ unstructured.log_records
+        │             ──xml────▶ [unstructured-xml]   ─▶ unstructured.xml_records
+        │             ──csv────▶ [unstructured-csv]   ─▶ unstructured.csv_records
+        └─unmatched──▶ LogAttribute-unmatched (WARN 한 줄만 남기고 폐기)
 ```
 
-- 실시간 처리가 필요한 소스(ListenHTTP 등)는 Scheduling Strategy를 Timer
-  Driven(기본 0 sec)으로, 일 배치 등 스케줄이 필요한 소스는 CRON Driven으로
-  프로세서 단위로 설정하면 됩니다.
+### 1-1. 서브그룹 내부
+
+**이미지 / 동영상 (바이너리 원본)**
+
+```
+[in] ─▶ store-image-binary (ExecuteGroovyScript, CTL.tarandb = cp-tarantula-192-168-50-12)
+          success ─▶ 자동 종료
+          failure ─▶ log-failed (ERROR 로그 → NiFi Bulletin → ETL 로그 화면에 FAILED로 노출)
+```
+
+PutDatabaseRecord를 쓰지 않고 Groovy를 쓰는 이유: PutDatabaseRecord는 레코드
+기반이라 바이너리를 넣으려면 Base64로 바꿔 **파일 전체를 attribute/JSON으로 올려야**
+하는데, attribute는 힙에 상주해서 동영상 한 개로 NiFi가 OOM에 빠질 수 있다.
+스크립트는 FlowFile의 InputStream을 `PreparedStatement.setBinaryStream()`에 그대로
+넘기므로 파일 크기와 무관하게 힙을 쓰지 않는다.
+
+스크립트 끝에서 `session.adjustCounter('INSERT updates performed', 1, false)`를
+호출하는데, 이건 백엔드 `NifiPipelineMetricScheduler`가 집계하는 카운터 이름과
+맞춘 것이다(아래 "한계" 참고).
+
+**로그 / XML / CSV (파싱 → 구조화)**
+
+```
+[in] ─▶ parse-<종류>-and-tag (UpdateRecord: <종류>Reader → json-writer-unstructured,
+        │                     /source_file = ${orig.filename} 을 레코드에 심는다)
+        │ success
+        ▼
+     load-<종류>-records (PutDatabaseRecord: json-reader-unstructured → unstructured.<테이블>)
+          success ─▶ 자동 종료
+          failure/retry ─▶ log-failed
+```
+
+파싱만 하면 "어느 파일에서 온 행인지"가 사라진다(attribute는 DB로 안 따라감).
+그래서 파싱과 동시에 `source_file` 필드를 레코드 안에 넣어주는 UpdateRecord를
+한 단 두었다.
+
+### 1-2. 공용 Controller Service (비정형 그룹 레벨)
+
+| 이름 | 타입 | 설정 |
+|---|---|---|
+| `csv-reader` | CSVReader | Schema Access = infer-schema, Skip Header Line = true |
+| `xml-reader` | XMLReader | Schema Access = infer-schema, `record_format` = true (루트 밑 반복 엘리먼트 = 레코드) |
+| `grok-reader-log` | GrokReader | 아래 Grok 표현식, no-match-behavior = raw-line |
+| `json-writer-unstructured` | JsonRecordSetWriter | 기본값 (inherit-record-schema) |
+| `json-reader-unstructured` | JsonTreeReader | 기본값 (infer-schema) |
+
+DB 연결은 루트에 이미 있는 `cp-tarantula-192-168-50-12`(DBCPConnectionPool)를
+상속해서 쓴다. 별도로 만들지 않았다.
+
+Grok 표현식:
+
+```
+%{TIMESTAMP_ISO8601:log_time}%{SPACE}%{LOGLEVEL:log_level}%{SPACE}\[%{DATA:logger}\]%{SPACE}%{GREEDYDATA:message}
+```
+
+### 1-3. 보내는 법
+
+샘플 파일은 `nifi/samples/unstructured/`에 있다. **그룹이 RUNNING이어야 받는다**
+(시작은 Airflow가 시킨다 - 아래 1-5 참고).
+
+호스트에서 (compose에 `18444:8444` 노출):
+
+```bash
+curl -X POST http://localhost:18444/unstructured \
+  -H "Content-Type: image/png" -H "filename: sample.png" \
+  --data-binary @nifi/samples/unstructured/sample.png
+```
+
+종류별로 필요한 건 Content-Type 하나뿐이다:
+
+| 종류 | Content-Type | 또는 확장자 |
+|---|---|---|
+| 이미지 | `image/*` | — |
+| 동영상 | `video/*` | — |
+| CSV | `text/csv` | `.csv` |
+| XML | `application/xml`, `text/xml` | `.xml` |
+| 로그 | (판별 불가) | `.log` |
+
+Content-Type이 애매하면 `-H "X-Data-Type: log"` 처럼 헤더로 강제 지정할 수 있고,
+이 헤더가 항상 최우선이다. 브라우저 업로드(`multipart/form-data`)도 그대로 받는다:
+
+```bash
+curl -X POST http://localhost:18444/unstructured -F "file=@sample.csv;type=text/csv"
+```
+
+어디에도 안 걸리면 `unmatched`로 빠져서 WARN 로그만 남고 버려진다(적재 안 됨).
+
+### 1-4. XML / CSV 입력 형식
+
+파싱 결과 필드명이 그대로 컬럼명에 매칭되므로(PutDatabaseRecord의
+`Column Name Translation Strategy = REMOVE_UNDERSCORE`) 형식을 맞춰야 한다.
+`id`는 DB가 채우는 PK라 넣지 않는다.
+
+```xml
+<records>
+  <record>
+    <record_id>X-001</record_id><title>...</title><category>A</category>
+    <amount>1500.75</amount><reg_date>2026-07-28</reg_date>
+  </record>
+</records>
+```
+
+```csv
+record_id,title,category,amount,reg_date
+C-001,...,A,1500.75,2026-07-28
+```
+
+다른 형식을 넣으려면 테이블 컬럼을 그 형식에 맞춰 추가하면 된다. 매칭 안 되는
+필드/컬럼은 양쪽 다 `Ignore`라 에러 없이 무시된다.
+
+### 1-5. 스케줄은 걸지 않는다
+
+이 그룹에는 CRON Driven 프로세서가 하나도 없다(전부 Timer Driven `0 sec` =
+"그룹이 켜져 있는 동안 일이 있으면 처리"). 시작/정지는 다른 그룹과 똑같이
+Airflow 제어 DAG(`nifi_pipeline_a7c2d807_control`)가 담당한다 - 이 DAG는
+`nifi_pipelines_dynamic.py`가 루트 그룹을 훑어서 자동 생성하고, Variable로
+스케줄을 넣지 않는 한 수동 트리거 전용이다.
+
+`nifi.flowcontroller.autoResumeState=false`가 강제돼 있어서 컨테이너가 재시작되면
+이 그룹도 STOPPED로 올라온다. HTTP 수신을 상시 열어두려면 제어 DAG를 한 번
+트리거해야 한다.
+
+### 1-6. 한계
+
+- **이미지/동영상은 ETL 로그 화면의 적재 건수에 안 잡힌다.** 백엔드
+  `NifiPipelineMetricScheduler`가 `PutDatabaseRecord` **타입인 프로세서만** 훑기
+  때문이다(카운터 이름은 맞춰뒀으므로, 그 타입 필터에 `ExecuteGroovyScript`를
+  추가하면 바로 잡힌다). 로그/XML/CSV는 지금도 정상적으로 잡힌다.
+- 동영상을 bytea로 넣는 건 시연 목적이다. 운영 규모에서는 원본을 오브젝트
+  스토리지에 두고 경로만 적재하는 쪽이 맞다(DB 백업/복제 비용).
+- Grok 표현식에 안 맞는 로그 줄은 버려지지 않고 전 컬럼 NULL인 행으로 들어간다
+  (`no-match-behavior = raw-line`). 로그 포맷이 다르면 `grok-reader-log`의
+  표현식을 소스에 맞게 바꿔야 한다.
 
 ## 2. 정형 CDC 경로 검증 방법
 

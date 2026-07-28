@@ -200,6 +200,8 @@ services:
     ports:
       - "${NIFI_PUBLIC_HTTPS_PORT}:${NIFI_HTTPS_PORT}"
       - "${NIFI_LISTENHTTP_PUBLIC_PORT}:${NIFI_LISTENHTTP_PORT}"
+      # "비정형" 그룹의 파일 수신 엔드포인트(POST /unstructured)
+      - "${NIFI_UNSTRUCTURED_HTTP_PUBLIC_PORT}:${NIFI_UNSTRUCTURED_HTTP_PORT}"
     volumes:
       # state는 컴포넌트 상태값(예: 마지막 처리 위치)만 저장한다. 캔버스에서
       # 만드는 실제 플로우 정의(flow.json.gz)는 conf/에 저장되는데 예전엔 이게

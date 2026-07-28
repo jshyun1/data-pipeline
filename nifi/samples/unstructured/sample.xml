@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<records>
+  <record>
+    <record_id>X-001</record_id>
+    <title>비정형 XML 테스트 1</title>
+    <category>A</category>
+    <amount>1500.75</amount>
+    <reg_date>2026-07-28</reg_date>
+  </record>
+  <record>
+    <record_id>X-002</record_id>
+    <title>비정형 XML 테스트 2</title>
+    <category>B</category>
+    <amount>320.00</amount>
+    <reg_date>2026-07-27</reg_date>
+  </record>
+</records>

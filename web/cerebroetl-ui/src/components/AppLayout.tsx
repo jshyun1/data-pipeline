@@ -4,6 +4,8 @@ import {
   DashboardOutlined,
   DeploymentUnitOutlined,
   LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
   NodeIndexOutlined,
 } from "@ant-design/icons";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
@@ -53,6 +55,7 @@ export function AppLayout() {
   const location = useLocation();
   const { user, logout } = useAuth();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const toggleGroup = (path: string) => {
     setOpenGroups((previous) => ({ ...previous, [path]: !previous[path] }));
@@ -61,8 +64,17 @@ export function AppLayout() {
   return (
     <Layout className="app-shell">
       <Header className="app-header">
+        <Button
+          type="text"
+          className="sidebar-toggle"
+          icon={sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+          aria-label={sidebarCollapsed ? "메뉴 펼치기" : "메뉴 숨기기"}
+          aria-expanded={!sidebarCollapsed}
+          aria-controls="primary-sidebar"
+          onClick={() => setSidebarCollapsed((previous) => !previous)}
+        />
         <Link to="/dashboard" className="brand-link">
-          <div className="brand-mark">dw</div>
+          <img src="/logo.svg" alt="데이터월드" className="brand-logo" />
           <div className="brand-divider" />
           <div className="brand-title">Cerebro ETL</div>
         </Link>
@@ -78,8 +90,17 @@ export function AppLayout() {
           </Button>
         </div>
       </Header>
-      <Layout>
-        <Sider width={270} theme="light" className="app-sidebar">
+      <Layout className={sidebarCollapsed ? "app-body sidebar-is-collapsed" : "app-body"}>
+        <Sider
+          id="primary-sidebar"
+          width={270}
+          collapsedWidth={0}
+          collapsed={sidebarCollapsed}
+          collapsible
+          trigger={null}
+          theme="light"
+          className="app-sidebar"
+        >
           <nav className="sidebar-nav" aria-label="주요 메뉴">
             {NAV_ITEMS.map((item) => {
               const groupPrefix = `/${item.path.split("/")[1]}`;

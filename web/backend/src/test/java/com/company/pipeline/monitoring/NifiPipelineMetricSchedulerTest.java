@@ -142,6 +142,67 @@ class NifiPipelineMetricSchedulerTest {
     }
 
     @Test
+    void checkCounters_executeGroovyScriptLoader_isCountedLikePutDatabaseRecord() {
+        // 비정형 그룹의 이미지/동영상 적재는 PutDatabaseRecord가 아니라
+        // ExecuteGroovyScript다(바이너리를 레코드로 넣으면 파일 전체가 힙에 올라와서).
+        // 스크립트가 session.adjustCounter()로 같은 카운터를 올리므로 집계 대상이어야 한다.
+        scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
+                executionLogRepository);
+
+        String processorId = "a7d8b6b3-019f-1000-199b-2fe36157b6b2";
+        var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "store-image-binary",
+                "ExecuteGroovyScript");
+        var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
+                "a7d8b5ea-019f-1000-7126-f9de54751340", "unstructured-image",
+                List.of(new NifiFlowStatusResponse.ProcessorStatusEntry(processor)), List.of());
+        var rootAggregate = new NifiFlowStatusResponse.AggregateSnapshot(
+                List.of(), List.of(new NifiFlowStatusResponse.ProcessGroupStatusEntry(group)));
+        when(nifiClient.getRootFlowStatus())
+                .thenReturn(new NifiFlowStatusResponse(new NifiFlowStatusResponse.ProcessGroupStatus(rootAggregate)));
+
+        var counter = new NifiCountersResponse.Counter("c1", "store-image-binary (" + processorId + ")",
+                "INSERT updates performed", 5L);
+        when(nifiClient.getCounters()).thenReturn(new NifiCountersResponse(new NifiCountersResponse.Counters(
+                new NifiCountersResponse.AggregateSnapshot(List.of(counter)))));
+        when(snapshotRepository.findById(processorId))
+                .thenReturn(Optional.of(new NifiCounterSnapshot(processorId, "store-image-binary", 3L)));
+
+        scheduler.checkCounters();
+
+        verify(dailyLoadMetricService).incrementLoadedCount(eq("NIFI"), eq(processorId), any(),
+                eq("store-image-binary"), eq(2L));
+
+        ArgumentCaptor<NifiExecutionLogEntry> captor = ArgumentCaptor.forClass(NifiExecutionLogEntry.class);
+        verify(executionLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getGroupName()).isEqualTo("unstructured-image");
+        assertThat(captor.getValue().getInsertedCount()).isEqualTo(2L);
+    }
+
+    @Test
+    void checkCounters_processorTypeThatNeverLoads_isIgnored() {
+        // 타입 필터를 넓힌 뒤에도 아무 프로세서나 집계하지 않는다는 것.
+        scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
+                executionLogRepository);
+
+        var processor = new NifiFlowStatusResponse.ProcessorStatus("p1", "parse-csv-and-tag", "UpdateRecord");
+        var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
+                "g1", "unstructured-csv",
+                List.of(new NifiFlowStatusResponse.ProcessorStatusEntry(processor)), List.of());
+        var rootAggregate = new NifiFlowStatusResponse.AggregateSnapshot(
+                List.of(), List.of(new NifiFlowStatusResponse.ProcessGroupStatusEntry(group)));
+        when(nifiClient.getRootFlowStatus())
+                .thenReturn(new NifiFlowStatusResponse(new NifiFlowStatusResponse.ProcessGroupStatus(rootAggregate)));
+        when(nifiClient.getCounters()).thenReturn(new NifiCountersResponse(
+                new NifiCountersResponse.Counters(new NifiCountersResponse.AggregateSnapshot(List.of()))));
+
+        scheduler.checkCounters();
+
+        verify(snapshotRepository, never()).findById(any());
+        verify(snapshotRepository, never()).save(any());
+        verify(executionLogRepository, never()).save(any());
+    }
+
+    @Test
     void checkCounters_counterAbsentAndSnapshotAlreadyZero_doesNotRewriteSnapshot() {
         // 아직 한 번도 안 돈 프로세서까지 매 주기 DB에 쓰지 않도록.
         scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,

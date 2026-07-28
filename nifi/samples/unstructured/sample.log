@@ -1,0 +1,3 @@
+2026-07-28 16:30:01,123 INFO [com.company.pipeline.Ingest] 비정형 로그 수집 시작
+2026-07-28 16:30:02,456 WARN [com.company.pipeline.Ingest] 큐 지연 감지 - 1200ms
+2026-07-28 16:30:03,789 ERROR [com.company.pipeline.Ingest] 적재 실패 - 재시도 예정

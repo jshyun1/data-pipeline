@@ -39,14 +39,11 @@ DBCP 컨트롤러 서비스의 비밀번호 같은 민감 속성은 `enc{...}` �
 통째로 날아간 상황에서 이 백업으로 복구하면 **플로우 구조는 되살아나지만 비밀번호는
 직접 다시 입력해야 한다.** 프로세서가 invalid로 뜨면 이걸 의심할 것.
 
-## 참고: 재시작 시 폭주 프로세서를 자동 재개시키지 않으려면
+## 참고: 재시작하면 항상 STOPPED로 올라온다
 
-대용량 추출 프로세서가 OOM을 유발하는 상태에서는 재시작해도 곧바로 같은 자리에서
-다시 터진다(`autoResumeState=true`가 기본이라 이전 RUNNING 상태를 복원하기 때문).
-이때는 정지 상태에서 아래를 바꿔 넣고 기동하면 전부 STOPPED로 올라온다.
+`nifi.flowcontroller.autoResumeState=false`가 `nifi/apply-nifi-properties.sh`에서
+기동할 때마다 강제된다. NiFi 기본값(`true`)이면 재시작할 때 직전에 RUNNING이던
+프로세서를 자동으로 되살리는데, 그 탓에 아무도 지시하지 않은 대량 적재가 두 번
+발생했다(OOM 무한 재시작 루프 한 번, 배치 그룹 전량 재적재 한 번).
 
-```
-nifi.flowcontroller.autoResumeState=false
-```
-
-정리가 끝나면 `true`로 되돌린다.
+그래서 **되돌리지 않는다.** 적재 시작은 오직 Airflow 제어 DAG가 지시한다.
