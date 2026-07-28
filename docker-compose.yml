@@ -175,6 +175,12 @@ services:
       # tls/ldap/oidc 세 case에서만 호출되기 때문에 그 경로를 빌려 keystore/truststore와
       # login-identity-provider 설정을 재기동 때마다 멱등하게 재적용하기 위함이다.
       AUTH: tls
+      # 적재 시작은 오직 Airflow가 지시한다. NiFi 기본값(true)이면 재시작 시 직전에
+      # RUNNING이던 프로세서가 자동으로 되살아나, 아무도 지시하지 않았는데 컨테이너
+      # 재시작만으로 대량 적재가 시작된다(실제로 두 번 사고가 났다). false로 두면
+      # 무슨 이유로 재시작되든 전부 STOPPED로 올라오고, 시작은 제어 DAG가 담당한다.
+      # apply-nifi-properties.sh가 기동할 때마다 nifi.properties에 반영한다.
+      NIFI_AUTO_RESUME_STATE: "false"
       KEYSTORE_PATH: /opt/nifi/nifi-current/conf/keystore.p12
       KEYSTORE_TYPE: PKCS12
       KEYSTORE_PASSWORD: ${NIFI_KEYSTORE_PASSWORD}
