@@ -200,8 +200,12 @@ services:
     ports:
       - "${NIFI_PUBLIC_HTTPS_PORT}:${NIFI_HTTPS_PORT}"
       - "${NIFI_LISTENHTTP_PUBLIC_PORT}:${NIFI_LISTENHTTP_PORT}"
-      # "비정형" 그룹의 파일 수신 엔드포인트(POST /unstructured)
-      - "${NIFI_UNSTRUCTURED_HTTP_PUBLIC_PORT}:${NIFI_UNSTRUCTURED_HTTP_PORT}"
+      # "비정형" 그룹의 파일 수신 엔드포인트(POST /unstructured).
+      # 여기만 기본값을 박아둔 이유: .env는 서버마다 손으로 관리하는 파일이라 새 변수를
+      # 추가하면 기존 .env에는 없다. 기본값이 없으면 ":"로 펼쳐지면서 "no port specified"로
+      # compose 전체가 안 뜬다 - 포트 하나 때문에 스택을 통째로 못 띄우는 건 과하다.
+      # 포트를 바꾸려면 .env에 두 변수를 넣으면 그대로 우선한다.
+      - "${NIFI_UNSTRUCTURED_HTTP_PUBLIC_PORT:-18444}:${NIFI_UNSTRUCTURED_HTTP_PORT:-8444}"
     volumes:
       # state는 컴포넌트 상태값(예: 마지막 처리 위치)만 저장한다. 캔버스에서
       # 만드는 실제 플로우 정의(flow.json.gz)는 conf/에 저장되는데 예전엔 이게
