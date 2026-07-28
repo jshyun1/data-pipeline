@@ -8,8 +8,13 @@ export interface NifiExecutionLogEntry {
   groupId?: string;
   groupName?: string;
   occurredAt: string;
-  insertedCount: number;
+  /** 실패 행은 셀 대상이 없어 null. */
+  insertedCount: number | null;
   status: string;
+  /** 실패 행의 원인(NiFi bulletin 원문). */
+  message?: string | null;
+  /** 실패 행의 심각도(ERROR/WARNING). */
+  level?: string | null;
 }
 
 export interface AirflowDag {

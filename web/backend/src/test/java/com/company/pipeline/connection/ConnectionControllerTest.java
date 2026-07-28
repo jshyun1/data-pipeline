@@ -13,6 +13,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.company.pipeline.common.BusinessException;
 import com.company.pipeline.common.ErrorCode;
 import com.company.pipeline.connection.dto.ConnectionResponse;
+import com.company.pipeline.user.AppUserRepository;
+import com.company.pipeline.user.security.PipelineJwtAuthenticationFilter;
+import com.company.pipeline.user.security.PipelineJwtService;
 import com.company.pipeline.user.security.SecurityConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
@@ -25,7 +28,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(ConnectionController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, PipelineJwtAuthenticationFilter.class})
 class ConnectionControllerTest {
 
     @Autowired
@@ -39,6 +42,20 @@ class ConnectionControllerTest {
 
     @MockBean
     private SchemaDiscoveryService schemaDiscoveryService;
+
+    // Keycloak을 걷어내면서 SecurityConfig가 PipelineJwtAuthenticationFilter를 생성자로
+    // 받게 됐는데, @WebMvcTest는 웹 계층 빈만 올리므로 그 필터도 그 안의 @Component들도
+    // 만들어지지 않아 SecurityConfig를 import하는 시점에 컨텍스트가 통째로 실패한다.
+    //
+    // 필터 자체를 @MockBean으로 대체하면 안 된다 - 목의 doFilter는 아무것도 하지 않아서
+    // 체인이 끊기고 요청이 컨트롤러까지 오지 않는다(응답 본문이 비어 jsonPath가 깨짐).
+    // 실제 필터를 쓰되 의존성만 목으로 준다. Authorization 헤더가 없으면 이 필터는
+    // 그대로 통과시키므로 업무 API 테스트에는 영향이 없다.
+    @MockBean
+    private PipelineJwtService pipelineJwtService;
+
+    @MockBean
+    private AppUserRepository appUserRepository;
 
     @Test
     void create_validRequest_returns200WithEnvelope() throws Exception {

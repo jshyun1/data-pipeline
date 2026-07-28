@@ -19,6 +19,7 @@ import lombok.NoArgsConstructor;
 public class NifiExecutionLogEntry {
 
     public static final String STATUS_SUCCESS = "SUCCESS";
+    public static final String STATUS_FAILED = "FAILED";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -39,11 +40,24 @@ public class NifiExecutionLogEntry {
     @Column(name = "occurred_at", nullable = false)
     private LocalDateTime occurredAt;
 
-    @Column(name = "inserted_count", nullable = false)
+    /** 적재 건수. 실패 행에는 셀 대상이 없으므로 null. */
+    @Column(name = "inserted_count")
     private Long insertedCount;
 
     @Column(name = "status", length = 20, nullable = false)
     private String status;
+
+    /** 실패 행의 bulletin 원문(어떤 예외였는지). 성공 행은 null. */
+    @Column(name = "message", columnDefinition = "text")
+    private String message;
+
+    /** NiFi가 bulletin에 매기는 단조 증가 id. 중복 적재 방지 키. 성공 행은 null. */
+    @Column(name = "bulletin_id")
+    private Long bulletinId;
+
+    /** bulletin 심각도(ERROR/WARNING). 성공 행은 null. */
+    @Column(name = "level", length = 20)
+    private String level;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
@@ -58,5 +72,16 @@ public class NifiExecutionLogEntry {
         this.insertedCount = insertedCount;
         this.status = status;
         this.createdAt = LocalDateTime.now();
+    }
+
+    /** NiFi bulletin에서 만든 실패 기록. */
+    public static NifiExecutionLogEntry fromBulletin(String processorId, String processorName, String groupId,
+            String groupName, LocalDateTime occurredAt, long bulletinId, String level, String message) {
+        NifiExecutionLogEntry entry = new NifiExecutionLogEntry(
+                processorId, processorName, groupId, groupName, occurredAt, null, STATUS_FAILED);
+        entry.bulletinId = bulletinId;
+        entry.level = level;
+        entry.message = message;
+        return entry;
     }
 }

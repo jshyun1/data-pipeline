@@ -1,5 +1,6 @@
 package com.company.pipeline.nifi;
 
+import com.company.pipeline.nifi.dto.NifiBulletinBoardResponse;
 import com.company.pipeline.nifi.dto.NifiCountersResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
 import com.company.pipeline.nifi.dto.NifiProcessGroupEntity;
@@ -100,6 +101,29 @@ public class NifiClient {
                     .body(NifiCountersResponse.class);
         } catch (RestClientException ex) {
             throw new NifiClientException("NiFi 카운터 조회 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    /**
+     * 경고/에러 알림 조회. {@code afterId} 이후에 생긴 것만 받아서 같은 알림을 두 번
+     * 처리하지 않는다.
+     *
+     * <p>bulletin은 NiFi 메모리에 5분 남짓만 남으므로, 이 호출 주기가 그보다 길면
+     * 그 사이 발생한 실패는 조용히 유실된다.
+     */
+    public NifiBulletinBoardResponse getBulletins(long afterId) {
+        String token = getToken();
+        try {
+            return restClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/nifi-api/flow/bulletin-board")
+                            .queryParam("after", afterId)
+                            .build())
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .body(NifiBulletinBoardResponse.class);
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi bulletin 조회 실패: " + ex.getMessage(), ex);
         }
     }
 

@@ -34,10 +34,13 @@ function formatDateTime(value?: string) {
 // NiFi에는 Airflow의 dag_run 같은 "실행 이력" 개념이 없다 - Provenance 조회는 이 환경에서
 // 인덱스/이벤트파일 불일치로 구조적으로 안 되는 것으로 확인됐고(재시작/저장소 재구축 후에도
 // 재현), 프로세서 단위 Status History도 항상 비어 있어 조회가 안 된다(그룹 단위는 되지만
-// 그룹 안 여러 테이블이 섞여서 프로세서별 구분이 안 됨). 그래서 적재 프로세서(PutDatabaseRecord)의
-// 누적 카운터가 60초 주기로 증가했는지를 백엔드가 감지해서 남긴 행을 그대로 보여준다 -
-// "실행 1회 = 행 1개"가 정확히는 아니고 "60초 구간 안에 증가가 있었다 = 행 1개"에 가깝지만,
-// 지금 파이프라인들의 실행 빈도상 대부분 실제 실행 횟수와 근접하게 나온다.
+// 그룹 안 여러 테이블이 섞여서 프로세서별 구분이 안 됨). 그래서 두 갈래로 만든다:
+//  - 성공: 적재 프로세서(PutDatabaseRecord)의 누적 카운터가 60초 주기로 증가했는지를
+//    백엔드가 감지해서 남긴다. "실행 1회 = 행 1개"가 정확히는 아니고 "60초 구간 안에
+//    증가가 있었다 = 행 1개"에 가깝다.
+//  - 실패: NiFi bulletin(경고/에러)을 30초마다 긁어서 남긴다. 카운터는 "늘었을 때"만
+//    보이므로 실패를 표현할 방법이 원래 없었고, 그래서 DB 인증 실패나 OOM처럼 실제로
+//    파이프라인이 죽은 날에도 이 화면엔 아무것도 안 남았다.
 async function getEtlLogs(range: [Dayjs, Dayjs]): Promise<NifiExecutionLogEntry[]> {
   const entries = await listNifiExecutionLogs(
     range[0].format("YYYY-MM-DD"),
@@ -66,9 +69,12 @@ export function EtlLogsPage() {
     return rows.filter(
       (row) =>
         row.processorName.toLowerCase().includes(keyword) ||
-        (row.groupName ?? "").toLowerCase().includes(keyword),
+        (row.groupName ?? "").toLowerCase().includes(keyword) ||
+        (row.message ?? "").toLowerCase().includes(keyword),
     );
   }, [rows, nameFilter]);
+
+  const failureCount = filteredRows.filter((row) => row.status !== "SUCCESS").length;
 
   const showInitialLoading = logsQuery.isLoading && !logsQuery.data;
 
@@ -95,6 +101,7 @@ export function EtlLogsPage() {
           <Button type="primary" onClick={() => setAppliedRange(dateRange)}>
             조회
           </Button>
+          {failureCount > 0 && <Tag color="error">실패 {failureCount}건</Tag>}
         </Space>
         <Table<NifiExecutionLogEntry>
           rowKey="id"
@@ -112,8 +119,30 @@ export function EtlLogsPage() {
               render: (value: string) => <Tag color={STATUS_COLOR[value] ?? "default"}>{STATUS_LABEL[value] ?? value}</Tag>,
             },
             { title: "실행 시각", dataIndex: "occurredAt", width: 190, render: formatDateTime },
-            { title: "적재 건수", dataIndex: "insertedCount", width: 100, align: "right" },
+            {
+              title: "적재 건수",
+              dataIndex: "insertedCount",
+              width: 100,
+              align: "right",
+              // 실패 행은 셀 대상이 없어서 null이다. 0으로 보이면 "0건 적재됨"으로
+              // 오해할 수 있어 구분해서 표시한다.
+              render: (value: number | null) => (value == null ? "-" : value.toLocaleString()),
+            },
+            {
+              title: "메시지",
+              dataIndex: "message",
+              ellipsis: true,
+              render: (value?: string | null) => value ?? "-",
+            },
           ]}
+          // 실패 원인은 스택트레이스까지 길어서 한 줄에 다 못 보여준다. 행을 펼치면
+          // 원문 전체를 볼 수 있게 한다.
+          expandable={{
+            expandedRowRender: (row) => (
+              <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: 12 }}>{row.message}</pre>
+            ),
+            rowExpandable: (row) => Boolean(row.message),
+          }}
         />
       </Card>
     </div>

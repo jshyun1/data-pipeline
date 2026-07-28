@@ -161,7 +161,8 @@ function buildRows(
 
   const nifiRows: OperationRow[] = nifiJobs.map((job) => {
     const recentLogs = recentLogsByGroup.get(job.id) ?? [];
-    const insertedCount = recentLogs.reduce((sum, entry) => sum + entry.insertedCount, 0);
+    // 실패 행(bulletin에서 만든 것)은 적재 건수가 null이라 합계에서 제외한다.
+    const insertedCount = recentLogs.reduce((sum, entry) => sum + (entry.insertedCount ?? 0), 0);
     const throughput = recentLogs.length > 0 ? Math.round((insertedCount / 60) * 10) / 10 : 0;
     const latestProgressAt = recentLogs
       .map((entry) => entry.occurredAt)

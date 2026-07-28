@@ -1,6 +1,7 @@
 package com.company.pipeline.monitoring;
 
 import com.company.pipeline.nifi.NifiClient;
+import com.company.pipeline.nifi.dto.NifiBulletinBoardResponse;
 import com.company.pipeline.nifi.dto.NifiCountersResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
 import java.time.LocalDateTime;
@@ -59,6 +60,66 @@ public class NifiPipelineMetricScheduler {
     }
 
     private record ProcessorRef(String id, String name, String groupId, String groupName) {
+    }
+
+    /**
+     * NiFi bulletin(경고/에러)을 긁어 실패 이력으로 남긴다.
+     *
+     * <p>카운터 델타 방식은 "적재가 늘었을 때"만 행을 남기므로 실패를 기록할 방법이
+     * 원래 없었다 - 화면의 실패 배지가 도달 불가능한 코드였던 이유. 실제로 DB 인증
+     * 실패로 truncate가 30초마다 롤백되던 날에도, ExecuteSQL이 OOM으로 34번 죽던
+     * 날에도 이 표에는 아무것도 남지 않았다.
+     *
+     * <p>bulletin은 NiFi 메모리에 5분 남짓만 남는 링버퍼라 카운터(60초)보다 자주
+     * 가져온다. 놓치면 그 실패는 어디에도 남지 않는다.
+     */
+    @Scheduled(fixedRate = 30_000, initialDelay = 30_000)
+    public void collectBulletins() {
+        Long lastId = executionLogRepository.findMaxBulletinId();
+        NifiBulletinBoardResponse response;
+        try {
+            response = nifiClient.getBulletins(lastId == null ? 0L : lastId);
+        } catch (Exception ex) {
+            // NiFi가 부하로 응답을 못 하는 상황 자체가 흔하다(그때가 오히려 실패가
+            // 쌓이는 때다). 다음 주기에 같은 afterId로 다시 시도하면 되므로 조용히 넘긴다.
+            log.warn("NiFi bulletin 조회 실패(다음 주기에 재시도): {}", ex.getMessage());
+            return;
+        }
+        var board = response == null ? null : response.bulletinBoard();
+        var bulletins = board == null ? null : board.bulletins();
+        if (bulletins == null || bulletins.isEmpty()) {
+            return;
+        }
+
+        for (var entity : bulletins) {
+            var bulletin = entity.bulletin();
+            if (bulletin == null) {
+                continue;
+            }
+            String level = bulletin.level();
+            if (!"ERROR".equals(level) && !"WARNING".equals(level)) {
+                continue;
+            }
+            Long bulletinId = bulletin.id() != null ? bulletin.id() : entity.id();
+            if (bulletinId == null || executionLogRepository.existsByBulletinId(bulletinId)) {
+                continue;
+            }
+            String sourceId = bulletin.sourceId() != null ? bulletin.sourceId() : entity.sourceId();
+            String groupId = bulletin.groupId() != null ? bulletin.groupId() : entity.groupId();
+            executionLogRepository.save(NifiExecutionLogEntry.fromBulletin(
+                    sourceId == null ? "unknown" : sourceId,
+                    bulletin.sourceName() == null ? "unknown" : bulletin.sourceName(),
+                    groupId,
+                    // bulletin은 그룹 "이름"을 주지 않는다. 화면에서 그룹명이 필요하면
+                    // group_id로 조인해야 한다(여기서 매번 조회하면 호출이 배로 늘어남).
+                    null,
+                    // bulletin.timestamp는 "HH:mm:ss z" 표시용 문자열이라 날짜가 없다.
+                    // 30초 주기로 즉시 수거하므로 수집 시각을 발생 시각으로 근사한다.
+                    LocalDateTime.now(),
+                    bulletinId,
+                    level,
+                    bulletin.message()));
+        }
     }
 
     @Scheduled(fixedRate = 60_000, initialDelay = 60_000)

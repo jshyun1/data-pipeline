@@ -11,7 +11,11 @@ public record NifiExecutionLogResponse(
         String groupName,
         LocalDateTime occurredAt,
         Long insertedCount,
-        String status
+        String status,
+        /** 실패 행의 원인 메시지(NiFi bulletin 원문). 성공 행은 null. */
+        String message,
+        /** 실패 행의 심각도(ERROR/WARNING). 성공 행은 null. */
+        String level
 ) {
     public static NifiExecutionLogResponse from(NifiExecutionLogEntry entity) {
         return new NifiExecutionLogResponse(
@@ -22,7 +26,9 @@ public record NifiExecutionLogResponse(
                 entity.getGroupName(),
                 entity.getOccurredAt(),
                 entity.getInsertedCount(),
-                entity.getStatus()
+                entity.getStatus(),
+                entity.getMessage(),
+                entity.getLevel()
         );
     }
 }
