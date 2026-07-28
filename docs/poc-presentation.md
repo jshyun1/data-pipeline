@@ -31,7 +31,7 @@
 | 로그 적재 | Filebeat로 로그 파일을 tailing하여 Kafka로 실시간 전송 후 적재 |
 | 비정형/배치 ETL | NiFi로 HTTP·파일 기반 비정형 데이터 수집 및 Oracle 배치 동기화 |
 | 실행 제어 | Airflow 동적 DAG로 Kafka Connect/NiFi 파이프라인 시작·중지·재시작 |
-| 통합 웹/SSO | Cerebro ETL 포털에서 연결정보·파이프라인·대시보드 통합 제공, Keycloak 기반 단일 로그인 |
+| 통합 웹/인증 | Cerebro ETL 포털에서 연결정보·파이프라인·대시보드 통합 제공, 사내 계정 테이블 기반 로그인 |
 | 폐쇄망 대응 | 외부망 이미지 빌드 → tar 반입 → 폐쇄망 `docker load` 방식의 배포 패키징 |
 
 ### 1.4 기대효과
@@ -93,9 +93,7 @@ flowchart TD
     PORTAL[["Cerebro ETL 통합 웹"]] --> AF
     PORTAL -.->|"모니터링"| SINK
     PORTAL -.->|"모니터링"| NIFI
-    KC[["Keycloak SSO"]] --> PORTAL
-    KC --> NIFI
-    KC --> AF
+    ACC[("사내 계정 테이블<br/>ST_USER")] --> PORTAL
 ```
 
 > **참고(정확한 이해를 위해)**: Airflow로 "모이는" 것은 데이터 자체가 아니라 **실행 제어(시작/중지/재시작)와 상태 확인**입니다. 실제 데이터는 Kafka Connect와 NiFi가 각각 타깃 DB로 직접 적재하며, Airflow는 이 두 실행 엔진을 동일한 방식(동적 DAG)으로 통제하는 컨트롤 플레인 역할을 합니다.
@@ -110,13 +108,13 @@ flowchart TD
 | NiFi | 비정형·배치 ETL 엔진 | HTTP/파일 수집, Oracle 배치(EMPLOYEES) 동기화, 시각적 플로우 관리 |
 | Airflow | 실행 제어/스케줄러 | 파이프라인별 동적 DAG로 start/stop/restart + 결과 재검증 |
 | Cerebro ETL 통합 웹 | 사용자 포털 | 연결정보·파이프라인 생성/배포, 대시보드, 각 콘솔 통합 뷰 |
-| Keycloak | 인증(SSO) | 포털/NiFi/Airflow 공통 계정, OIDC 기반 |
+| 인증 | 사내 계정 기반 로그인 | 포털이 사내 계정 테이블로 검증 후 자체 토큰 발급, NiFi/Airflow는 공유 서비스계정으로 자동 연결 |
 | Metadata DB | 파이프라인 메타데이터 저장 | 연결정보(암호화), 파이프라인 정의, 커넥터, 명령 이력 |
 
 ### 2.3 Docker 기반 서비스 구성 (실제 기동 스택)
 
 ```text
-인증/통합 화면 : keycloak, cerebroetl-ui
+인증/통합 화면 : cerebroetl-ui
 제어 플레인    : pipeline-api, metadata-db, pipeline-ui
 실시간 데이터  : kafka, kafka-connect, filebeat
 ETL/스케줄     : nifi, airflow-apiserver, airflow-scheduler, airflow-dag-processor, airflow-init
@@ -129,7 +127,7 @@ POC 검증용 DB  : target-db (PostgreSQL 기반, 타란툴라DB 대체)
 
 ## 3. 시스템 기능 소개
 
-Cerebro ETL 통합 웹(`cerebroetl-ui`)은 Keycloak SSO 로그인 이후 아래 화면들로 구성됩니다.
+Cerebro ETL 통합 웹(`cerebroetl-ui`)은 사내 계정으로 로그인한 뒤 아래 화면들로 구성됩니다.
 
 ### 3.1 대시보드 (`/dashboard`)
 
@@ -250,7 +248,7 @@ Cerebro ETL 통합 웹(`cerebroetl-ui`)은 Keycloak SSO 로그인 이후 아래 
 | 1주차 | 06.29 ~ 07.05 | 요구사항 정의, 아키텍처 설계, Kafka/Kafka Connect/NiFi 기본 인프라(Docker Compose) 구성, Oracle CDC 1차 검증 | 완료 |
 | 2주차 | 07.06 ~ 07.12 | 파이프라인 웹서비스(Backend/Frontend) 개발 — 연결정보/파이프라인 CRUD, Kafka Connect 연동, 로그파일 실시간 적재(Filebeat) 구현 | 완료 |
 | 3주차 | 07.13 ~ 07.19 | Airflow 도입 및 동적 DAG 기반 파이프라인 실행 제어, 통합 대시보드/모니터링 강화 | 완료 |
-| 4주차 | 07.20 ~ 07.22 | NiFi 플로우 정비(비정형·배치 플로우 복구), Keycloak 기반 통합 SSO(OIDC) — 포털/NiFi/Airflow 적용 | 완료 |
+| 4주차 | 07.20 ~ 07.22 | NiFi 플로우 정비(비정형·배치 플로우 복구), 통합 인증 적용 — 포털/NiFi/Airflow | 완료 |
 | 5주차 | 07.23 ~ 07.26 | 통합 웹(Cerebro ETL UI) 완성, 폐쇄망 배포 패키징, **성능/부하 테스트 수행(본 문서 4장)** | 완료 |
 | 6주차 | 07.27 ~ 07.31 | 테스트 결과 정리 및 POC 결과 보고서 작성, 사내 발표 및 피드백 수렴, 실사용 확산 로드맵 확정 | 진행 예정 |
 
@@ -269,7 +267,7 @@ gantt
     section 3. 제어/보안
     Airflow 동적 DAG 실행 제어          :done, c1, 2026-07-13, 5d
     NiFi 플로우 정비                    :done, c2, 2026-07-20, 2d
-    Keycloak 통합 SSO                   :done, c3, 2026-07-21, 2d
+    통합 인증 적용                      :done, c3, 2026-07-21, 2d
     section 4. 검증/발표
     통합 웹 완성 및 폐쇄망 패키징        :done, d1, 2026-07-23, 3d
     성능/부하 테스트                    :done, d2, 2026-07-25, 2d

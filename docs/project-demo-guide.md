@@ -2,7 +2,7 @@
 
 > 대상: 프로젝트 관계자, 개발·운영 담당자, 의사결정자  
 > 권장 발표 시간: 15~20분, 질의응답 5~10분  
-> 기준 브랜치: `feature/airflow-oidc` (2026-07-22)
+> 기준 브랜치: `msa-integration` (2026-07-28)
 
 ## 1. 발표 목표
 
@@ -10,11 +10,11 @@
 
 1. 서로 다른 데이터 소스의 실시간·배치·비정형 데이터를 하나의 플랫폼에서 연계한다.
 2. 사용자는 Cerebro ETL에서 파이프라인을 만들고, Airflow에서 실행을 통제하며, 대시보드에서 상태와 이력을 확인한다.
-3. Keycloak 통합 계정을 기반으로 향후 프로젝트별 권한과 개인별 감사 이력을 적용할 수 있다.
+3. 사내 계정 테이블을 인증 기준으로 삼아 향후 프로젝트별 권한과 개인별 감사 이력을 적용할 수 있다.
 
 ### 30초 소개 문구
 
-> Cerebro ETL은 Oracle과 PostgreSQL의 변경 데이터를 실시간으로 전달하고, 로그파일과 비정형·배치 데이터까지 함께 처리하는 통합 데이터 파이프라인 플랫폼입니다. Kafka Connect는 실시간 CDC, NiFi는 비정형 및 배치 ETL, Airflow는 실행과 스케줄 제어를 담당합니다. 사용자는 통합 웹에서 이들을 관리하고 Keycloak 계정 하나로 인증합니다.
+> Cerebro ETL은 Oracle과 PostgreSQL의 변경 데이터를 실시간으로 전달하고, 로그파일과 비정형·배치 데이터까지 함께 처리하는 통합 데이터 파이프라인 플랫폼입니다. Kafka Connect는 실시간 CDC, NiFi는 비정형 및 배치 ETL, Airflow는 실행과 스케줄 제어를 담당합니다. 사용자는 통합 웹에서 이들을 관리하고 사내 계정 하나로 인증합니다.
 
 ---
 
@@ -24,8 +24,7 @@
 
 ```mermaid
 flowchart LR
-    U[사용자] -->|OIDC 로그인| KC[Keycloak]
-    U --> PORTAL[Cerebro ETL 통합 웹]
+    U[사용자] -->|사내 계정 로그인| PORTAL[Cerebro ETL 통합 웹]
     PORTAL --> API[Pipeline API<br/>Spring Boot]
     API --> META[(Metadata DB)]
     API --> CONNECT[Kafka Connect REST]
@@ -54,7 +53,7 @@ flowchart LR
 | 구성요소 | 책임 | 발표 시 강조할 내용 |
 |---|---|---|
 | Cerebro ETL | 사용자 통합 화면 | 여러 도구를 한곳에서 조회·관리 |
-| Keycloak | 사용자 인증과 SSO | 포털, NiFi, Airflow에 동일 계정 사용 |
+| 사내 계정 테이블(ST_USER) | 사용자 인증 기준 | 포털이 조회해 검증, NiFi/Airflow는 공유 서비스계정으로 자동 연결 |
 | Pipeline API | 파이프라인 제어 플레인 | 연결정보·파이프라인·배포·이력 관리 |
 | Metadata DB | 관리 정보 저장 | 연결정보, 파이프라인 정의, 커넥터, 명령 이력 |
 | Kafka | 이벤트 전달 허브 | 소스와 타깃을 분리하고 변경 이벤트를 버퍼링 |
@@ -68,7 +67,7 @@ flowchart LR
 현재 주요 서비스는 다음과 같다.
 
 ```text
-인증/통합 화면: keycloak, cerebroetl-ui
+인증/통합 화면: cerebroetl-ui
 제어 플레인: pipeline-api, metadata-db, pipeline-ui
 실시간 데이터: kafka, kafka-connect, filebeat
 ETL/스케줄: nifi, airflow-apiserver, airflow-scheduler,
@@ -170,7 +169,7 @@ Oracle 배치 동기화
 
 ```mermaid
 flowchart LR
-    A[Keycloak 로그인] --> B[연결정보 등록]
+    A[사내 계정 로그인] --> B[연결정보 등록]
     B --> C[파이프라인 정의 생성]
     C --> D[Pipeline API에 저장]
     D --> E[배포]
@@ -185,7 +184,7 @@ flowchart LR
 
 | 작업 | 담당 도구 |
 |---|---|
-| 사용자 인증 | Keycloak |
+| 사용자 인증 | Cerebro ETL / 사내 계정 테이블 |
 | DB 연결정보 등록 | Cerebro ETL / Pipeline API |
 | CDC·로그 파이프라인 생성 및 배포 | Cerebro ETL / Pipeline API |
 | Kafka Connect 커넥터 생성·삭제 | Pipeline API |
@@ -217,28 +216,25 @@ flowchart LR
 |---:|---|
 | 0:00~1:30 | 프로젝트 목적과 전체 구조 |
 | 1:30~3:30 | 컴포넌트 역할과 데이터 흐름 |
-| 3:30~5:00 | Keycloak 로그인 및 통합 대시보드 |
+| 3:30~5:00 | 로그인 및 통합 대시보드 |
 | 5:00~7:00 | 연결정보와 파이프라인 정의 |
 | 7:00~11:00 | Oracle → PostgreSQL CDC 실시간 시연 |
 | 11:00~13:00 | Airflow 중지·시작 및 검증 |
 | 13:00~15:00 | 로그 파이프라인과 NiFi 소개 |
-| 15:00~17:00 | 모니터링·이력·SSO·권한 발전 방향 |
+| 15:00~17:00 | 모니터링·이력·인증·권한 발전 방향 |
 | 17:00~20:00 | 제약사항, 폐쇄망 배포, 질의응답 전환 |
 
 ### 장면 1. 통합 로그인
 
 화면:
 
-1. `https://localhost:13001`
-2. Cerebro ETL 로그인 버튼 선택
-3. Keycloak 로그인
-4. 대시보드 복귀
+1. `http://localhost:13001`
+2. 사내 계정으로 로그인
+3. 대시보드 진입
 
 발표 멘트:
 
-> 사용자는 Cerebro ETL에 별도 비밀번호를 저장하지 않습니다. Keycloak Authorization Code와 PKCE 방식으로 인증하고, 백엔드는 전달된 액세스 토큰을 검증합니다. 같은 Keycloak 세션을 NiFi와 Airflow 로그인에도 사용하도록 구성했습니다.
-
-시연 전 브라우저에서 `https://localhost:8543`의 자체 서명 인증서를 한 번 신뢰해야 한다.
+> 사용자는 Cerebro ETL에 별도 비밀번호를 만들지 않습니다. 사내 계정 테이블을 그대로 인증 기준으로 쓰고, 백엔드가 검증한 뒤 토큰을 발급합니다. NiFi와 Airflow는 공유 서비스계정으로 서버가 대신 인증하므로, 사용자는 각 콘솔에서 다시 로그인할 필요가 없습니다.
 
 ### 장면 2. 통합 대시보드
 
@@ -375,16 +371,16 @@ NiFi:
 
 발표 멘트:
 
-> 현재는 Keycloak을 통한 개인별 통합 로그인까지 구현됐습니다. 최종 구조에서는 최상위 관리자, 프로젝트 관리자, 개발자, 운영자, 조회자 역할을 분리하고 모든 리소스에 프로젝트 ID를 부여할 계획입니다. Keycloak은 인증과 소속의 기준, Cerebro ETL 백엔드는 업무 리소스 권한과 감사 기록의 기준이 됩니다.
+> 현재는 사내 계정 테이블 기반의 통합 로그인까지 구현됐습니다. 최종 구조에서는 최상위 관리자, 프로젝트 관리자, 개발자, 운영자, 조회자 역할을 분리하고 모든 리소스에 프로젝트 ID를 부여할 계획입니다. 사내 계정 테이블은 인증과 소속의 기준, Cerebro ETL 백엔드는 업무 리소스 권한과 감사 기록의 기준이 됩니다.
 
 현재 상태와 목표를 혼동하지 않도록 다음과 같이 구분한다.
 
 | 항목 | 현재 | 최종 목표 |
 |---|---|---|
-| 인증 | Keycloak 개인 계정 SSO | 유지 |
+| 인증 | 사내 계정 테이블 기반 로그인 | 개인별 권한·감사로 확장 |
 | 역할 | 전역 `portal_admin`, `portal_user` | 프로젝트별 admin/developer/operator/viewer/auditor |
 | 감사 | command history 중심 | 생성·수정 전후 값, 사용자, 프로젝트, IP까지 통합 기록 |
-| 도구 직접 접근 | SSO로 가능 | 관리자·장애 대응자 중심으로 제한 |
+| 도구 직접 접근 | 공유 서비스계정으로 가능 | 관리자·장애 대응자 중심으로 제한 |
 
 ---
 
@@ -392,9 +388,8 @@ NiFi:
 
 ### 6.1 하루 전
 
-- [ ] 브라우저에서 Keycloak 인증서 신뢰
-- [ ] Cerebro ETL → Keycloak → Cerebro ETL 로그인 왕복 확인
-- [ ] NiFi와 Airflow의 Keycloak 브라우저 로그인 확인
+- [ ] Cerebro ETL 로그인 확인(사내 계정)
+- [ ] NiFi와 Airflow 콘솔이 추가 로그인 없이 열리는지 확인
 - [ ] `docker compose ps`에서 모든 필수 서비스가 healthy인지 확인
 - [ ] WSL2 메모리 여유와 swap 사용량 확인
 - [ ] Kafka Connect의 기존 커넥터가 모두 RUNNING인지 확인
@@ -410,7 +405,7 @@ NiFi:
 
 ```bash
 docker compose ps
-curl -ks https://localhost:8543/realms/cerebro/.well-known/openid-configuration
+curl -s http://localhost:13001/ -o /dev/null -w '%{http_code}\n'
 curl -s http://localhost:8083/connectors
 ```
 
@@ -487,7 +482,7 @@ Connector가 멈춰도 이미 Kafka에 들어온 이벤트는 retention 범위 �
 
 ### Q8. 개인별로 누가 무엇을 했는지 확인할 수 있는가?
 
-현재 Keycloak 개인 계정과 파이프라인 명령 이력의 기반은 있다. 최종적으로는 모든 리소스에 프로젝트 ID를 부여하고 생성·수정 전후 값, 실행 사용자, 요청 결과를 append-only 감사 이벤트로 남기는 구조로 확장해야 한다.
+현재 사내 계정 기반 로그인과 파이프라인 명령 이력의 기반은 있다. 최종적으로는 모든 리소스에 프로젝트 ID를 부여하고 생성·수정 전후 값, 실행 사용자, 요청 결과를 append-only 감사 이벤트로 남기는 구조로 확장해야 한다.
 
 ### Q9. 폐쇄망에서도 설치할 수 있는가?
 
@@ -513,7 +508,7 @@ Connector가 멈춰도 이미 Kafka에 들어온 이벤트는 retention 범위 �
 
 - 단일 노드 POC 구성으로 Kafka·DB·Airflow 고가용성 미구성
 - 프로젝트별 세부 권한과 완전한 감사 이벤트 모델 미구현
-- Keycloak 자체 서명 인증서와 POC용 trust 설정 사용
+- NiFi 콘솔은 자체 서명 인증서 기반 HTTPS(POC용 trust 설정) 사용
 - 로그 파서는 `PLAIN` 중심
 - NiFi EMPLOYEES 전체 동기화는 DELETE 미반영
 - NiFi ListFile 예시는 파일 수정 시 중복 가능
