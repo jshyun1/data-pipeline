@@ -69,6 +69,56 @@ Update Keys 대상에서 제외하고 명시적으로 SET 하도록 바꿔야 �
 검증하려면 `QueryDatabaseTable-employees`를 STOPPED → RUNNING으로 한 번
 껐다 켜면 됩니다 (실제 운영 중엔 그냥 1시간마다 자동 실행됨).
 
+## 0-3. DZ / DW 배치 (Oracle 원천 → DZ → DW, 테이블 5종)
+
+Airflow `ETL_dz` DAG가 두 그룹을 한 번에 켜고, DZ가 끝나면 출력포트를 타고 DW가
+이어받는다. 테이블마다 아래 네 단계가 독립적으로 돌고, 5개 테이블(COM001M /
+COM002L / COM003M / COM004M / POP003L)이 나란히 있다.
+
+```
+DZ:  trigger-dz-XXX ─▶ extract-tb-XXX ─▶ truncate-dz-XXX ─▶ load-dz-XXX ─▶ to-dw-XXX
+     (GenerateFlowFile)  (ExecuteSQL)      (PutSQL)         (PutDatabaseRecord)   │
+                          Oracle 원천                                             │
+                                                                                  ▼
+DW:  from-dz-XXX ─▶ extract-dz-XXX ─▶ truncate-dw-XXX ─▶ load-dw-XXX
+                     (ExecuteSQL)       (PutSQL)          (PutDatabaseRecord)
+                      dz_xxx 테이블
+```
+
+### truncate가 extract "뒤"에 있는 이유 (2026-07-29 변경)
+
+원래는 `truncate → extract → load` 순서였는데, 이 순서는 **원천이 안 붙으면
+착지 테이블을 비운 채로 끝난다.** truncate는 타란툴라DB라 Oracle과 무관하게
+성공해 커밋되고, 그 다음 extract가 실패하면 채울 데이터가 없기 때문이다.
+
+실제로 2026-07-29 09:04에 PC 부팅 43초 만에 밀린 배치가 돌면서, Oracle VM이 아직
+안 올라와 `ORA-12170`(TCP connect timeout)으로 추출이 전부 실패했다. 그 결과
+**DZ 5개 테이블 166만 행이 통째로 비었다.** 그런데도 DAG는 성공으로 끝났다
+(아래 "실패가 조용히 지나가던 문제" 참고).
+
+지금 순서는 **데이터를 손에 쥔 다음에만 지운다.**
+
+| 어디서 실패 | 결과 |
+|---|---|
+| extract (원천 조회) | truncate가 아예 안 돎 → **기존 데이터 보존** |
+| truncate | `failure` 자동종료라 load로 안 넘어감 → 중복 적재 없음 |
+| load | 테이블이 빈 상태 (이건 예전과 동일) |
+
+재배치가 안전한 근거 두 가지:
+- `PutSQL`이 SQL을 `putsql-sql-statement` 속성에 직접 들고 있어서 FlowFile
+  내용을 SQL로 읽지 않는다 → extract가 만든 Avro 데이터를 그대로 통과시킨다.
+- `ExecuteSQL`의 `esql-max-rows = 0`이라 쿼리당 FlowFile이 정확히 1개다 →
+  truncate가 중간에 여러 번 돌 일이 없다. **이 값을 0이 아닌 값으로 바꾸면
+  이 전제가 깨진다** (배치마다 truncate가 다시 돌아 앞 배치를 날린다).
+
+### 실패가 조용히 지나가던 문제
+
+NiFi 쪽 `failure`/`retry` 관계가 전부 자동종료(폐기)라, 실패한 FlowFile이 큐에
+남지 않는다. 그래서 `wait_*` 태스크의 완료 판정("큐 0 + 활성 스레드 0")에는
+성공과 실패가 똑같이 보였다. 지금은 대기 중 수집한 **ERROR bulletin이 하나라도
+있으면 태스크를 실패**시킨다(`_fail_if_errors`). WARNING은 평상시에도 올라와서
+실패로 보지 않는다.
+
 ## 0. 공통 Controller Service 등록
 
 Process Group 우클릭 → Configure → Controller Services 탭에서 추가:

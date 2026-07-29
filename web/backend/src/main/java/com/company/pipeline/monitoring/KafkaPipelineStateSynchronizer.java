@@ -19,8 +19,13 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Airflow 시작 명령이 끝난 뒤에도 장시간 실행되는 TABLE_CDC 파이프라인의 실제
- * Kafka Connect 상태를 metadata-db와 동기화한다.
+ * Airflow 시작 명령이 끝난 뒤에도 장시간 실행되는 파이프라인의 실제 Kafka Connect
+ * 상태를 metadata-db와 동기화한다. TABLE_CDC와 LOG_FILE 둘 다 대상이다.
+ *
+ * <p>로그 파이프라인의 "소스"는 filebeat라서 Kafka Connect 커넥터가 아니다 - SINK만
+ * 있는 것이 정상 구성이므로 그쪽은 Sink만 검사한다. 예전에는 TABLE_CDC만 보고
+ * 넘어갔는데, 그 탓에 로그 파이프라인은 커넥터가 죽어도 배포 시점에 찍힌 상태가
+ * 그대로 남아 화면에 계속 "실행중"으로 보였다.
  *
  * Kafka Connect 분산 워커는 재조정 중 connector/task가 잠깐 비정상처럼 보일 수
  * 있으므로 한 번의 불일치로 FAILED를 만들지 않는다. 동일 파이프라인에서 연속 3회
@@ -75,9 +80,6 @@ public class KafkaPipelineStateSynchronizer {
         List<PipelineDefinition> pipelines = pipelineDefinitionRepository.findByStatusIn(
                 List.of(PipelineStatus.DEPLOYED, PipelineStatus.STOPPED, PipelineStatus.FAILED));
         for (PipelineDefinition pipeline : pipelines) {
-            if (!"TABLE_CDC".equalsIgnoreCase(pipeline.getPipelineType())) {
-                continue;
-            }
             synchronizeOne(pipeline);
         }
     }
@@ -85,11 +87,13 @@ public class KafkaPipelineStateSynchronizer {
     void synchronizeOne(PipelineDefinition pipeline) {
         List<PipelineConnector> connectors =
                 pipelineConnectorRepository.findByPipelineId(pipeline.getId());
+        // 로그 파이프라인은 소스가 filebeat라 SINK 하나뿐인 것이 정상이다.
+        boolean sourceRequired = "TABLE_CDC".equalsIgnoreCase(pipeline.getPipelineType());
         PipelineConnector source = connectorByRole(connectors, "SOURCE");
         PipelineConnector sink = connectorByRole(connectors, "SINK");
 
-        if (source == null || sink == null) {
-            registerProblem(pipeline, "Source/Sink Connector 메타데이터가 불완전합니다."
+        if (sink == null || (sourceRequired && source == null)) {
+            registerProblem(pipeline, "Connector 메타데이터가 불완전합니다."
                     + " source=" + (source != null) + ", sink=" + (sink != null));
             return;
         }
@@ -97,17 +101,19 @@ public class KafkaPipelineStateSynchronizer {
         ConnectorStatusResponse sourceStatus;
         ConnectorStatusResponse sinkStatus;
         try {
-            sourceStatus = kafkaConnectClient.getStatus(source.getConnectorName());
+            sourceStatus = source == null ? null : kafkaConnectClient.getStatus(source.getConnectorName());
             sinkStatus = kafkaConnectClient.getStatus(sink.getConnectorName());
         } catch (Exception ex) {
             // 조회 자체가 실패했으면 커넥터 상태를 알 수 없다. 여기서 FAILED를 찍으면
             // Kafka Connect가 잠시 느려진 것만으로 정상 파이프라인이 장애로 둔갑한다.
             // 판정을 보류하고 실패 카운터도 건드리지 않는다(다음 주기에 다시 시도).
-            log.warn("CDC 파이프라인 {} 상태 조회 불가 - 판정 보류: {}",
+            log.warn("파이프라인 {} 상태 조회 불가 - 판정 보류: {}",
                     pipeline.getId(), safeMessage(ex));
             return;
         }
-        saveLiveStatus(source, sourceStatus);
+        if (source != null) {
+            saveLiveStatus(source, sourceStatus);
+        }
         saveLiveStatus(sink, sinkStatus);
 
         if (pipeline.getStatus() == PipelineStatus.FAILED) {
@@ -187,15 +193,23 @@ public class KafkaPipelineStateSynchronizer {
                 .orElse(null);
     }
 
+    /**
+     * {@code sourceStatus}가 null이면 소스 커넥터가 없는 구성(LOG_FILE)이므로 Sink만 본다.
+     *
+     * <p>CDC에서 중지(STOPPED)일 때 Source를 RUNNING으로 기대하는 것은 의도된 설계다 -
+     * 소스를 멈추면 원천 변경분(Oracle redo 등)을 영구히 놓치므로 Sink만 멈춘다.
+     */
     private String expectedStateProblem(PipelineStatus pipelineStatus,
             ConnectorStatusResponse sourceStatus, ConnectorStatusResponse sinkStatus) {
         if (pipelineStatus == PipelineStatus.DEPLOYED) {
-            String sourceProblem = connectorProblem("Source", sourceStatus, "RUNNING", true);
+            String sourceProblem = sourceStatus == null ? null
+                    : connectorProblem("Source", sourceStatus, "RUNNING", true);
             String sinkProblem = connectorProblem("Sink", sinkStatus, "RUNNING", true);
             return joinProblems(sourceProblem, sinkProblem);
         }
         if (pipelineStatus == PipelineStatus.STOPPED) {
-            String sourceProblem = connectorProblem("Source", sourceStatus, "RUNNING", true);
+            String sourceProblem = sourceStatus == null ? null
+                    : connectorProblem("Source", sourceStatus, "RUNNING", true);
             String sinkProblem = connectorProblem("Sink", sinkStatus, "STOPPED", false);
             return joinProblems(sourceProblem, sinkProblem);
         }

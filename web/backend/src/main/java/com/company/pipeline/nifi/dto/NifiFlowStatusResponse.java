@@ -23,7 +23,12 @@ public record NifiFlowStatusResponse(ProcessGroupStatus processGroupStatus) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record ProcessorStatus(String id, String name, String type) {
+    public record ProcessorStatus(String id, String name, String type, Integer activeThreadCount) {
+
+        /** activeThreadCount는 응답에 없을 수도 있어(구버전/부분 응답) null을 0으로 본다. */
+        public int activeThreads() {
+            return activeThreadCount == null ? 0 : activeThreadCount;
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

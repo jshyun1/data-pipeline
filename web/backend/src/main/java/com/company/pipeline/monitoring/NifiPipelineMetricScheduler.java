@@ -62,6 +62,10 @@ public class NifiPipelineMetricScheduler {
     // 없으면 스냅샷도 없어서 아래 초기화 감지가 아무것도 하지 않는다.
     private static final Set<String> LOAD_PROCESSOR_TYPES = Set.of("PutDatabaseRecord", "ExecuteGroovyScript");
     private static final String INSERT_COUNTER_NAME = "INSERT updates performed";
+    // 같은 bulletin id를 "이미 넣은 것"으로 볼 시간 범위. NiFi의 bulletin 링버퍼가
+    // 5분치라 그보다 넉넉히 잡으면 같은 세션의 중복은 확실히 걸러지고, 재시작 뒤
+    // 재사용된 id는 예전 행이 이 범위 밖이라 새 실패로 정상 기록된다.
+    private static final long BULLETIN_DEDUPE_WINDOW_MINUTES = 30;
     private static final Pattern PROCESSOR_ID_IN_CONTEXT = Pattern.compile("\\(([0-9a-fA-F-]{36})\\)\\s*$");
 
     private final NifiClient nifiClient;
@@ -93,13 +97,19 @@ public class NifiPipelineMetricScheduler {
      *
      * <p>bulletin은 NiFi 메모리에 5분 남짓만 남는 링버퍼라 카운터(60초)보다 자주
      * 가져온다. 놓치면 그 실패는 어디에도 남지 않는다.
+     *
+     * <p>예전에는 "마지막으로 본 id 이후"만 요청했는데(after 파라미터), bulletin id가
+     * NiFi 프로세스 안에서만 단조 증가하고 재시작하면 1부터 다시 시작한다는 걸 놓쳤다.
+     * 재시작 뒤에는 새 id가 전부 예전 커서보다 작아서 NiFi가 통째로 걸러버렸고, 수집이
+     * 조용히 멈췄다 - DZ 5개 테이블이 비워진 사고가 로그에 한 줄도 안 남았다(2026-07-29).
+     * 지금은 커서를 쓰지 않고 링버퍼 전체를 가져온 뒤 (id, 최근 시간대)로 중복을
+     * 거른다. 버퍼가 5분치로 애초에 작아서 매번 다 읽어도 부담이 없다.
      */
     @Scheduled(fixedRate = 30_000, initialDelay = 30_000)
     public void collectBulletins() {
-        Long lastId = executionLogRepository.findMaxBulletinId();
         NifiBulletinBoardResponse response;
         try {
-            response = nifiClient.getBulletins(lastId == null ? 0L : lastId);
+            response = nifiClient.getBulletins(0L);
         } catch (Exception ex) {
             // NiFi가 부하로 응답을 못 하는 상황 자체가 흔하다(그때가 오히려 실패가
             // 쌓이는 때다). 다음 주기에 같은 afterId로 다시 시도하면 되므로 조용히 넘긴다.
@@ -112,6 +122,7 @@ public class NifiPipelineMetricScheduler {
             return;
         }
 
+        LocalDateTime dedupeSince = LocalDateTime.now().minusMinutes(BULLETIN_DEDUPE_WINDOW_MINUTES);
         for (var entity : bulletins) {
             var bulletin = entity.bulletin();
             if (bulletin == null) {
@@ -122,7 +133,8 @@ public class NifiPipelineMetricScheduler {
                 continue;
             }
             Long bulletinId = bulletin.id() != null ? bulletin.id() : entity.id();
-            if (bulletinId == null || executionLogRepository.existsByBulletinId(bulletinId)) {
+            if (bulletinId == null
+                    || executionLogRepository.existsByBulletinIdAndOccurredAtAfter(bulletinId, dedupeSince)) {
                 continue;
             }
             String sourceId = bulletin.sourceId() != null ? bulletin.sourceId() : entity.sourceId();

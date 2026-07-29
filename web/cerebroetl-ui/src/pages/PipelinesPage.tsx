@@ -21,6 +21,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Typography,
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { listConnections, listConnectionSchemas, listConnectionTables } from "../api/connections";
@@ -29,7 +30,6 @@ import {
   createLogFilePipeline,
   createPipeline,
   deletePipeline,
-  deployPipeline,
   dismissConnectorDrift,
   getPipelineHistory,
   listPipelines,
@@ -206,19 +206,6 @@ export function PipelinesPage() {
     onError: (error: Error) => message.error(error.message),
   });
 
-  const deployMutation = useMutation({
-    mutationFn: deployPipeline,
-    onSuccess: (pipeline) => {
-      message.success(
-        pipeline.pipelineType === "TABLE_CDC"
-          ? "Source/Sink Connector를 실행 대기 상태로 다시 준비했습니다."
-          : "배포 완료",
-      );
-      invalidatePipelines();
-    },
-    onError: (error: Error) => message.error(error.message),
-  });
-
   const dismissDriftMutation = useMutation({
     mutationFn: dismissConnectorDrift,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["pipeline-dashboard-summary"] }),
@@ -251,16 +238,14 @@ export function PipelinesPage() {
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span>
                   <b>{info.pipelineName}</b> — {info.connectorNames.join(", ")} 없음
+                  {/* 여기서 바로 재배포하지 않는다 - 배포/시작/중지는 Airflow 제어 DAG가
+                      단독으로 지시한다(화면은 생성/삭제만 담당). 화면과 DAG 양쪽에서
+                      배포가 가능하면 "누가 언제 실행시켰는지"가 이력에서 흐려진다. */}
+                  <br />
+                  <Typography.Text type="secondary">
+                    복구하려면 Airflow에서 이 파이프라인의 제어 DAG를 action=deploy로 실행하세요.
+                  </Typography.Text>
                 </span>
-                <Button
-                  size="small"
-                  loading={deployMutation.isPending}
-                  onClick={() => deployMutation.mutate(Number(pipelineId))}
-                >
-                  {(pipelines ?? []).find((pipeline) => pipeline.id === Number(pipelineId))?.pipelineType === "TABLE_CDC"
-                    ? "다시 준비"
-                    : "지금 재배포"}
-                </Button>
               </div>
             }
           />
@@ -346,15 +331,6 @@ export function PipelinesPage() {
                 <Button size="small" onClick={() => setDetailPipelineId(record.id)}>
                   상세
                 </Button>
-                {record.pipelineType === "LOG_FILE" && (
-                  <Button
-                    size="small"
-                    loading={deployMutation.isPending}
-                    onClick={() => deployMutation.mutate(record.id)}
-                  >
-                    배포
-                  </Button>
-                )}
                 <Popconfirm
                   title="이 파이프라인을 삭제할까요?"
                   description="배포된 Kafka Connect 커넥터도 함께 삭제됩니다."

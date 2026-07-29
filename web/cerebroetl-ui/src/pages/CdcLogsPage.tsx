@@ -62,8 +62,28 @@ function formatCount(value?: number | null) {
   return (value ?? 0).toLocaleString("ko-KR");
 }
 
-function StateTag({ value }: { value: string }) {
+function StateTag({ value }: { value: string | null }) {
+  // 로그 파이프라인의 Source처럼 "원래 없는" 항목은 태그 대신 "-"로 둔다.
+  // UNKNOWN 태그로 보이면 "상태를 못 읽었다"는 뜻으로 오해된다.
+  if (!value) {
+    return <span style={{ color: "#999" }}>-</span>;
+  }
   return <Tag color={STATUS_COLOR[value] ?? (value === "FAILED" ? "error" : "default")}>{value}</Tag>;
+}
+
+function ConnectorStateTitle({ label, description }: { label: string; description: string }) {
+  return (
+    <Tooltip title={description}>
+      <span
+        tabIndex={0}
+        aria-label={`${label} 컬럼 설명`}
+        style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "help" }}
+      >
+        {label}
+        <InfoCircleFilled style={{ color: "#1677ff", fontSize: 13 }} />
+      </span>
+    </Tooltip>
+  );
 }
 
 export function CdcLogsPage() {
@@ -161,6 +181,9 @@ export function CdcLogsPage() {
           <>
             <div>처리 건수는 Kafka Sink의 committed offset 증가량을 기준으로 한 추정치입니다.</div>
             <div style={{ marginTop: 6 }}>
+              일 누적 처리는 파이프라인별로 한국 시간 자정부터 해당 시각까지의 처리 건수를 합산합니다.
+            </div>
+            <div style={{ marginTop: 6 }}>
               원본 데이터의 컬럼값은 표시하지 않으며, 중지 상태에서는 Source가 계속 수집하므로 Lag 증가가
               정상적인 적재 대기일 수 있습니다.
             </div>
@@ -223,10 +246,36 @@ export function CdcLogsPage() {
                           <Tag color={STATUS_COLOR[value] ?? "default"}>{STATUS_LABEL[value] ?? value}</Tag>
                         ),
                       },
-                      { title: "Source", dataIndex: "sourceState", width: 110, render: (value: string) => <StateTag value={value} /> },
-                      { title: "Sink", dataIndex: "sinkState", width: 110, render: (value: string) => <StateTag value={value} /> },
+                      {
+                        title: (
+                          <ConnectorStateTitle
+                            label="Source"
+                            description="원본 시스템의 변경 데이터를 읽어 중간 전송 채널로 보내는 Source 커넥터의 현재 상태입니다. 로그 파이프라인은 소스가 Filebeat(외부 에이전트)라 Source 커넥터가 없어 -로 표시됩니다."
+                          />
+                        ),
+                        dataIndex: "sourceState",
+                        width: 110,
+                        render: (value: string | null) => <StateTag value={value} />,
+                      },
+                      {
+                        title: (
+                          <ConnectorStateTitle
+                            label="Sink"
+                            description="중간 전송 채널의 데이터를 읽어 대상 시스템에 반영하는 Sink 커넥터의 현재 상태입니다."
+                          />
+                        ),
+                        dataIndex: "sinkState",
+                        width: 110,
+                        render: (value: string) => <StateTag value={value} />,
+                      },
                       { title: "처리 건수", dataIndex: "processedCount", width: 110, align: "right", render: formatCount },
-                      { title: "누적 처리", dataIndex: "committedOffset", width: 120, align: "right", render: formatCount },
+                      {
+                        title: "일 누적 처리",
+                        dataIndex: "dailyProcessedCount",
+                        width: 120,
+                        align: "right",
+                        render: formatCount,
+                      },
                       {
                         title: "Lag",
                         dataIndex: "consumerLag",

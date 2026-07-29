@@ -218,7 +218,7 @@ async function buildAirflowHistory(range: [Dayjs, Dayjs]): Promise<AirflowHistor
   successEntries.sort(byDatetimeDesc);
   failedEntries.sort(byDatetimeDesc);
 
-  // Top 5 수행시간 태스크: 선택한 기간 안의 모든 실행에서 태스크별 소요시간(종료-시작)을
+  // Top 5 수행시간 태스크: 조회 기간 안의 모든 실행에서 태스크별 소요시간(종료-시작)을
   // 합산해 가장 오래 걸린 태스크 5개를 뽑는다.
   const taskInstanceResults = await Promise.allSettled(
     runGroups.flatMap((group) =>
@@ -331,21 +331,29 @@ export function DashboardPage() {
     placeholderData: (previousData) => previousData,
   });
 
+  // 상단 요약 카드(스트림/플로우/배치)의 집계값. 조회 기간 기반이라 원래는 조회 버튼을
+  // 눌러야만 갱신됐는데, 오늘이 기간에 포함되면 "지금 쌓이는 건수"처럼 보이면서 실제로는
+  // 멈춰 있어 오해를 샀다. 아래 상태 카드들과 같은 주기로 맞춰 자동 갱신한다.
+  const SUMMARY_REFETCH_INTERVAL = 30000;
+
   const nifiLoadQuery = useQuery({
     queryKey: ["dashboard-nifi-load", appliedRange[0].toISOString(), appliedRange[1].toISOString()],
     queryFn: () => getDailyLoadSummary(appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD"), "NIFI"),
+    refetchInterval: SUMMARY_REFETCH_INTERVAL,
     placeholderData: (previousData) => previousData,
   });
 
   const kafkaLoadQuery = useQuery({
     queryKey: ["dashboard-kafka-load", appliedRange[0].toISOString(), appliedRange[1].toISOString()],
     queryFn: () => getDailyLoadSummary(appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD"), "KAFKA"),
+    refetchInterval: SUMMARY_REFETCH_INTERVAL,
     placeholderData: (previousData) => previousData,
   });
 
   const airflowHistoryQuery = useQuery({
     queryKey: ["dashboard-airflow-history", appliedRange[0].toISOString(), appliedRange[1].toISOString()],
     queryFn: () => buildAirflowHistory(appliedRange),
+    refetchInterval: SUMMARY_REFETCH_INTERVAL,
     placeholderData: (previousData) => previousData,
   });
 
@@ -502,7 +510,7 @@ export function DashboardPage() {
     ...airflowHistory.successEntries.map((entry) => ({ ...entry, state: "SUCCESS" as const })),
   ]
     .sort((a, b) => new Date(b.datetime ?? 0).getTime() - new Date(a.datetime ?? 0).getTime())
-    .slice(0, 7);
+    .slice(0, 10);
 
   const recentFailureEvents = [
     ...(nifiExecutionLogsQuery.data ?? [])
@@ -523,7 +531,7 @@ export function DashboardPage() {
     })),
   ]
     .sort((a, b) => new Date(b.datetime ?? 0).getTime() - new Date(a.datetime ?? 0).getTime())
-    .slice(0, 7);
+    .slice(0, 10);
 
   const selectedDataLoading =
     (nifiLoadQuery.isLoading && !nifiLoadQuery.data) ||
@@ -572,7 +580,7 @@ export function DashboardPage() {
             {formatCompactCount(kafkaPeriodTotal)}
             <small>건</small>
           </div>
-          <div className="summary-card-caption">선택 기간 적재 건수</div>
+          <div className="summary-card-caption">적재 건수</div>
           <div className="summary-card-details">
             <span>현재 처리율 <strong>{formatCompactCount(Math.round(kafkaThroughput))}</strong> rows/s</span>
             <span>미처리 <strong>{formatCompactCount(kafkaBacklog)}</strong></span>
@@ -596,7 +604,7 @@ export function DashboardPage() {
             {formatCompactCount(nifiPeriodTotal)}
             <small>건</small>
           </div>
-          <div className="summary-card-caption">선택 기간 적재 건수</div>
+          <div className="summary-card-caption">적재 건수</div>
           <div className="summary-card-details">
             <span>활성 스레드 <strong>{nifiActiveThreads}</strong></span>
             <span>대기 <strong>{formatCompactCount(nifiQueued)}</strong> FlowFiles</span>
@@ -616,7 +624,7 @@ export function DashboardPage() {
             {airflowSuccessRate}
             <small>% 성공</small>
           </div>
-          <div className="summary-card-caption">선택 기간 완료 실행 기준</div>
+          <div className="summary-card-caption">완료 실행 기준</div>
           <div className="summary-card-details">
             <button type="button" onClick={() => setAirflowActiveTile("success")}>
               성공 <strong>{airflowHistory.successEntries.length}</strong>
@@ -640,14 +648,14 @@ export function DashboardPage() {
         <main className="dashboard-primary-column">
           <Card
             className="dashboard-panel dashboard-panel--wide"
-            title={`선택 기간 일별 처리 건수 추이 · ${selectedPeriodLabel}`}
+            title={`일별 처리 건수 추이 · ${selectedPeriodLabel}`}
             loading={selectedDataLoading}
           >
             {dailyTrendChart.length > 0 ? (
               <Line data={dailyTrendChart} xField="date" yField="count" colorField="engine" height={270} />
             ) : (
               <div className="empty-chart-placeholder">
-                <Empty description="선택한 기간에 적재 이력이 없습니다." />
+                <Empty description="조회 기간에 적재 이력이 없습니다." />
               </div>
             )}
           </Card>
@@ -665,7 +673,7 @@ export function DashboardPage() {
                 />
               ) : (
                 <div className="empty-chart-placeholder">
-                  <Empty description="선택한 기간에 적재 이력이 없습니다." />
+                  <Empty description="조회 기간에 적재 이력이 없습니다." />
                 </div>
               )}
             </Card>
@@ -691,7 +699,7 @@ export function DashboardPage() {
             </Card>
           </div>
 
-          <Card className="dashboard-panel" title="선택 기간 Airflow 태스크 수행시간 Top 5" loading={showAirflowInitialLoading}>
+          <Card className="dashboard-panel" title="Airflow 태스크 수행시간 Top 5" loading={showAirflowInitialLoading}>
             {airflowHistory.topDurationTasks.length > 0 ? (
               <Column
                 data={airflowHistory.topDurationTasks}
@@ -702,7 +710,7 @@ export function DashboardPage() {
               />
             ) : (
               <div className="empty-chart-placeholder">
-                <Empty description="선택한 기간에 실행 이력이 없습니다." />
+                <Empty description="조회 기간에 실행 이력이 없습니다." />
               </div>
             )}
           </Card>
@@ -744,13 +752,13 @@ export function DashboardPage() {
                 ))}
               </div>
             ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="선택한 기간에 실행 이력이 없습니다." />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="조회 기간에 실행 이력이 없습니다." />
             )}
           </Card>
 
           <Card
             className="dashboard-feed-card dashboard-feed-card--issues"
-            title="선택 기간 장애 이벤트"
+            title="장애 이벤트"
             extra={
               commandSummary && commandSummary.connectorDrift.length > 0 ? (
                 <Tag color="warning">커넥터 불일치 {commandSummary.connectorDrift.length}</Tag>
@@ -779,7 +787,7 @@ export function DashboardPage() {
             ) : (
               <div className="dashboard-no-issues">
                 <span>✓</span>
-                <strong>선택한 기간에 수집된 장애가 없습니다.</strong>
+                <strong>조회 기간에 수집된 장애가 없습니다.</strong>
               </div>
             )}
           </Card>

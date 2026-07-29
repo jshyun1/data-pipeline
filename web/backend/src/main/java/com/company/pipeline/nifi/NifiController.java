@@ -2,9 +2,11 @@ package com.company.pipeline.nifi;
 
 import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.monitoring.NifiExecutionLogEntryRepository;
+import com.company.pipeline.monitoring.NifiProcessorRunRepository;
 import com.company.pipeline.nifi.dto.NifiExecutionLogResponse;
 import com.company.pipeline.nifi.dto.NifiProcessGroupCreateRequest;
 import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
+import com.company.pipeline.nifi.dto.NifiProcessorRunResponse;
 import jakarta.validation.Valid;
 import java.time.LocalDate;
 import java.util.List;
@@ -22,10 +24,14 @@ public class NifiController {
 
     private final NifiClient nifiClient;
     private final NifiExecutionLogEntryRepository executionLogRepository;
+    private final NifiProcessorRunRepository processorRunRepository;
 
-    public NifiController(NifiClient nifiClient, NifiExecutionLogEntryRepository executionLogRepository) {
+    public NifiController(NifiClient nifiClient,
+            NifiExecutionLogEntryRepository executionLogRepository,
+            NifiProcessorRunRepository processorRunRepository) {
         this.nifiClient = nifiClient;
         this.executionLogRepository = executionLogRepository;
+        this.processorRunRepository = processorRunRepository;
     }
 
     @PostMapping("/process-groups")
@@ -43,5 +49,21 @@ public class NifiController {
         var entries = executionLogRepository.findByOccurredAtBetweenOrderByOccurredAtDesc(
                 from.atStartOfDay(), to.plusDays(1).atStartOfDay());
         return ApiResponse.success(entries.stream().map(NifiExecutionLogResponse::from).toList());
+    }
+
+    /**
+     * ETL 로그 "처리 이력" - 적재 프로세서의 실행 구간(시작~종료~건수).
+     *
+     * <p>execution-logs가 "이 주기에 카운터가 늘었다"는 시점 기록이라 6분짜리 적재 하나가
+     * 7행으로 흩어졌던 것을 구간 단위로 묶어 보여준다. 소요시간과 처리량은 여기서만 나온다.
+     */
+    @GetMapping("/processor-runs")
+    public ApiResponse<List<NifiProcessorRunResponse>> processorRuns(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to
+    ) {
+        var runs = processorRunRepository.findByStartedAtBetweenOrderByStartedAtDesc(
+                from.atStartOfDay(), to.plusDays(1).atStartOfDay());
+        return ApiResponse.success(runs.stream().map(NifiProcessorRunResponse::from).toList());
     }
 }

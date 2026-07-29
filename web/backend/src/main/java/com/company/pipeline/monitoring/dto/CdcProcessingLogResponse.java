@@ -12,6 +12,7 @@ public record CdcProcessingLogResponse(
         LocalDateTime occurredAt,
         Long processedCount,
         Long committedOffset,
+        Long dailyProcessedCount,
         Long consumerLag,
         String sourceState,
         String sinkState,

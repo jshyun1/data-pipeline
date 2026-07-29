@@ -143,7 +143,10 @@ class PipelineDeployServiceTest {
     }
 
     @Test
-    void deploy_logFilePipeline_registersOnlySinkConnectorAndWritesFilebeatConfig() throws Exception {
+    void deploy_logFilePipeline_createsSinkStoppedAndLandsInReady() throws Exception {
+        // 배포는 "만들되 실행하지 않는" 단계로 CDC와 통일했다 - 예전에는 LOG_FILE만
+        // 배포 즉시 적재가 시작돼서, 아무도 시작을 지시하지 않았는데 데이터가 흐르는
+        // 경로가 있었다. 실행 지시는 오직 Airflow 제어 DAG가 한다.
         PipelineDefinition pipeline = newLogFilePipeline(1L, 20L);
         when(pipelineDefinitionRepository.findById(1L)).thenReturn(Optional.of(pipeline));
         when(pipelineDefinitionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -164,15 +167,18 @@ class PipelineDeployServiceTest {
 
         when(pipelineConnectorRepository.findByPipelineIdAndConnectorRole(eq(1L), anyString()))
                 .thenReturn(Optional.empty());
+        when(kafkaConnectClient.listConnectors()).thenReturn(List.of());
         when(kafkaConnectClient.getStatus(anyString())).thenReturn(
-                new ConnectorStatusResponse("x", new ConnectorState("RUNNING", "w"), List.of(), "sink"));
+                new ConnectorStatusResponse("x", new ConnectorState("STOPPED", "w"), List.of(), "sink"));
 
         deployService.deploy(1L);
 
-        verify(kafkaConnectClient).upsertConfig(eq("sink-1-postgresql-log_landing-app_log"), any());
+        // 즉시 실행되는 upsertConfig가 아니라 initial_state=STOPPED로 만들어야 한다.
+        verify(kafkaConnectClient).createStopped(eq("sink-1-postgresql-log_landing-app_log"), any());
+        verify(kafkaConnectClient, never()).upsertConfig(anyString(), any());
         verify(connectorConfigRenderer, never()).renderSource(any());
         verify(filebeatInputFileService).write(1L, "- type: filestream");
-        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.DEPLOYED);
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.READY);
     }
 
     @Test

@@ -105,8 +105,11 @@ public class PipelineDeployService {
     private PipelineResponse deployLocked(Long pipelineId) {
         PipelineDefinition pipeline = pipelineDefinitionRepository.findById(pipelineId)
                 .orElseThrow(() -> new PipelineNotFoundException(pipelineId));
-        boolean tableCdc = isTableCdc(pipeline);
-        String command = tableCdc ? "PREPARE" : "DEPLOY";
+        // 배포는 두 타입 모두 "만들되 실행하지 않는" 단계다 - 실행 지시는 오직 Airflow가
+        // 한다는 원칙(NiFi의 autoResumeState=false와 같은 규칙)을 로그 파이프라인에도
+        // 적용한다. 예전에는 LOG_FILE만 배포 즉시 적재가 시작돼서, 아무도 시작을
+        // 지시하지 않았는데 데이터가 흐르는 상태가 만들어졌다.
+        String command = "PREPARE";
 
         pipeline.setStatus(PipelineStatus.DEPLOYING);
         pipelineDefinitionRepository.save(pipeline);
@@ -118,7 +121,7 @@ public class PipelineDeployService {
                 deployTableCdcPipeline(pipeline);
             }
 
-            pipeline.setStatus(tableCdc ? PipelineStatus.READY : PipelineStatus.DEPLOYED);
+            pipeline.setStatus(PipelineStatus.READY);
             pipelineDefinitionRepository.save(pipeline);
             commandHistoryRecorder.record(pipeline.getId(), command, "SUCCESS", null);
         } catch (Exception ex) {
@@ -129,7 +132,7 @@ public class PipelineDeployService {
                 throw businessException;
             }
             throw new BusinessException(ErrorCode.INTERNAL_ERROR,
-                    (tableCdc ? "CDC 실행 대기 준비" : "파이프라인 배포") + " 실패: " + ex.getMessage());
+                    "파이프라인 실행 대기 준비 실패: " + ex.getMessage());
         }
 
         return PipelineResponse.from(pipeline, pipelineConnectorRepository.findByPipelineId(pipeline.getId()));
@@ -173,7 +176,7 @@ public class PipelineDeployService {
                 target.getUsername(), passwordCryptoService.decrypt(target.getEncryptedPassword()),
                 target.getDatabaseName(), target.getServiceName(),
                 pipeline.getTargetSchema(), pipeline.getTargetTable(), source.getTopicName()));
-        deployConnector(pipeline.getId(), "SINK", sinkConfig);
+        prepareStoppedConnector(pipeline.getId(), "SINK", sinkConfig);
 
         String filebeatYaml = filebeatConfigRenderer.render(pipeline.getId(), source);
         filebeatInputFileService.write(pipeline.getId(), filebeatYaml);

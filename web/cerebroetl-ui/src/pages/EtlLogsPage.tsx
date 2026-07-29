@@ -1,22 +1,38 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Card, DatePicker, Input, Space, Table, Tag } from "antd";
+import { Button, Card, DatePicker, Input, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
+import { QuestionCircleOutlined } from "@ant-design/icons";
 import dayjs, { type Dayjs } from "dayjs";
-import { listNifiExecutionLogs, type NifiExecutionLogEntry } from "../api/platform";
+import {
+  listNifiExecutionLogs,
+  listNifiProcessorRuns,
+  type NifiExecutionLogEntry,
+  type NifiProcessorRun,
+} from "../api/platform";
 
 const { RangePicker } = DatePicker;
 
-const STATUS_LABEL: Record<string, string> = {
-  SUCCESS: "성공",
-  FAILED: "실패",
+const RUN_STATUS_LABEL: Record<string, string> = {
+  RUNNING: "진행 중",
+  SUCCESS: "완료",
 };
 
-const STATUS_COLOR: Record<string, string> = {
+const RUN_STATUS_COLOR: Record<string, string> = {
+  RUNNING: "processing",
   SUCCESS: "success",
-  FAILED: "error",
 };
 
-function formatDateTime(value?: string) {
+const LEVEL_LABEL: Record<string, string> = {
+  ERROR: "오류",
+  WARNING: "경고",
+};
+
+const LEVEL_COLOR: Record<string, string> = {
+  ERROR: "error",
+  WARNING: "warning",
+};
+
+function formatDateTime(value?: string | null) {
   if (!value) {
     return "-";
   }
@@ -31,118 +47,296 @@ function formatDateTime(value?: string) {
   }).format(new Date(value));
 }
 
-// NiFi에는 Airflow의 dag_run 같은 "실행 이력" 개념이 없다 - Provenance 조회는 이 환경에서
-// 인덱스/이벤트파일 불일치로 구조적으로 안 되는 것으로 확인됐고(재시작/저장소 재구축 후에도
-// 재현), 프로세서 단위 Status History도 항상 비어 있어 조회가 안 된다(그룹 단위는 되지만
-// 그룹 안 여러 테이블이 섞여서 프로세서별 구분이 안 됨). 그래서 두 갈래로 만든다:
-//  - 성공: 적재 프로세서(PutDatabaseRecord)의 누적 카운터가 60초 주기로 증가했는지를
-//    백엔드가 감지해서 남긴다. "실행 1회 = 행 1개"가 정확히는 아니고 "60초 구간 안에
-//    증가가 있었다 = 행 1개"에 가깝다.
-//  - 실패: NiFi bulletin(경고/에러)을 30초마다 긁어서 남긴다. 카운터는 "늘었을 때"만
-//    보이므로 실패를 표현할 방법이 원래 없었고, 그래서 DB 인증 실패나 OOM처럼 실제로
-//    파이프라인이 죽은 날에도 이 화면엔 아무것도 안 남았다.
-async function getEtlLogs(range: [Dayjs, Dayjs]): Promise<NifiExecutionLogEntry[]> {
-  const entries = await listNifiExecutionLogs(
-    range[0].format("YYYY-MM-DD"),
-    range[1].format("YYYY-MM-DD"),
-  );
-  return [...entries].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
+function formatCount(value?: number | null) {
+  return value == null ? "-" : value.toLocaleString();
 }
 
+/** 733초를 "12분 13초"처럼. 한 관측 주기 안에 끝난 구간은 0초로 들어온다. */
+function formatDuration(seconds?: number | null) {
+  if (seconds == null) {
+    return "-";
+  }
+  if (seconds < 60) {
+    return `${seconds}초`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (minutes < 60) {
+    return rest === 0 ? `${minutes}분` : `${minutes}분 ${rest}초`;
+  }
+  const hours = Math.floor(minutes / 60);
+  return `${hours}시간 ${minutes % 60}분`;
+}
+
+// NiFi에는 Airflow의 dag_run 같은 "실행 이력" 개념이 없다 - Provenance 조회는 이 환경에서
+// 인덱스/이벤트파일 불일치로 구조적으로 안 되는 것으로 확인됐고(재시작/저장소 재구축 후에도
+// 재현), 프로세서 단위 Status History도 항상 비어 있다(그룹 단위는 되지만 그룹 안 여러
+// 테이블이 섞여서 프로세서별 구분이 안 됨). 그래서 두 갈래로 만든다:
+//  - 처리 이력: 백엔드가 15초마다 활성 스레드와 적재 카운터를 관측해 "실행 구간"을 직접
+//    만든다(nifi_processor_run). 시작/종료는 관측값이라 최대 15초 오차가 있다.
+//  - 오류·상태 이력: NiFi bulletin(경고/에러)을 30초마다 긁어서 남긴다. 카운터는 "늘었을
+//    때"만 보이므로 실패를 표현할 방법이 원래 없었고, 그래서 DB 인증 실패나 OOM처럼 실제로
+//    파이프라인이 죽은 날에도 이 화면엔 아무것도 안 남았다.
 export function EtlLogsPage() {
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(6, "day"), dayjs()]);
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
-  const [nameFilter, setNameFilter] = useState("");
+  const [keyword, setKeyword] = useState("");
+  const [groupFilter, setGroupFilter] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState("runs");
 
-  const logsQuery = useQuery({
-    queryKey: ["etl-logs", appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD")],
-    queryFn: () => getEtlLogs(appliedRange),
-    placeholderData: (previousData) => previousData,
+  const from = appliedRange[0].format("YYYY-MM-DD");
+  const to = appliedRange[1].format("YYYY-MM-DD");
+
+  const runsQuery = useQuery({
+    queryKey: ["nifi-processor-runs", from, to],
+    queryFn: () => listNifiProcessorRuns(from, to),
+    placeholderData: (previous) => previous,
   });
 
-  const rows = logsQuery.data ?? [];
-  const filteredRows = useMemo(() => {
-    const keyword = nameFilter.trim().toLowerCase();
-    if (!keyword) {
-      return rows;
+  const eventsQuery = useQuery({
+    queryKey: ["nifi-execution-logs", from, to],
+    queryFn: () => listNifiExecutionLogs(from, to),
+    placeholderData: (previous) => previous,
+  });
+
+  // 그룹 필터 후보는 두 탭의 데이터를 합쳐서 뽑는다 - 실패만 있고 적재는 없는
+  // 그룹도 골라볼 수 있어야 한다.
+  const groupOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const row of runsQuery.data ?? []) {
+      if (row.groupName) names.add(row.groupName);
     }
-    return rows.filter(
-      (row) =>
-        row.processorName.toLowerCase().includes(keyword) ||
-        (row.groupName ?? "").toLowerCase().includes(keyword) ||
-        (row.message ?? "").toLowerCase().includes(keyword),
-    );
-  }, [rows, nameFilter]);
+    for (const row of eventsQuery.data ?? []) {
+      if (row.groupName) names.add(row.groupName);
+    }
+    return [...names].sort().map((name) => ({ value: name, label: name }));
+  }, [runsQuery.data, eventsQuery.data]);
 
-  const failureCount = filteredRows.filter((row) => row.status !== "SUCCESS").length;
+  const runRows = useMemo(() => {
+    const needle = keyword.trim().toLowerCase();
+    return (runsQuery.data ?? []).filter((row) => {
+      if (groupFilter.length > 0 && !groupFilter.includes(row.groupName ?? "")) {
+        return false;
+      }
+      if (!needle) {
+        return true;
+      }
+      return [row.processorName, row.groupName, row.targetTable, row.processorType].some((text) =>
+        (text ?? "").toLowerCase().includes(needle),
+      );
+    });
+  }, [runsQuery.data, keyword, groupFilter]);
 
-  const showInitialLoading = logsQuery.isLoading && !logsQuery.data;
+  // 오류·상태 이력은 bulletin 기반 행만 보여준다. 카운터 기반 SUCCESS 행은 처리 이력
+  // 탭이 구간으로 대신 보여주므로, 여기 섞이면 같은 적재가 두 탭에 중복으로 나온다.
+  const eventRows = useMemo(() => {
+    const needle = keyword.trim().toLowerCase();
+    return (eventsQuery.data ?? [])
+      .filter((row) => row.status !== "SUCCESS")
+      .filter((row) => {
+        if (groupFilter.length > 0 && !groupFilter.includes(row.groupName ?? "")) {
+          return false;
+        }
+        if (!needle) {
+          return true;
+        }
+        return [row.processorName, row.groupName, row.message].some((text) =>
+          (text ?? "").toLowerCase().includes(needle),
+        );
+      });
+  }, [eventsQuery.data, keyword, groupFilter]);
+
+  const errorCount = eventRows.filter((row) => row.level !== "WARNING").length;
+
+  const filters = (
+    <Space style={{ marginBottom: 16 }} wrap>
+      <RangePicker
+        value={dateRange}
+        onChange={(value) => {
+          if (value && value[0] && value[1]) {
+            setDateRange([value[0], value[1]]);
+          }
+        }}
+        allowClear={false}
+      />
+      <Input
+        placeholder="프로세서/그룹/테이블 검색"
+        allowClear
+        style={{ width: 240 }}
+        value={keyword}
+        onChange={(event) => setKeyword(event.target.value)}
+      />
+      <Select
+        mode="multiple"
+        allowClear
+        placeholder="그룹(파이프라인)"
+        style={{ minWidth: 200 }}
+        options={groupOptions}
+        value={groupFilter}
+        onChange={setGroupFilter}
+      />
+      <Button type="primary" onClick={() => setAppliedRange(dateRange)}>
+        조회
+      </Button>
+      {errorCount > 0 && <Tag color="error">오류 {errorCount}건</Tag>}
+      <Tooltip
+        title={
+          "NiFi에는 실행 이력 개념이 없어(Provenance 조회 불가, 프로세서 단위 Status History 빈 응답) " +
+          "백엔드가 15초마다 프로세서의 활성 스레드와 적재 카운터를 관측해 실행 구간을 만듭니다. " +
+          "따라서 시작/종료 시각은 최대 15초 오차가 있는 추정값이고, 15초 안에 끝난 적재는 " +
+          "소요 0초로 기록되어 처리량을 계산할 수 없습니다."
+        }
+      >
+        <QuestionCircleOutlined
+          role="button"
+          tabIndex={0}
+          style={{ color: "#1677ff", cursor: "help", fontSize: 18 }}
+        />
+      </Tooltip>
+    </Space>
+  );
 
   return (
     <div>
       <Card title="NiFi ETL 로그">
-        <Space style={{ marginBottom: 16 }} wrap>
-          <RangePicker
-            value={dateRange}
-            onChange={(value) => {
-              if (value && value[0] && value[1]) {
-                setDateRange([value[0], value[1]]);
-              }
-            }}
-            allowClear={false}
-          />
-          <Input
-            placeholder="프로세서/그룹 이름 검색"
-            allowClear
-            style={{ width: 220 }}
-            value={nameFilter}
-            onChange={(event) => setNameFilter(event.target.value)}
-          />
-          <Button type="primary" onClick={() => setAppliedRange(dateRange)}>
-            조회
-          </Button>
-          {failureCount > 0 && <Tag color="error">실패 {failureCount}건</Tag>}
-        </Space>
-        <Table<NifiExecutionLogEntry>
-          rowKey="id"
-          size="small"
-          loading={showInitialLoading}
-          dataSource={filteredRows}
-          pagination={{ pageSize: 20 }}
-          columns={[
-            { title: "프로세서", dataIndex: "processorName" },
-            { title: "그룹(파이프라인)", dataIndex: "groupName", render: (value?: string) => value ?? "-" },
+        {filters}
+        <Tabs
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          items={[
             {
-              title: "상태",
-              dataIndex: "status",
-              width: 100,
-              render: (value: string) => <Tag color={STATUS_COLOR[value] ?? "default"}>{STATUS_LABEL[value] ?? value}</Tag>,
+              key: "runs",
+              label: "처리 이력",
+              children: (
+                <>
+                  <Typography.Text type="secondary">
+                    적재 프로세서가 연속으로 일한 구간을 하나의 실행으로 묶어 표시합니다. 처리량은 적재 건수를
+                    소요시간으로 나눈 값입니다.
+                  </Typography.Text>
+                  <Table<NifiProcessorRun>
+                    rowKey="id"
+                    style={{ marginTop: 12 }}
+                    size="small"
+                    loading={runsQuery.isLoading && !runsQuery.data}
+                    dataSource={runRows}
+                    pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
+                    scroll={{ x: 1470 }}
+                    columns={[
+                      { title: "시작 시각", dataIndex: "startedAt", width: 180, fixed: "left", render: formatDateTime },
+                      { title: "종료 시각", dataIndex: "endedAt", width: 180, render: formatDateTime },
+                      {
+                        title: "소요",
+                        dataIndex: "durationSeconds",
+                        width: 110,
+                        align: "right",
+                        render: formatDuration,
+                      },
+                      { title: "프로세서", dataIndex: "processorName", width: 190 },
+                      {
+                        title: "유형",
+                        dataIndex: "processorType",
+                        width: 165,
+                        render: (value?: string | null) => value ?? "-",
+                      },
+                      {
+                        title: "그룹(파이프라인)",
+                        dataIndex: "groupName",
+                        width: 150,
+                        render: (value?: string | null) => value ?? "-",
+                      },
+                      {
+                        title: "적재 대상",
+                        dataIndex: "targetTable",
+                        width: 190,
+                        // 스크립트 안에 테이블명이 박혀 있는 적재(ExecuteGroovyScript)는
+                        // 프로세서 설정에서 읽을 수 없어 비어 있다.
+                        render: (value?: string | null) => value ?? "-",
+                      },
+                      {
+                        title: "적재 건수",
+                        dataIndex: "insertedCount",
+                        width: 120,
+                        align: "right",
+                        render: formatCount,
+                      },
+                      {
+                        title: "처리량",
+                        dataIndex: "rowsPerSecond",
+                        width: 125,
+                        align: "right",
+                        render: (value?: number | null) =>
+                          value == null ? (
+                            <Tooltip title="한 관측 주기(15초) 안에 끝나 소요시간을 잴 수 없습니다.">
+                              <span style={{ color: "#999" }}>-</span>
+                            </Tooltip>
+                          ) : (
+                            `${value.toLocaleString()} 행/초`
+                          ),
+                      },
+                      {
+                        title: "상태",
+                        dataIndex: "status",
+                        width: 100,
+                        render: (value: string) => (
+                          <Tag color={RUN_STATUS_COLOR[value] ?? "default"}>{RUN_STATUS_LABEL[value] ?? value}</Tag>
+                        ),
+                      },
+                    ]}
+                  />
+                </>
+              ),
             },
-            { title: "실행 시각", dataIndex: "occurredAt", width: 190, render: formatDateTime },
             {
-              title: "적재 건수",
-              dataIndex: "insertedCount",
-              width: 100,
-              align: "right",
-              // 실패 행은 셀 대상이 없어서 null이다. 0으로 보이면 "0건 적재됨"으로
-              // 오해할 수 있어 구분해서 표시한다.
-              render: (value: number | null) => (value == null ? "-" : value.toLocaleString()),
-            },
-            {
-              title: "메시지",
-              dataIndex: "message",
-              ellipsis: true,
-              render: (value?: string | null) => value ?? "-",
+              key: "events",
+              label: "오류·상태 이력",
+              children: (
+                <>
+                  <Typography.Text type="secondary">
+                    NiFi가 올린 경고/오류입니다. NiFi는 이 알림을 5분만 메모리에 두므로 30초마다 수집해 영속화한
+                    것입니다.
+                  </Typography.Text>
+                  <Table<NifiExecutionLogEntry>
+                    rowKey="id"
+                    style={{ marginTop: 12 }}
+                    size="small"
+                    loading={eventsQuery.isLoading && !eventsQuery.data}
+                    dataSource={eventRows}
+                    pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
+                    columns={[
+                      { title: "발생 시각", dataIndex: "occurredAt", width: 190, render: formatDateTime },
+                      { title: "프로세서", dataIndex: "processorName", width: 200 },
+                      {
+                        title: "그룹(파이프라인)",
+                        dataIndex: "groupName",
+                        width: 150,
+                        render: (value?: string | null) => value ?? "-",
+                      },
+                      {
+                        title: "수준",
+                        dataIndex: "level",
+                        width: 90,
+                        render: (value?: string | null) =>
+                          value ? <Tag color={LEVEL_COLOR[value] ?? "default"}>{LEVEL_LABEL[value] ?? value}</Tag> : "-",
+                      },
+                      {
+                        title: "메시지",
+                        dataIndex: "message",
+                        ellipsis: true,
+                        render: (value?: string | null) => value ?? "-",
+                      },
+                    ]}
+                    // 실패 원인은 스택트레이스까지 길어서 한 줄에 다 못 보여준다.
+                    expandable={{
+                      expandedRowRender: (row) => (
+                        <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: 12 }}>{row.message}</pre>
+                      ),
+                      rowExpandable: (row) => Boolean(row.message),
+                    }}
+                  />
+                </>
+              ),
             },
           ]}
-          // 실패 원인은 스택트레이스까지 길어서 한 줄에 다 못 보여준다. 행을 펼치면
-          // 원문 전체를 볼 수 있게 한다.
-          expandable={{
-            expandedRowRender: (row) => (
-              <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: 12 }}>{row.message}</pre>
-            ),
-            rowExpandable: (row) => Boolean(row.message),
-          }}
         />
       </Card>
     </div>

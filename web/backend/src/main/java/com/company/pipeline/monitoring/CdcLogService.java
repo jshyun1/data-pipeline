@@ -46,7 +46,7 @@ public class CdcLogService {
 
     public List<CdcProcessingLogResponse> processingLogs(LocalDate from, LocalDate to) {
         DateRange range = validateRange(from, to);
-        List<PipelineDefinition> pipelines = cdcPipelines();
+        List<PipelineDefinition> pipelines = monitoredPipelines();
         if (pipelines.isEmpty()) {
             return List.of();
         }
@@ -75,19 +75,27 @@ public class CdcLogService {
                     .findTopByPipelineIdAndCollectedAtBeforeOrderByCollectedAtDesc(pipelineId, range.from())
                     .orElse(null);
             Long previousCommitted = baseline != null ? baseline.getCommittedOffset() : null;
-            String previousSourceState = baseline != null ? sourceState(baseline) : null;
+            String previousSourceState = baseline != null ? sourceState(pipeline, baseline) : null;
             String previousSinkState = baseline != null ? sinkState(baseline) : null;
+            LocalDate cumulativeDate = null;
+            long dailyProcessedCount = 0L;
 
             List<Map.Entry<LocalDateTime, PipelineMetricSnapshot>> buckets =
                     new ArrayList<>(pipelineEntry.getValue().entrySet());
             for (int index = 0; index < buckets.size(); index++) {
                 Map.Entry<LocalDateTime, PipelineMetricSnapshot> bucket = buckets.get(index);
                 PipelineMetricSnapshot snapshot = bucket.getValue();
+                LocalDate bucketDate = bucket.getKey().toLocalDate();
+                if (!bucketDate.equals(cumulativeDate)) {
+                    cumulativeDate = bucketDate;
+                    dailyProcessedCount = 0L;
+                }
                 long committed = valueOrZero(snapshot.getCommittedOffset());
                 long processed = previousCommitted == null
                         ? 0L : Math.max(0L, committed - previousCommitted);
+                dailyProcessedCount += processed;
                 long lag = valueOrZero(snapshot.getConsumerLag());
-                String sourceState = sourceState(snapshot);
+                String sourceState = sourceState(pipeline, snapshot);
                 String sinkState = sinkState(snapshot);
                 boolean stateChanged = !Objects.equals(previousSourceState, sourceState)
                         || !Objects.equals(previousSinkState, sinkState);
@@ -97,7 +105,8 @@ public class CdcLogService {
                 // 변화 없는 정상 heartbeat를 전부 노출하면 로그가 지나치게 커진다.
                 if (processed > 0L || lag > 0L || stateChanged || !"SUCCESS".equals(status) || latestBucket) {
                     result.add(toProcessingResponse(
-                            pipeline, bucket.getKey(), snapshot, processed, lag, sourceState, sinkState, status));
+                            pipeline, bucket.getKey(), snapshot, processed, dailyProcessedCount,
+                            lag, sourceState, sinkState, status));
                 }
                 previousCommitted = committed;
                 previousSourceState = sourceState;
@@ -110,7 +119,7 @@ public class CdcLogService {
 
     public List<CdcEventLogResponse> eventLogs(LocalDate from, LocalDate to) {
         DateRange range = validateRange(from, to);
-        List<PipelineDefinition> pipelines = cdcPipelines();
+        List<PipelineDefinition> pipelines = monitoredPipelines();
         if (pipelines.isEmpty()) {
             return List.of();
         }
@@ -133,10 +142,19 @@ public class CdcLogService {
                 .toList();
     }
 
-    private List<PipelineDefinition> cdcPipelines() {
-        return pipelineRepository.findAll().stream()
-                .filter(pipeline -> "TABLE_CDC".equalsIgnoreCase(pipeline.getPipelineType()))
-                .toList();
+    /**
+     * 이 화면이 다루는 파이프라인 전체.
+     *
+     * <p>예전에는 TABLE_CDC만 골랐다 - 로그 파이프라인이 나중에 같은 테이블/같은 화면을
+     * 쓰게 됐는데 필터가 남아서, 처리 이력과 오류·상태 이력 양쪽에서 통째로 빠져 있었다.
+     * 두 탭 모두 이 메서드를 쓰므로 여기 한 곳만 고치면 된다.
+     */
+    private List<PipelineDefinition> monitoredPipelines() {
+        return pipelineRepository.findAll();
+    }
+
+    private boolean isLogFile(PipelineDefinition pipeline) {
+        return "LOG_FILE".equalsIgnoreCase(pipeline.getPipelineType());
     }
 
     private CdcProcessingLogResponse toProcessingResponse(
@@ -144,6 +162,7 @@ public class CdcLogService {
             LocalDateTime occurredAt,
             PipelineMetricSnapshot snapshot,
             long processed,
+            long dailyProcessedCount,
             long lag,
             String sourceState,
             String sinkState,
@@ -151,12 +170,16 @@ public class CdcLogService {
         return new CdcProcessingLogResponse(
                 pipeline.getId(),
                 pipeline.getName(),
-                path(pipeline.getSourceDbType(), pipeline.getSourceSchema(), pipeline.getSourceTable()),
+                // 로그 파이프라인의 소스는 filebeat라 DB 경로가 없다 - "null · null.null"이
+                // 찍히지 않도록 에이전트 이름으로 표시한다(파이프라인 목록 화면과 동일).
+                isLogFile(pipeline) ? "Filebeat"
+                        : path(pipeline.getSourceDbType(), pipeline.getSourceSchema(), pipeline.getSourceTable()),
                 path(pipeline.getTargetDbType(), pipeline.getTargetSchema(), pipeline.getTargetTable()),
                 snapshot.getTopicName(),
                 occurredAt,
                 processed,
                 valueOrZero(snapshot.getCommittedOffset()),
+                dailyProcessedCount,
                 lag,
                 sourceState,
                 sinkState,
@@ -168,7 +191,15 @@ public class CdcLogService {
         return dbType + " · " + schema + "." + table;
     }
 
-    private String sourceState(PipelineMetricSnapshot snapshot) {
+    /**
+     * 로그 파이프라인은 소스가 filebeat여서 Kafka Connect 소스 커넥터가 없다 - 없는
+     * 것을 UNKNOWN으로 찍으면 "상태를 못 읽었다"처럼 보이므로 null로 두고 화면에서
+     * "-"로 표시한다. status() 판정도 null은 실패로 보지 않는다.
+     */
+    private String sourceState(PipelineDefinition pipeline, PipelineMetricSnapshot snapshot) {
+        if (isLogFile(pipeline)) {
+            return null;
+        }
         return snapshot.getSourceConnectorState() != null
                 ? snapshot.getSourceConnectorState() : "UNKNOWN";
     }

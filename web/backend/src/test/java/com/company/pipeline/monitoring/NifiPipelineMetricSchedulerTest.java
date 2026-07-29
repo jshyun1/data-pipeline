@@ -39,7 +39,7 @@ class NifiPipelineMetricSchedulerTest {
 
         String processorId = "59d9d764-019f-1000-bc10-355d39a9b2fd";
         var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "PutDatabaseRecord",
-                "PutDatabaseRecord");
+                "PutDatabaseRecord", 0);
         var processorEntry = new NifiFlowStatusResponse.ProcessorStatusEntry(processor);
         var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
                 "59d6f6f7-019f-1000-3a91-49b23eaf89a1", "logfile", List.of(processorEntry), List.of());
@@ -81,7 +81,7 @@ class NifiPipelineMetricSchedulerTest {
 
         String processorId = "59d9d764-019f-1000-bc10-355d39a9b2fd";
         var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "PutDatabaseRecord",
-                "PutDatabaseRecord");
+                "PutDatabaseRecord", 0);
         var processorEntry = new NifiFlowStatusResponse.ProcessorStatusEntry(processor);
         var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
                 "59d6f6f7-019f-1000-3a91-49b23eaf89a1", "logfile", List.of(processorEntry), List.of());
@@ -115,7 +115,7 @@ class NifiPipelineMetricSchedulerTest {
 
         String processorId = "9e2dd726-019f-1000-338b-b3f02d4d9673";
         var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "load-dz-POP002L",
-                "PutDatabaseRecord");
+                "PutDatabaseRecord", 0);
         var processorEntry = new NifiFlowStatusResponse.ProcessorStatusEntry(processor);
         var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
                 "9e2da75d-019f-1000-1f21-9e2ab492cf11", "DZ", List.of(processorEntry), List.of());
@@ -151,7 +151,7 @@ class NifiPipelineMetricSchedulerTest {
 
         String processorId = "a7d8b6b3-019f-1000-199b-2fe36157b6b2";
         var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "store-image-binary",
-                "ExecuteGroovyScript");
+                "ExecuteGroovyScript", 0);
         var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
                 "a7d8b5ea-019f-1000-7126-f9de54751340", "unstructured-image",
                 List.of(new NifiFlowStatusResponse.ProcessorStatusEntry(processor)), List.of());
@@ -184,7 +184,7 @@ class NifiPipelineMetricSchedulerTest {
         scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
                 executionLogRepository);
 
-        var processor = new NifiFlowStatusResponse.ProcessorStatus("p1", "parse-csv-and-tag", "UpdateRecord");
+        var processor = new NifiFlowStatusResponse.ProcessorStatus("p1", "parse-csv-and-tag", "UpdateRecord", 0);
         var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
                 "g1", "unstructured-csv",
                 List.of(new NifiFlowStatusResponse.ProcessorStatusEntry(processor)), List.of());
@@ -210,7 +210,7 @@ class NifiPipelineMetricSchedulerTest {
 
         String processorId = "9e2dd726-019f-1000-338b-b3f02d4d9673";
         var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "load-dz-POP002L",
-                "PutDatabaseRecord");
+                "PutDatabaseRecord", 0);
         var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
                 "9e2da75d-019f-1000-1f21-9e2ab492cf11", "DZ",
                 List.of(new NifiFlowStatusResponse.ProcessorStatusEntry(processor)), List.of());

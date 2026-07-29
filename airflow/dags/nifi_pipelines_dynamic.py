@@ -115,6 +115,135 @@ def _as_int(value) -> int:
     return int(str(value).replace(",", "").strip() or 0)
 
 
+INSERT_COUNTER_NAME = "INSERT updates performed"
+_PROCESSOR_ID_IN_CONTEXT = re.compile(r"\(([0-9a-fA-F-]{36})\)\s*$")
+
+
+def _walk_processor_snapshots(snapshot: dict):
+    """status(recursive=true) 응답에서 하위 그룹까지 훑어 프로세서 스냅샷을 모은다."""
+    for entry in snapshot.get("processorStatusSnapshots") or []:
+        processor = entry.get("processorStatusSnapshot")
+        if processor:
+            yield processor
+    for entry in snapshot.get("processGroupStatusSnapshots") or []:
+        child = entry.get("processGroupStatusSnapshot")
+        if child:
+            yield from _walk_processor_snapshots(child)
+
+
+def _insert_counters_by_processor(base_url: str, host_header: str, token: str) -> dict[str, int]:
+    """PutDatabaseRecord가 올리는 "적재 행수" 카운터를 프로세서별로 뽑는다.
+
+    FlowFile 건수(flowFilesOut)는 "파일 몇 개"라 행수가 아니다 - 155 MB짜리
+    FlowFile 하나가 166만 행인 식이라, 실제 적재 건수는 이 카운터로만 알 수 있다.
+    """
+    try:
+        response = requests.get(
+            f"{base_url}/nifi-api/counters",
+            headers={"Authorization": f"Bearer {token}", "Host": host_header},
+            verify=False,
+            timeout=15,
+        )
+        response.raise_for_status()
+        counters = response.json()["counters"]["aggregateSnapshot"]["counters"]
+    except Exception as exc:  # 카운터는 부가 정보라 못 읽어도 대기 자체는 계속한다
+        print(f"카운터 조회 실패(적재 건수 표시 생략): {exc}")
+        return {}
+    result = {}
+    for counter in counters:
+        if counter.get("name") != INSERT_COUNTER_NAME:
+            continue
+        matched = _PROCESSOR_ID_IN_CONTEXT.search(counter.get("context") or "")
+        if matched:
+            result[matched.group(1)] = _as_int(counter.get("valueCount"))
+    return result
+
+
+def _collect_new_bulletins(pg_id: str, pg_name: str, base_url: str, host_header: str,
+                           token: str, seen: set) -> list[str]:
+    """그룹 안에서 새로 올라온 경고/에러를 찍고, 그중 ERROR만 요약해서 돌려준다.
+
+    NiFi의 bulletin은 5분 남짓만 메모리에 남는 링버퍼라, 적재가 실패해도 그 자리에
+    없으면 어디에도 안 남는다. 대기하는 동안 계속 긁어서 태스크 로그에 박아둔다.
+
+    커서(after 파라미터)를 쓰지 않는 이유: bulletin id는 NiFi 프로세스 안에서만
+    단조 증가하고 재시작하면 1부터 다시 시작한다. 커서를 쓰면 재시작 직후의 실패가
+    통째로 걸러진다 - 백엔드 수집기가 실제로 이것 때문에 사고를 놓쳤다(2026-07-29).
+    링버퍼 자체가 작으니 매번 전체를 가져와서 이 태스크 안에서 본 id로만 거른다.
+    """
+    try:
+        response = requests.get(
+            f"{base_url}/nifi-api/flow/bulletin-board",
+            params={"groupId": pg_id},
+            headers={"Authorization": f"Bearer {token}", "Host": host_header},
+            verify=False,
+            timeout=15,
+        )
+        response.raise_for_status()
+        bulletins = response.json()["bulletinBoard"]["bulletins"]
+    except Exception as exc:
+        print(f"[{pg_name}] bulletin 조회 실패(이번 주기 건너뜀): {exc}")
+        return []
+    errors = []
+    for entry in bulletins:
+        bulletin = entry.get("bulletin") or {}
+        # id는 재시작하면 재사용되므로 메시지까지 묶어야 같은 태스크 안에서 안전하다.
+        key = (bulletin.get("id"), bulletin.get("sourceId"), bulletin.get("message"))
+        if key in seen:
+            continue
+        seen.add(key)
+        level = bulletin.get("level")
+        source = bulletin.get("sourceName")
+        message = bulletin.get("message")
+        print(f"[{pg_name}]   !! {level} {source}: {message}")
+        if level == "ERROR":
+            errors.append(f"{source}: {message}")
+    return errors
+
+
+def _fail_if_errors(pg_name: str, errors: list[str]):
+    """대기 중 ERROR bulletin을 하나라도 봤으면 태스크를 실패시킨다.
+
+    "큐 0 + 활성 스레드 0"만으로 완료를 판정하면 실패도 완료로 보인다 - NiFi 쪽
+    failure 관계가 자동종료(폐기)라 실패한 FlowFile이 큐에 남지 않기 때문이다.
+    실제로 원천 Oracle이 안 떠 있어 추출이 전부 실패한 날, truncate만 먼저 커밋돼
+    DZ 5개 테이블이 통째로 비었는데도 DAG는 초록불로 끝났다(2026-07-29).
+
+    WARNING은 평상시에도 올라오므로 실패로 보지 않는다. ERROR만 본다.
+    """
+    if not errors:
+        return
+    preview = "\n  - ".join(errors[:5])
+    more = f"\n  ... 외 {len(errors) - 5}건" if len(errors) > 5 else ""
+    raise RuntimeError(
+        f"[{pg_name}] 그룹은 유휴가 됐지만 처리 중 ERROR가 {len(errors)}건 발생했습니다. "
+        f"적재가 누락됐을 수 있으니 반드시 확인하십시오.\n  - {preview}{more}"
+    )
+
+
+def _print_load_summary(pg_name: str, base_url: str, host_header: str, token: str,
+                        baseline: dict[str, int], processor_names: dict[str, str]):
+    """이번 실행에서 프로세서별로 몇 행을 넣었는지 표로 남긴다."""
+    final = _insert_counters_by_processor(base_url, host_header, token)
+    rows = []
+    for processor_id, name in processor_names.items():
+        if processor_id not in final:
+            continue
+        before = baseline.get(processor_id, 0)
+        after = final[processor_id]
+        # NiFi가 중간에 재시작되면 카운터가 0부터 다시 오른다(그땐 현재값이 곧 이번분).
+        delta = after - before if after >= before else after
+        if delta > 0:
+            rows.append((name, delta))
+    if not rows:
+        print(f"[{pg_name}] 이번 실행 적재 건수: 없음 (적재 프로세서가 없거나 새로 넣은 행이 0)")
+        return
+    total = sum(delta for _, delta in rows)
+    print(f"[{pg_name}] 이번 실행 적재 건수 (총 {total:,}행)")
+    for name, delta in sorted(rows, key=lambda r: -r[1]):
+        print(f"[{pg_name}]   {name:<24} {delta:>12,} 행")
+
+
 def _downstream_group_ids(pg_id: str, connections: list[dict]) -> set[str]:
     """pg_id의 출력포트가 곧바로 이어지는 다른 그룹들의 id."""
     result = set()
@@ -226,6 +355,13 @@ def wait_for_group_completion(
     idle_streak = 0
     seen_activity = False
 
+    # 시작 시점의 적재 카운터를 기준점으로 잡아둔다. 카운터는 NiFi 재시작 전까지
+    # 누적이라, 이번 실행분만 보려면 끝값에서 이걸 빼야 한다.
+    baseline_counters = _insert_counters_by_processor(base_url, host_header, token)
+    seen_bulletins: set = set()
+    errors: list[str] = []
+    processor_names: dict[str, str] = {}
+
     while time.time() < deadline:
         response = requests.get(
             f"{base_url}/nifi-api/flow/process-groups/{pg_id}/status",
@@ -253,11 +389,29 @@ def wait_for_group_completion(
             f"idle={idle_streak}/{IDLE_SETTLE_CHECKS} activity={seen_activity}"
         )
 
+        # 합계만으로는 "뭔가 돌고 있다"까지밖에 모른다. 같은 응답에 프로세서별
+        # 스냅샷이 이미 들어있으니, 지금 스레드를 잡고 있는 놈을 이름으로 찍어준다.
+        for processor in _walk_processor_snapshots(snapshot):
+            processor_names[processor["id"]] = processor["name"]
+            if _as_int(processor.get("activeThreadCount")) > 0:
+                print(
+                    f"[{pg_name}]   > {processor['name']} ({processor['type']}) "
+                    f"스레드={processor.get('activeThreadCount')} "
+                    f"입력={processor.get('input')} 출력={processor.get('output')}"
+                )
+        errors.extend(_collect_new_bulletins(
+            pg_id, pg_name, base_url, host_header, token, seen_bulletins
+        ))
+
         if seen_activity and idle_streak >= IDLE_SETTLE_CHECKS:
             print(f"[{pg_name}] 완료 - 대기 FlowFile 0, 활성 스레드 0")
+            _print_load_summary(pg_name, base_url, host_header, token,
+                                baseline_counters, processor_names)
+            _fail_if_errors(pg_name, errors)
             return
         if not seen_activity and time.time() - started_at > WAIT_START_GRACE_SECONDS:
             print(f"[{pg_name}] 유예시간 내 아무 활동이 없어 처리할 데이터가 없었던 것으로 봄")
+            _fail_if_errors(pg_name, errors)
             return
         time.sleep(WAIT_POLL_INTERVAL_SECONDS)
 

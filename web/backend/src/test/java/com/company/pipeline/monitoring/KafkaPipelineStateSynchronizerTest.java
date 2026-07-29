@@ -202,4 +202,74 @@ class KafkaPipelineStateSynchronizerTest {
         return new ConnectorStatusResponse("x", new ConnectorState("STOPPED", "worker"),
                 List.of(), "sink");
     }
+
+    @Test
+    void logFilePipeline_sinkOnly_isMonitoredAndNotTreatedAsIncomplete() throws Exception {
+        // 로그 파이프라인의 소스는 filebeat라 Kafka Connect 커넥터가 아니다 - SINK만
+        // 있는 것이 정상 구성이다. 예전에는 TABLE_CDC만 점검해서, 로그 파이프라인은
+        // 커넥터가 죽어도 배포 시점 상태가 그대로 남아 화면에 계속 "실행중"으로 보였다.
+        PipelineDefinition pipeline = logFilePipeline(8L, PipelineStatus.DEPLOYED);
+        PipelineConnector sink = connector("SINK", "sink-8");
+        when(pipelineDefinitionRepository.findByStatusIn(any())).thenReturn(List.of(pipeline));
+        when(pipelineConnectorRepository.findByPipelineId(8L)).thenReturn(List.of(sink));
+        when(kafkaConnectClient.getStatus("sink-8")).thenReturn(runningStatus());
+
+        synchronizer.synchronizeRuntimeStates();
+
+        // SOURCE가 없다고 "메타데이터 불완전"으로 실패 처리하면 안 된다.
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.DEPLOYED);
+        verify(commandHistoryRecorder, never()).record(eq(8L), eq("RUNTIME_MONITOR"), eq("FAILED"), anyString());
+        verify(kafkaConnectClient, never()).getStatus("source-8");
+    }
+
+    @Test
+    void logFilePipeline_sinkDead_isDetectedAfterThreeChecks() throws Exception {
+        // 이 화면 표시 문제의 본체: Sink가 죽었는데도 계속 "실행중"으로 보이던 것.
+        PipelineDefinition pipeline = logFilePipeline(8L, PipelineStatus.DEPLOYED);
+        PipelineConnector sink = connector("SINK", "sink-8");
+        when(pipelineDefinitionRepository.findByStatusIn(any())).thenReturn(List.of(pipeline));
+        when(pipelineConnectorRepository.findByPipelineId(8L)).thenReturn(List.of(sink));
+        // registerProblem이 확정 직전에 최신 상태를 다시 읽는다(그 사이 Airflow가
+        // stop/start를 끝냈으면 옛 기대치로 FAILED를 덮어쓰지 않기 위해).
+        when(pipelineDefinitionRepository.findById(8L)).thenReturn(Optional.of(pipeline));
+        when(pipelineDefinitionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(kafkaConnectClient.getStatus("sink-8")).thenReturn(failedTaskStatus());
+
+        synchronizer.synchronizeRuntimeStates();
+        synchronizer.synchronizeRuntimeStates();
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.DEPLOYED);
+
+        synchronizer.synchronizeRuntimeStates();
+
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.FAILED);
+        verify(commandHistoryRecorder).record(eq(8L), eq("RUNTIME_MONITOR"), eq("FAILED"), anyString());
+    }
+
+    @Test
+    void logFilePipeline_stopped_sinkStoppedIsHealthy() throws Exception {
+        // 중지 상태에서는 Sink가 STOPPED인 것이 정상이다(소스 검사는 아예 없음).
+        PipelineDefinition pipeline = logFilePipeline(8L, PipelineStatus.STOPPED);
+        PipelineConnector sink = connector("SINK", "sink-8");
+        when(pipelineDefinitionRepository.findByStatusIn(any())).thenReturn(List.of(pipeline));
+        when(pipelineConnectorRepository.findByPipelineId(8L)).thenReturn(List.of(sink));
+        when(kafkaConnectClient.getStatus("sink-8")).thenReturn(stoppedStatus());
+
+        synchronizer.synchronizeRuntimeStates();
+
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.STOPPED);
+        verify(commandHistoryRecorder, never()).record(eq(8L), eq("RUNTIME_MONITOR"), eq("FAILED"), anyString());
+    }
+
+    private PipelineDefinition logFilePipeline(Long id, PipelineStatus status) throws Exception {
+        PipelineDefinition pipeline = new PipelineDefinition(
+                "app-log-ingest", "LOG_FILE", null, 11L,
+                null, DbType.POSTGRESQL,
+                null, null, "log_landing", "app_log",
+                "log-8", true, null, null);
+        Field idField = PipelineDefinition.class.getDeclaredField("id");
+        idField.setAccessible(true);
+        idField.set(pipeline, id);
+        pipeline.setStatus(status);
+        return pipeline;
+    }
 }

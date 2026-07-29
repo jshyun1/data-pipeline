@@ -5,6 +5,7 @@ import com.company.pipeline.nifi.dto.NifiCountersResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
 import com.company.pipeline.nifi.dto.NifiProcessGroupEntity;
 import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
+import com.company.pipeline.nifi.dto.NifiProcessorDetailResponse;
 import java.net.http.HttpClient;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
@@ -101,6 +102,23 @@ public class NifiClient {
                     .body(NifiCountersResponse.class);
         } catch (RestClientException ex) {
             throw new NifiClientException("NiFi 카운터 조회 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    /**
+     * 프로세서 1개의 설정. status 응답에는 설정이 없어서 적재 대상 테이블 같은 값을
+     * 얻으려면 이걸 따로 불러야 한다 - 프로세서마다 한 번만 부르고 캐시할 것.
+     */
+    public NifiProcessorDetailResponse getProcessor(String processorId) {
+        String token = getToken();
+        try {
+            return restClient.get()
+                    .uri("/nifi-api/processors/{id}", processorId)
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .body(NifiProcessorDetailResponse.class);
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 프로세서 조회 실패: " + ex.getMessage(), ex);
         }
     }
 

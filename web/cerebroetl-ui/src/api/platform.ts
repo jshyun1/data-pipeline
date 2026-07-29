@@ -258,3 +258,34 @@ export async function listNifiExecutionLogs(from: string, to: string): Promise<N
   });
   return unwrap(res.data);
 }
+
+/** 적재 프로세서의 실행 구간 1회. 시작~종료가 있어 소요시간과 처리량을 알 수 있다. */
+export interface NifiProcessorRun {
+  id: number;
+  processorId: string;
+  processorName: string;
+  /** PutDatabaseRecord / ExecuteGroovyScript 등. 소급 병합된 과거 구간은 null. */
+  processorType?: string | null;
+  groupId?: string | null;
+  groupName?: string | null;
+  /** 적재 대상 schema.table. 스크립트 기반 적재는 알 수 없어 null. */
+  targetTable?: string | null;
+  startedAt: string;
+  /** 진행 중이면 null. */
+  endedAt?: string | null;
+  durationSeconds: number;
+  insertedCount: number;
+  /** 소요가 0초면(한 폴링 주기 안에 끝남) 계산 불가라 null. */
+  rowsPerSecond?: number | null;
+  status: string;
+}
+
+// 백엔드가 15초마다 activeThreadCount와 적재 카운터를 관측해 만든 구간이다. NiFi에는
+// 실행 이력 개념이 없어서(Provenance 0건, 프로세서 Status History 빈 응답) 직접
+// 관측하는 것 외에 방법이 없고, 그래서 시작/종료는 최대 15초 오차가 있는 추정값이다.
+export async function listNifiProcessorRuns(from: string, to: string): Promise<NifiProcessorRun[]> {
+  const res = await apiClient.get<ApiResponse<NifiProcessorRun[]>>("/nifi/processor-runs", {
+    params: { from, to },
+  });
+  return unwrap(res.data);
+}

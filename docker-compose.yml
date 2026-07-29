@@ -1,3 +1,22 @@
+# 컨테이너 stdout/stderr는 도커가 JSON 파일 하나에 계속 이어붙이는데, 기본값에는
+# 상한이 없어서 컨테이너를 지우기 전까지 그 파일이 절대 줄지 않는다. 오래 도는
+# 서비스에서 디스크가 조용히 차는 전형적인 원인이라 컨테이너당 상한을 걸어둔다.
+#
+# 50MB짜리 조각 5개 = 서비스당 최대 250MB, 넘으면 가장 오래된 조각부터 자동 삭제.
+#
+# nifi/kafka의 자체 로그 파일(nifi-app.log, server.log)은 호스트로 빼지 않는다.
+# 두 컨테이너 모두 같은 내용을 stdout으로도 내보내고 있어서(실측: 마지막 줄까지
+# 동일) 여기 로테이션만으로 같은 로그가 250MB까지 남는다. 호스트 bind로 빼면
+# 서버마다 디렉터리를 미리 만들고 UID 1000으로 소유권을 맞춰야 하는데, 그 UID는
+# 베이스 이미지에 종속이라 이미지가 바뀌면 조용히 기동이 깨진다 - 중복 저장을
+# 위해 이식성을 깎는 거래라 하지 않는다. 장기 보존이 필요하면 bind가 아니라
+# filebeat 같은 수집기로 내보낼 것.
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 networks:
   pipeline-net:
     driver: bridge
@@ -22,6 +41,7 @@ services:
   # .env 의 TARGET_DB_HOST/PORT/계정을 실제 값으로 지정하세요.
   # ---------------------------------------------------------------------
   target-db:
+    logging: *default-logging
     image: ${TARGET_DB_IMAGE}
     profiles: ["poc"]
     container_name: target-db
@@ -55,6 +75,7 @@ services:
   # Kafka (KRaft 모드, 브로커+컨트롤러 결합, 단일 노드)
   # ---------------------------------------------------------------------
   kafka:
+    logging: *default-logging
     image: ${KAFKA_IMAGE}
     container_name: kafka
     restart: unless-stopped
@@ -70,6 +91,14 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # 토픽 데이터(파티션 세그먼트, __consumer_offsets, KRaft 메타데이터)가 저장되는 곳.
+      #
+      # 이 값을 안 주면 브로커가 기본값 /tmp/kafka-logs를 쓴다 - 컨테이너 안이라
+      # 재생성 한 번이면 토픽과 컨슈머 오프셋이 통째로 사라진다. 아래 kafka-data
+      # 볼륨은 선언만 돼 있고 실제로는 아무것도 안 받고 있었다(실측: 볼륨 0항목,
+      # /tmp/kafka-logs에 250MB/파티션 98개). 볼륨을 가리키게 해서 컨테이너 수명과
+      # 데이터 수명을 분리한다.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS}
     ports:
       - "${KAFKA_BROKER_PORT}:9092"
@@ -92,6 +121,7 @@ services:
   # Kafka Connect + Debezium Oracle(LogMiner) 커넥터 (CDC 실시간 캡처)
   # ---------------------------------------------------------------------
   kafka-connect:
+    logging: *default-logging
     image: data-pipeline-kafka-connect:${APP_VERSION:-latest}
     build:
       context: ./kafka-connect
@@ -148,6 +178,7 @@ services:
   # (JDK 21 기반, NiFi 2.x 요구사항)
   # ---------------------------------------------------------------------
   nifi:
+    logging: *default-logging
     image: data-pipeline-nifi:${APP_VERSION:-latest}
     build:
       context: ./nifi
@@ -239,6 +270,7 @@ services:
   # docs/kafka-webservice-design.md §14 참고.
   # ---------------------------------------------------------------------
   metadata-db:
+    logging: *default-logging
     image: postgres:16-alpine
     container_name: metadata-db
     restart: unless-stopped
@@ -269,6 +301,7 @@ services:
   # (KafkaConnectClient/ConnectorConfigRenderer는 다음 증분).
   # ---------------------------------------------------------------------
   pipeline-api:
+    logging: *default-logging
     image: data-pipeline-pipeline-api:${APP_VERSION:-latest}
     build:
       context: ./web/backend
@@ -336,6 +369,7 @@ services:
   # 하나의 포트만 알면 된다.
   # ---------------------------------------------------------------------
   pipeline-ui:
+    logging: *default-logging
     image: data-pipeline-pipeline-ui:${APP_VERSION:-latest}
     build:
       context: ./web/frontend
@@ -367,6 +401,7 @@ services:
   # 기동되고, Airflow 화면의 상태 조회만 연결 실패로 표시된다.
   # ---------------------------------------------------------------------
   cerebroetl-ui:
+    logging: *default-logging
     image: data-pipeline-cerebroetl-ui:${APP_VERSION:-latest}
     build:
       context: ./web/cerebroetl-ui
@@ -406,6 +441,7 @@ services:
   # reload 설정이 컨테이너 재시작 없이 주기적으로 반영한다.
   # ---------------------------------------------------------------------
   filebeat:
+    logging: *default-logging
     image: docker.elastic.co/beats/filebeat:${FILEBEAT_IMAGE_TAG}
     container_name: filebeat
     restart: unless-stopped
@@ -456,12 +492,24 @@ services:
   # 최초 기동 시 1회 실행되어 DB 마이그레이션 + admin 계정을 만들고 종료되는
   # "1회성 초기화 컨테이너" 패턴.
   airflow-init:
+    logging: *default-logging
     image: apache/airflow:${AIRFLOW_IMAGE_TAG}
     container_name: airflow-init
     depends_on:
       metadata-db:
         condition: service_healthy
     environment: &airflow-common-env
+      # 이 시스템의 모든 시각은 한국시간 기준이다(nifi/kafka 컨테이너도 동일).
+      #
+      # TZ는 컨테이너 OS 시계 - 태스크 로그와 print()의 시각 표기에 적용된다.
+      # AIRFLOW__CORE__DEFAULT_TIMEZONE은 Airflow가 크론을 해석하는 기준 -
+      # 기본값 utc로 두면 화면에서 "56 12 * * *"를 넣은 사람은 낮 12시 56분을
+      # 의도했는데 실제로는 밤 9시 56분에 돈다(실제로 이틀 연속 밤에 못 돌고
+      # 다음날 아침 부팅 직후로 밀린 뒤에야 발견했다).
+      #
+      # DB에 저장되는 값 자체는 어느 쪽이든 항상 UTC다 - 해석과 표시만 바뀐다.
+      TZ: Asia/Seoul
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Seoul
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       # 호스트 메모리가 빠듯해 LocalExecutor의 태스크당 fork+exec(Task SDK 재import)
       # 부담이 큼 - 동시 fork 수를 낮춰 순간 메모리 버스트가 겹치는 걸 줄인다.
@@ -523,6 +571,7 @@ services:
     networks: [pipeline-net]
 
   airflow-apiserver:
+    logging: *default-logging
     image: apache/airflow:${AIRFLOW_IMAGE_TAG}
     container_name: airflow-apiserver
     restart: unless-stopped
@@ -561,6 +610,7 @@ services:
     networks: [pipeline-net]
 
   airflow-scheduler:
+    logging: *default-logging
     image: apache/airflow:${AIRFLOW_IMAGE_TAG}
     container_name: airflow-scheduler
     restart: unless-stopped
@@ -594,6 +644,7 @@ services:
 
   # 3.x부터 DAG 파일 파싱이 스케줄러에서 분리된 별도 컨테이너로 나뉨.
   airflow-dag-processor:
+    logging: *default-logging
     image: apache/airflow:${AIRFLOW_IMAGE_TAG}
     container_name: airflow-dag-processor
     restart: unless-stopped

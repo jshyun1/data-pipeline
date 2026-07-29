@@ -61,8 +61,46 @@ class CdcLogServiceTest {
         assertThat(result).hasSize(2);
         assertThat(result.get(0).occurredAt()).isEqualTo(day.atTime(10, 1));
         assertThat(result.get(0).processedCount()).isEqualTo(5L);
+        assertThat(result.get(0).dailyProcessedCount()).isEqualTo(10L);
         assertThat(result.get(0).consumerLag()).isEqualTo(2L);
         assertThat(result.get(1).processedCount()).isEqualTo(5L);
+        assertThat(result.get(1).dailyProcessedCount()).isEqualTo(5L);
+    }
+
+    @Test
+    void processingLogs_resetsDailyProcessedCountAtMidnight() {
+        PipelineDefinition pipeline = pipeline(1L);
+        LocalDate firstDay = LocalDate.of(2026, 7, 27);
+        LocalDate secondDay = firstDay.plusDays(1);
+        LocalDateTime from = firstDay.atStartOfDay();
+        LocalDateTime to = secondDay.plusDays(1).atStartOfDay().minusNanos(1);
+        PipelineMetricSnapshot baseline =
+                snapshot(1L, from.minusSeconds(20), 100L, 0L, "RUNNING", "RUNNING");
+        PipelineMetricSnapshot first =
+                snapshot(1L, firstDay.atTime(23, 58, 20), 105L, 0L, "RUNNING", "RUNNING");
+        PipelineMetricSnapshot endOfFirstDay =
+                snapshot(1L, firstDay.atTime(23, 59, 20), 110L, 0L, "RUNNING", "RUNNING");
+        PipelineMetricSnapshot startOfSecondDay =
+                snapshot(1L, secondDay.atTime(0, 0, 20), 113L, 0L, "RUNNING", "RUNNING");
+        PipelineMetricSnapshot second =
+                snapshot(1L, secondDay.atTime(0, 1, 20), 118L, 0L, "RUNNING", "RUNNING");
+
+        when(pipelineRepository.findAll()).thenReturn(List.of(pipeline));
+        when(snapshotRepository.findByPipelineIdInAndCollectedAtBetweenOrderByCollectedAtAsc(
+                List.of(1L), from, to))
+                .thenReturn(List.of(first, endOfFirstDay, startOfSecondDay, second));
+        when(snapshotRepository.findTopByPipelineIdAndCollectedAtBeforeOrderByCollectedAtDesc(1L, from))
+                .thenReturn(Optional.of(baseline));
+
+        List<CdcProcessingLogResponse> result = service.processingLogs(firstDay, secondDay);
+
+        assertThat(result).hasSize(4);
+        assertThat(result.get(0).occurredAt()).isEqualTo(secondDay.atTime(0, 1));
+        assertThat(result.get(0).dailyProcessedCount()).isEqualTo(8L);
+        assertThat(result.get(1).occurredAt()).isEqualTo(secondDay.atStartOfDay());
+        assertThat(result.get(1).dailyProcessedCount()).isEqualTo(3L);
+        assertThat(result.get(2).dailyProcessedCount()).isEqualTo(10L);
+        assertThat(result.get(3).dailyProcessedCount()).isEqualTo(5L);
     }
 
     @Test

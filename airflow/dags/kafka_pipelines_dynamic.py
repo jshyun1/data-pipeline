@@ -48,7 +48,11 @@ from airflow.sdk import Asset, Param
 from airflow.sdk.exceptions import AirflowException, AirflowSkipException
 
 PIPELINE_API_BASE_URL = "http://pipeline-api:8081"
-ACTIONS = ["start", "stop"]
+# deploy(배포)까지 여기에 두는 이유: 화면에서 버튼으로 배포하면 "아무도 시작을
+# 지시하지 않았는데 적재가 시작되는" 경로가 생긴다. 파이프라인의 생성/삭제만 화면이
+# 맡고 실행 계통(배포·시작·중지)은 전부 Airflow가 지시한다 - NiFi 쪽에
+# autoResumeState=false로 강제해둔 것과 같은 규칙이다.
+ACTIONS = ["deploy", "start", "stop"]
 VERIFY_ATTEMPTS = 6
 VERIFY_INTERVAL_SECONDS = 5
 RUNTIME_MONITOR_INTERVAL_SECONDS = 30
@@ -75,9 +79,11 @@ def verify_pipeline_action(pipeline_id: int, **context):
     resp.raise_for_status()
     connectors = resp.json()["data"]["connectors"]
     roles = {c["connectorRole"] for c in connectors}
-    if roles != {"SOURCE", "SINK"}:
+    # 로그 파이프라인의 "소스"는 filebeat라서 Kafka Connect 커넥터가 아니다 - SINK만
+    # 있는 것이 정상 구성이다. 반대로 CDC는 Source/Sink가 둘 다 있어야 한다.
+    if "SINK" not in roles:
         raise RuntimeError(
-            f"파이프라인 {pipeline_id}의 Source/Sink Connector 구성이 불완전합니다: {sorted(roles)}"
+            f"파이프라인 {pipeline_id}에 Sink Connector가 없습니다: {sorted(roles)}"
         )
 
     problems = []
@@ -86,7 +92,14 @@ def verify_pipeline_action(pipeline_id: int, **context):
         for connector in connectors:
             name = connector["connectorName"]
             role = connector["connectorRole"]
-            expected = "RUNNING" if action == "start" or role == "SOURCE" else "STOPPED"
+            # deploy는 "만들되 실행하지 않는" 단계라 전부 STOPPED가 정상이다.
+            # stop은 CDC에서 Source를 계속 돌려둔다(원천 변경분을 놓치지 않기 위해).
+            if action == "deploy":
+                expected = "STOPPED"
+            elif action == "start" or role == "SOURCE":
+                expected = "RUNNING"
+            else:
+                expected = "STOPPED"
             status_resp = requests.get(
                 f"{PIPELINE_API_BASE_URL}/api/connect/connectors/{name}/status", timeout=30
             )
@@ -186,6 +199,10 @@ def monitor_cdc_runtime(pipeline_id: int, **context) -> bool:
     action = context["params"]["action"]
     if action == "stop":
         return True
+    if action == "deploy":
+        # 배포는 커넥터를 STOPPED로 만들어두는 단계라 감시할 런타임이 없다.
+        # 실제 실행은 이후 start DagRun이 지시하고, 그 Run이 감시를 맡는다.
+        return True
 
     try:
         response = requests.get(
@@ -220,6 +237,7 @@ def sanitize(name: str) -> str:
 def build_dag(
     pipeline_id: int,
     pipeline_name: str,
+    pipeline_type: str,
     target_schema: str | None,
     target_table: str | None,
 ) -> DAG:
@@ -228,8 +246,11 @@ def build_dag(
         # dag_id는 파이프라인 삭제 후 같은 id가 재사용될 일이 없어 안정적이지만, 사람이
         # 읽을 이름은 NiFi DAG와 동일하게 dag_display_name(화면 표시 전용)으로 분리한다 -
         # Airflow 화면에서 "kafka_pipeline_13_control" 대신 실제 파이프라인명이 보인다.
-        dag_display_name=f"CDC_{sanitize(pipeline_name)}",
-        description=f'Kafka CDC 파이프라인 "{pipeline_name}"(id={pipeline_id}) 시작/Sink 중지 제어',
+        dag_display_name=f"{'LOG' if pipeline_type == 'LOG_FILE' else 'CDC'}_{sanitize(pipeline_name)}",
+        description=(
+            f'Kafka {"로그" if pipeline_type == "LOG_FILE" else "CDC"} 파이프라인 '
+            f'"{pipeline_name}"(id={pipeline_id}) 배포/시작/중지 제어'
+        ),
         schedule=None,
         start_date=datetime(2026, 1, 1),
         catchup=False,
@@ -287,12 +308,16 @@ except Exception as exc:  # pipeline-api가 잠시 안 뜬 상태라도 DAG 파�
     print(f"pipeline-api 조회 실패, 이번 파싱 주기엔 Kafka 파이프라인 DAG를 생성하지 않음: {exc}")
     _pipelines = []
 
+# LOG_FILE도 포함한다. 예전에는 TABLE_CDC만 DAG를 만들어서 로그 파이프라인은
+# Airflow에서 제어할 수단이 아예 없었고, 그래서 화면에만 "배포" 버튼이 따로 남아
+# 있었다 - 실행 계통을 Airflow로 일원화하려면 여기부터 열어야 한다.
 for _pipeline in _pipelines:
-    if _pipeline.get("pipelineType") != "TABLE_CDC":
+    if _pipeline.get("pipelineType") not in ("TABLE_CDC", "LOG_FILE"):
         continue
     globals()[f"kafka_pipeline_{_pipeline['id']}_control_dag"] = build_dag(
         _pipeline["id"],
         _pipeline["name"],
+        _pipeline.get("pipelineType"),
         _pipeline.get("targetSchema"),
         _pipeline.get("targetTable"),
     )

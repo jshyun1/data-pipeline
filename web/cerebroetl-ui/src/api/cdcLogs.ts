@@ -11,8 +11,10 @@ export interface CdcProcessingLogEntry {
   occurredAt: string;
   processedCount: number;
   committedOffset: number;
+  dailyProcessedCount: number;
   consumerLag: number;
-  sourceState: string;
+  /** 로그 파이프라인은 소스가 filebeat라 Kafka Connect 소스 커넥터가 없다 -> null. */
+  sourceState: string | null;
   sinkState: string;
   status: CdcProcessingStatus;
   message: string | null;
