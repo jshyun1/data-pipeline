@@ -3,6 +3,7 @@ package com.company.pipeline.monitoring;
 import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.monitoring.dto.DailyLoadIncrementRequest;
 import com.company.pipeline.monitoring.dto.DailyLoadSummaryResponse;
+import com.company.pipeline.monitoring.dto.HourlyLoadSummaryResponse;
 import com.company.pipeline.monitoring.dto.RealtimePipelineMetricResponse;
 import jakarta.validation.Valid;
 import java.time.LocalDate;
@@ -25,12 +26,15 @@ import org.springframework.web.bind.annotation.RestController;
 public class PipelineDailyLoadMetricController {
 
     private final PipelineDailyLoadMetricService service;
+    private final HourlyLoadMetricService hourlyLoadMetricService;
     private final RealtimePipelineMetricService realtimeMetricService;
 
     public PipelineDailyLoadMetricController(
             PipelineDailyLoadMetricService service,
+            HourlyLoadMetricService hourlyLoadMetricService,
             RealtimePipelineMetricService realtimeMetricService) {
         this.service = service;
+        this.hourlyLoadMetricService = hourlyLoadMetricService;
         this.realtimeMetricService = realtimeMetricService;
     }
 
@@ -48,6 +52,15 @@ public class PipelineDailyLoadMetricController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false) String source) {
         return ApiResponse.success(service.getSummary(from, to, source));
+    }
+
+    /** 같은 조회 기간을 24시간 칸으로 접어 본 것. 일자별 차트와 짝으로 쓴다. */
+    @GetMapping("/hourly")
+    public ApiResponse<HourlyLoadSummaryResponse> hourly(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String source) {
+        return ApiResponse.success(hourlyLoadMetricService.getHourly(from, to, source));
     }
 
     @GetMapping("/realtime")
