@@ -426,15 +426,25 @@ body {
 }
 
 /* ===== 통합 운영 대시보드 ===== */
+/*
+ * 이 화면은 스크롤 없이 한 눈에 들어와야 한다: 페이지 높이를 뷰포트에 고정하고
+ * (앱 헤더 61px + .app-content 위아래 패딩 48px을 뺀 값), 필터바/요약카드가 쓰고 남은
+ * 높이를 아래 구역이 그대로 채운다. 차트는 고정 높이 대신 남은 높이에 맞춰 그려진다.
+ */
 .dashboard-page {
+  height: calc(100vh - 109px);
   width: 100%;
   max-width: 1840px;
   margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
 }
 
 .dashboard-filter-bar {
-  margin-bottom: 16px;
-  padding: 15px 18px;
+  flex: 0 0 auto;
+  padding: 11px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -444,17 +454,21 @@ body {
   background: #ffffff;
 }
 
+.dashboard-filter-heading {
+  min-width: 0;
+}
+
 .dashboard-filter-bar h2 {
-  margin: 0 0 5px;
+  margin: 0 0 3px;
   color: #172033;
-  font-size: 21px;
+  font-size: 19px;
   font-weight: 850;
 }
 
 .dashboard-filter-bar p {
   margin: 0;
   color: #64748b;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .dashboard-filter-bar p strong {
@@ -466,10 +480,10 @@ body {
 }
 
 .dashboard-summary-grid {
-  margin-bottom: 16px;
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  gap: 12px;
 }
 
 .dashboard-summary-card {
@@ -501,8 +515,7 @@ body {
 }
 
 .dashboard-summary-card .ant-card-body {
-  min-height: 207px;
-  padding: 19px 20px 17px;
+  padding: 10px 14px 9px;
 }
 
 .summary-card-heading {
@@ -528,9 +541,9 @@ body {
 }
 
 .summary-card-value {
-  margin-top: 18px;
+  margin-top: 7px;
   color: #111827;
-  font-size: clamp(30px, 2.5vw, 40px);
+  font-size: clamp(21px, 1.7vw, 28px);
   font-weight: 760;
   letter-spacing: -1.2px;
   line-height: 1;
@@ -539,20 +552,13 @@ body {
 .summary-card-value small {
   margin-left: 7px;
   color: #64748b;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0;
 }
 
-.summary-card-caption {
-  margin-top: 7px;
-  color: #94a3b8;
-  font-size: 12px;
-}
-
 .summary-card-details {
-  min-height: 27px;
-  margin-top: 18px;
+  margin-top: 8px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -583,9 +589,15 @@ body {
   font-size: 13px;
 }
 
+/* 커넥터 불일치처럼 "지금 봐야 하는" 값만 경고색을 쓴다. */
+.summary-card-warning,
+.summary-card-warning strong {
+  color: #b4740f;
+}
+
 .airflow-run-strip {
-  height: 22px;
-  margin-top: 11px;
+  height: 8px;
+  margin-top: 7px;
   display: flex;
   gap: 4px;
 }
@@ -609,44 +621,71 @@ body {
   background: #357fd2;
 }
 
-.dashboard-main-grid {
+/* 필터바가 쓰고 남은 높이 전부: 왼쪽 통계 구역 + 오른쪽 인프라 구역을 한 화면에 둔다. */
+.dashboard-body {
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(330px, 0.92fr);
-  align-items: stretch;
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(290px, 340px);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 12px;
 }
 
-.dashboard-primary-column,
-.dashboard-side-column {
+.dashboard-main {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
-.dashboard-side-column {
-  height: 0;
-  min-height: 100%;
+/* 통계 구역: 일별 / 시간대별 / NiFi Top5 / CDC Top5 네 칸. */
+.dashboard-stats-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+/* 인프라 구역: 서버 리소스 3종은 내용 높이, 프로세스 현황이 남은 높이를 갖는다. */
+.dashboard-infra-column {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   overflow: hidden;
 }
 
-.dashboard-side-column .dashboard-feed-card {
+.dashboard-chart-card,
+.infra-process-card {
   min-height: 0;
-  flex: 1;
   display: flex;
   flex-direction: column;
 }
 
-.dashboard-side-column .dashboard-feed-card .ant-card-body {
-  min-height: 0;
+/*
+ * 차트는 autoFit으로 상자 크기를 읽는다. 높이가 0인 flex 자식에서는 크기를 못 읽으므로,
+ * 실제 크기가 정해진 상자를 두고 그 안에 절대배치해서 항상 측정 가능하게 만든다.
+ */
+.chart-fit-shell {
+  position: relative;
   flex: 1;
-  overflow-y: auto;
+  min-width: 0;
+  min-height: 0;
 }
 
-.dashboard-chart-pair {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+.chart-fit-shell > * {
+  position: absolute;
+  inset: 0;
+}
+
+.dashboard-chart-card .empty-chart-placeholder {
+  flex: 1;
+  height: auto;
 }
 
 .dashboard-panel,
@@ -657,8 +696,8 @@ body {
 
 .dashboard-panel .ant-card-head,
 .dashboard-feed-card .ant-card-head {
-  min-height: 47px;
-  padding: 0 14px;
+  min-height: 38px;
+  padding: 0 12px;
   border-bottom-color: #e8edf3;
 }
 
@@ -677,12 +716,19 @@ body {
   padding: 0 14px;
 }
 
+/* 카드 머리를 뺀 나머지 높이를 차트가 그대로 쓴다(.dashboard-panel 기본 패딩보다 뒤). */
+.dashboard-chart-card .ant-card-body {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 8px 8px;
+  display: flex;
+}
+
 .dashboard-feed-list {
   display: flex;
   flex-direction: column;
 }
 
-.dashboard-feed-row,
 .dashboard-event-row {
   width: 100%;
   min-width: 0;
@@ -694,53 +740,14 @@ body {
   cursor: pointer;
 }
 
-.dashboard-feed-row:last-child,
 .dashboard-event-row:last-child {
   border-bottom: 0;
 }
 
-.dashboard-feed-row {
-  min-height: 63px;
-  padding: 9px 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.dashboard-feed-row:hover,
 .dashboard-event-row:hover {
   background: #f8fafc;
 }
 
-.feed-state-dot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: #94a3b8;
-}
-
-.feed-state-dot--success {
-  background: #37a560;
-}
-
-.feed-state-dot--failed {
-  background: #df3f45;
-}
-
-.feed-state-dot--running {
-  background: #2d7dd2;
-}
-
-.feed-row-content {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.feed-row-content strong,
 .event-content strong {
   overflow: hidden;
   color: #26344c;
@@ -750,19 +757,27 @@ body {
   white-space: nowrap;
 }
 
-.feed-row-content small,
 .event-content small {
   color: #94a3b8;
   font-size: 11px;
 }
 
+/* 카드 폭이 좁아서(구역의 1/4) 시각·출처를 위 줄, 내용을 아래 줄로 접는다. */
 .dashboard-event-row {
-  min-height: 67px;
-  padding: 9px 0;
+  padding: 7px 0;
   display: grid;
-  grid-template-columns: 76px auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: 3px 8px;
+}
+
+.dashboard-event-row .ant-tag {
+  justify-self: start;
+  margin-inline-end: 0;
+}
+
+.dashboard-event-row .event-content {
+  grid-column: 1 / -1;
 }
 
 .event-time {
@@ -808,28 +823,237 @@ body {
   font-size: 18px;
 }
 
+/* ----- 인프라 구역: 서버 리소스 타일 ----- */
+.infra-tile {
+  border-color: #e2e8f0;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.035);
+}
+
+.infra-tile {
+  flex: 0 0 auto;
+}
+
+.infra-tile .ant-card-body {
+  padding: 8px 12px 9px;
+}
+
+.infra-tile-title {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+/*
+ * 수치를 항상 같이 보여주기 때문에 색이 안 보이는 환경에서도 읽힌다 - 상태색(정상/경고/
+ * 위험)은 여기와 프로세스 태그에만 쓰고, 차트 계열색으로는 절대 쓰지 않는다.
+ */
+.infra-tile-value {
+  margin-top: 5px;
+  color: #1f2b40;
+  font-size: clamp(19px, 1.5vw, 24px);
+  font-weight: 760;
+  letter-spacing: -0.8px;
+  line-height: 1;
+}
+
+.infra-tile-value small {
+  margin-left: 3px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.infra-tile-value--warn {
+  color: #b4740f;
+}
+
+.infra-tile-value--danger {
+  color: #c62b30;
+}
+
+.infra-meter {
+  height: 5px;
+  margin: 7px 0 6px;
+  overflow: hidden;
+  background: #eef1f5;
+  border-radius: 3px;
+}
+
+.infra-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: #37a560;
+}
+
+.infra-meter-fill--warn {
+  background: #b4740f;
+}
+
+.infra-meter-fill--danger {
+  background: #d0353a;
+}
+
+.infra-tile-headline {
+  color: #24344d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.infra-tile-caption {
+  margin-top: 4px;
+  color: #94a3b8;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.infra-tile-unavailable {
+  margin: 12px 0 10px;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.infra-system-list {
+  margin: 9px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.infra-system-list > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.infra-system-list dt {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.infra-system-list dd {
+  margin: 0;
+  color: #24344d;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----- 인프라 구역: 주요 프로세스 현황 ----- */
+.infra-process-card {
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow: hidden;
+}
+
+.infra-process-card .ant-card-body {
+  flex: 1;
+  min-height: 0;
+  padding: 2px 14px 8px;
+  overflow-y: auto;
+}
+
+.infra-process-group + .infra-process-group {
+  margin-top: 6px;
+}
+
+.infra-process-group-heading {
+  padding: 7px 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.infra-process-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1px 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #edf1f5;
+}
+
+.infra-process-row:last-child {
+  border-bottom: 0;
+}
+
+.infra-process-row .ant-tag {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  margin-inline-end: 0;
+}
+
+.infra-process-name {
+  grid-column: 1;
+  overflow: hidden;
+  color: #26344c;
+  font-size: 12.5px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.infra-process-detail {
+  grid-column: 1;
+  overflow: hidden;
+  color: #94a3b8;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * 아래는 한 화면에 다 못 들어가는 크기일 때의 대비다. 페이지 자체는 계속 스크롤되지
+ * 않고(구역 안에서만 스크롤) 차트가 읽을 수 없게 눌리는 것만 막는다.
+ */
 @media (max-width: 1280px) {
-  .dashboard-main-grid {
+  /* 인프라 열을 접고 통계만 남긴다 - 인프라는 아래로 내려 세로로 이어 붙인다. */
+  .dashboard-body {
     grid-template-columns: minmax(0, 1fr);
-    align-items: start;
+    overflow-y: auto;
   }
 
-  .dashboard-side-column {
-    height: 490px;
-    min-height: 0;
-    overflow: hidden;
+  .dashboard-stats-grid {
+    grid-template-rows: repeat(2, minmax(230px, 1fr));
+  }
+
+  .dashboard-infra-column {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .infra-process-card {
+    grid-column: 1 / -1;
+    min-height: 260px;
   }
 }
 
 @media (max-width: 980px) {
-  .dashboard-summary-grid {
+  .dashboard-page {
+    height: auto;
+    min-height: calc(100vh - 109px);
+    overflow: visible;
+  }
+
+  .dashboard-summary-grid,
+  .dashboard-stats-grid,
+  .dashboard-infra-column {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .dashboard-summary-card .ant-card-body {
-    min-height: auto;
+  .dashboard-stats-grid {
+    grid-auto-rows: minmax(230px, auto);
+    grid-template-rows: none;
   }
 }
 
@@ -847,19 +1071,27 @@ body {
   .dashboard-date-filter .ant-btn {
     flex: 1;
   }
+}
 
-  .dashboard-chart-pair,
-  .dashboard-side-column {
-    grid-template-columns: minmax(0, 1fr);
+/* 세로가 짧은 화면(노트북 등)에서 요약 카드가 차트 높이를 다 먹지 않게 조인다. */
+@media (max-height: 800px) {
+  .dashboard-summary-card .ant-card-body {
+    padding: 10px 14px 9px;
   }
 
-  .dashboard-side-column {
-    height: auto;
-    overflow: visible;
+  .summary-card-value {
+    margin-top: 7px;
+    font-size: clamp(22px, 1.7vw, 28px);
   }
 
-  .dashboard-side-column .dashboard-feed-card {
-    height: 490px;
+  .summary-card-details {
+    margin-top: 8px;
+    gap: 5px 14px;
+  }
+
+  .airflow-run-strip {
+    height: 9px;
+    margin-top: 7px;
   }
 }
 

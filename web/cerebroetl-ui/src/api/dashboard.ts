@@ -28,6 +28,32 @@ export async function getDailyLoadSummary(
   return unwrap(res.data);
 }
 
+export interface HourlyLoadPointResponse {
+  /** YYYY-MM-DD */
+  date: string;
+  /** 0~23 */
+  hour: number;
+  count: number;
+}
+
+export interface HourlyLoadSummaryResponse {
+  hourly: HourlyLoadPointResponse[];
+}
+
+// 날짜 × 시간대 조합의 적재 건수. 시각이 남아 있는 원본 관측 테이블(NiFi=카운터 증가분
+// 로그, CDC=offset 스냅샷)에서 계산하므로, 그 테이블이 생기기 전 기간은 값이 비어 있다.
+// 건수가 0인 조합은 응답에 없으므로 화면에서 빈 칸을 채운다.
+export async function getHourlyLoadSummary(
+  from: string,
+  to: string,
+  source?: "NIFI" | "KAFKA",
+): Promise<HourlyLoadSummaryResponse> {
+  const res = await apiClient.get<ApiResponse<HourlyLoadSummaryResponse>>("/metrics/daily-load/hourly", {
+    params: { from, to, source },
+  });
+  return unwrap(res.data);
+}
+
 export interface ConnectorDriftEntry {
   pipelineId: number;
   pipelineName: string;
