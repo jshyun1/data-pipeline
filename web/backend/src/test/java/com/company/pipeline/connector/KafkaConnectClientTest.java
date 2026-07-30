@@ -30,6 +30,24 @@ class KafkaConnectClientTest {
         server.shutdown();
     }
 
+    /** 대시보드 인프라 구역의 워커 생존 확인. 실제 워커(7.7.1-ccs) 응답 형태 그대로. */
+    @Test
+    void getWorkerInfo_parsesVersionAndClusterId() throws Exception {
+        server.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setBody("""
+                        {"version":"7.7.1-ccs","commit":"91d86f33092378c89731b4a9cf1ce5db831a2b07",
+                         "kafka_cluster_id":"p2L8jgNR4wDo_-ShniX13A"}
+                        """)
+                .addHeader("Content-Type", "application/json"));
+
+        var info = client.getWorkerInfo();
+
+        assertThat(info.version()).isEqualTo("7.7.1-ccs");
+        assertThat(info.kafkaClusterId()).isEqualTo("p2L8jgNR4wDo_-ShniX13A");
+        assertThat(server.takeRequest().getPath()).isEqualTo("/");
+    }
+
     @Test
     void listConnectors_parsesJsonArray() throws Exception {
         server.enqueue(new MockResponse()

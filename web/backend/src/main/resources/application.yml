@@ -47,6 +47,17 @@ kafka:
 filebeat:
   inputs-dir: ${FILEBEAT_INPUTS_DIR:/filebeat-inputs}
 
+# 대시보드 인프라 구역에서 Airflow 스케줄러/DAG 프로세서 생존 확인(monitor/health)용.
+# 조회 전용이고 인증이 필요 없는 엔드포인트만 쓴다.
+airflow:
+  base-url: ${AIRFLOW_BASE_URL:http://airflow-apiserver:8080}
+
+# 대시보드 인프라 구역의 서버 리소스. proc-path는 컨테이너 안에서도 호스트 값이 보이는
+# procfs 경로, disk-paths는 사용률을 볼 마운트 경로다(쉼표로 여러 개 지정 가능).
+infra:
+  proc-path: ${INFRA_PROC_PATH:/proc}
+  disk-paths: ${INFRA_DISK_PATHS:/}
+
 nifi:
   base-url: ${NIFI_BASE_URL:https://localhost:8443}
   # NiFi가 Single User 인증(공유 서비스계정)으로 전환됨에 따라 username/password로

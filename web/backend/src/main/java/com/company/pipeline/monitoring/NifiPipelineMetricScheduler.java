@@ -155,6 +155,20 @@ public class NifiPipelineMetricScheduler {
         }
     }
 
+    /**
+     * 이 수집 루프가 마지막으로 정상 완주한 시각. 대시보드 인프라 구역이 "적재 지표 수집"
+     * 생존 표시에 쓴다.
+     *
+     * <p>DB(nifi_counter_snapshot.updated_at)로는 이걸 판단할 수 없다: NiFi 카운터가
+     * 초기화된 뒤 적재가 한 번도 없으면 스냅샷을 새로 쓸 일이 없어서, 수집이 정상인데도
+     * 시각이 몇 시간 전에 멈춘 것처럼 보인다(실측: NiFi 재기동 5시간 뒤 09:03에 멈춘 채).
+     */
+    private volatile LocalDateTime lastCounterCheckAt;
+
+    public LocalDateTime getLastCounterCheckAt() {
+        return lastCounterCheckAt;
+    }
+
     @Scheduled(fixedRate = 60_000, initialDelay = 60_000)
     public void checkCounters() {
         NifiFlowStatusResponse flow;
@@ -164,10 +178,13 @@ public class NifiPipelineMetricScheduler {
             counters = nifiClient.getCounters();
         } catch (Exception ex) {
             // NiFi가 일시적으로 응답 안 해도(재시작 등) 다음 주기에 다시 시도되므로
-            // 여기서 죽지 않고 조용히 넘어간다.
+            // 여기서 죽지 않고 조용히 넘어간다. NiFi를 못 본 주기는 "정상 완주"가
+            // 아니므로 heartbeat도 갱신하지 않는다.
             log.warn("NiFi 상태/카운터 조회 실패(다음 주기에 재시도): {}", ex.getMessage());
             return;
         }
+
+        lastCounterCheckAt = LocalDateTime.now();
 
         List<ProcessorRef> loadProcessors = collectLoadProcessors(flow);
         if (loadProcessors.isEmpty()) {

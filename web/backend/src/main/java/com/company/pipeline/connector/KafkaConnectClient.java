@@ -2,6 +2,7 @@ package com.company.pipeline.connector;
 
 import com.company.pipeline.connector.dto.ConnectorPluginInfo;
 import com.company.pipeline.connector.dto.ConnectorStatusResponse;
+import com.company.pipeline.connector.dto.KafkaConnectWorkerInfo;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,14 @@ public class KafkaConnectClient {
         this.restClient = RestClient.builder()
                 .baseUrl(properties.baseUrl())
                 .build();
+    }
+
+    /** 워커 생존 확인용(대시보드 인프라 구역). 커넥터 목록보다 가볍고 항상 응답한다. */
+    public KafkaConnectWorkerInfo getWorkerInfo() {
+        return execute(() -> restClient.get()
+                .uri("/")
+                .retrieve()
+                .body(KafkaConnectWorkerInfo.class));
     }
 
     public List<String> listConnectors() {

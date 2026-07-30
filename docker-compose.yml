@@ -340,6 +340,9 @@ services:
       # 직접 /nifi-api/access/token을 받아 Bearer로 제시한다 (Keycloak 제거).
       NIFI_USERNAME: ${NIFI_SINGLE_USER_USERNAME}
       NIFI_PASSWORD: ${NIFI_SINGLE_USER_PASSWORD}
+      # 대시보드 인프라 구역의 Airflow 프로세스 현황 조회용(인증 없는 monitor/health).
+      # 오래된 .env로 배포해도 값이 비지 않도록 compose에서 기본값을 준다.
+      AIRFLOW_BASE_URL: ${AIRFLOW_BASE_URL:-http://airflow-apiserver:8080}
       # 컨테이너에 메모리 상한(deploy.limits.memory)이 없으면 JVM이 host 전체 메모리
       # 기준으로 힙 상한(기본 25%)을 잡아서 다른 서비스와 상관없이 자율적으로 커질 수
       # 있다 - 명시적으로 캡을 걸어 아래 memory 상한 안에서 여유(메타스페이스/스레드/
