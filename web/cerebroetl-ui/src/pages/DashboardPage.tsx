@@ -16,14 +16,13 @@ import {
   getKafkaConnectorTrace,
   getNifiBulletins,
   getNifiRootStatus,
-  listAirflowDagRuns,
-  listAirflowDagTasks,
   listAirflowDags,
   listAirflowTaskInstances,
+  listAllAirflowDagRuns,
   listKafkaConnectorsWithStatus,
   listNifiExecutionLogs,
 } from "../api/platform";
-import type { AirflowTaskInstance } from "../api/platform";
+import type { AirflowDagRun } from "../api/platform";
 import { listPipelines } from "../api/pipelines";
 import type { PipelineResponse } from "../types/pipeline";
 import { collectNifiJobs, extractErrorGroupMessages } from "../utils/nifiJobs";
@@ -48,9 +47,7 @@ interface DagInfo {
 
 interface AirflowHistoryData {
   dagCount: number;
-  taskCount: number;
   dagCatalog: HistoryEntry[];
-  taskCatalog: HistoryEntry[];
   runningEntries: HistoryEntry[];
   successEntries: HistoryEntry[];
   failedEntries: HistoryEntry[];
@@ -58,9 +55,7 @@ interface AirflowHistoryData {
 
 const EMPTY_AIRFLOW_HISTORY: AirflowHistoryData = {
   dagCount: 0,
-  taskCount: 0,
   dagCatalog: [],
-  taskCatalog: [],
   runningEntries: [],
   successEntries: [],
   failedEntries: [],
@@ -95,8 +90,14 @@ async function fetchRunLogText(dagId: string, runId: string): Promise<string> {
 // 자체가 잘 처리됐는지"를 보여줄 뿐, 그 뒤 NiFi/Kafka가 실제로 데이터를 잘 처리했는지는
 // 반영하지 않는다(그건 통계 구역의 적재 건수와 인프라 구역의 프로세스 현황이 담당).
 async function buildAirflowHistory(range: [Dayjs, Dayjs]): Promise<AirflowHistoryData> {
-  const [dags, nifiStatusResult, kafkaPipelines] = await Promise.all([
+  const [dags, allRuns, nifiStatusResult, kafkaPipelines] = await Promise.all([
     listAirflowDags(),
+    // 전체 DAG의 기간 내 실행을 한 번에 받는다. 예전에는 DAG마다 따로 물어봐서
+    // 파이프라인 수에 비례해 요청이 늘었다(DAG 12개 기준 30초마다 48회 -> 2회).
+    listAllAirflowDagRuns({
+      startDateGte: range[0].startOf("day").toISOString(),
+      startDateLte: range[1].endOf("day").toISOString(),
+    }).catch(() => [] as AirflowDagRun[]),
     getNifiRootStatus().catch(() => undefined),
     listPipelines().catch(() => [] as PipelineResponse[]),
   ]);
@@ -112,130 +113,78 @@ async function buildAirflowHistory(range: [Dayjs, Dayjs]): Promise<AirflowHistor
       isActive: dag.is_active !== false && dag.is_paused !== true,
     };
   });
+  const displayNameByDag = new Map(dagInfos.map((info) => [info.dagId, info]));
 
-  const latestRunResults = await Promise.allSettled(
-    dagInfos.map(async (info) => ({
-      dagId: info.dagId,
-      run: (await listAirflowDagRuns(info.dagId, { limit: 1 }))[0],
-    })),
-  );
-  const latestRunByDag = new Map(
-    latestRunResults
-      .filter((result) => result.status === "fulfilled")
-      .map((result) => [result.value.dagId, result.value.run]),
-  );
-
-  const taskListResults = await Promise.allSettled(
-    dagInfos.map(async (info) => ({ dagId: info.dagId, tasks: await listAirflowDagTasks(info.dagId) })),
-  );
-
-  const latestRunTaskInstances = new Map<string, AirflowTaskInstance[]>();
-  await Promise.all(
-    dagInfos.map(async (info) => {
-      const run = latestRunByDag.get(info.dagId);
-      if (!run) {
-        return;
-      }
-      const instances = await listAirflowTaskInstances(info.dagId, run.dag_run_id).catch(() => []);
-      latestRunTaskInstances.set(info.dagId, instances);
-    }),
-  );
+  // 응답이 이미 start_date 내림차순이라, DAG별 첫 항목이 그 DAG의 최근 실행이다.
+  const runsByDag = new Map<string, AirflowDagRun[]>();
+  allRuns.forEach((run) => {
+    const dagId = run.dag_id;
+    if (!dagId) {
+      return;
+    }
+    const bucket = runsByDag.get(dagId);
+    if (bucket) {
+      bucket.push(run);
+    } else {
+      runsByDag.set(dagId, [run]);
+    }
+  });
 
   const dagCatalog: HistoryEntry[] = dagInfos.map((info) => {
-    const run = latestRunByDag.get(info.dagId);
+    const latest = runsByDag.get(info.dagId)?.[0];
     return {
       id: info.dagId,
       basicContent: info.displayName,
       category: info.category,
-      datetime: run?.start_date ?? run?.execution_date,
-      fetchLog: run ? () => fetchRunLogText(info.dagId, run.dag_run_id) : undefined,
+      datetime: latest?.start_date ?? latest?.execution_date,
+      fetchLog: latest ? () => fetchRunLogText(info.dagId, latest.dag_run_id) : undefined,
     };
   });
-
-  const taskCatalog: HistoryEntry[] = taskListResults.flatMap((result) => {
-    if (result.status !== "fulfilled") {
-      return [];
-    }
-    const { dagId, tasks } = result.value;
-    const info = dagInfos.find((candidate) => candidate.dagId === dagId);
-    if (!info) {
-      return [];
-    }
-    const run = latestRunByDag.get(dagId);
-    const instances = latestRunTaskInstances.get(dagId) ?? [];
-    return tasks.map((task) => {
-      const instance = instances.find((candidate) => candidate.task_id === task.task_id);
-      return {
-        id: `${dagId}.${task.task_id}`,
-        basicContent: `${info.displayName} / ${task.task_id}`,
-        category: info.category,
-        datetime: instance?.start_date,
-        fetchLog: run ? () => fetchTaskLogText(dagId, run.dag_run_id, task.task_id, instance?.try_number) : undefined,
-      };
-    });
-  });
-
-  // 1분마다 도는 nifi_pipelines_metrics_collector는 알려진 executor 버그로 매번
-  // failed로 찍히는 노이즈라 성공/실패 집계에서는 제외한다(DAG/태스크 목록에는
-  // 실제로 존재하는 DAG이니 그대로 포함).
-  const historyDagInfos = dagInfos.filter((info) => info.dagId !== NIFI_METRICS_COLLECTOR_DAG_ID);
-  const runGroupResults = await Promise.allSettled(
-    historyDagInfos.map(async (info) => ({
-      info,
-      runs: await listAirflowDagRuns(info.dagId, {
-        limit: 200,
-        startDateGte: range[0].startOf("day").toISOString(),
-        startDateLte: range[1].endOf("day").toISOString(),
-      }),
-    })),
-  );
-  const runGroups = runGroupResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
 
   const runningEntries: HistoryEntry[] = [];
   const successEntries: HistoryEntry[] = [];
   const failedEntries: HistoryEntry[] = [];
 
-  runGroups.forEach(({ info, runs }) => {
-    runs.forEach((run) => {
-      const entry: HistoryEntry = {
-        id: `${info.dagId}:${run.dag_run_id}`,
-        basicContent: info.displayName,
-        category: info.category,
-        datetime: run.start_date ?? run.execution_date,
-        fetchLog: () => fetchRunLogText(info.dagId, run.dag_run_id),
-      };
-      if (run.state === "success") {
-        successEntries.push(entry);
-      } else if (run.state === "failed") {
-        failedEntries.push(entry);
-      } else if (run.state === "running" || run.state === "queued") {
-        runningEntries.push(entry);
-      }
-    });
+  allRuns.forEach((run) => {
+    const dagId = run.dag_id;
+    // 1분마다 도는 nifi_pipelines_metrics_collector는 알려진 executor 버그로 매번
+    // failed로 찍히는 노이즈라 성공/실패 집계에서 제외한다(DAG 목록에는 그대로 둔다).
+    if (!dagId || dagId === NIFI_METRICS_COLLECTOR_DAG_ID) {
+      return;
+    }
+    const info = displayNameByDag.get(dagId);
+    if (!info) {
+      return;
+    }
+    const entry: HistoryEntry = {
+      id: `${dagId}:${run.dag_run_id}`,
+      basicContent: info.displayName,
+      category: info.category,
+      datetime: run.start_date ?? run.execution_date,
+      fetchLog: () => fetchRunLogText(dagId, run.dag_run_id),
+    };
+    if (run.state === "success") {
+      successEntries.push(entry);
+    } else if (run.state === "failed") {
+      failedEntries.push(entry);
+    } else if (run.state === "running" || run.state === "queued") {
+      runningEntries.push(entry);
+    }
   });
-
-  const byDatetimeDesc = (a: HistoryEntry, b: HistoryEntry) =>
-    new Date(b.datetime ?? 0).getTime() - new Date(a.datetime ?? 0).getTime();
-  runningEntries.sort(byDatetimeDesc);
-  successEntries.sort(byDatetimeDesc);
-  failedEntries.sort(byDatetimeDesc);
 
   return {
     dagCount: dagInfos.length,
-    taskCount: taskCatalog.length,
     dagCatalog,
-    taskCatalog,
     runningEntries,
     successEntries,
     failedEntries,
   };
 }
 
-type AirflowTileKind = "dag" | "task" | "running" | "success" | "failed";
+type AirflowTileKind = "dag" | "running" | "success" | "failed";
 
 const AIRFLOW_TILE_TITLE: Record<AirflowTileKind, string> = {
   dag: "DAG 목록",
-  task: "태스크 목록",
   running: "실행중 내역",
   success: "성공 내역",
   failed: "실패 내역",
@@ -266,7 +215,7 @@ const HOUR_BUCKET_LABELS = Array.from({ length: BUCKET_COUNT }, (_, index) => {
 });
 
 /**
- * 날짜 × 시간대 원본을 "날짜별 3시간 구간" 막대 데이터로 만든다.
+ * 날짜 × 시간대 원본을 "날짜별 6시간 구간" 막대 데이터로 만든다.
  *
  * <p>백엔드는 건수가 0인 조합을 빼고 주므로 여기서 날짜×구간 격자를 채운다 - 안 그러면
  * 날짜마다 막대 개수가 달라져서 같은 구간이 서로 다른 x 위치에 그려진다.
@@ -554,8 +503,6 @@ export function DashboardPage() {
     switch (airflowActiveTile) {
       case "dag":
         return airflowHistory.dagCatalog;
-      case "task":
-        return airflowHistory.taskCatalog;
       case "running":
         return airflowHistory.runningEntries;
       case "success":

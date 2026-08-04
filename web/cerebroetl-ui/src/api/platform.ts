@@ -42,10 +42,6 @@ export interface AirflowTaskInstance {
   end_date?: string;
 }
 
-export interface AirflowTask {
-  task_id: string;
-}
-
 export interface NifiRootStatusResponse {
   processGroupStatus?: {
     id?: string;
@@ -170,18 +166,50 @@ export async function listAirflowDagRuns(
   return res.data.dag_runs ?? [];
 }
 
+/**
+ * 전체 DAG의 실행 이력을 한 번에 조회한다(dag_id 자리의 `~`가 와일드카드).
+ *
+ * <p>예전에는 DAG마다 따로 호출해서 파이프라인이 늘수록 요청이 비례해 늘었다
+ * (DAG 12개 기준 30초마다 48회). 이 엔드포인트는 기간/정렬 필터를 그대로 받으므로
+ * 같은 결과를 1회로 얻는다.
+ *
+ * <p>한 번에 받는 만큼 limit에 걸려 조용히 잘리면 집계가 틀어지므로, total_entries를
+ * 보고 남은 페이지를 이어서 받는다.
+ */
+export async function listAllAirflowDagRuns(
+  options: { startDateGte?: string; startDateLte?: string; pageSize?: number; maxRuns?: number } = {},
+): Promise<AirflowDagRun[]> {
+  const pageSize = options.pageSize ?? 500;
+  const maxRuns = options.maxRuns ?? 5000;
+  const runs: AirflowDagRun[] = [];
+
+  for (let offset = 0; offset < maxRuns; offset += pageSize) {
+    const res = await axios.get<{ dag_runs?: AirflowDagRun[]; total_entries?: number }>(
+      `${AIRFLOW_API_BASE}/dags/~/dagRuns`,
+      {
+        params: {
+          limit: pageSize,
+          offset,
+          order_by: "-start_date",
+          start_date_gte: options.startDateGte,
+          start_date_lte: options.startDateLte,
+        },
+      },
+    );
+    const page = res.data.dag_runs ?? [];
+    runs.push(...page);
+    if (page.length < pageSize || runs.length >= (res.data.total_entries ?? runs.length)) {
+      break;
+    }
+  }
+  return runs;
+}
+
 export async function listAirflowTaskInstances(dagId: string, dagRunId: string): Promise<AirflowTaskInstance[]> {
   const res = await axios.get<{ task_instances?: AirflowTaskInstance[] }>(
     `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/dagRuns/${encodeURIComponent(dagRunId)}/taskInstances`,
   );
   return res.data.task_instances ?? [];
-}
-
-export async function listAirflowDagTasks(dagId: string): Promise<AirflowTask[]> {
-  const res = await axios.get<{ tasks?: AirflowTask[] }>(
-    `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/tasks`,
-  );
-  return res.data.tasks ?? [];
 }
 
 interface AirflowLogMessage {
