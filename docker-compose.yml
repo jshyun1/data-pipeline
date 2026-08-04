@@ -151,6 +151,13 @@ services:
       # "cannot have null schema" / Struct 캐스팅 NPE 발생) -> 키/값 모두 활성화
       CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "true"
       CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "true"
+      # CDC 메시지는 schemas.enable=true라 행마다 동일한 스키마 블록이 통째로 반복된다
+      # (실측: 행 1건 5,333B 중 스키마가 4,284B, 실제 컬럼값은 163B). 그 반복 때문에
+      # 압축이 극단적으로 잘 들어서, 형식을 바꾸지 않고도 디스크/네트워크가 크게 준다
+      # (실측: 실제 메시지 20건 199KB -> 6.7KB). 스키마를 끄는 건 JDBC Sink가 깨지므로
+      # 불가(위 주석 참고) - 압축은 메시지 형식을 그대로 두므로 싱크에 영향이 없다.
+      # CPU 여유가 없으면 lz4로 낮출 것(압축률은 떨어지지만 더 싸다).
+      CONNECT_PRODUCER_COMPRESSION_TYPE: ${CONNECT_COMPRESSION_TYPE:-zstd}
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
       CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
       KAFKA_HEAP_OPTS: ${CONNECT_HEAP_OPTS}
