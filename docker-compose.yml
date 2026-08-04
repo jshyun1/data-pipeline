@@ -333,6 +333,11 @@ services:
       ACCOUNT_DB_USER: ${ACCOUNT_DB_USER}
       ACCOUNT_DB_PASSWORD: ${ACCOUNT_DB_PASSWORD}
       KAFKA_CONNECT_URL: http://kafka-connect:8083
+      # Oracle CDC가 온라인 redo 대신 아카이브 로그만 읽게 할지(기본 false=온라인 redo).
+      # 켜면 지연이 redo 스위치 주기만큼 늘어난다 - 운영 DB가 redo 접근을 막을 때만 켤 것.
+      ORACLE_ARCHIVE_LOG_ONLY: ${ORACLE_ARCHIVE_LOG_ONLY:-false}
+      # LogMiner가 접속할 CDB 이름(PDB는 커넥션별 serviceName을 쓴다). XE는 항상 XE.
+      ORACLE_CDB_NAME: ${ORACLE_CDB_NAME:-XE}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       FILEBEAT_INPUTS_DIR: /filebeat-inputs
       NIFI_BASE_URL: https://nifi:${NIFI_HTTPS_PORT}

@@ -6,6 +6,7 @@ import com.company.pipeline.connector.dto.RenderedConnectorConfig;
 import com.company.pipeline.connector.dto.SourceConnectorRequest;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
@@ -15,10 +16,17 @@ import org.springframework.stereotype.Component;
  * 항상 켜둔다(사용자 입력으로 끌 수 있게 하지 않음).
  */
 @Component
+@EnableConfigurationProperties(OracleCdcProperties.class)
 public class DebeziumOracleTemplate {
 
     private static final String BOOTSTRAP_SERVERS = "kafka:9092";
     private static final String COMMON_USER_PREFIX = "C##";
+
+    private final OracleCdcProperties properties;
+
+    public DebeziumOracleTemplate(OracleCdcProperties properties) {
+        this.properties = properties;
+    }
 
     /**
      * Oracle LogMiner는 CDB 레벨에서 동작하므로 반드시 공통 사용자(C##...)로 접속해야 한다.
@@ -49,10 +57,13 @@ public class DebeziumOracleTemplate {
         config.put("database.port", String.valueOf(request.port()));
         config.put("database.user", request.username());
         config.put("database.password", request.password());
-        config.put("database.dbname", "XE");
+        config.put("database.dbname", properties.cdbName());
         config.put("database.pdb.name", request.serviceName());
         config.put("database.connection.adapter", "logminer");
         config.put("log.mining.strategy", "online_catalog");
+        // false(기본)면 온라인 redo + 아카이브를 모두 세션에 등록해 평소엔 redo에서 바로 읽고,
+        // true면 아카이브로 넘어간 뒤에야 읽는다(지연이 redo 스위치 주기만큼 늘어남).
+        config.put("log.mining.archive.log.only.mode", String.valueOf(properties.archiveLogOnly()));
         config.put("schema.history.internal.kafka.bootstrap.servers", BOOTSTRAP_SERVERS);
         // 커넥터마다 고유해야 함 - 공유하면 서로 다른 DB의 DDL 이력이 섞여 스키마 해석이 깨짐.
         config.put("schema.history.internal.kafka.topic", "schema-changes." + connectorName);

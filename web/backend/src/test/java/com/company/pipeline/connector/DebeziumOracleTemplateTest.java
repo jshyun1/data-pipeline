@@ -11,7 +11,9 @@ import org.junit.jupiter.api.Test;
 
 class DebeziumOracleTemplateTest {
 
-    private final DebeziumOracleTemplate template = new DebeziumOracleTemplate();
+    /** 기본값: 온라인 redo + 아카이브 (archive-log-only 꺼짐) */
+    private final DebeziumOracleTemplate template =
+            new DebeziumOracleTemplate(new OracleCdcProperties(null, null));
 
     // kafka-connect/connectors/oracle-cdc-source.json.template과 같은 파라미터로
     // 렌더링해서 필드값이 일치하는지 확인 (실제 운영 중인 커넥터와의 정합성 검증).
@@ -33,6 +35,7 @@ class DebeziumOracleTemplateTest {
         assertThat(config.get("database.pdb.name")).isEqualTo("XEPDB1");
         assertThat(config.get("database.connection.adapter")).isEqualTo("logminer");
         assertThat(config.get("log.mining.strategy")).isEqualTo("online_catalog");
+        assertThat(config.get("log.mining.archive.log.only.mode")).isEqualTo("false");
         assertThat(config.get("topic.prefix")).isEqualTo("oracle-cdc");
         assertThat(config.get("schema.include.list")).isEqualTo("APPUSER");
         assertThat(config.get("table.include.list")).isEqualTo("APPUSER.CUSTOMERS");
@@ -65,6 +68,31 @@ class DebeziumOracleTemplateTest {
         assertThatThrownBy(() -> template.render(request))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("공통 사용자");
+    }
+
+    /**
+     * 온라인 redo 접근이 막힌 환경에서 켜는 설정. 켜면 변경이 아카이브로 넘어간 뒤에야
+     * 읽히므로 지연이 redo 스위치 주기만큼 늘어난다.
+     */
+    @Test
+    void render_archiveLogOnlyMode_isDrivenByConfiguration() {
+        var archiveOnly = new DebeziumOracleTemplate(new OracleCdcProperties(true, null));
+        SourceConnectorRequest request = new SourceConnectorRequest(
+                1L, DbType.ORACLE, "oracle-db", 1521, "c##u", "p", null, "XEPDB1", "APPUSER", "CUSTOMERS", "oracle-cdc");
+
+        assertThat(archiveOnly.render(request).config().get("log.mining.archive.log.only.mode"))
+                .isEqualTo("true");
+    }
+
+    /** CDB 이름은 XE 기본값이지만 다른 에디션을 붙일 수 있게 환경변수로 뺀다. */
+    @Test
+    void render_cdbName_fallsBackToXeAndIsOverridable() {
+        SourceConnectorRequest request = new SourceConnectorRequest(
+                1L, DbType.ORACLE, "oracle-db", 1521, "c##u", "p", null, "XEPDB1", "APPUSER", "CUSTOMERS", "oracle-cdc");
+
+        assertThat(template.render(request).config().get("database.dbname")).isEqualTo("XE");
+        assertThat(new DebeziumOracleTemplate(new OracleCdcProperties(false, "ORCLCDB"))
+                .render(request).config().get("database.dbname")).isEqualTo("ORCLCDB");
     }
 
     @Test

@@ -41,6 +41,13 @@ account-db:
 kafka-connect:
   base-url: ${KAFKA_CONNECT_URL:http://localhost:8083}
 
+# Oracle CDC(Debezium LogMiner) 소스 커넥터 설정. archive-log-only를 켜면 온라인 redo를
+# 읽지 않고 아카이브 로그만 읽는다 - 지연이 redo 스위치 주기만큼 늘어나므로, 운영 DB가
+# 온라인 redo 접근을 막는 환경에서만 켠다(아카이브 보존 기간을 지연보다 길게 잡을 것).
+oracle-cdc:
+  archive-log-only: ${ORACLE_ARCHIVE_LOG_ONLY:false}
+  cdb-name: ${ORACLE_CDB_NAME:XE}
+
 kafka:
   bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
 
