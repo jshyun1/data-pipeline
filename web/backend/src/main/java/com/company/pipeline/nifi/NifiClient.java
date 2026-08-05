@@ -2,7 +2,9 @@ package com.company.pipeline.nifi;
 
 import com.company.pipeline.nifi.dto.NifiBulletinBoardResponse;
 import com.company.pipeline.nifi.dto.NifiCountersResponse;
+import com.company.pipeline.nifi.dto.NifiFlowResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
+import com.company.pipeline.nifi.dto.NifiParameterContextResponse;
 import com.company.pipeline.nifi.dto.NifiProcessGroupEntity;
 import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
 import com.company.pipeline.nifi.dto.NifiProcessorDetailResponse;
@@ -88,6 +90,39 @@ public class NifiClient {
                     .body(NifiFlowStatusResponse.class);
         } catch (RestClientException ex) {
             throw new NifiClientException("NiFi 프로세스 그룹 상태 조회 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    /**
+     * 잡 카탈로그 동기화용 - 그룹 한 단계의 "구성"(하위 그룹/프로세서/연결선).
+     *
+     * <p>상태 조회와 달리 프로세서 설정값과 연결의 관계 이름, 캔버스 좌표가 들어 있다.
+     * 한 번에 한 단계만 내려오므로 하위 그룹은 호출자가 재귀로 다시 부른다.
+     */
+    public NifiFlowResponse getFlow(String groupId) {
+        String token = getToken();
+        try {
+            return restClient.get()
+                    .uri("/nifi-api/flow/process-groups/{groupId}", groupId)
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .body(NifiFlowResponse.class);
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 프로세스 그룹 구성 조회 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    /** 그룹에 바인딩된 파라미터 컨텍스트의 파라미터 목록. sensitive 값은 내려오지 않는다. */
+    public NifiParameterContextResponse getParameterContext(String parameterContextId) {
+        String token = getToken();
+        try {
+            return restClient.get()
+                    .uri("/nifi-api/parameter-contexts/{id}", parameterContextId)
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .body(NifiParameterContextResponse.class);
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 파라미터 컨텍스트 조회 실패: " + ex.getMessage(), ex);
         }
     }
 
