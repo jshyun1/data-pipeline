@@ -33,7 +33,7 @@ Kafka + NiFi + Airflow 기반 CDC/ETL 파이프라인과, 그 위에서 파이�
   [`nifi/FLOW_RUNBOOK.md`](nifi/FLOW_RUNBOOK.md) 참고.
 - **로그파일 실시간 적재**: Filebeat가 로그 파일을 tailing해서 Kafka에 쓰고,
   기존 JDBC Sink 커넥터가 그대로 타깃 DB에 적재합니다.
-- **파이프라인 웹 서비스**(`web/backend` + `web/frontend`/`web/cerebroetl-ui`):
+- **파이프라인 웹 서비스**(`web/backend` + `web/cerebroetl-ui`):
   화면/API로 Kafka Connect 커넥터를 동적으로 생성·배포·삭제합니다. 자세한 설계는
   [`docs/kafka-webservice-design.md`](docs/kafka-webservice-design.md) 참고.
 - **Airflow**: 이미 배포된 파이프라인의 시작/중지/재시작 및 스케줄을 담당하는
@@ -78,8 +78,7 @@ docker compose up -d --build
 
 | 서비스 | URL | 용도 |
 |---|---|---|
-| Cerebro ETL 통합 웹 | `https://localhost:${CEREBROETL_UI_PORT}` | NiFi/Airflow/Kafka Connect를 한 화면에서 |
-| Kafka 파이프라인 웹 | `http://localhost:${PIPELINE_UI_PORT}` | Kafka 파이프라인 생성/배포/삭제 전용 |
+| Cerebro ETL 통합 웹 | `https://localhost:${CEREBROETL_UI_PORT}` | 연결/파이프라인 관리 + NiFi/Airflow/Kafka Connect를 한 화면에서 |
 | Airflow | `http://localhost:${AIRFLOW_WEBSERVER_PORT}` | 파이프라인 시작/중지/재시작/스케줄 |
 | NiFi | `https://localhost:${NIFI_PUBLIC_HTTPS_PORT}/nifi` | NiFi 캔버스 직접 접속 |
 
@@ -114,8 +113,7 @@ nifi/                  JDBC 드라이버 포함 NiFi 이미지 + 플로우 구�
 airflow/dags/          Kafka/NiFi 파이프라인 제어용 동적 DAG + 배선 검증용 DAG
 filebeat/              로그파일 실시간 적재 파이프라인의 소스 설정
 web/backend/           파이프라인 웹 서비스 백엔드 (Spring Boot)
-web/frontend/          Kafka 파이프라인 전용 웹 UI (생성/배포/삭제)
-web/cerebroetl-ui/     NiFi/Airflow/Kafka Connect 통합 웹 UI ("Cerebro ETL")
+web/cerebroetl-ui/     통합 웹 UI ("Cerebro ETL") - 연결/파이프라인 관리 + NiFi/Airflow/Kafka Connect
 docs/                  설계 문서 (kafka-webservice-design.md 등)
 offline/               폐쇄망 배포 패키징 스크립트
 scripts/               로컬 개발환경 셋업 스크립트

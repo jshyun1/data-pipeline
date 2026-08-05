@@ -115,13 +115,13 @@ flowchart TD
 
 ```text
 인증/통합 화면 : cerebroetl-ui
-제어 플레인    : pipeline-api, metadata-db, pipeline-ui
+제어 플레인    : pipeline-api, metadata-db
 실시간 데이터  : kafka, kafka-connect, filebeat
 ETL/스케줄     : nifi, airflow-apiserver, airflow-scheduler, airflow-dag-processor, airflow-init
 POC 검증용 DB  : target-db (PostgreSQL 기반, 타란툴라DB 대체)
 ```
 
-전체 13개 서비스가 Docker Compose 단일 스택으로 구성되어 있으며, 폐쇄망 반입 시에도 동일 구성을 그대로 유지할 수 있습니다.
+전체 12개 서비스가 Docker Compose 단일 스택으로 구성되어 있으며, 폐쇄망 반입 시에도 동일 구성을 그대로 유지할 수 있습니다.
 
 ---
 
@@ -168,7 +168,7 @@ Cerebro ETL 통합 웹(`cerebroetl-ui`)은 사내 계정으로 로그인한 뒤 
 - **주요 UI**: 전체화면 iframe, 콘솔 기동 전 대기 화면
 - **사용법**: 콘솔 자체 로고/계정 UI는 숨겨 "하나의 Cerebro ETL"처럼 보이도록 구성했고, NiFi는 특정 프로세스 그룹으로 바로 진입할 수 있습니다.
 
-> 참고: `web/frontend`(Kafka 파이프라인 전용 UI)는 통합 이전 단계에서 사용하던 화면으로, 현재는 `cerebroetl-ui`가 동일 기능을 포함해 통합 제공합니다.
+> 참고: 통합 이전에 쓰던 `web/frontend`(Kafka 파이프라인 전용 UI, 13000 포트)는 `cerebroetl-ui`가 동일 기능을 모두 포함하게 되어 2026-08-04에 제거했습니다.
 
 ---
 

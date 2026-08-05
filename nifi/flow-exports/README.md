@@ -30,6 +30,28 @@ curl -sk -H "Authorization: Bearer $TOKEN" \
 2. 이름 입력 칸 옆의 **파일 업로드(browse)** 버튼으로 이 JSON을 선택
 3. `Add` - 그룹이 통째로 생성된다
 
+## 가져오는 방법 (REST API)
+
+UI를 못 쓰는 상황이면 **multipart 업로드 엔드포인트**를 쓴다.
+
+```bash
+ROOT=<대상 NiFi의 루트 그룹 id>
+curl -sk --http1.1 -X POST \
+  -F "id=$ROOT" -F "groupName=DZ" -F "positionX=-360" -F "positionY=300" \
+  -F "clientId=$(cat /proc/sys/kernel/random/uuid)" \
+  -F "disconnectedNodeAcknowledged=false" \
+  -F "file=@DZ.json;type=application/json" \
+  "https://<host>/nifi-api/process-groups/$ROOT/process-groups/upload"
+```
+
+**`POST /process-groups/{id}/process-groups` 본문에 `versionedFlowSnapshot`을 넣는 방식은
+쓰면 안 된다.** NiFi 2.2.0은 그 필드를 조용히 무시하고 **이름만 같은 빈 그룹**을 만든다
+(HTTP 201이 떨어지고 응답의 `component`도 정상이라 성공한 것처럼 보인다 - 실측 확인).
+그룹을 열어봐야 비어 있는 걸 알 수 있다.
+
+내려받을 때도 `--http1.1`이 필요하다. 응답이 100KB를 넘으면 HTTP/2 framing 오류로
+끊긴다(`curl: (16)`).
+
 ## 가져온 뒤 반드시 해야 하는 것 3가지
 
 ### 1. DB 비밀번호 재입력 + 컨트롤러 서비스 활성화
@@ -108,6 +130,32 @@ docker exec nifi sh -c 'ss -ltn 2>/dev/null | grep 8444 || echo "8444 비어있�
 
 **참고**: 2026-07-29 기준 MSA 서버(192.168.50.30) NiFi에는 포트를 여는 프로세서가
 하나도 없어서 8444는 비어 있다.
+
+## MSA 서버 이관 기록 (2026-07-29 완료)
+
+192.168.50.30 NiFi(2.2.0)에 세 그룹을 **추가**했다. 기존 DM / file / 수입테이블4개컬럼매핑은
+건드리지 않았고, 작업 후에도 카운트가 그대로다.
+
+| 그룹 | MSA 그룹 id | 상태 |
+|---|---|---|
+| DZ | `ad0c12a1-019f-1000-5562-e5616d1a834c` | 프로세서 20, 커넥션 20, 출력포트 5 |
+| DW | `ad0c9365-019f-1000-dea0-d9078538c9af` | 프로세서 15, 커넥션 15, 입력포트 5 |
+| 비정형 | `ad0c93f9-019f-1000-2a1b-14fb8491cce5` | 프로세서 18, 커넥션 25, 하위그룹 5 |
+
+같이 끝낸 것:
+
+- `cp-tarantula-192-168-50-12` 비밀번호 입력 후 3개 그룹 모두 Enable. NiFi 검증 API로
+  실제 접속까지 확인했다(`Establish Connection: Successfully established`)
+- 리더/라이터 컨트롤러 서비스 7종 Enable (avro/xml/grok/json/csv)
+- DZ→DW 루트 커넥션 5개 연결 (이름 같은 짝끼리)
+- `unstructured` 스키마는 **이미 있었다** - MSA도 같은 192.168.50.12를 보므로 로컬 작업
+  때 만든 5개 테이블을 그대로 쓴다. 추가 작업 없음
+
+**남은 것**: DZ의 `cp-oracle-192-168-204-128`은 원천 Oracle 비밀번호를 몰라서 DISABLED로
+뒀다. 그래서 `extract-tb-*` 5개가 invalid다(사유: "Controller Service ... is disabled").
+비밀번호를 넣고 Enable하면 5개 모두 valid가 된다. 그 전까지 DZ는 실행할 수 없다.
+
+모든 프로세서는 STOPPED 상태다. 실행은 Airflow가 담당한다.
 
 ## 스냅샷 갱신
 

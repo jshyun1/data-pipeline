@@ -53,3 +53,6 @@ logfile/**
 csv_data/**
 !csv_data/**/
 !csv_data/**/.gitkeep
+
+# NiFi/앱 런타임 로그가 호스트로 떨어지는 디렉터리(44MB+). 코드가 아니고 서버마다 다르다.
+logs/

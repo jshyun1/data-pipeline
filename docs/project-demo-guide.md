@@ -68,7 +68,7 @@ flowchart LR
 
 ```text
 인증/통합 화면: cerebroetl-ui
-제어 플레인: pipeline-api, metadata-db, pipeline-ui
+제어 플레인: pipeline-api, metadata-db
 실시간 데이터: kafka, kafka-connect, filebeat
 ETL/스케줄: nifi, airflow-apiserver, airflow-scheduler,
              airflow-dag-processor, airflow-db

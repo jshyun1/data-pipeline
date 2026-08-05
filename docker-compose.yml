@@ -379,39 +379,11 @@ services:
     networks: [pipeline-net]
 
   # ---------------------------------------------------------------------
-  # Pipeline UI: web/frontend (React+Vite, nginx로 정적 서빙). /api는
-  # nginx.conf가 pipeline-api로 리버스 프록시하므로, 브라우저는 이 컨테이너
-  # 하나의 포트만 알면 된다.
-  # ---------------------------------------------------------------------
-  pipeline-ui:
-    logging: *default-logging
-    image: data-pipeline-pipeline-ui:${APP_VERSION:-latest}
-    build:
-      context: ./web/frontend
-    container_name: pipeline-ui
-    restart: unless-stopped
-    depends_on:
-      pipeline-api:
-        condition: service_healthy
-    ports:
-      - "${PIPELINE_UI_PORT}:80"
-    healthcheck:
-      # localhost가 컨테이너 안에서 ::1(IPv6)로만 풀려서 nginx(IPv4만 바인딩)에
-      # 연결 거부가 나는 문제가 있었음 - 127.0.0.1로 명시해서 회피.
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          memory: 96m
-    networks: [pipeline-net]
-
-  # ---------------------------------------------------------------------
-  # Cerebro ETL UI: Airflow/NiFi/Kafka Connect/CDC/연결정보 통합 조회 콘솔.
-  # 기존 pipeline-ui는 그대로 두고, 별도 프론트엔드 이미지로 운영한다.
+  # Cerebro ETL UI: Airflow/NiFi/Kafka Connect/CDC/연결정보 통합 조회 콘솔이자
+  # 유일한 프론트엔드. 구 pipeline-ui(web/frontend)는 이 화면의 부분집합이라
+  # 2026-08-04에 제거했다 - 연결/파이프라인 기능이 전부 여기 들어와 있고,
+  # 구 화면에만 남아 있던 배포 버튼은 "제어는 Airflow에서만" 원칙에 따라
+  # 의도적으로 없앤 것이다(구 화면은 그 원칙을 우회하는 경로였다).
   # Airflow는 선택 실행 대상으로 둔다. Airflow를 올리지 않아도 UI 자체는
   # 기동되고, Airflow 화면의 상태 조회만 연결 실패로 표시된다.
   # ---------------------------------------------------------------------
