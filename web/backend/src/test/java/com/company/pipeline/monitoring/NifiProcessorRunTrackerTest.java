@@ -9,6 +9,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.company.pipeline.jobcatalog.EtlJobRunService;
+import com.company.pipeline.jobcatalog.JobLookup;
 import com.company.pipeline.nifi.NifiClient;
 import com.company.pipeline.nifi.dto.NifiCountersResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
@@ -41,6 +43,10 @@ class NifiProcessorRunTrackerTest {
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
 
     @Mock
+    private JobLookup jobLookup;
+    @Mock
+    private EtlJobRunService jobRunService;
+    @Mock
     private NifiClient nifiClient;
     @Mock
     private NifiProcessorRunRepository runRepository;
@@ -59,7 +65,7 @@ class NifiProcessorRunTrackerTest {
     }
 
     private NifiProcessorRunTracker tracker() {
-        return new NifiProcessorRunTracker(nifiClient, runRepository, Clock.fixed(now, ZONE));
+        return new NifiProcessorRunTracker(nifiClient, runRepository, jobLookup, jobRunService, Clock.fixed(now, ZONE));
     }
 
     private LocalDateTime at() {

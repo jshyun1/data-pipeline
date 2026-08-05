@@ -1,5 +1,8 @@
 package com.company.pipeline.monitoring;
 
+import com.company.pipeline.jobcatalog.EtlJobRun;
+import com.company.pipeline.jobcatalog.EtlJobRunService;
+import com.company.pipeline.jobcatalog.JobLookup;
 import com.company.pipeline.nifi.NifiClient;
 import com.company.pipeline.nifi.dto.NifiCountersResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
@@ -58,6 +61,8 @@ public class NifiProcessorRunTracker {
 
     private final NifiClient nifiClient;
     private final NifiProcessorRunRepository runRepository;
+    private final JobLookup jobLookup;
+    private final EtlJobRunService jobRunService;
 
     /** 프로세서별 직전 카운터값. 증가분만 구간에 더하기 위해 들고 있는다. */
     private final Map<String, Long> lastCounterValue = new ConcurrentHashMap<>();
@@ -69,14 +74,18 @@ public class NifiProcessorRunTracker {
     // 생성자가 둘이라 어느 쪽으로 주입할지 명시해야 한다(없으면 기동 시 기본
     // 생성자를 찾다가 실패한다 - 실제로 겪음).
     @Autowired
-    public NifiProcessorRunTracker(NifiClient nifiClient, NifiProcessorRunRepository runRepository) {
-        this(nifiClient, runRepository, Clock.systemDefaultZone());
+    public NifiProcessorRunTracker(NifiClient nifiClient, NifiProcessorRunRepository runRepository,
+            JobLookup jobLookup, EtlJobRunService jobRunService) {
+        this(nifiClient, runRepository, jobLookup, jobRunService, Clock.systemDefaultZone());
     }
 
     /** 유휴 판정이 시간에 의존해서 테스트에서 시계를 갈아끼울 수 있어야 한다. */
-    NifiProcessorRunTracker(NifiClient nifiClient, NifiProcessorRunRepository runRepository, Clock clock) {
+    NifiProcessorRunTracker(NifiClient nifiClient, NifiProcessorRunRepository runRepository,
+            JobLookup jobLookup, EtlJobRunService jobRunService, Clock clock) {
         this.nifiClient = nifiClient;
         this.runRepository = runRepository;
+        this.jobLookup = jobLookup;
+        this.jobRunService = jobRunService;
         this.clock = clock;
     }
 
@@ -114,6 +123,7 @@ public class NifiProcessorRunTracker {
             NifiProcessorRun open = openRuns.remove(processor.id());
 
             if (active) {
+                boolean newStepRun = open == null;
                 if (open == null) {
                     open = new NifiProcessorRun(processor.id(), processor.name(), processor.type(),
                             processor.groupId(), processor.groupName(), targetTableOf(processor), now);
@@ -121,6 +131,15 @@ public class NifiProcessorRunTracker {
                     open.describe(processor.name(), processor.type(), processor.groupName(), targetTableOf(processor));
                 }
                 open.observeActivity(now, delta);
+                // 스텝 구간을 잡 실행에 귀속시킨다. 잡을 해석하지 못하면(미러가 아직 못 본
+                // 프로세서) 구간만 남고 실행 묶음은 다음 주기 이후에 붙는다.
+                Long jobId = jobLookup.resolveJobId(processor.id(), processor.groupId()).orElse(null);
+                if (jobId != null) {
+                    Long jobRunId = jobRunService.openOrAttach(jobId, now, newStepRun)
+                            .map(EtlJobRun::getId).orElse(null);
+                    open.assignJob(jobId, jobRunId);
+                    jobRunService.recordActivity(jobRunId, now, delta);
+                }
                 runRepository.save(open);
             } else if (open != null && open.getLastSeenAt().plusSeconds(IDLE_CLOSE_SECONDS).isBefore(now)) {
                 open.close();
@@ -137,6 +156,9 @@ public class NifiProcessorRunTracker {
                 runRepository.save(orphan);
             }
         }
+
+        // 스텝과 같은 기준으로 조용해진 잡 실행을 닫는다(SUCCESS/FAILED 판정 포함).
+        jobRunService.closeIdleRuns(now, IDLE_CLOSE_SECONDS);
     }
 
     /**

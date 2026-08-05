@@ -55,6 +55,14 @@ public class NifiProcessorRun {
     @Column(name = "target_table", length = 200)
     private String targetTable;
 
+    /** 이 구간이 속한 잡(etl_job.id). V18에서 추가 - 하위 그룹 소속 프로세서도 최상위 잡으로 귀속된다. */
+    @Column(name = "job_id")
+    private Long jobId;
+
+    /** 이 구간이 속한 잡 실행(etl_job_run.id). V18에서 추가. */
+    @Column(name = "job_run_id")
+    private Long jobRunId;
+
     @Column(name = "started_at", nullable = false)
     private LocalDateTime startedAt;
 
@@ -103,6 +111,11 @@ public class NifiProcessorRun {
      * 유휴를 몇 주기 확인한 뒤에야 닫기 때문에, 지금으로 잡으면 그 확인 시간이
      * 통째로 소요시간에 얹혀 처리량이 실제보다 낮게 나온다.
      */
+    public void assignJob(Long jobId, Long jobRunId) {
+        this.jobId = jobId;
+        this.jobRunId = jobRunId;
+    }
+
     public void close() {
         this.endedAt = this.lastSeenAt;
         this.status = STATUS_SUCCESS;

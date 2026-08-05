@@ -7,6 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.company.pipeline.jobcatalog.JobLookup;
 import com.company.pipeline.nifi.NifiClient;
 import com.company.pipeline.nifi.dto.NifiCountersResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
@@ -22,6 +23,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class NifiPipelineMetricSchedulerTest {
 
     @Mock
+    private JobLookup jobLookup;
+    @Mock
     private NifiClient nifiClient;
     @Mock
     private NifiCounterSnapshotRepository snapshotRepository;
@@ -35,7 +38,7 @@ class NifiPipelineMetricSchedulerTest {
     @Test
     void checkCounters_deltaDetected_incrementsDailyMetricAndSavesExecutionLogRow() {
         scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
-                executionLogRepository);
+                executionLogRepository, jobLookup);
 
         String processorId = "59d9d764-019f-1000-bc10-355d39a9b2fd";
         var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "PutDatabaseRecord",
@@ -77,7 +80,7 @@ class NifiPipelineMetricSchedulerTest {
     @Test
     void checkCounters_noDelta_doesNotSaveExecutionLogRow() {
         scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
-                executionLogRepository);
+                executionLogRepository, jobLookup);
 
         String processorId = "59d9d764-019f-1000-bc10-355d39a9b2fd";
         var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "PutDatabaseRecord",
@@ -111,7 +114,7 @@ class NifiPipelineMetricSchedulerTest {
         // 기준점을 남겨두면, TRUNCATE 후 전량 재적재해서 카운터가 예전과 똑같은 값까지
         // 올라왔을 때 delta가 0이 되어 적재가 로그에 한 줄도 안 남는다(실측으로 확인).
         scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
-                executionLogRepository);
+                executionLogRepository, jobLookup);
 
         String processorId = "9e2dd726-019f-1000-338b-b3f02d4d9673";
         var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "load-dz-POP002L",
@@ -147,7 +150,7 @@ class NifiPipelineMetricSchedulerTest {
         // ExecuteGroovyScript다(바이너리를 레코드로 넣으면 파일 전체가 힙에 올라와서).
         // 스크립트가 session.adjustCounter()로 같은 카운터를 올리므로 집계 대상이어야 한다.
         scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
-                executionLogRepository);
+                executionLogRepository, jobLookup);
 
         String processorId = "a7d8b6b3-019f-1000-199b-2fe36157b6b2";
         var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "store-image-binary",
@@ -182,7 +185,7 @@ class NifiPipelineMetricSchedulerTest {
     void checkCounters_processorTypeThatNeverLoads_isIgnored() {
         // 타입 필터를 넓힌 뒤에도 아무 프로세서나 집계하지 않는다는 것.
         scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
-                executionLogRepository);
+                executionLogRepository, jobLookup);
 
         var processor = new NifiFlowStatusResponse.ProcessorStatus("p1", "parse-csv-and-tag", "UpdateRecord", 0);
         var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
@@ -206,7 +209,7 @@ class NifiPipelineMetricSchedulerTest {
     void checkCounters_counterAbsentAndSnapshotAlreadyZero_doesNotRewriteSnapshot() {
         // 아직 한 번도 안 돈 프로세서까지 매 주기 DB에 쓰지 않도록.
         scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
-                executionLogRepository);
+                executionLogRepository, jobLookup);
 
         String processorId = "9e2dd726-019f-1000-338b-b3f02d4d9673";
         var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "load-dz-POP002L",

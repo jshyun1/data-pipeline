@@ -45,4 +45,19 @@ public interface NifiExecutionLogEntryRepository extends JpaRepository<NifiExecu
      * DB를 보므로 직전 몇 분치가 중복되지 않는다.
      */
     boolean existsByBulletinIdAndOccurredAtAfter(Long bulletinId, LocalDateTime since);
+
+    /**
+     * 잡 실행 구간 안에 남은 ERROR 개수. 실행을 SUCCESS로 닫을지 FAILED로 닫을지의 근거다.
+     *
+     * <p>bulletin은 NiFi 메모리에 5분만 남지만 수집 스케줄러가 이미 이 테이블로 옮겨 두므로,
+     * 몇 시간짜리 실행이라도 중간에 났던 오류를 놓치지 않는다.
+     */
+    @Query("""
+            select count(e) from NifiExecutionLogEntry e
+            where e.jobId = :jobId and e.level = 'ERROR'
+              and e.occurredAt >= :from and e.occurredAt <= :to
+            """)
+    int countErrorsForJobBetween(@Param("jobId") Long jobId,
+                                 @Param("from") LocalDateTime from,
+                                 @Param("to") LocalDateTime to);
 }

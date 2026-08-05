@@ -62,6 +62,19 @@ public class NifiExecutionLogEntry {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
+    /**
+     * 이 이력이 속한 잡(etl_job.id). V18에서 추가.
+     *
+     * <p>기록 시점에 프로세서 -> 잡으로 해석해서 채운다(JobLookup). 미러가 아직 못 본
+     * 프로세서이거나 캔버스에서 지워진 뒤 남은 이력은 null이다.
+     */
+    @Column(name = "job_id")
+    private Long jobId;
+
+    public void assignJob(Long jobId) {
+        this.jobId = jobId;
+    }
+
     public NifiExecutionLogEntry(String processorId, String processorName, String groupId, String groupName,
             LocalDateTime occurredAt, Long insertedCount, String status) {
         this.processorId = processorId;

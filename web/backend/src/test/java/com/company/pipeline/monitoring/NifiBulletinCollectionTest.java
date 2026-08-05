@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.company.pipeline.jobcatalog.JobLookup;
 import com.company.pipeline.nifi.NifiClient;
 import com.company.pipeline.nifi.dto.NifiBulletinBoardResponse;
 import java.time.LocalDateTime;
@@ -30,6 +31,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class NifiBulletinCollectionTest {
 
     @Mock
+    private JobLookup jobLookup;
+    @Mock
     private NifiClient nifiClient;
     @Mock
     private NifiCounterSnapshotRepository snapshotRepository;
@@ -40,7 +43,7 @@ class NifiBulletinCollectionTest {
 
     private NifiPipelineMetricScheduler scheduler() {
         return new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
-                executionLogRepository);
+                executionLogRepository, jobLookup);
     }
 
     private static NifiBulletinBoardResponse board(NifiBulletinBoardResponse.Bulletin... bulletins) {

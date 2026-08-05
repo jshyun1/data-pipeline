@@ -1,5 +1,6 @@
 package com.company.pipeline.monitoring;
 
+import com.company.pipeline.jobcatalog.JobLookup;
 import com.company.pipeline.nifi.NifiClient;
 import com.company.pipeline.nifi.dto.NifiBulletinBoardResponse;
 import com.company.pipeline.nifi.dto.NifiCountersResponse;
@@ -72,16 +73,20 @@ public class NifiPipelineMetricScheduler {
     private final NifiCounterSnapshotRepository snapshotRepository;
     private final PipelineDailyLoadMetricService dailyLoadMetricService;
     private final NifiExecutionLogEntryRepository executionLogRepository;
+    /** 이력을 어느 잡에 귀속시킬지 해석한다(V18). 미러가 못 본 프로세서는 null. */
+    private final JobLookup jobLookup;
 
     public NifiPipelineMetricScheduler(
             NifiClient nifiClient,
             NifiCounterSnapshotRepository snapshotRepository,
             PipelineDailyLoadMetricService dailyLoadMetricService,
-            NifiExecutionLogEntryRepository executionLogRepository) {
+            NifiExecutionLogEntryRepository executionLogRepository,
+            JobLookup jobLookup) {
         this.nifiClient = nifiClient;
         this.snapshotRepository = snapshotRepository;
         this.dailyLoadMetricService = dailyLoadMetricService;
         this.executionLogRepository = executionLogRepository;
+        this.jobLookup = jobLookup;
     }
 
     private record ProcessorRef(String id, String name, String groupId, String groupName) {
@@ -139,7 +144,7 @@ public class NifiPipelineMetricScheduler {
             }
             String sourceId = bulletin.sourceId() != null ? bulletin.sourceId() : entity.sourceId();
             String groupId = bulletin.groupId() != null ? bulletin.groupId() : entity.groupId();
-            executionLogRepository.save(NifiExecutionLogEntry.fromBulletin(
+            NifiExecutionLogEntry failureEntry = NifiExecutionLogEntry.fromBulletin(
                     sourceId == null ? "unknown" : sourceId,
                     bulletin.sourceName() == null ? "unknown" : bulletin.sourceName(),
                     groupId,
@@ -151,7 +156,10 @@ public class NifiPipelineMetricScheduler {
                     LocalDateTime.now(),
                     bulletinId,
                     level,
-                    bulletin.message()));
+                    bulletin.message());
+            // 실패 로그도 잡에 귀속시킨다 - 잡 실행을 FAILED로 닫는 판정이 이 값을 본다.
+            failureEntry.assignJob(jobLookup.resolveJobId(sourceId, groupId).orElse(null));
+            executionLogRepository.save(failureEntry);
         }
     }
 
@@ -230,8 +238,10 @@ public class NifiPipelineMetricScheduler {
             long delta = currentValue >= previousValue ? currentValue - previousValue : currentValue;
             if (delta > 0) {
                 dailyLoadMetricService.incrementLoadedCount(SOURCE, ref.id(), TASK_KEY, ref.name(), delta);
-                executionLogRepository.save(new NifiExecutionLogEntry(ref.id(), ref.name(), ref.groupId(),
-                        ref.groupName(), LocalDateTime.now(), delta, NifiExecutionLogEntry.STATUS_SUCCESS));
+                NifiExecutionLogEntry entry = new NifiExecutionLogEntry(ref.id(), ref.name(), ref.groupId(),
+                        ref.groupName(), LocalDateTime.now(), delta, NifiExecutionLogEntry.STATUS_SUCCESS);
+                entry.assignJob(jobLookup.resolveJobId(ref.id(), ref.groupId()).orElse(null));
+                executionLogRepository.save(entry);
             }
         }
         // 처음 보는 프로세서는 이번 값을 기준점으로만 잡고(그 이전 이력은 알 방법이 없음)
