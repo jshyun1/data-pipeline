@@ -92,6 +92,33 @@ export interface NifiProcessGroupEntity {
   id?: string;
   name?: string;
   parentGroupId?: string;
+  processorCount?: number | null;
+}
+
+export interface NifiProcessGroupTreeNode {
+  id: string;
+  name: string;
+  processorCount: number;
+  runningCount: number;
+  stoppedCount: number;
+  invalidCount: number;
+  disabledCount: number;
+  children: NifiProcessGroupTreeNode[];
+}
+
+export interface NifiControllerServiceEntity {
+  id?: string;
+  component?: {
+    id?: string;
+    name?: string;
+    type?: string;
+    state?: string;
+    properties?: Record<string, string | null | undefined>;
+  };
+}
+
+export interface NifiControllerServicesResponse {
+  controllerServices?: NifiControllerServiceEntity[];
 }
 
 export interface NifiBulletin {
@@ -246,6 +273,13 @@ export async function getNifiRootStatus(): Promise<NifiRootStatusResponse> {
   return res.data;
 }
 
+export async function listRootNifiControllerServices(): Promise<NifiControllerServiceEntity[]> {
+  const res = await axios.get<NifiControllerServicesResponse>("/nifi-api/flow/process-groups/root/controller-services", {
+    params: { includeAncestorGroups: false, includeDescendantGroups: false },
+  });
+  return res.data.controllerServices ?? [];
+}
+
 // NiFi는 Airflow의 DAG-run 같은 "실행 성공/실패" 개념이 없고 대신 실시간 오류를
 // bulletin board에 올린다 - 그룹의 runStatus가 Invalid가 아니어도(정상 기동 중이어도)
 // 처리 중 오류(예: SQL 예외)는 여기로만 올라오므로, 실패 판정은 이 값도 같이 봐야 한다.
@@ -273,6 +307,33 @@ export async function getKafkaConnectorTrace(connectorName: string): Promise<Kaf
 export async function createNifiProcessGroup(name: string): Promise<NifiProcessGroupEntity> {
   const res = await apiClient.post("/nifi/process-groups", { name });
   return unwrap<NifiProcessGroupEntity>(res.data);
+}
+
+export interface InitialDbToDbFlowCreateRequest {
+  jobName: string;
+  parentGroupId: string;
+  comments: string;
+  sourceServiceId: string;
+  sourceDatabaseType: string;
+  sourceSchema: string;
+  sourceTable: string;
+  targetServiceId: string;
+  targetDatabaseType: string;
+  targetSchema: string;
+  targetTable: string;
+  loadMode: "INSERT";
+}
+
+export async function createInitialDbToDbFlow(
+  request: InitialDbToDbFlowCreateRequest,
+): Promise<NifiProcessGroupEntity> {
+  const res = await apiClient.post<ApiResponse<NifiProcessGroupEntity>>("/nifi/etl/initial-db-to-db", request);
+  return unwrap<NifiProcessGroupEntity>(res.data);
+}
+
+export async function getNifiProcessGroupTree(): Promise<NifiProcessGroupTreeNode> {
+  const res = await apiClient.get<ApiResponse<NifiProcessGroupTreeNode>>("/nifi/process-group-tree");
+  return unwrap<NifiProcessGroupTreeNode>(res.data);
 }
 
 // NiFi에는 Airflow의 dag_run 같은 "실행 이력" 개념이 없고, Provenance 조회도 이 환경에서

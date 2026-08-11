@@ -4,6 +4,8 @@ import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.monitoring.NifiExecutionLogEntryRepository;
 import com.company.pipeline.monitoring.NifiProcessorRunRepository;
 import com.company.pipeline.nifi.dto.NifiExecutionLogResponse;
+import com.company.pipeline.nifi.dto.NifiInitialDbToDbCreateRequest;
+import com.company.pipeline.nifi.dto.NifiProcessGroupTreeResponse;
 import com.company.pipeline.nifi.dto.NifiProcessGroupCreateRequest;
 import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
 import com.company.pipeline.nifi.dto.NifiProcessorRunResponse;
@@ -23,13 +25,16 @@ import org.springframework.web.bind.annotation.RestController;
 public class NifiController {
 
     private final NifiClient nifiClient;
+    private final NifiProcessGroupTreeService processGroupTreeService;
     private final NifiExecutionLogEntryRepository executionLogRepository;
     private final NifiProcessorRunRepository processorRunRepository;
 
     public NifiController(NifiClient nifiClient,
+            NifiProcessGroupTreeService processGroupTreeService,
             NifiExecutionLogEntryRepository executionLogRepository,
             NifiProcessorRunRepository processorRunRepository) {
         this.nifiClient = nifiClient;
+        this.processGroupTreeService = processGroupTreeService;
         this.executionLogRepository = executionLogRepository;
         this.processorRunRepository = processorRunRepository;
     }
@@ -39,6 +44,18 @@ public class NifiController {
             @Valid @RequestBody NifiProcessGroupCreateRequest request
     ) {
         return ApiResponse.success(nifiClient.createRootProcessGroup(request.name().trim()));
+    }
+
+    @PostMapping("/etl/initial-db-to-db")
+    public ApiResponse<NifiProcessGroupResponse> createInitialDbToDbFlow(
+            @Valid @RequestBody NifiInitialDbToDbCreateRequest request
+    ) {
+        return ApiResponse.success(nifiClient.createInitialDbToDbFlow(request));
+    }
+
+    @GetMapping("/process-group-tree")
+    public ApiResponse<NifiProcessGroupTreeResponse> processGroupTree() {
+        return ApiResponse.success(processGroupTreeService.getTree());
     }
 
     @GetMapping("/execution-logs")

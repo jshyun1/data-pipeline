@@ -125,3 +125,18 @@ scripts/               로컬 개발환경 셋업 스크립트
 - NiFi 플로우는 재현성과 안정성을 위해 UI에서 수동으로 구성하도록 안내합니다
   (`nifi/FLOW_RUNBOOK.md`). 자동 임포트용 `flow.json`은 추후 팀 내 검증된 플로우를
   export한 뒤 저장소에 추가하는 것을 권장합니다.
+
+## NiFi conf 백업 적용
+
+`nifi-conf-backup/conf`에 백업해둔 NiFi 설정/플로우를 현재 Docker NiFi에 적용하려면
+NiFi를 멈춘 뒤 `conf` 내용을 컨테이너의 conf 볼륨으로 복사하고 다시 시작합니다.
+
+```bash
+docker compose stop nifi
+docker cp nifi-conf-backup/conf/. nifi:/opt/nifi/nifi-current/conf/
+docker compose start nifi
+```
+
+현재 캔버스 구조는 주로 `flow.json.gz`로 복원됩니다. 암호화된 비밀번호/토큰을
+정상 복호화하려면 백업의 `nifi.properties` 안에 있는 `nifi.sensitive.props.key`도
+같이 적용되어야 합니다.

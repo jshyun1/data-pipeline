@@ -40,6 +40,7 @@ export function App() {
               src="/nifi/"
               healthcheckSrc="/nifi/"
               waitMessage="NiFi 관리 콘솔을 준비하는 중입니다"
+              showProcessGroupTree
             />
           }
         />

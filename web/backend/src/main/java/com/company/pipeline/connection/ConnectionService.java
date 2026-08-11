@@ -6,6 +6,8 @@ import com.company.pipeline.common.crypto.PasswordCryptoService;
 import com.company.pipeline.connection.dto.ConnectionCreateRequest;
 import com.company.pipeline.connection.dto.ConnectionResponse;
 import com.company.pipeline.connection.dto.ConnectionUpdateRequest;
+import com.company.pipeline.nifi.NifiClient;
+import com.company.pipeline.nifi.dto.NifiControllerServiceEntity;
 import com.company.pipeline.pipeline.PipelineDefinition;
 import com.company.pipeline.pipeline.PipelineDefinitionRepository;
 import com.company.pipeline.pipeline.PipelineStatus;
@@ -15,6 +17,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 @Service
 @Transactional(readOnly = true)
@@ -30,19 +33,24 @@ public class ConnectionService {
     private final PasswordCryptoService passwordCryptoService;
     private final SchemaDiscoveryService schemaDiscoveryService;
     private final PipelineDefinitionRepository pipelineDefinitionRepository;
+    private final NifiClient nifiClient;
 
     public ConnectionService(ConnectionRepository connectionRepository,
             PasswordCryptoService passwordCryptoService,
             SchemaDiscoveryService schemaDiscoveryService,
-            PipelineDefinitionRepository pipelineDefinitionRepository) {
+            PipelineDefinitionRepository pipelineDefinitionRepository,
+            NifiClient nifiClient) {
         this.connectionRepository = connectionRepository;
         this.passwordCryptoService = passwordCryptoService;
         this.schemaDiscoveryService = schemaDiscoveryService;
         this.pipelineDefinitionRepository = pipelineDefinitionRepository;
+        this.nifiClient = nifiClient;
     }
 
     @Transactional
     public ConnectionResponse create(ConnectionCreateRequest request) {
+        validateForNifiControllerService(request);
+        String encryptedPassword = passwordCryptoService.encrypt(request.password());
         PipelineConnection entity = new PipelineConnection(
                 request.name(),
                 request.dbType(),
@@ -52,10 +60,47 @@ public class ConnectionService {
                 request.serviceName(),
                 request.schemaName(),
                 request.username(),
-                passwordCryptoService.encrypt(request.password()),
+                encryptedPassword,
                 null
         );
-        return ConnectionResponse.from(connectionRepository.save(entity));
+        PipelineConnection saved = connectionRepository.save(entity);
+
+        if (request.dbType() == DbType.POSTGRESQL) {
+            NifiControllerServiceEntity service = nifiClient.createPostgresDbcpControllerService(
+                    saved.getId(),
+                    saved.getName(),
+                    saved.getHost(),
+                    saved.getPort(),
+                    saved.getDatabaseName(),
+                    saved.getUsername(),
+                    request.password()
+            );
+            saved.setNifiControllerServiceId(service.component().id());
+            saved.setNifiControllerServiceName(service.component().name());
+        } else if (request.dbType() == DbType.ORACLE) {
+            NifiControllerServiceEntity service = nifiClient.createOracleDbcpControllerService(
+                    saved.getId(),
+                    saved.getName(),
+                    saved.getHost(),
+                    saved.getPort(),
+                    saved.getServiceName(),
+                    saved.getUsername(),
+                    request.password()
+            );
+            saved.setNifiControllerServiceId(service.component().id());
+            saved.setNifiControllerServiceName(service.component().name());
+        }
+
+        return ConnectionResponse.from(saved);
+    }
+
+    private void validateForNifiControllerService(ConnectionCreateRequest request) {
+        if (request.dbType() == DbType.POSTGRESQL && !StringUtils.hasText(request.databaseName())) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "PostgreSQL 연결은 databaseName이 필요합니다.");
+        }
+        if (request.dbType() == DbType.ORACLE && !StringUtils.hasText(request.serviceName())) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "Oracle 연결은 serviceName이 필요합니다.");
+        }
     }
 
     public ConnectionResponse get(Long id) {

@@ -73,6 +73,10 @@ class NifiProcessorRunTrackerTest {
     }
 
     private void nifiReports(int activeThreads, Long counterValue) {
+        nifiReports(activeThreads, counterValue, "INSERT updates performed");
+    }
+
+    private void nifiReports(int activeThreads, Long counterValue, String counterName) {
         var processor = new NifiFlowStatusResponse.ProcessorStatus(
                 PROCESSOR_ID, "load-dz-POP003L", "PutDatabaseRecord", activeThreads);
         var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
@@ -84,7 +88,7 @@ class NifiProcessorRunTrackerTest {
 
         List<NifiCountersResponse.Counter> counters = counterValue == null ? List.of()
                 : List.of(new NifiCountersResponse.Counter("c1", "load-dz-POP003L (" + PROCESSOR_ID + ")",
-                        "INSERT updates performed", counterValue));
+                        counterName, counterValue));
         when(nifiClient.getCounters()).thenReturn(new NifiCountersResponse(
                 new NifiCountersResponse.Counters(new NifiCountersResponse.AggregateSnapshot(counters))));
     }
@@ -209,6 +213,22 @@ class NifiProcessorRunTrackerTest {
         NifiProcessorRun run = savedRun();
         assertThat(run.getInsertedCount()).isEqualTo(43L);
         assertThat(run.getStatus()).isEqualTo(NifiProcessorRun.STATUS_RUNNING);
+    }
+
+    @Test
+    void upsertCounter_isTreatedAsLoadCounter() {
+        NifiProcessorRunTracker tracker = tracker();
+
+        nifiReports(0, null);
+        when(runRepository.findByEndedAtIsNull()).thenReturn(List.of());
+        tracker.track();
+
+        nifiReports(0, 200L, "UPSERT updates performed");
+        when(runRepository.findByEndedAtIsNull()).thenReturn(List.of());
+        tracker.track();
+
+        NifiProcessorRun run = savedRun();
+        assertThat(run.getInsertedCount()).isEqualTo(200L);
     }
 
     @Test

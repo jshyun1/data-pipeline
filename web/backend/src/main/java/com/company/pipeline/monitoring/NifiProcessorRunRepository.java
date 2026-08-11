@@ -17,4 +17,6 @@ public interface NifiProcessorRunRepository extends JpaRepository<NifiProcessorR
      * (ended_at 기준으로 자르면 아직 안 끝난 실행이 목록에서 빠진다).
      */
     List<NifiProcessorRun> findByStartedAtBetweenOrderByStartedAtDesc(LocalDateTime from, LocalDateTime to);
+
+    Optional<NifiProcessorRun> findTopByGroupIdOrderByStartedAtDesc(String groupId);
 }

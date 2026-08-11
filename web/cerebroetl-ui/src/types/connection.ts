@@ -12,6 +12,8 @@ export interface ConnectionResponse {
   serviceName: string | null;
   schemaName: string | null;
   username: string;
+  nifiControllerServiceId: string | null;
+  nifiControllerServiceName: string | null;
   status: ConnectionStatus;
   lastTestedAt: string | null;
   createdAt: string;

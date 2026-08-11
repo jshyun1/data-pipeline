@@ -9,6 +9,8 @@
 # 일부 속성만 환경변수와 연결해두었고 여기서 다루는 속성들은 그 목록에 없다.
 
 NIFI_PROPS=/opt/nifi/nifi-current/conf/nifi.properties
+NIFI_USERS=/opt/nifi/nifi-current/conf/users.xml
+NIFI_AUTHORIZATIONS=/opt/nifi/nifi-current/conf/authorizations.xml
 
 set_prop() {
     key=$1
@@ -19,6 +21,45 @@ set_prop() {
         echo "${key}=${value}" >> "${NIFI_PROPS}"
     fi
     echo "nifi.properties 적용: ${key}=${value}"
+}
+
+ensure_read_policy() {
+    resource=$1
+    policy_id=$2
+    username=${SINGLE_USER_CREDENTIALS_USERNAME:-admin}
+
+    if [ ! -f "${NIFI_USERS}" ] || [ ! -f "${NIFI_AUTHORIZATIONS}" ]; then
+        return
+    fi
+
+    user_id=$(sed -n "s/.*<user identifier=\"\\([^\"]*\\)\" identity=\"${username}\".*/\\1/p" "${NIFI_USERS}" | head -n 1)
+    if [ -z "${user_id}" ]; then
+        echo "NiFi 권한 보정 건너뜀: users.xml에서 ${username} 사용자를 찾지 못함"
+        return
+    fi
+
+    if grep -q "resource=\"${resource}\" action=\"R\"" "${NIFI_AUTHORIZATIONS}"; then
+        POLICY_RESOURCE=${resource} USER_ID=${user_id} perl -0pi -e '
+            my $res = $ENV{"POLICY_RESOURCE"};
+            my $uid = $ENV{"USER_ID"};
+            s{(<policy[^>]*resource="\Q$res\E"[^>]*action="R"[^>]*>)(.*?)(\s*</policy>)}{
+                index($2, $uid) >= 0 ? "$1$2$3" : "$1$2            <user identifier=\"$uid\"/>\n$3"
+            }gse;
+        ' "${NIFI_AUTHORIZATIONS}"
+    else
+        POLICY_ID=${policy_id} POLICY_RESOURCE=${resource} USER_ID=${user_id} perl -0pi -e '
+            my $id = $ENV{"POLICY_ID"};
+            my $res = $ENV{"POLICY_RESOURCE"};
+            my $uid = $ENV{"USER_ID"};
+            s{    </policies>}{
+                "        <policy identifier=\"$id\" resource=\"$res\" action=\"R\">\n"
+                . "            <user identifier=\"$uid\"/>\n"
+                . "        </policy>\n"
+                . "    </policies>"
+            }e;
+        ' "${NIFI_AUTHORIZATIONS}"
+    fi
+    echo "NiFi 권한 적용: ${username} -> ${resource} R"
 }
 
 # 적재 시작은 오직 Airflow만 지시한다는 원칙을 컨테이너 레벨에서 강제한다.
@@ -33,6 +74,12 @@ set_prop() {
 # 온전히 통제한다. 상시 대기가 필요한 그룹(logfile, http-ingest)도 각자의 제어 DAG가
 # 있으므로 그쪽에서 켜면 된다.
 set_prop nifi.flowcontroller.autoResumeState "${NIFI_AUTO_RESUME_STATE:-false}"
+
+# pipeline-api의 ETL 처리 이력 수집기는 /nifi-api/counters를 읽어
+# PutDatabaseRecord의 "INSERT updates performed" 증가분을 관측한다. 기존 conf 볼륨에는
+# Initial Admin Identity가 다시 적용되지 않아 /counters 정책이 빠질 수 있으므로,
+# 기동 때마다 현재 single-user 계정에 읽기 권한을 보정한다.
+ensure_read_policy "/counters" "a1b2c3d4-1111-3333-8888-999999999999"
 
 # 원래 이미지의 기동 스크립트로 넘긴다.
 exec /opt/nifi/scripts/start.sh "$@"

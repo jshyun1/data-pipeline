@@ -62,7 +62,7 @@ public class NifiPipelineMetricScheduler {
     // 카운터를 안 올리는 ExecuteGroovyScript가 섞여 있어도 문제되지 않는다 - 카운터가
     // 없으면 스냅샷도 없어서 아래 초기화 감지가 아무것도 하지 않는다.
     private static final Set<String> LOAD_PROCESSOR_TYPES = Set.of("PutDatabaseRecord", "ExecuteGroovyScript");
-    private static final String INSERT_COUNTER_NAME = "INSERT updates performed";
+    private static final String LOAD_COUNTER_SUFFIX = " updates performed";
     // 같은 bulletin id를 "이미 넣은 것"으로 볼 시간 범위. NiFi의 bulletin 링버퍼가
     // 5분치라 그보다 넉넉히 잡으면 같은 세션의 중복은 확실히 걸러지고, 재시작 뒤
     // 재사용된 id는 예전 행이 이 범위 밖이라 새 실패로 정상 기록된다.
@@ -257,7 +257,7 @@ public class NifiPipelineMetricScheduler {
             return result;
         }
         for (var counter : counterList) {
-            if (!INSERT_COUNTER_NAME.equals(counter.name())) {
+            if (!isLoadCounter(counter.name())) {
                 continue;
             }
             Matcher matcher = PROCESSOR_ID_IN_CONTEXT.matcher(counter.context() == null ? "" : counter.context());
@@ -266,6 +266,10 @@ public class NifiPipelineMetricScheduler {
             }
         }
         return result;
+    }
+
+    private boolean isLoadCounter(String counterName) {
+        return counterName != null && counterName.endsWith(LOAD_COUNTER_SUFFIX);
     }
 
     private List<ProcessorRef> collectLoadProcessors(NifiFlowStatusResponse flow) {

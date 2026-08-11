@@ -3,6 +3,7 @@ package com.company.pipeline.monitoring;
 import com.company.pipeline.monitoring.dto.HourlyCountProjection;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -45,6 +46,8 @@ public interface NifiExecutionLogEntryRepository extends JpaRepository<NifiExecu
      * DB를 보므로 직전 몇 분치가 중복되지 않는다.
      */
     boolean existsByBulletinIdAndOccurredAtAfter(Long bulletinId, LocalDateTime since);
+
+    Optional<NifiExecutionLogEntry> findTopByGroupIdAndStatusOrderByOccurredAtDesc(String groupId, String status);
 
     /**
      * 잡 실행 구간 안에 남은 ERROR 개수. 실행을 SUCCESS로 닫을지 FAILED로 닫을지의 근거다.

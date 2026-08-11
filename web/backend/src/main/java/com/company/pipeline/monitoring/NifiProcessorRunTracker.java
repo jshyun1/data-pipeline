@@ -47,7 +47,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class NifiProcessorRunTracker {
 
     private static final Logger log = LoggerFactory.getLogger(NifiProcessorRunTracker.class);
-    private static final String INSERT_COUNTER_NAME = "INSERT updates performed";
+    private static final String LOAD_COUNTER_SUFFIX = " updates performed";
     private static final Pattern PROCESSOR_ID_IN_CONTEXT = Pattern.compile("\\(([0-9a-fA-F-]{36})\\)\\s*$");
     /** {@link NifiPipelineMetricScheduler}와 같은 기준 - 적재를 수행하는 프로세서 타입. */
     private static final Set<String> LOAD_PROCESSOR_TYPES = Set.of("PutDatabaseRecord", "ExecuteGroovyScript");
@@ -214,7 +214,7 @@ public class NifiProcessorRunTracker {
             return result;
         }
         for (var counter : list) {
-            if (!INSERT_COUNTER_NAME.equals(counter.name())) {
+            if (!isLoadCounter(counter.name())) {
                 continue;
             }
             Matcher matcher = PROCESSOR_ID_IN_CONTEXT.matcher(counter.context() == null ? "" : counter.context());
@@ -223,6 +223,10 @@ public class NifiProcessorRunTracker {
             }
         }
         return result;
+    }
+
+    private boolean isLoadCounter(String counterName) {
+        return counterName != null && counterName.endsWith(LOAD_COUNTER_SUFFIX);
     }
 
     private List<ProcessorSnapshot> collectLoadProcessors(NifiFlowStatusResponse flow) {

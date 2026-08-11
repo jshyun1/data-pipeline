@@ -78,6 +78,40 @@ class NifiPipelineMetricSchedulerTest {
     }
 
     @Test
+    void checkCounters_upsertCounter_isCountedLikeInsertCounter() {
+        scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
+                executionLogRepository, jobLookup);
+
+        String processorId = "a7d8266c-aa51-32df-641b-9545e403b408";
+        var processor = new NifiFlowStatusResponse.ProcessorStatus(processorId, "PutDatabaseRecord",
+                "PutDatabaseRecord", 0);
+        var group = new NifiFlowStatusResponse.ProcessGroupStatusSnapshot(
+                "d4bbc12a-019f-1000-ad1e-afcab3d438dd", "수입테이블4개컬럼매핑",
+                List.of(new NifiFlowStatusResponse.ProcessorStatusEntry(processor)), List.of());
+        var rootAggregate = new NifiFlowStatusResponse.AggregateSnapshot(
+                List.of(), List.of(new NifiFlowStatusResponse.ProcessGroupStatusEntry(group)));
+        when(nifiClient.getRootFlowStatus())
+                .thenReturn(new NifiFlowStatusResponse(new NifiFlowStatusResponse.ProcessGroupStatus(rootAggregate)));
+
+        var counter = new NifiCountersResponse.Counter("c1", "PutDatabaseRecord (" + processorId + ")",
+                "UPSERT updates performed", 200L);
+        when(nifiClient.getCounters()).thenReturn(new NifiCountersResponse(new NifiCountersResponse.Counters(
+                new NifiCountersResponse.AggregateSnapshot(List.of(counter)))));
+        when(snapshotRepository.findById(processorId))
+                .thenReturn(Optional.of(new NifiCounterSnapshot(processorId, "PutDatabaseRecord", 50L)));
+
+        scheduler.checkCounters();
+
+        verify(dailyLoadMetricService).incrementLoadedCount(eq("NIFI"), eq(processorId), any(),
+                eq("PutDatabaseRecord"), eq(150L));
+
+        ArgumentCaptor<NifiExecutionLogEntry> captor = ArgumentCaptor.forClass(NifiExecutionLogEntry.class);
+        verify(executionLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getGroupName()).isEqualTo("수입테이블4개컬럼매핑");
+        assertThat(captor.getValue().getInsertedCount()).isEqualTo(150L);
+    }
+
+    @Test
     void checkCounters_noDelta_doesNotSaveExecutionLogRow() {
         scheduler = new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
                 executionLogRepository, jobLookup);

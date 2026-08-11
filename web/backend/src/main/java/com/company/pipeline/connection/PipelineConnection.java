@@ -57,6 +57,12 @@ public class PipelineConnection extends BaseAuditEntity {
     @Column(name = "jdbc_url", columnDefinition = "TEXT")
     private String jdbcUrl;
 
+    @Column(name = "nifi_controller_service_id", length = 100)
+    private String nifiControllerServiceId;
+
+    @Column(name = "nifi_controller_service_name", length = 150)
+    private String nifiControllerServiceName;
+
     @Enumerated(EnumType.STRING)
     @Column(length = 30)
     private ConnectionStatus status = ConnectionStatus.UNKNOWN;

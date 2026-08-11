@@ -10,7 +10,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** NiFi PutDatabaseRecord 프로세서별 "INSERT updates performed" 카운터의 마지막 확인 값. V10 마이그레이션. */
+/** NiFi PutDatabaseRecord 프로세서별 "* updates performed" 카운터의 마지막 확인 값. V10 마이그레이션. */
 @Entity
 @Table(name = "nifi_counter_snapshot")
 @Getter

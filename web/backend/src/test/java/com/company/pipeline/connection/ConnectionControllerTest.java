@@ -61,7 +61,7 @@ class ConnectionControllerTest {
     void create_validRequest_returns200WithEnvelope() throws Exception {
         ConnectionResponse response = new ConnectionResponse(1L, "oracle-source-poc", DbType.ORACLE,
                 "oracle-db", 1521, null, "XEPDB1", null, "c##dbzuser",
-                ConnectionStatus.UNKNOWN, null, LocalDateTime.now(), LocalDateTime.now());
+                null, null, ConnectionStatus.UNKNOWN, null, LocalDateTime.now(), LocalDateTime.now());
         when(connectionService.create(any())).thenReturn(response);
 
         String body = """
