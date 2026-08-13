@@ -21,7 +21,8 @@ COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY refresh-credentials.sh /docker-entrypoint-credentials/refresh-credentials.sh
 COPY docker-entrypoint-credentials.sh /docker-entrypoint-credentials.sh
-RUN chmod +x /docker-entrypoint-credentials/refresh-credentials.sh /docker-entrypoint-credentials.sh \
+RUN sed -i 's/\r$//' /docker-entrypoint-credentials/refresh-credentials.sh /docker-entrypoint-credentials.sh \
+  && chmod +x /docker-entrypoint-credentials/refresh-credentials.sh /docker-entrypoint-credentials.sh \
   && mkdir -p /etc/nginx/generated \
   # nginx가 최초 기동 시(자격증명 갱신 전) include 대상이 없어 죽지 않도록 빈 값 스텁을 둔다.
   && printf 'set $nifi_shared_bearer "";\nset $airflow_shared_cookie "";\n' > /etc/nginx/generated/shared-credentials.conf \

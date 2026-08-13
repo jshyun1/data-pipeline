@@ -78,7 +78,7 @@ docker compose up -d --build
 
 | 서비스 | URL | 용도 |
 |---|---|---|
-| Cerebro ETL 통합 웹 | `https://localhost:${CEREBROETL_UI_PORT}` | 연결/파이프라인 관리 + NiFi/Airflow/Kafka Connect를 한 화면에서 |
+| Cerebro ETL 통합 웹 | `http://localhost:${CEREBROETL_UI_PORT}` | 연결/파이프라인 관리 + NiFi/Airflow/Kafka Connect를 한 화면에서 |
 | Airflow | `http://localhost:${AIRFLOW_WEBSERVER_PORT}` | 파이프라인 시작/중지/재시작/스케줄 |
 | NiFi | `https://localhost:${NIFI_PUBLIC_HTTPS_PORT}/nifi` | NiFi 캔버스 직접 접속 |
 

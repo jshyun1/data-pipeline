@@ -12,6 +12,56 @@ NIFI_PROPS=/opt/nifi/nifi-current/conf/nifi.properties
 NIFI_USERS=/opt/nifi/nifi-current/conf/users.xml
 NIFI_AUTHORIZATIONS=/opt/nifi/nifi-current/conf/authorizations.xml
 
+ensure_tls_stores() {
+    keystore=${KEYSTORE_PATH:-/opt/nifi/nifi-current/conf/keystore.p12}
+    truststore=${TRUSTSTORE_PATH:-/opt/nifi/nifi-current/conf/truststore.p12}
+
+    if [ -f "${keystore}" ] && [ -f "${truststore}" ]; then
+        return
+    fi
+
+    if [ -z "${KEYSTORE_PASSWORD:-}" ] || [ -z "${TRUSTSTORE_PASSWORD:-}" ]; then
+        echo "NiFi TLS 저장소가 없으며 KEYSTORE_PASSWORD/TRUSTSTORE_PASSWORD도 설정되지 않았습니다." >&2
+        exit 1
+    fi
+
+    cert_file=$(mktemp /tmp/nifi-cert.XXXXXX.pem)
+    trap 'rm -f "${cert_file}"' EXIT HUP INT TERM
+
+    rm -f "${keystore}" "${truststore}"
+    keytool -genkeypair \
+        -alias nifi-key \
+        -keyalg RSA \
+        -keysize 3072 \
+        -validity 825 \
+        -dname "CN=localhost, OU=Cerebro ETL, O=Data Pipeline, L=Seoul, ST=Seoul, C=KR" \
+        -ext "SAN=dns:localhost,dns:nifi,ip:127.0.0.1" \
+        -keystore "${keystore}" \
+        -storetype PKCS12 \
+        -storepass "${KEYSTORE_PASSWORD}" \
+        -keypass "${KEYSTORE_PASSWORD}" \
+        -noprompt
+    keytool -exportcert \
+        -alias nifi-key \
+        -keystore "${keystore}" \
+        -storetype PKCS12 \
+        -storepass "${KEYSTORE_PASSWORD}" \
+        -rfc \
+        -file "${cert_file}"
+    keytool -importcert \
+        -alias nifi-ca \
+        -file "${cert_file}" \
+        -keystore "${truststore}" \
+        -storetype PKCS12 \
+        -storepass "${TRUSTSTORE_PASSWORD}" \
+        -noprompt
+
+    chmod 600 "${keystore}" "${truststore}"
+    rm -f "${cert_file}"
+    trap - EXIT HUP INT TERM
+    echo "NiFi TLS keystore/truststore 자동 생성 완료"
+}
+
 set_prop() {
     key=$1
     value=$2
@@ -61,6 +111,8 @@ ensure_read_policy() {
     fi
     echo "NiFi 권한 적용: ${username} -> ${resource} R"
 }
+
+ensure_tls_stores
 
 # 적재 시작은 오직 Airflow만 지시한다는 원칙을 컨테이너 레벨에서 강제한다.
 #

@@ -1,0 +1,5 @@
+# Gradle's POSIX launcher must retain an LF shebang inside Linux containers.
+web/backend/gradlew text eol=lf
+nifi/apply-nifi-properties.sh text eol=lf
+web/cerebroetl-ui/docker-entrypoint-credentials.sh text eol=lf
+web/cerebroetl-ui/refresh-credentials.sh text eol=lf

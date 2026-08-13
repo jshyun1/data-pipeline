@@ -21,7 +21,8 @@ RUN echo 'java.arg.sniHostCheck=-Djetty.ssl.sniHostCheck=false' >> /opt/nifi/nif
 # conf는 볼륨이라 이미지에 구운 nifi.properties 변경이 기존 볼륨에는 반영되지 않는다.
 # 기동할 때마다 필요한 속성을 다시 적용하고 원래 start.sh로 넘기는 래퍼를 둔다.
 COPY apply-nifi-properties.sh /opt/nifi/scripts/apply-nifi-properties.sh
-RUN chmod +x /opt/nifi/scripts/apply-nifi-properties.sh
+RUN sed -i 's/\r$//' /opt/nifi/scripts/apply-nifi-properties.sh && \
+    chmod +x /opt/nifi/scripts/apply-nifi-properties.sh
 
 USER nifi
 
