@@ -57,3 +57,10 @@ csv_data/**
 
 # NiFi/앱 런타임 로그가 호스트로 떨어지는 디렉터리(44MB+). 코드가 아니고 서버마다 다르다.
 logs/
+
+# backup은 백업할 필요가 없다.
+backup/**
+
+docs/ui-mockups/**
+*.pptx
+*.json.gz

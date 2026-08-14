@@ -23,6 +23,19 @@ export interface AirflowDag {
   is_paused?: boolean;
 }
 
+export interface AirflowDagCatalogEntry {
+  dagId: string;
+  businessGroup: "CDC" | "ETL";
+  businessFolder: string;
+  displayName: string;
+  description?: string;
+}
+
+export async function listAirflowDagCatalog(): Promise<AirflowDagCatalogEntry[]> {
+  const res = await apiClient.get<ApiResponse<AirflowDagCatalogEntry[]>>("/airflow/dag-catalog");
+  return unwrap(res.data);
+}
+
 export interface AirflowDagRun {
   dag_id?: string;
   dag_run_id: string;
@@ -334,6 +347,34 @@ export async function createInitialDbToDbFlow(
 export async function getNifiProcessGroupTree(): Promise<NifiProcessGroupTreeNode> {
   const res = await apiClient.get<ApiResponse<NifiProcessGroupTreeNode>>("/nifi/process-group-tree");
   return unwrap<NifiProcessGroupTreeNode>(res.data);
+}
+
+async function saveAirflowVariable(key: string, value: string): Promise<void> {
+  try {
+    await axios.post(`${AIRFLOW_API_BASE}/variables`, { key, value });
+  } catch (error) {
+    // 신규 그룹의 Variable은 POST로 만들되, 네트워크 오류 뒤 재시도처럼 이미 만들어진
+    // 경우에는 같은 값을 PATCH해서 저장 작업을 멱등하게 만든다.
+    if (axios.isAxiosError(error) && error.response?.status === 409) {
+      await axios.patch(`${AIRFLOW_API_BASE}/variables/${encodeURIComponent(key)}`, { key, value });
+      return;
+    }
+    throw error;
+  }
+}
+
+/** NiFi 동적 DAG가 읽는 스케줄과 배치 실행 후 자동 정지 설정을 함께 저장한다. */
+export async function saveNifiDagSchedule(processGroupId: string, cron: string): Promise<string> {
+  if (processGroupId.length < 8) {
+    throw new Error("올바르지 않은 Processor Group ID입니다.");
+  }
+
+  const dagId = `nifi_pipeline_${processGroupId.slice(0, 8)}_control`;
+  await Promise.all([
+    saveAirflowVariable(`${dagId}__schedule`, cron),
+    saveAirflowVariable(`${dagId}__auto_stop_after_run`, "true"),
+  ]);
+  return dagId;
 }
 
 // NiFi에는 Airflow의 dag_run 같은 "실행 이력" 개념이 없고, Provenance 조회도 이 환경에서

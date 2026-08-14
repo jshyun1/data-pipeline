@@ -27,7 +27,10 @@ const NAV_ITEMS: NavItem[] = [
     path: "/airflow",
     label: "AirFlow",
     icon: <DeploymentUnitOutlined />,
-    children: [{ path: "/airflow/manage", label: "생성/관리" }],
+    children: [
+      { path: "/airflow/manage", label: "생성/관리" },
+      { path: "/airflow/dashboard", label: "대시보드" },
+    ],
   },
   {
     path: "/etl/manage",

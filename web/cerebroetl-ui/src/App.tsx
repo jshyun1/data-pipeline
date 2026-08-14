@@ -3,6 +3,7 @@ import { AppLayout } from "./components/AppLayout";
 import { RequireAuth } from "./auth/RequireAuth";
 import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { CdcLogsPage } from "./pages/CdcLogsPage";
+import { AirflowDashboardPage } from "./pages/AirflowDashboardPage";
 import { ConsoleFramePage } from "./pages/ConsoleFramePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EtlCreatePage } from "./pages/EtlCreatePage";
@@ -18,7 +19,8 @@ export function App() {
         <Route element={<AppLayout />}>
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/airflow" element={<Navigate to="/airflow/manage" replace />} />
+        <Route path="/airflow" element={<Navigate to="/airflow/dashboard" replace />} />
+        <Route path="/airflow/dashboard" element={<AirflowDashboardPage />} />
         <Route
           path="/airflow/manage"
           element={

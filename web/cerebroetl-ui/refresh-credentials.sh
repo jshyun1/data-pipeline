@@ -19,6 +19,15 @@ mkdir -p "$OUT_DIR"
 
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 
+# 한 시스템의 로그인이 실패해도 다른 시스템의 자격증명은 갱신할 수 있도록 기존 줄을
+# 각각 보존한다. 컨테이너 최초 기동이라 파일이 없으면 빈 값으로 시작한다.
+existing_credential_line() {
+  grep -F "set \$$1 " "$OUT_FILE" 2>/dev/null || printf 'set $%s "";\n' "$1"
+}
+
+NIFI_LINE=$(existing_credential_line nifi_shared_bearer)
+AIRFLOW_LINE=$(existing_credential_line airflow_shared_cookie)
+
 # --- NiFi: /nifi-api/access/token (username/password -> JWT 원문) ---
 NIFI_TOKEN=$(curl -sk -X POST "https://nifi:8443/nifi-api/access/token" \
   -H "Host: ${NIFI_HOST_HEADER:-localhost:8443}" \
@@ -26,38 +35,38 @@ NIFI_TOKEN=$(curl -sk -X POST "https://nifi:8443/nifi-api/access/token" \
   --data-urlencode "password=${NIFI_PASSWORD}") || true
 
 if [ -z "$NIFI_TOKEN" ]; then
-  log "ERROR: NiFi 토큰 발급 실패, 기존 자격증명 파일 유지"
-  exit 1
+  log "ERROR: NiFi 토큰 발급 실패, 기존 NiFi 자격증명 유지"
+else
+  NIFI_LINE="set \$nifi_shared_bearer \"Bearer $NIFI_TOKEN\";"
 fi
 
 # --- Airflow: CSRF 토큰 확보 -> Referer 포함 로그인 -> _token 쿠키 추출 ---
 rm -f "$COOKIE_JAR"
-LOGIN_PAGE=$(curl -sk -c "$COOKIE_JAR" "http://airflow-apiserver:8080/airflow/auth/login/")
+LOGIN_PAGE=$(curl -sk -c "$COOKIE_JAR" "http://airflow-apiserver:8080/airflow/auth/login/" || true)
 CSRF=$(echo "$LOGIN_PAGE" | grep -oE 'name="csrf_token" type="hidden" value="[^"]+"' | sed -E 's/.*value="([^"]+)"/\1/')
 
 if [ -z "$CSRF" ]; then
-  log "ERROR: Airflow CSRF 토큰 추출 실패, 기존 자격증명 파일 유지"
-  exit 1
-fi
+  log "ERROR: Airflow CSRF 토큰 추출 실패, 기존 Airflow 자격증명 유지"
+else
+  curl -sk -o /dev/null -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+    -H "Referer: http://airflow-apiserver:8080/airflow/auth/login/" \
+    --data-urlencode "csrf_token=$CSRF" \
+    --data-urlencode "username=${AIRFLOW_USERNAME}" \
+    --data-urlencode "password=${AIRFLOW_PASSWORD}" \
+    "http://airflow-apiserver:8080/airflow/auth/login/" || true
 
-curl -sk -o /dev/null -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
-  -H "Referer: http://airflow-apiserver:8080/airflow/auth/login/" \
-  --data-urlencode "csrf_token=$CSRF" \
-  --data-urlencode "username=${AIRFLOW_USERNAME}" \
-  --data-urlencode "password=${AIRFLOW_PASSWORD}" \
-  "http://airflow-apiserver:8080/airflow/auth/login/"
-
-AIRFLOW_TOKEN=$(grep -E "_token" "$COOKIE_JAR" | awk '{print $7}')
-
-if [ -z "$AIRFLOW_TOKEN" ]; then
-  log "ERROR: Airflow 로그인 실패(_token 쿠키 없음), 기존 자격증명 파일 유지"
-  exit 1
+  AIRFLOW_TOKEN=$(grep -E "_token" "$COOKIE_JAR" | awk '{print $7}')
+  if [ -z "$AIRFLOW_TOKEN" ]; then
+    log "ERROR: Airflow 로그인 실패(_token 쿠키 없음), 기존 Airflow 자격증명 유지"
+  else
+    AIRFLOW_LINE="set \$airflow_shared_cookie \"_token=$AIRFLOW_TOKEN\";"
+  fi
 fi
 
 cat > "$TMP_FILE" <<EOF
 # 자동 생성 파일 - refresh-credentials.sh가 주기적으로 덮어씀. 직접 수정하지 말 것.
-set \$nifi_shared_bearer "Bearer $NIFI_TOKEN";
-set \$airflow_shared_cookie "_token=$AIRFLOW_TOKEN";
+$NIFI_LINE
+$AIRFLOW_LINE
 EOF
 mv "$TMP_FILE" "$OUT_FILE"
 
