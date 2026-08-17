@@ -40,3 +40,11 @@ export async function getAlertQueue(limit = 20): Promise<QueueResponse> {
   const res = await apiClient.get<ApiResponse<QueueResponse>>("/dashboard/queue", { params: { limit } });
   return unwrap(res.data);
 }
+
+export async function ackAlert(id: number, comment?: string): Promise<void> {
+  await apiClient.post(`/alerts/${id}/ack`, { comment });
+}
+
+export async function snoozeAlert(id: number, minutes = 60): Promise<void> {
+  await apiClient.post(`/alerts/${id}/snooze`, { minutes });
+}

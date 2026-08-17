@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
-import { Card, Empty, Space, Table, Tag } from "antd";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Card, Empty, message, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { getAlertQueue, type QueueItem } from "../api/alerts";
+import { ackAlert, getAlertQueue, snoozeAlert, type QueueItem } from "../api/alerts";
 
 // 상태색(정상/경고/중단)은 예약색. 심각도만 색으로 표현한다.
 const SEVERITY_TAG: Record<string, { color: string; icon: string }> = {
@@ -49,6 +49,7 @@ const columns: ColumnsType<QueueItem> = [
 ];
 
 export function AlertQueuePage() {
+  const qc = useQueryClient();
   // 화면은 20초마다 이 한 엔드포인트만 호출한다(설계서 5-2 ①).
   const { data, isLoading } = useQuery({
     queryKey: ["alert-queue"],
@@ -59,6 +60,36 @@ export function AlertQueuePage() {
 
   const counts = data?.counts;
   const items = data?.items ?? [];
+
+  async function handleAck(id: number) {
+    await ackAlert(id);
+    message.success("확인 처리됨");
+    qc.invalidateQueries({ queryKey: ["alert-queue"] });
+  }
+  async function handleSnooze(id: number) {
+    await snoozeAlert(id, 60);
+    message.success("1시간 스누즈됨");
+    qc.invalidateQueries({ queryKey: ["alert-queue"] });
+  }
+
+  // 표시 컬럼 + 조치 컬럼(확인/스누즈).
+  const actionColumns: ColumnsType<QueueItem> = [
+    ...columns,
+    {
+      title: "조치",
+      width: 150,
+      render: (_: unknown, item) => (
+        <Space size="small">
+          <Button size="small" disabled={item.acked} onClick={() => handleAck(item.id)}>
+            확인
+          </Button>
+          <Button size="small" onClick={() => handleSnooze(item.id)}>
+            스누즈
+          </Button>
+        </Space>
+      ),
+    },
+  ];
 
   return (
     <div style={{ padding: 16 }}>
@@ -81,7 +112,7 @@ export function AlertQueuePage() {
           <Table<QueueItem>
             rowKey="id"
             dataSource={items}
-            columns={columns}
+            columns={actionColumns}
             pagination={false}
             size="middle"
           />
