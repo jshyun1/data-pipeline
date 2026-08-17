@@ -22,6 +22,8 @@ public class KafkaBrokerHealthChecker {
         Properties config = new Properties();
         config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, properties.bootstrapServers());
         config.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 3000);
+        // 파이프라인당 .get(5,SECONDS) 3회 = 최악 15초를 API 레벨에서 5초로 상한(설계서 3-2).
+        config.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 5000);
         this.adminClient = AdminClient.create(config);
     }
 

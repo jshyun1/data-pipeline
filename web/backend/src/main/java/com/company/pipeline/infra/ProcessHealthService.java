@@ -4,6 +4,7 @@ import com.company.pipeline.connector.KafkaConnectClient;
 import com.company.pipeline.connector.dto.ConnectorStatusResponse;
 import com.company.pipeline.connector.dto.ConnectorTaskStatus;
 import com.company.pipeline.connector.dto.KafkaConnectWorkerInfo;
+import com.company.pipeline.heartbeat.HeartbeatService;
 import com.company.pipeline.infra.dto.AirflowHealthResponse;
 import com.company.pipeline.infra.dto.ProcessHealthResponse;
 import com.company.pipeline.infra.dto.ProcessHealthResponse.ProcessGroup;
@@ -11,14 +12,17 @@ import com.company.pipeline.infra.dto.ProcessHealthResponse.ProcessItem;
 import com.company.pipeline.infra.dto.ProcessStatus;
 import com.company.pipeline.monitoring.KafkaBrokerHealthChecker;
 import com.company.pipeline.monitoring.KafkaBrokerProperties;
-import com.company.pipeline.monitoring.NifiPipelineMetricScheduler;
 import com.company.pipeline.nifi.NifiClient;
 import com.company.pipeline.nifi.dto.NifiBulletinBoardResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse.ProcessGroupStatusEntry;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse.ProcessorStatusEntry;
+import com.company.pipeline.settings.SettingKey;
+import com.company.pipeline.settings.SettingService;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,9 +47,8 @@ public class ProcessHealthService {
     private static final Logger log = LoggerFactory.getLogger(ProcessHealthService.class);
 
     private static final DateTimeFormatter HEARTBEAT_FORMAT = DateTimeFormatter.ofPattern("MM.dd HH:mm:ss");
-    /** 적재 카운터 수집은 60초 주기라, 3분 넘게 조용하면 수집이 멈춘 것으로 본다. */
-    private static final Duration COLLECTOR_STALE_AFTER = Duration.ofMinutes(3);
-    private static final Duration COLLECTOR_DEAD_AFTER = Duration.ofMinutes(10);
+    // 수집 신선도 임계(적재 카운터 60초 주기, 기존 3분/10분)는
+    // SettingKey(health.stale/dead.seconds.nifi)로 이관됨(U2, 설계서 4-2).
     private static final String AIRFLOW_HEALTHY = "healthy";
 
     private final KafkaBrokerHealthChecker kafkaBrokerHealthChecker;
@@ -53,7 +56,8 @@ public class ProcessHealthService {
     private final KafkaConnectClient kafkaConnectClient;
     private final NifiClient nifiClient;
     private final AirflowHealthClient airflowHealthClient;
-    private final NifiPipelineMetricScheduler metricScheduler;
+    private final HeartbeatService heartbeat;
+    private final SettingService settings;
 
     public ProcessHealthService(
             KafkaBrokerHealthChecker kafkaBrokerHealthChecker,
@@ -61,13 +65,15 @@ public class ProcessHealthService {
             KafkaConnectClient kafkaConnectClient,
             NifiClient nifiClient,
             AirflowHealthClient airflowHealthClient,
-            NifiPipelineMetricScheduler metricScheduler) {
+            HeartbeatService heartbeat,
+            SettingService settings) {
         this.kafkaBrokerHealthChecker = kafkaBrokerHealthChecker;
         this.kafkaBrokerProperties = kafkaBrokerProperties;
         this.kafkaConnectClient = kafkaConnectClient;
         this.nifiClient = nifiClient;
         this.airflowHealthClient = airflowHealthClient;
-        this.metricScheduler = metricScheduler;
+        this.heartbeat = heartbeat;
+        this.settings = settings;
     }
 
     public ProcessHealthResponse collect() {
@@ -235,16 +241,22 @@ public class ProcessHealthService {
      * "적재가 없어서 조용한 것"과 "수집이 죽은 것"을 구분할 수 없다.
      */
     private ProcessItem loadCollectorItem() {
-        LocalDateTime lastRun = metricScheduler.getLastCounterCheckAt();
+        // 하트비트(system_heartbeat, key=nifi-counter)에서 마지막 완주 시각을 읽는다(U5). JVM 필드가
+        // 아니라 DB라 재기동을 넘어 유지된다. TIMESTAMPTZ 라 OffsetDateTime.
+        OffsetDateTime lastRun = heartbeat.lastBeat("nifi-counter");
         if (lastRun == null) {
             // 기동 직후 첫 주기(60초) 전. 아직 모른다는 뜻이지 죽은 게 아니다.
             return new ProcessItem("적재 지표 수집", ProcessStatus.UNKNOWN, "첫 수집 주기 대기 중");
         }
-        Duration elapsed = Duration.between(lastRun, LocalDateTime.now());
-        ProcessStatus status = elapsed.compareTo(COLLECTOR_DEAD_AFTER) > 0
+        Duration elapsed = Duration.between(lastRun.toInstant(), Instant.now());
+        Duration deadAfter = Duration.ofSeconds(settings.getInt(SettingKey.HEALTH_DEAD_SECONDS_NIFI));
+        Duration staleAfter = Duration.ofSeconds(settings.getInt(SettingKey.HEALTH_STALE_SECONDS_NIFI));
+        ProcessStatus status = elapsed.compareTo(deadAfter) > 0
                 ? ProcessStatus.DOWN
-                : elapsed.compareTo(COLLECTOR_STALE_AFTER) > 0 ? ProcessStatus.DEGRADED : ProcessStatus.UP;
-        return new ProcessItem("적재 지표 수집", status, "마지막 수집 " + HEARTBEAT_FORMAT.format(lastRun));
+                : elapsed.compareTo(staleAfter) > 0 ? ProcessStatus.DEGRADED : ProcessStatus.UP;
+        // OffsetDateTime(DB는 UTC 오프셋)을 앱 타임존(KST)으로 변환해 표시한다.
+        return new ProcessItem("적재 지표 수집", status,
+                "마지막 수집 " + HEARTBEAT_FORMAT.format(lastRun.atZoneSameInstant(java.time.ZoneId.systemDefault())));
     }
 
     private FlowCounts countFlow(NifiFlowStatusResponse flow) {

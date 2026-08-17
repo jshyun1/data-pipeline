@@ -1,5 +1,6 @@
 package com.company.pipeline.monitoring;
 
+import com.company.pipeline.heartbeat.HeartbeatService;
 import com.company.pipeline.pipeline.PipelineDefinition;
 import com.company.pipeline.pipeline.PipelineDefinitionRepository;
 import com.company.pipeline.pipeline.PipelineStatus;
@@ -27,16 +28,19 @@ public class KafkaPipelineMetricScheduler {
     private final PipelineMetricSnapshotService pipelineMetricSnapshotService;
     private final PipelineMetricSnapshotRepository pipelineMetricSnapshotRepository;
     private final PipelineDailyLoadMetricService dailyLoadMetricService;
+    private final HeartbeatService heartbeat;
 
     public KafkaPipelineMetricScheduler(
             PipelineDefinitionRepository pipelineDefinitionRepository,
             PipelineMetricSnapshotService pipelineMetricSnapshotService,
             PipelineMetricSnapshotRepository pipelineMetricSnapshotRepository,
-            PipelineDailyLoadMetricService dailyLoadMetricService) {
+            PipelineDailyLoadMetricService dailyLoadMetricService,
+            HeartbeatService heartbeat) {
         this.pipelineDefinitionRepository = pipelineDefinitionRepository;
         this.pipelineMetricSnapshotService = pipelineMetricSnapshotService;
         this.pipelineMetricSnapshotRepository = pipelineMetricSnapshotRepository;
         this.dailyLoadMetricService = dailyLoadMetricService;
+        this.heartbeat = heartbeat;
     }
 
     @Scheduled(fixedRate = 20_000, initialDelay = 20_000)
@@ -54,6 +58,8 @@ public class KafkaPipelineMetricScheduler {
                 log.warn("파이프라인 {} 적재 건수 체크 실패: {}", pipeline.getId(), ex.getMessage());
             }
         }
+        // 주기 완주(대상 0건이어도) - 생존 신호. 수집이 멈추면 이 beat 가 끊긴다(U5).
+        heartbeat.beat("kafka-metrics");
     }
 
     private void checkOne(PipelineDefinition pipeline) {

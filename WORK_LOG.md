@@ -554,3 +554,182 @@ cd web/backend && ./gradlew test   # ConnectionRepositoryIT만 실패하면 정�
 - **범위 제약**: 이번 작업은 로컬 docker-compose 환경에 한정 - MSA 서버(192.168.50.30) 배포/빌드는
   일절 하지 않음(사용자 지시, 별도 요청 시에만 진행).
 - 커밋 `2c0bbd4` 후 `feature/airflow-oidc`를 `dev`에 fast-forward 병합하고 원격 push 완료.
+
+## 19. 통합 운영 대시보드 기능개선 착수 (2026-08-17) — 🚧 진행 중 (Phase 0)
+
+**기반 설계서**: `/home/user/기능개선/대시보드_구현설계.md`(4,715줄). 관제/장애/알림 중심의 통합
+운영 대시보드로 개편. 신규 Flyway 대역 **V22~V42**(현재 V21 다음, 충돌 없음), 전부
+`metadata-db`(Postgres) 대상. MySQL(`ST_USER`)에는 마이그레이션이 나가지 않는다(§18 원칙 유지,
+Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
+
+### 19.0. 재택 개발 환경 구성 (사내 MySQL 접근 불가 대응)
+- 사내망에서만 닿는 `ST_USER`(MySQL, 192.168.50.30)는 로그인 검증 전용이라, 재택에서는 로컬
+  목업으로 대체. `docker-compose.override.yml`에 `account-db-local`(mysql:8.0) 서비스를 추가하고
+  `local-dev/st_user-init.sql`로 `ST_USER` + 테스트 계정 1개(`admin`/`admin`, bcrypt)만 시드.
+- **커밋 무영향 보장**: override 파일과 `local-dev/`는 `.git/info/exclude`(이 클론에서만 무시,
+  `.gitignore`와 달리 커밋 안 됨)에 등록. `.env`의 `ACCOUNT_DB_HOST`만 `account-db-local`로 바꿈
+  (`.env`는 원래 gitignore). 사무실 복귀 시 `192.168.50.30`으로 되돌리면 원복.
+- 실제 로그인 API(`POST /api/auth/login`)로 `admin`/`admin` 통과 + 오답 `INVALID_CREDENTIALS` 확인.
+
+### 19.1. 착수 전 결정 — D-5 (성능테스트 잔여물 처리) → "삭제 안 함 + env_kind 생략"
+- 설계서 D-5(9-2절)는 `etl_job`의 `PERF-*` 5행 + `pipeline_daily_load_metric` 100만~204만 건을
+  **삭제할지 / `env_kind=TEST`로 가릴지** 결정하라고 남겨둠. 설계 기본안은 후자(env-tag).
+- **실측 확인**: 이 PERF 데이터는 **로컬 `metadata-db`에 존재하지 않는다**(`etl_job` 실제 4행은
+  NiFi PG 미러, `pipeline_daily_load_metric` 0건). 설계서 수치는 사내 인스턴스 기준이고, 사용자
+  확인상 **고객사에도 없는 개발 전용 데이터**.
+- **결정**: 삭제도 하지 않고, `env_kind`/`pipeline_env_tag`도 만들지 않는다.
+  - 근거: `env_kind`(PROD/TEST/EXCLUDED)의 유일한 실제 근거가 PERF 분리(U7 DoD, 설계서 line 4289)
+    뿐이고 `EXCLUDED`는 enum 정의에만 있고 의존 쿼리가 없음. 고객사에도 있는 노이즈 DAG(NiFi 카운터
+    수집)는 env_kind가 아니라 신선도/판정불가 로직으로 별도 처리 → 제거해도 고객 배포판 무영향.
+    개발 로컬 대시보드에 PERF 노이즈가 섞이는 건 수용.
+  - **반영**: 신규 테이블 **29개 → 28개**(`pipeline_env_tag` 제외). `pipeline_load_rollup`(V26)·
+    `airflow_dag_run`(V29)에서 `env_kind` 컬럼·CHECK·인덱스 제거. `/api/env-tags*` API·`^PERF-`
+    SettingKey 시드 제거. (두 테이블 모두 아직 미존재라 ALTER가 아니라 "처음부터 그 컬럼 없이 CREATE".)
+  - **되돌리기**: 향후 "잡별 KPI 제외"가 필요하면 `ALTER TABLE ... ADD COLUMN env_kind DEFAULT 'PROD'`로
+    안전하게 재도입 가능(기존 데이터 무해한 추가형).
+
+### 19.2. 기존 스키마 영향 요약 (착수 전 확인)
+- **DROP(테이블 삭제): 없음.**
+- **기존 테이블 변경: 2개뿐** — ① `app_user`: V24에서 로컬 인증 컬럼 4개 ADD(순수 추가, 안전)
+  ② `pipeline_metric_snapshot`: V27에서 일 RANGE 파티션으로 전환하되 신규 파티션 테이블 생성 →
+  INSERT SELECT → 원자적 RENAME 교체 + 구 테이블 `_v0` 보존(데이터 손실 0, 현재 39,961행이라 전환비 ~0).
+- **기존 데이터: 지우지 않음**(D-5 결정).
+
+### 19.3. Phase 0 스키마 마이그레이션 적용 완료 (V22~V24)
+로컬 `metadata-db`에 실제 적용·검증 완료(Flyway `now at version v24`).
+- **V22** `create_app_setting`: `app_setting`(override-only 설정 저장, CHECK 제약 7종 value_type),
+  `app_setting_alias`(설정 키 rename 이관표). 신규 테이블은 설계 §3-3대로 전부 TIMESTAMPTZ.
+- **V23** `create_platform_runtime`: `system_heartbeat`(수집기 생존, 컴포넌트당 1행),
+  `collector_outage`(결측 구간, `system_heartbeat` FK + 열린구간 부분 UNIQUE),
+  `retention_policy`(보존정책, **시드 5행** - metric_snapshot은 PARTITION_DROP 예약),
+  `install_info`(싱글턴, `gen_random_uuid()`로 install_id 시드, display_zone Asia/Seoul).
+- **V24** `local_auth`: `app_user`에 `pw_updated_at`/`pw_must_change`/`login_fail_count`/`locked_until`
+  4컬럼 ADD(하위호환 규칙 2대로 NOT NULL엔 DEFAULT). `account_kind`는 R1대로 제외.
+- **번호 정합성**: 설계서는 baseline을 V20으로 가정하고 V21을 권한 문서에 예약했으나, 실제 로컬은
+  V21이 `create_nifi_canvas_status_label`로 채워져 있었음. 대시보드 대역(V22~)은 그대로 유효해
+  재번호 불필요. 각 마이그레이션 실행 전 `BEGIN…ROLLBACK` 문법 사전검증으로 부팅차단형 실패 예방.
+- **빌드 환경**: §9의 WSL2 `error getting credentials`(credsStore=desktop.exe)로 `--build`가 실패 →
+  `~/.docker/config.json`을 `{}`로 비워 우회(원본은 `config.json.bak`, 공개 이미지만 받으므로 무해).
+  이후 빌드 정상. 빌드 중 메모리 확보 위해 `target-db`를 잠시 stop 후 복구.
+- **미완(Phase 0 코드 단위)**: SettingKey enum/SettingService, 스레드풀 격리, HeartbeatComponentRegistry,
+  보존 배치 잡 등은 아직. 이번 증분은 스키마까지.
+
+### 19.4. U1 · 스케줄러 격리 + 클라이언트 타임아웃 + 시계 정합 — ✅ 코드 완료·검증
+설계서 §3-2/§3-3. 모든 신규 주기작업의 실행 기반이라 Phase 0 맨 앞.
+- **스레드풀 격리** — `common/config/PlatformSchedulerConfig`(신규): `taskScheduler`(collect- pool4)/
+  `controlPlaneScheduler`(ctrl- 3)/`batchScheduler`(batch- 2)/`watchdogScheduler`(watchdog- 1).
+  `TaskScheduler` 빈이 2개 이상이면 이름 폴백(`DEFAULT_TASK_SCHEDULER_BEAN_NAME="taskScheduler"`)이
+  발동하는 성질을 이용해, scheduler 미지정 기존 @Scheduled 8개를 collect- 풀에 자동 배선.
+  `common/config/AlertSchedulerErrorHandler`(신규)로 관제/배치 루프의 조용한 죽음 방지.
+- **외부 클라이언트 타임아웃**(§3-2 표) — `NifiClient`/`KafkaConnectClient` connect 2s·read 5s
+  (JdkClientHttpRequestFactory, AirflowHealthClient 패턴 계승), `KafkaBrokerHealthChecker`에
+  `default.api.timeout.ms=5000`, `application.yml`에 Hikari connection-timeout 3s + postgres
+  socketTimeout 10s(기존엔 타임아웃 전무).
+- **시계 정합** — `common/config/ClockSkewChecker`(신규): ApplicationReadyEvent에서 `SELECT now()`를
+  Instant로 받아 JVM 시각과 비교(TZ 표시차가 아니라 절대시각차만 검출), 60초 초과 시 WARN.
+  자가진단 상시노출(CLOCK_SKEW)은 U5에서 결과를 읽어 연결. `docker-compose.yml`의 metadata-db에
+  `TZ` 추가하되 **재생성은 보류**(기존 naive 컬럼 DEFAULT now() 불연속 방지 위해 U7과 함께 적용).
+- **검증**: 빌드 성공·기동 healthy(10.8s). `/proc/1/task/*/comm`에서 `collect-1..4` 스레드 4개 확인
+  (기존 수집 태스크가 격리 풀에 배선됨). ctrl-/batch-/watchdog-는 할당 작업이 아직 없어 지연 생성
+  대기(정상). ClockSkewChecker 로그 "차이 0초". 클라이언트 타임아웃은 코드 반영·배포까지 확인
+  (강제 타임아웃 재현은 운영 커넥터 영향 우려로 생략 - §5.2와 동일 판단).
+- **미반영**: ScheduledTaskHolder 통합테스트(Testcontainers 로컬 불가, §9)는 미작성 - procfs 스레드명
+  확인으로 대체. `install.sh` TZ 불일치 검사는 배포툴이라 이번 로컬 범위 밖.
+
+### 19.5. U2 · 설정 카탈로그 + SettingService + 설정 API — ✅ 코드 완료·검증
+설계서 §4-2. U3~U9가 전부 임계값을 읽으므로 하드코딩보다 먼저.
+- **신규 패키지 `settings/`**: `SettingValueType`(app_setting CHECK와 일치), `SettingKey`(45키 카탈로그 =
+  코드 기본값 단일 원천, key/type/default/min/max), `SettingService`, `SettingsController`.
+- **SettingService**: TTL 30초 전체-override 캐시 + **3단 폴백**(캐시히트 / DB SELECT / DB실패시 만료캐시
+  or 코드기본값) — **어떤 경우에도 예외를 던지지 않는다**(알림 평가 루프가 죽으면 안 됨). getInt/getLong/
+  getBytes/getDecimal/getBoolean/getString. 부팅 시 `ApplicationReadyEvent`로 warn/crit 상호관계
+  재검증 → 역전 시 안전방향 자동보정(UPSERT) + WARN(SETTING_AUTO_CORRECT), 부팅은 막지 않음.
+- **설정 API** `/api/admin/settings`(permitAll): GET(전 키 실효값+메타), PUT(벌크, 전건 검증 통과 후에만
+  저장 - 부분저장 방지), DELETE(재정의 제거=기본값 초기화). 타입/범위 위반은 `VALIDATION_ERROR` 400.
+- **하드코딩 이관**: `ProcessHealthService`의 COLLECTOR_STALE_AFTER(3분)/DEAD_AFTER(10분) →
+  `HEALTH_STALE/DEAD_SECONDS_NIFI`(180/600). SettingService 생성자 주입.
+- **D-5 반영**: `metrics.exclude.label.patterns` 키는 두지 않음(PERF 제외 기능 미구현, WORK_LOG §19.1).
+- **검증**: 빌드 성공(1차는 jdbc.query 람다 RowCallbackHandler/ResultSetExtractor 모호성으로 실패 →
+  블록 람다로 해소 후 성공). GET 45키, PUT 200 왕복(overridden=true·DB 실제저장·updatedBy=admin),
+  범위위반(5<min60)→400+메시지, DELETE→기본값 복귀, 부팅 재검증 "보정 0건"(빈 app_setting이라 정상).
+- **미이관(플래그)**: `KafkaPipelineStateSynchronizer.FAILURE_THRESHOLD=3`,
+  `NifiProcessorRunTracker.IDLE_CLOSE_SECONDS=45`, `NifiPipelineMetricScheduler.BULLETIN_DEDUPE=30`,
+  `CdcLogService.DELAYED_LAG=1000` — **설계서 카탈로그에 대응 키가 없다.** 알림엔진(U9)에서 재설계될
+  여지가 있어 임의 키 신설을 보류. U9 착수 시 매핑 확정 필요.
+- **미반영**: CI "임계 상수 잔존 시 빌드 경고"(gradle 설정 작업), DB 정지 예외무발생은 폴백 코드로 커버하되
+  실제 정지 테스트는 생략(운영 커넥터 영향 우려, §5.2 판단).
+
+### 19.6. U3 · 로컬 인증 복원 + /api/health — ✅ 코드 완료·검증
+설계서 §3-4 C9. **판매 차단 요소 해소** — ST_USER 없는 고객사가 부팅·로그인 하도록.
+- **authz.provider**(application.yml, 기본 `LOCAL`): LOCAL=app_user bcrypt / EXTERNAL=사내 ST_USER.
+  `AccountDataSourceConfig`·`AccountLookupService`를 `@ConditionalOnProperty(authz.provider=EXTERNAL)`로
+  격리. LOCAL 에선 MySQL 빈이 안 생기고, 그러면 DataSource 모호성도 사라져 Spring Boot 자동설정이
+  metadata-db(Postgres)를 단독 구성한다(그래서 @Primary 재선언도 EXTERNAL 전용으로 옮김).
+- **인증 추상화**: `CredentialAuthenticator` 인터페이스 + `LocalCredentialAuthenticator`(LOCAL,
+  matchIfMissing) / `ExternalCredentialAuthenticator`(EXTERNAL). `AuthController`가 인터페이스에 의존하도록
+  리팩터(AccountLookupService·PasswordEncoder 직접의존 제거). authz.provider 로 정확히 1개 빈만 등록.
+- **AppUser +4필드**: pw_updated_at·locked_until(TIMESTAMPTZ→`OffsetDateTime` 매핑, LocalDateTime 이면
+  ddl validate 실패)·login_fail_count(int)·pw_must_change(boolean). V24 컬럼과 매핑.
+- **실패 잠금**: 연속 실패 임계/잠금시간은 `SettingKey(auth.login.*)`. 임계 도달 시 locked_until 설정.
+- **사용자 CRUD** `/api/admin/users`: POST 생성(bcrypt), GET 목록, PUT `/{id}/password`, DELETE.
+- **/api/health**(신규, permitAll) + `docker-compose.yml` healthcheck 를 `/api/connections`→`/api/health`
+  로 교체(인가 켜져도 항상 열림). SecurityConfig 에 `/api/health` permitAll 명시. ErrorCode `ACCOUNT_LOCKED`(423).
+- **검증 중 버그 발견·수정**: `LocalCredentialAuthenticator.authenticate`가 `@Transactional`이라 실패 시
+  INVALID_CREDENTIALS(RuntimeException) 던지면 방금 올린 login_fail_count 증가까지 **롤백**되어 잠금이
+  영원히 안 걸렸다(1차 검증에서 6회차 성공·count=0으로 잡음). @Transactional 제거 → 각 save() 독립 커밋.
+- **검증(재빌드 후)**: LOCAL 부팅 healthy(account-db-pool 로그 0건 = MySQL 빈 미생성), `/api/health` 200,
+  기존 admin 행에 비번 세팅 후 admin/admin 로그인 성공, 틀린 비번 401, **실패 5회 → count=5·locked=t →
+  6회차 올바른 비번도 423 ACCOUNT_LOCKED**, 사용자 CRUD 왕복.
+- **동작 변화**: 기본 인증원이 LOCAL(app_user)로 바뀜 → 재택 로컬은 이제 account-db-local(ST_USER 목업)을
+  안 쓴다(사무실과 동일하게 놀기만). EXTERNAL 로 돌리려면 `.env`에 `AUTHZ_PROVIDER=EXTERNAL`.
+- **미반영**: 상용 아티팩트에서 mysql-connector 제외(D-17, build.gradle 프로파일 작업), 온보딩 최초 관리자
+  생성은 U19(Phase 3). 지금은 permitAll 이라 `/api/admin/users`로 직접 생성 가능.
+
+### 19.7. U5 · 하트비트 + 결측 구간 + 자가진단 — ✅ 코드 완료·검증
+설계서 §4-3/§6-5/§6-7-2. 신규 패키지 `heartbeat/`.
+- **HeartbeatComponentRegistry**(코드가 기대 컴포넌트 원천): kafka-metrics(20s)/nifi-counter(60s)/
+  nifi-processor(15s). 리소스 수집기는 U36, 알림 엔진 컴포넌트는 U9/U11 에서 키 추가.
+- **HeartbeatService**(JdbcTemplate): onReady 에서 3행 seed(last_beat_at NULL - now()로 시드하면
+  UTC/KST 차로 즉시 오탐) + 재기동 결측(STARTUP) 기록. beat(주기 완주 시 UPSERT, observed_interval
+  = 직전 beat 와의 실측 차) / beatFailed(연속실패++). 하트비트 기록 실패가 수집을 막지 않게 흡수.
+- **WatchdogService**(watchdogScheduler 전용 스레드 60s): 실효임계 max(expected,observed)x3 초과 시
+  collector_outage GAP 개시, 재개 시 종료. 보존정리가 수백만 행 돌 때도 살아있게 배치 풀과 분리.
+- **SelfCheckController** `GET /api/admin/self-check`: 수집기 상태(UP/DEGRADED/DOWN/PENDING)+시계정합.
+  "모름을 정상으로 안 칠함"(원칙 A): last_beat 없고 uptime>interval x5 면 PENDING 아니라 DOWN.
+- **수집기 3곳 배선**: KafkaPipelineMetricScheduler/NifiPipelineMetricScheduler(checkCounters)/
+  NifiProcessorRunTracker 가 주기 완주 시 beat. **NifiPipelineMetricScheduler 의 volatile
+  lastCounterCheckAt 필드 제거** → DB 하트비트로 대체(재기동 넘어 이력 유지). ProcessHealthService 의
+  "적재 지표 수집"이 metricScheduler.getLastCounterCheckAt() 대신 heartbeat.lastBeat("nifi-counter")
+  (OffsetDateTime, KST 변환 표시)를 읽도록 이관.
+- **검증 중 버그 발견·수정(크래시 루프)**: NifiProcessorRunTracker 에 HeartbeatService 필드를 추가하며
+  기존 4-arg 생성자의 @Autowired 가 필드 위로 밀려나 고아가 됐다(final 필드 @Autowired 무효) → 생성자
+  둘 다 @Autowired 없어져 Spring 이 no-arg 를 찾다 실패, RestartCount 26 크래시 루프. @Autowired 를
+  주입 생성자로 되돌려 해소. (NifiProcessorRunTrackerTest 도 HeartbeatService mock 추가로 갱신.)
+- **검증**: 빌드 성공·RestartCount 0·healthy. system_heartbeat 3행 seed → 65초 후 전부 beat(OK,
+  observed 20/15/nifi-counter는 2회차 전이라 null). self-check 3수집기 UP·clockSkew 0. **pipeline-api
+  75초 정지 후 재기동 → collector_outage STARTUP 2행(kafka-metrics/nifi-processor, nifi-counter 는
+  임계 180초 미달로 제외 - 정확)** → 55초 후 워치독이 watchdog-1 스레드에서 결측 2건 종료 확인.
+- **미반영**: 자가진단의 알림경로/저장소 섹션(U6/U11~ 이후), 프론트 자가진단 화면(백엔드 API까지만 -
+  프론트는 §9 헤드리스 제약으로 이번 범위 밖), KafkaPipelineStateSynchronizer/NifiJobMirror 하트비트(핵심
+  3수집기만 배선).
+
+### 19.8. U6 · 보존 엔진 — ✅ RetentionService 완료·검증 / ⏸ V27 파티셔닝 보류
+설계서 §4-3/C10. 신규 패키지 `retention/`.
+- **RetentionService**(batchScheduler, 매시간): retention_policy 를 읽어 정리. 시간예산(기본 20분,
+  SettingKey)까지 잔량 0 반복. DELETE_BATCH 는 ctid 서브쿼리 배치삭제(batch_rows). 정리대상은
+  코드 화이트리스트(ALLOWED_TABLES)가 원천, 식별자는 quote_ident(동적 SQL이라 바인딩 불가).
+  last_run_at/last_deleted_rows/last_duration_ms/backlog_rows/last_error 기록.
+  **PARTITION_DROP-safe**: pipeline_metric_snapshot 이 아직 파티션 테이블이 아니면(V27 전) DROP
+  PARTITION 을 시도하지 않고 backlog 로만 남긴다 - 일반 테이블에 매시간 예외를 내지 않기 위함.
+- **RetentionController** `/api/admin/retention`: GET(정책+상태), PUT(보존일/배치/활성 - 하한은 DB
+  CHECK 가 지켜 위반 시 400), POST `/run`(수동 트리거).
+- **검증**: 빌드 성공·healthy. 정책 5개 조회. collector_outage 에 200일 지난 6000행 삽입 → POST /run
+  → 잔량 0, last_deleted_rows=6000, backlog 0, 예외 없음(5000+1000 = 2배치, DoD "2번째 배치 예외 없음"
+  통과). pipeline_metric_snapshot 정책은 "PARTITION_DROP 대기(V27 전) - 정리 보류"로 우아하게 스킵.
+- **⏸ V27 파티셔닝 전환 보류(의도적, 신중)**: pipeline_metric_snapshot 을 일단위 RANGE 파티션으로
+  전환하는 것은 **라이브 데이터 테이블 교체 + 일단위 파티션 수명관리(선생성/DROP)** 라, 파티션이
+  롤오버 시점에 없으면 **적재 INSERT 자체가 실패해 지표 수집이 끊긴다**(무증상 아닌 즉각 장애). 로컬은
+  현재 0행이라 전환 급하지 않고, 이 고위험 마이그레이션은 pg_partman 부재 하에 create-ahead 잡까지
+  포함해 전용으로 신중히 다뤄야 한다. 서둘러 넣으면 "문제없이" 원칙을 어긴다 → 별도 착수로 분리.
+  그동안 RetentionService 가 이 테이블을 안전하게 스킵하므로 매시간 예외는 없다. (V27 착수 시 DoD:
+  파티션 전환 + create-ahead + DROP PARTITION 동작 + JPA validate 통과 + 롤오버 무중단 확인.)

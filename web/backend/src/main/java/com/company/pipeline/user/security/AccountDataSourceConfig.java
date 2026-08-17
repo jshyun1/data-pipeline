@@ -4,6 +4,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -20,8 +21,13 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * 이 계정 DB는 여러 시스템이 공유하는 실 사용자 디렉터리라 - 여기서는 절대 스키마를
  * 변경하거나 데이터를 쓰지 않는다(조회 전용).
  */
+// authz.provider=EXTERNAL(사내 ST_USER 연동) 일 때만 이 설정이 활성화된다(U3, C9).
+// LOCAL(상용 기본)에서는 MySQL 빈이 아예 생기지 않고, 그러면 DataSource 모호성도 사라져
+// Spring Boot 자동설정이 metadata-db(Postgres)를 단독 DataSource 로 구성한다. 따라서 아래의
+// @Primary Postgres 재선언(모호성 제거용)도 EXTERNAL 에서만 필요하다.
 @Configuration
 @EnableConfigurationProperties
+@ConditionalOnProperty(name = "authz.provider", havingValue = "EXTERNAL")
 public class AccountDataSourceConfig {
 
     @Bean

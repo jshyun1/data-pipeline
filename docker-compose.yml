@@ -285,6 +285,10 @@ services:
       POSTGRES_DB: ${METADATA_DB_NAME}
       POSTGRES_USER: ${METADATA_DB_USER}
       POSTGRES_PASSWORD: ${METADATA_DB_PASSWORD}
+      # 앱(KST)과 시각을 맞춘다(설계서 3-3 #5). 신규 테이블은 TIMESTAMPTZ라 무관하지만, 기존
+      # naive 컬럼의 DEFAULT now() 기준을 앱과 통일해 9시간 어긋남을 없앤다. 적용은 metadata-db
+      # 재생성이 필요하며, 기존 naive 컬럼 값의 불연속을 피하려 U7(MetricTimeSupport)과 함께 반영한다.
+      TZ: ${CEREBRO_DISPLAY_ZONE:-Asia/Seoul}
     ports:
       - "${METADATA_DB_PORT}:5432"
     volumes:
@@ -367,7 +371,7 @@ services:
     ports:
       - "${PIPELINE_API_PUBLIC_PORT}:${PIPELINE_API_PORT}"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${PIPELINE_API_PORT}/api/connections || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${PIPELINE_API_PORT}/api/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 15

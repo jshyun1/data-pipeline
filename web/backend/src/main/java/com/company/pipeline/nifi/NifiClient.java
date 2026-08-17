@@ -12,6 +12,7 @@ import com.company.pipeline.nifi.dto.NifiProcessGroupEntity;
 import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
 import com.company.pipeline.nifi.dto.NifiProcessorDetailResponse;
 import java.net.http.HttpClient;
+import java.time.Duration;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
@@ -89,9 +90,13 @@ public class NifiClient {
 
     public NifiClient(NifiProperties properties) {
         this.properties = properties;
+        // 외부 클라이언트 타임아웃 규약(설계서 3-2): connect 2s / read 5s.
+        // root status recursive 응답이 무거워 read 3s는 위험하므로 5s로 둔다.
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(insecureHttpClient());
+        requestFactory.setReadTimeout(Duration.ofSeconds(5));
         this.restClient = RestClient.builder()
                 .baseUrl(properties.baseUrl())
-                .requestFactory(new JdkClientHttpRequestFactory(insecureHttpClient()))
+                .requestFactory(requestFactory)
                 .build();
     }
 
@@ -800,6 +805,7 @@ public class NifiClient {
             SSLParameters sslParameters = sslContext.getDefaultSSLParameters();
             sslParameters.setEndpointIdentificationAlgorithm("");
             return HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(2))
                     .sslContext(sslContext)
                     .sslParameters(sslParameters)
                     .build();

@@ -3,6 +3,7 @@ package com.company.pipeline.user;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
  * 사용자 디렉터리라 여기서는 SELECT만 한다(계정 생성/수정/삭제는 이 서비스 책임이 아님).
  */
 @Service
+@ConditionalOnProperty(name = "authz.provider", havingValue = "EXTERNAL")
 public class AccountLookupService {
 
     public record Account(

@@ -50,6 +50,8 @@ class NifiProcessorRunTrackerTest {
     private NifiClient nifiClient;
     @Mock
     private NifiProcessorRunRepository runRepository;
+    @Mock
+    private com.company.pipeline.heartbeat.HeartbeatService heartbeat;
 
     private Instant now;
 
@@ -65,7 +67,7 @@ class NifiProcessorRunTrackerTest {
     }
 
     private NifiProcessorRunTracker tracker() {
-        return new NifiProcessorRunTracker(nifiClient, runRepository, jobLookup, jobRunService, Clock.fixed(now, ZONE));
+        return new NifiProcessorRunTracker(nifiClient, runRepository, jobLookup, jobRunService, heartbeat, Clock.fixed(now, ZONE));
     }
 
     private LocalDateTime at() {

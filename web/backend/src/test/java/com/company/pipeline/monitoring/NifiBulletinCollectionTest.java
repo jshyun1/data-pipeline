@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.company.pipeline.heartbeat.HeartbeatService;
 import com.company.pipeline.jobcatalog.JobLookup;
 import com.company.pipeline.nifi.NifiClient;
 import com.company.pipeline.nifi.dto.NifiBulletinBoardResponse;
@@ -40,10 +41,12 @@ class NifiBulletinCollectionTest {
     private PipelineDailyLoadMetricService dailyLoadMetricService;
     @Mock
     private NifiExecutionLogEntryRepository executionLogRepository;
+    @Mock
+    private HeartbeatService heartbeat;
 
     private NifiPipelineMetricScheduler scheduler() {
         return new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
-                executionLogRepository, jobLookup);
+                executionLogRepository, jobLookup, heartbeat);
     }
 
     private static NifiBulletinBoardResponse board(NifiBulletinBoardResponse.Bulletin... bulletins) {

@@ -1,5 +1,6 @@
 package com.company.pipeline.monitoring;
 
+import com.company.pipeline.heartbeat.HeartbeatService;
 import com.company.pipeline.jobcatalog.JobLookup;
 import com.company.pipeline.nifi.NifiClient;
 import com.company.pipeline.nifi.dto.NifiBulletinBoardResponse;
@@ -76,17 +77,21 @@ public class NifiPipelineMetricScheduler {
     /** 이력을 어느 잡에 귀속시킬지 해석한다(V18). 미러가 못 본 프로세서는 null. */
     private final JobLookup jobLookup;
 
+    private final HeartbeatService heartbeat;
+
     public NifiPipelineMetricScheduler(
             NifiClient nifiClient,
             NifiCounterSnapshotRepository snapshotRepository,
             PipelineDailyLoadMetricService dailyLoadMetricService,
             NifiExecutionLogEntryRepository executionLogRepository,
-            JobLookup jobLookup) {
+            JobLookup jobLookup,
+            HeartbeatService heartbeat) {
         this.nifiClient = nifiClient;
         this.snapshotRepository = snapshotRepository;
         this.dailyLoadMetricService = dailyLoadMetricService;
         this.executionLogRepository = executionLogRepository;
         this.jobLookup = jobLookup;
+        this.heartbeat = heartbeat;
     }
 
     private record ProcessorRef(String id, String name, String groupId, String groupName) {
@@ -171,11 +176,9 @@ public class NifiPipelineMetricScheduler {
      * 초기화된 뒤 적재가 한 번도 없으면 스냅샷을 새로 쓸 일이 없어서, 수집이 정상인데도
      * 시각이 몇 시간 전에 멈춘 것처럼 보인다(실측: NiFi 재기동 5시간 뒤 09:03에 멈춘 채).
      */
-    private volatile LocalDateTime lastCounterCheckAt;
-
-    public LocalDateTime getLastCounterCheckAt() {
-        return lastCounterCheckAt;
-    }
+    // (구) volatile lastCounterCheckAt 필드는 U5 에서 DB 하트비트(system_heartbeat, key=nifi-counter)로
+    // 대체됐다 - JVM 메모리 필드는 재기동 시 "언제까지 살아 있었나"가 증발했다. ProcessHealthService 는
+    // 이제 HeartbeatService.lastBeat("nifi-counter") 를 읽는다.
 
     @Scheduled(fixedRate = 60_000, initialDelay = 60_000)
     public void checkCounters() {
@@ -192,7 +195,8 @@ public class NifiPipelineMetricScheduler {
             return;
         }
 
-        lastCounterCheckAt = LocalDateTime.now();
+        // 주기 정상 완주(NiFi 응답 받음) - DB 하트비트 갱신. 재기동을 넘어 이력이 유지된다(U5).
+        heartbeat.beat("nifi-counter");
 
         List<ProcessorRef> loadProcessors = collectLoadProcessors(flow);
         if (loadProcessors.isEmpty()) {

@@ -15,14 +15,17 @@ import com.company.pipeline.infra.dto.AirflowHealthResponse;
 import com.company.pipeline.infra.dto.ProcessHealthResponse.ProcessGroup;
 import com.company.pipeline.infra.dto.ProcessHealthResponse.ProcessItem;
 import com.company.pipeline.infra.dto.ProcessStatus;
+import com.company.pipeline.heartbeat.HeartbeatService;
 import com.company.pipeline.monitoring.KafkaBrokerHealthChecker;
 import com.company.pipeline.monitoring.KafkaBrokerProperties;
-import com.company.pipeline.monitoring.NifiPipelineMetricScheduler;
+import com.company.pipeline.settings.SettingKey;
+import com.company.pipeline.settings.SettingService;
 import com.company.pipeline.nifi.NifiClient;
 import com.company.pipeline.nifi.NifiClientException;
 import com.company.pipeline.nifi.dto.NifiBulletinBoardResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,7 +49,9 @@ class ProcessHealthServiceTest {
     @Mock
     private AirflowHealthClient airflowHealthClient;
     @Mock
-    private NifiPipelineMetricScheduler metricScheduler;
+    private HeartbeatService heartbeat;
+    @Mock
+    private SettingService settings;
 
     private ProcessHealthService service;
 
@@ -58,7 +63,8 @@ class ProcessHealthServiceTest {
                 kafkaConnectClient,
                 nifiClient,
                 airflowHealthClient,
-                metricScheduler);
+                heartbeat,
+                settings);
 
         // 각 테스트가 관심 있는 축만 세팅하도록, 기본은 "전부 정상"으로 둔다.
         when(kafkaBrokerHealthChecker.isHealthy()).thenReturn(true);
@@ -69,7 +75,9 @@ class ProcessHealthServiceTest {
         when(nifiClient.getRootFlowStatus()).thenReturn(flowWithOneGroup());
         when(nifiClient.getBulletins(anyLong())).thenReturn(new NifiBulletinBoardResponse(
                 new NifiBulletinBoardResponse.BulletinBoard(List.of())));
-        when(metricScheduler.getLastCounterCheckAt()).thenReturn(LocalDateTime.now());
+        when(heartbeat.lastBeat("nifi-counter")).thenReturn(OffsetDateTime.now());
+        when(settings.getInt(SettingKey.HEALTH_STALE_SECONDS_NIFI)).thenReturn(180);
+        when(settings.getInt(SettingKey.HEALTH_DEAD_SECONDS_NIFI)).thenReturn(600);
         when(airflowHealthClient.getHealth()).thenReturn(Optional.of(healthyAirflow()));
     }
 
@@ -163,7 +171,7 @@ class ProcessHealthServiceTest {
 
     @Test
     void collect_collectorLoopStalled_marksLoadCollectorDown() {
-        when(metricScheduler.getLastCounterCheckAt()).thenReturn(LocalDateTime.now().minusMinutes(30));
+        when(heartbeat.lastBeat("nifi-counter")).thenReturn(OffsetDateTime.now().minusMinutes(30));
 
         var response = service.collect();
 
@@ -176,7 +184,7 @@ class ProcessHealthServiceTest {
      */
     @Test
     void collect_collectorRunningWithoutAnyLoad_staysUp() {
-        when(metricScheduler.getLastCounterCheckAt()).thenReturn(LocalDateTime.now().minusSeconds(40));
+        when(heartbeat.lastBeat("nifi-counter")).thenReturn(OffsetDateTime.now().minusSeconds(40));
 
         var response = service.collect();
 
@@ -187,7 +195,7 @@ class ProcessHealthServiceTest {
 
     @Test
     void collect_beforeFirstCollectorCycle_isUnknownNotDown() {
-        when(metricScheduler.getLastCounterCheckAt()).thenReturn(null);
+        when(heartbeat.lastBeat("nifi-counter")).thenReturn(null);
 
         var response = service.collect();
 

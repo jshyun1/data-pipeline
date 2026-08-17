@@ -6,6 +6,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -31,8 +32,23 @@ public class AppUser {
     private String userNm;
 
     // 인증은 Keycloak이 담당하므로 로컬 비밀번호는 저장하지 않는다(nullable, V8 참고).
+    // Keycloak 제거 후 로컬 인증(U3)이 복원되어 다시 bcrypt 해시 검증에 쓰인다.
     @Column(name = "user_pw", length = 255)
     private String userPw;
+
+    // V24(로컬 인증 U3): bcrypt 갱신 시각·강제변경·실패잠금. TIMESTAMPTZ 컬럼이라 OffsetDateTime
+    // 으로 매핑한다(LocalDateTime 으로 매핑하면 ddl-auto=validate 가 타입 불일치로 부팅을 막는다).
+    @Column(name = "pw_updated_at")
+    private OffsetDateTime pwUpdatedAt;
+
+    @Column(name = "pw_must_change", nullable = false)
+    private boolean pwMustChange = false;
+
+    @Column(name = "login_fail_count", nullable = false)
+    private int loginFailCount = 0;
+
+    @Column(name = "locked_until")
+    private OffsetDateTime lockedUntil;
 
     @Column(name = "email", length = 255)
     private String email;

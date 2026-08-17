@@ -3,11 +3,14 @@ package com.company.pipeline.connector;
 import com.company.pipeline.connector.dto.ConnectorPluginInfo;
 import com.company.pipeline.connector.dto.ConnectorStatusResponse;
 import com.company.pipeline.connector.dto.KafkaConnectWorkerInfo;
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -23,8 +26,13 @@ public class KafkaConnectClient {
     private final RestClient restClient;
 
     public KafkaConnectClient(KafkaConnectProperties properties) {
+        // 외부 클라이언트 타임아웃 규약(설계서 3-2): connect 2s / read 5s.
+        HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofSeconds(5));
         this.restClient = RestClient.builder()
                 .baseUrl(properties.baseUrl())
+                .requestFactory(requestFactory)
                 .build();
     }
 

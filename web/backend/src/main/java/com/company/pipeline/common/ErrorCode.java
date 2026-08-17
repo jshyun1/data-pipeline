@@ -7,6 +7,7 @@ public enum ErrorCode {
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "인증이 필요합니다."),
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "아이디 또는 비밀번호가 올바르지 않습니다."),
     ACCOUNT_NOT_APPROVED(HttpStatus.FORBIDDEN, "승인 대기 중이거나 사용할 수 없는 계정입니다."),
+    ACCOUNT_LOCKED(HttpStatus.LOCKED, "로그인 시도가 많아 계정이 잠겼습니다. 잠시 후 다시 시도하세요."),
     USER_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 존재하는 아이디입니다."),
     CONNECTION_NOT_FOUND(HttpStatus.NOT_FOUND, "연결정보를 찾을 수 없습니다."),
     CONNECTION_IN_USE(HttpStatus.CONFLICT, "이 연결정보를 사용 중인 파이프라인이 있어 삭제할 수 없습니다."),

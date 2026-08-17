@@ -44,6 +44,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // 로그인 자체는 인증 없이 호출 가능해야 함
                         .requestMatchers("/api/auth/login").permitAll()
+                        // 헬스체크는 인가가 켜져도 항상 열려 있어야 한다(U3) - 안 그러면 컨테이너가 영구 unhealthy.
+                        .requestMatchers("/api/health").permitAll()
                         // 현재 사용자 프로필 조회는 유효한 자체 토큰 필요
                         .requestMatchers("/api/auth/me").authenticated()
                         // 나머지 업무 API는 이번 단계에선 개방 유지(위 주석 참고)

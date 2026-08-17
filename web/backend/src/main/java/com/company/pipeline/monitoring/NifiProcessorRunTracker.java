@@ -1,5 +1,6 @@
 package com.company.pipeline.monitoring;
 
+import com.company.pipeline.heartbeat.HeartbeatService;
 import com.company.pipeline.jobcatalog.EtlJobRun;
 import com.company.pipeline.jobcatalog.EtlJobRunService;
 import com.company.pipeline.jobcatalog.JobLookup;
@@ -71,21 +72,24 @@ public class NifiProcessorRunTracker {
 
     private final Clock clock;
 
+    private final HeartbeatService heartbeat;
+
     // 생성자가 둘이라 어느 쪽으로 주입할지 명시해야 한다(없으면 기동 시 기본
     // 생성자를 찾다가 실패한다 - 실제로 겪음).
     @Autowired
     public NifiProcessorRunTracker(NifiClient nifiClient, NifiProcessorRunRepository runRepository,
-            JobLookup jobLookup, EtlJobRunService jobRunService) {
-        this(nifiClient, runRepository, jobLookup, jobRunService, Clock.systemDefaultZone());
+            JobLookup jobLookup, EtlJobRunService jobRunService, HeartbeatService heartbeat) {
+        this(nifiClient, runRepository, jobLookup, jobRunService, heartbeat, Clock.systemDefaultZone());
     }
 
     /** 유휴 판정이 시간에 의존해서 테스트에서 시계를 갈아끼울 수 있어야 한다. */
     NifiProcessorRunTracker(NifiClient nifiClient, NifiProcessorRunRepository runRepository,
-            JobLookup jobLookup, EtlJobRunService jobRunService, Clock clock) {
+            JobLookup jobLookup, EtlJobRunService jobRunService, HeartbeatService heartbeat, Clock clock) {
         this.nifiClient = nifiClient;
         this.runRepository = runRepository;
         this.jobLookup = jobLookup;
         this.jobRunService = jobRunService;
+        this.heartbeat = heartbeat;
         this.clock = clock;
     }
 
@@ -159,6 +163,9 @@ public class NifiProcessorRunTracker {
 
         // 스텝과 같은 기준으로 조용해진 잡 실행을 닫는다(SUCCESS/FAILED 판정 포함).
         jobRunService.closeIdleRuns(now, IDLE_CLOSE_SECONDS);
+
+        // 주기 정상 완주(NiFi 응답 받음) - 생존 신호(U5).
+        heartbeat.beat("nifi-processor");
     }
 
     /**
