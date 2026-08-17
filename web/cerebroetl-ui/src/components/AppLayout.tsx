@@ -1,6 +1,7 @@
 import { Button, Layout } from "antd";
 import {
   ApartmentOutlined,
+  BellOutlined,
   DashboardOutlined,
   DeploymentUnitOutlined,
   LogoutOutlined,
@@ -23,6 +24,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { path: "/dashboard", label: "대시보드", icon: <DashboardOutlined /> },
+  { path: "/alerts", label: "조치 대기열", icon: <BellOutlined /> },
   {
     path: "/airflow",
     label: "AirFlow",
