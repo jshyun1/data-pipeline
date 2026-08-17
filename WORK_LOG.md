@@ -883,3 +883,17 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
 - **신호 TZ 안전**: last_observed_at 은 timestamptz 라 세션 TZ 무관(JOB 규칙의 timestamp-without-tz
   함정 없음). RollupService.recordObservation 이 last_observed_at=now() 갱신하는 것을 신호로 사용.
 - **잔여(로컬 런타임)**: 검증용 AIRFLOW/신선화 롤업 행이 남음(커밋 무관 런타임 데이터).
+
+### 19.21. 확장②(발송) · 실 SMTP 릴레이(JavaMailSender) — ✅ 코드 완료·검증
+설계서 발송. 기존 EMAIL=NO_RELAY(RETRY→DEAD)를 실제 SMTP 발송으로 교체. 미설정 환경은 폴백 유지.
+- **build.gradle.kts**: spring-boot-starter-mail 추가.
+- **application.yml**: `spring.mail`(host 미지정 — 있을 때만 자동설정), `notification.email.enabled/from`.
+  기본 enabled=false → 고객사 SMTP 없는 환경은 기존과 동일(NO_RELAY). 무회귀.
+- **NotificationService**: `ObjectProvider<JavaMailSender>`(빈 부재 허용) 주입. dispatch() EMAIL 분기가
+  enabled && 빈 존재 시 relayEmail()로 SimpleMailMessage 발송 → SENT, 실패 시 SMTP_ERROR RETRY/DEAD,
+  주소 없으면 NO_ADDRESS DEAD. 빈 없으면(호스트 미설정) markNoRelay 폴백.
+- **로컬 검증 배선(커밋 안 함)**: docker-compose.override.yml(.git/info/exclude)에 mailhog 서비스 +
+  pipeline-api 에 SPRING_MAIL_HOST=mailhog/PORT=1025/NOTIFICATION_EMAIL_ENABLED=true env 주입.
+- **검증(end-to-end)**: EMAIL delivery 행 INSERT → dispatch → status=SENT, "EMAIL 발송 완료 to=o***@…"
+  → MailHog API(:8025) 수신 1건(to=ops@example.com, subj="[관제] SMTP 릴레이 검증"). 
+- **후속(미구현)**: 심각도별 레이트리밋·서킷브레이커·배치요약·데드맨(U12/U14/U15 잔여).

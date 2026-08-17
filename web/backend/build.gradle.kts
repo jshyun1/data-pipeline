@@ -22,6 +22,9 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-security")
+    // 알림 EMAIL 릴레이(JavaMailSender). spring.mail.host 가 있을 때만 자동설정되며,
+    // 미설정(고객사 SMTP 없음) 환경에서는 빈이 없어 NO_RELAY 로 폴백한다.
+    implementation("org.springframework.boot:spring-boot-starter-mail")
     implementation("org.springframework.security:spring-security-crypto")
     // cerebroetl-ui 자체 로그인 JWT 발급/검증 (Keycloak 제거, dw.cloud.auth.2026과 동일한
     // jjwt 기반 HMAC 서명 방식).

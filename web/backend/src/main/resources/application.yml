@@ -22,6 +22,25 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  # 알림 EMAIL 릴레이. host 는 여기 두지 않는다(설정 시 자동설정이 켜져 빈이 생김).
+  # SPRING_MAIL_HOST 가 주입될 때만 JavaMailSender 빈이 만들어지고, 없으면 NO_RELAY 폴백.
+  mail:
+    port: ${SPRING_MAIL_PORT:1025}
+    properties:
+      mail:
+        smtp:
+          auth: ${SPRING_MAIL_AUTH:false}
+          starttls:
+            enable: ${SPRING_MAIL_STARTTLS:false}
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+
+# 알림 이메일 발신 정책(설계서 발송). enabled=false 면 릴레이하지 않고 NO_RELAY 로 둔다.
+notification:
+  email:
+    enabled: ${NOTIFICATION_EMAIL_ENABLED:false}
+    from: ${NOTIFICATION_EMAIL_FROM:alerts@pipeline.local}
 
 server:
   port: ${SERVER_PORT:8081}

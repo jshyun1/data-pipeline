@@ -7,7 +7,11 @@ import java.util.Map;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -27,9 +31,19 @@ public class NotificationService {
     private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
 
     private final JdbcTemplate jdbc;
+    // JavaMailSender 는 spring.mail.host 가 있을 때만 존재한다(ObjectProvider 로 부재 허용).
+    private final ObjectProvider<JavaMailSender> mailSenderProvider;
+    private final boolean emailEnabled;
+    private final String emailFrom;
 
-    public NotificationService(DataSource dataSource) {
+    public NotificationService(DataSource dataSource,
+                               ObjectProvider<JavaMailSender> mailSenderProvider,
+                               @Value("${notification.email.enabled:false}") boolean emailEnabled,
+                               @Value("${notification.email.from:alerts@pipeline.local}") String emailFrom) {
         this.jdbc = new JdbcTemplate(dataSource);
+        this.mailSenderProvider = mailSenderProvider;
+        this.emailEnabled = emailEnabled;
+        this.emailFrom = emailFrom;
     }
 
     /** FIRING 시 호출. 구독한 수신자별 IN_APP/EMAIL 아웃박스 행을 만든다(심각도 필터). */
@@ -114,19 +128,70 @@ public class NotificationService {
                     jdbc.update("UPDATE notification_delivery SET status='SENT', sent_at=now(), "
                             + "attempt_count=attempt_count+1, first_attempt_at=COALESCE(first_attempt_at, now()), "
                             + "updated_at=now() WHERE id=?", id);
+                } else if ("EMAIL".equals(channel) && emailEnabled) {
+                    relayEmail(id);
                 } else {
-                    // EMAIL/SMS: 릴레이 미설정 환경에서는 실패 처리(재시도 백오프는 후속 U14).
-                    jdbc.update("UPDATE notification_delivery SET status='RETRY', "
-                            + "attempt_count=attempt_count+1, failure_reason='NO_RELAY', "
-                            + "next_attempt_at=now() + interval '5 minutes', updated_at=now() "
-                            + "WHERE id=? AND attempt_count+1 < max_attempts", id);
-                    jdbc.update("UPDATE notification_delivery SET status='DEAD', updated_at=now() "
-                            + "WHERE id=? AND attempt_count >= max_attempts", id);
+                    // SMS 등 미지원 채널 또는 EMAIL 릴레이 비활성: 재시도 백오프 후 DEAD.
+                    markNoRelay(id);
                 }
             } catch (Exception ex) {
                 log.warn("발송 처리 실패(id={}): {}", id, ex.getMessage());
             }
         }
+    }
+
+    /** EMAIL 실 릴레이. JavaMailSender 로 발송하고 결과를 아웃박스에 반영한다. */
+    private void relayEmail(long id) {
+        JavaMailSender sender = mailSenderProvider.getIfAvailable();
+        if (sender == null) {
+            // enabled=true 인데 spring.mail.host 미설정 → 빈 없음. NO_RELAY 로 폴백.
+            markNoRelay(id);
+            return;
+        }
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT target_address, subject, body FROM notification_delivery WHERE id=?", id);
+        String to = (String) row.get("target_address");
+        if (to == null || to.isBlank()) {
+            jdbc.update("UPDATE notification_delivery SET status='DEAD', failure_reason='NO_ADDRESS', "
+                    + "attempt_count=attempt_count+1, updated_at=now() WHERE id=?", id);
+            return;
+        }
+        try {
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(emailFrom);
+            msg.setTo(to);
+            Object subject = row.get("subject");
+            msg.setSubject(subject == null ? "[관제] 알림" : subject.toString());
+            Object body = row.get("body");
+            msg.setText(body == null ? "" : body.toString());
+            sender.send(msg);
+            jdbc.update("UPDATE notification_delivery SET status='SENT', sent_at=now(), "
+                    + "attempt_count=attempt_count+1, first_attempt_at=COALESCE(first_attempt_at, now()), "
+                    + "updated_at=now() WHERE id=?", id);
+            log.info("EMAIL 발송 완료 id={} to={}", id, maskEmail(to));
+        } catch (Exception ex) {
+            String detail = ex.getMessage();
+            if (detail != null && detail.length() > 480) {
+                detail = detail.substring(0, 480);
+            }
+            jdbc.update("UPDATE notification_delivery SET status='RETRY', attempt_count=attempt_count+1, "
+                    + "failure_reason='SMTP_ERROR', failure_detail=?, "
+                    + "next_attempt_at=now() + interval '2 minutes', updated_at=now() "
+                    + "WHERE id=? AND attempt_count+1 < max_attempts", detail, id);
+            jdbc.update("UPDATE notification_delivery SET status='DEAD', updated_at=now() "
+                    + "WHERE id=? AND attempt_count >= max_attempts", id);
+            log.warn("EMAIL 발송 실패 id={}: {}", id, ex.getMessage());
+        }
+    }
+
+    /** 릴레이 불가(미지원 채널/미설정): 재시도 백오프 후 최대치 도달 시 DEAD. */
+    private void markNoRelay(long id) {
+        jdbc.update("UPDATE notification_delivery SET status='RETRY', "
+                + "attempt_count=attempt_count+1, failure_reason='NO_RELAY', "
+                + "next_attempt_at=now() + interval '5 minutes', updated_at=now() "
+                + "WHERE id=? AND attempt_count+1 < max_attempts", id);
+        jdbc.update("UPDATE notification_delivery SET status='DEAD', updated_at=now() "
+                + "WHERE id=? AND attempt_count >= max_attempts", id);
     }
 
     private int rank(String severity) {
