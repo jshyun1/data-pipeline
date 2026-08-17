@@ -769,3 +769,17 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
 - **검증**: 빌드·healthy. 45초 후 infra_resource_sample 4행(DISK 8.1%/CPU 19%·8코어/LOAD1 2.75/
   MEMORY 60.2%) 실측 적재, series 4행, infra-host beat 확인. 파티션 테이블(DEFAULT)로 적재됨.
 - **미완**: 컨테이너 cgroup·PSI·적응형 주기·롤업 다운샘플·마운트별 deadline(infraProbeExecutor).
+
+### 19.12. U8/U9 · 알림 판정 엔진 수직 슬라이스 — ✅ 코드 완료·검증
+설계서 6-1절. 이 설계 최대 단위의 동작하는 최소 골격. 신규 패키지 alert/.
+- **AlertEngine**(controlPlaneScheduler 20초, 수집과 격리): 신호(infra_resource_sample)만 읽고 외부
+  호출 안 함(원칙 B). 부팅 시 내장 규칙 시드(SERVER_MEMORY, HOST:host). 상태기계
+  PENDING→FIRING→RESOLVED 를 관측 누적 초(true/false_observed_sec)로 판정(벽시계 아님). alert_instance
+  UPSERT + alert_instance_event 기록. 낙관적 락(version).
+- **AlertQueueController** `GET /api/dashboard/queue`: 열린 인스턴스를 심각도순으로. counts(critical/
+  warning/info/unknown/acked/snoozed/suppressed) + items. RESOLVED 는 closed 라 대기열 제외.
+- **검증(end-to-end)**: 임계 낮춰(30%) 현재 메모리 58.7% → FIRING 인스턴스 생성(이벤트 CREATED+FIRED),
+  대기열 API critical=1 확인. 이어 clear 70·clear_seconds 20 으로 → RESOLVED(closed_at·display_until·
+  reason=CONDITION_CLEARED, 이벤트 RESOLVED), 대기열 totalOpen=0. 규칙 운영 기본값 복원.
+- **미완(엔진 확장)**: 규칙 카탈로그 다종(JOB/SERVICE/DATA 등)·params 정식 파서·UNKNOWN(신선도)·
+  백프레셔 4단계·연쇄억제(suppressed_by)·플래핑·베이스라인·ack/스누즈 API·발송 연동(U11~).
