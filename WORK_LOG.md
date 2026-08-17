@@ -759,3 +759,13 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
   observation_count=2, loaded=100). KPI API 읽기 확인. (로컬 배포 파이프라인 0·NiFi 적재프로세서 없어
   실데이터 누적은 없음 - SQL 로직/배선/API 로 검증.)
 - **미완**: 주기당 배치 flush 최적화(현재 직접 UPSERT), RollupBackfillJob(과거 백필), timeseries 차트 3종.
+
+### 19.11. U36 · 리소스 시계열 수집(호스트) — ✅ 코드 완료·검증
+설계서 4-8절. "서버 리소스 이력 저장소가 0곳"이던 것을 채운다.
+- **ResourceSampleScheduler**(collect- 풀 60초): HostResourceService.collect() 재사용 →
+  infra_resource_sample 에 HOST(MEMORY/CPU/LOAD1) + FILESYSTEM(DISK) 적재(분 단위 절삭, 충돌 DO
+  NOTHING). infra_resource_series UPSERT(HOST=P0/FILESYSTEM=P1), infra-host 하트비트.
+  HeartbeatComponentRegistry 에 infra-host 키 추가.
+- **검증**: 빌드·healthy. 45초 후 infra_resource_sample 4행(DISK 8.1%/CPU 19%·8코어/LOAD1 2.75/
+  MEMORY 60.2%) 실측 적재, series 4행, infra-host beat 확인. 파티션 테이블(DEFAULT)로 적재됨.
+- **미완**: 컨테이너 cgroup·PSI·적응형 주기·롤업 다운샘플·마운트별 deadline(infraProbeExecutor).

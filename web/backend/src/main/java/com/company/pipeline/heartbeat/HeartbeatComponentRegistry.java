@@ -21,5 +21,7 @@ public final class HeartbeatComponentRegistry {
     public static final List<Component> COMPONENTS = List.of(
             new Component("kafka-metrics", "Kafka 지표 수집", "KAFKA", 20),
             new Component("nifi-counter", "NiFi 카운터 수집", "NIFI", 60),
-            new Component("nifi-processor", "NiFi 처리 추적", "NIFI", 15));
+            new Component("nifi-processor", "NiFi 처리 추적", "NIFI", 15),
+            // U36 리소스 수집기(호스트). 컨테이너/파일시스템/롤업은 후속에서 키 추가.
+            new Component("infra-host", "리소스 — 호스트", "INFRA", 60));
 }
