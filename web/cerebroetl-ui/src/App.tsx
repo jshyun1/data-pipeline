@@ -7,6 +7,7 @@ import { AirflowDashboardPage } from "./pages/AirflowDashboardPage";
 import { ConsoleFramePage } from "./pages/ConsoleFramePage";
 import { AlertQueuePage } from "./pages/AlertQueuePage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { EtlCreatePage } from "./pages/EtlCreatePage";
 import { EtlLogsPage } from "./pages/EtlLogsPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -21,6 +22,7 @@ export function App() {
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/alerts" element={<AlertQueuePage />} />
+        <Route path="/settings" element={<SettingsPage />} />
         <Route path="/airflow" element={<Navigate to="/airflow/dashboard" replace />} />
         <Route path="/airflow/dashboard" element={<AirflowDashboardPage />} />
         <Route

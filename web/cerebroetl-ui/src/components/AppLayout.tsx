@@ -8,6 +8,7 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   NodeIndexOutlined,
+  SettingOutlined,
 } from "@ant-design/icons";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useState, type ReactNode } from "react";
@@ -25,6 +26,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { path: "/dashboard", label: "대시보드", icon: <DashboardOutlined /> },
   { path: "/alerts", label: "조치 대기열", icon: <BellOutlined /> },
+  { path: "/settings", label: "알림/발송 설정", icon: <SettingOutlined /> },
   {
     path: "/airflow",
     label: "AirFlow",

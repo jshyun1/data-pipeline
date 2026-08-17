@@ -818,3 +818,11 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
   (010-****-5678), 테스트 발송 200. 전부 확인 후 테스트 데이터 정리·규칙 복원.
 - **알려진 소소한 이슈**: recipients 응답의 subscriptions(json_agg)가 PGobject 래퍼로 직렬화됨
   (값은 정상, 프론트 파싱 필요). 후속에서 ::text 캐스팅으로 정리 가능.
+
+### 19.16. 설정 화면(프론트) — ✅ 빌드·배포 검증
+설계서 6-7. /settings 새 페이지 + 사이드바 "알림/발송 설정" 메뉴.
+- **api/config.ts** + **pages/SettingsPage.tsx**: 탭 3개(알림 규칙 on/off·심각도·발화/해제초 표시,
+  발송 채널 on/off + 테스트발송 버튼, 수신자 추가/삭제 + 구독). useQuery + invalidate.
+- **검증**: docker node 로 tsc+vite build 통과(2.29s), cerebroetl-ui 재빌드·배포, 새 번들에
+  "알림/발송 설정" 포함(YES), 13001 경유 alert-rules/channels API 200. antd App 래퍼 부재로
+  정적 message 사용(루트 무수정).
