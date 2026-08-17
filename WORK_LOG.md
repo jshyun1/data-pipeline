@@ -783,3 +783,16 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
   reason=CONDITION_CLEARED, 이벤트 RESOLVED), 대기열 totalOpen=0. 규칙 운영 기본값 복원.
 - **미완(엔진 확장)**: 규칙 카탈로그 다종(JOB/SERVICE/DATA 등)·params 정식 파서·UNKNOWN(신선도)·
   백프레셔 4단계·연쇄억제(suppressed_by)·플래핑·베이스라인·ack/스누즈 API·발송 연동(U11~).
+
+### 19.13. U11 · 알림 발송 아웃박스 + 디스패처 — ✅ 코드 완료·검증
+설계서 4-7절/6-2절. 신규 패키지 notification/.
+- **NotificationService**: enqueueForInstance(FIRING 시 AlertEngine 이 호출) - 구독한 수신자별
+  IN_APP/EMAIL notification_delivery 행 INSERT(심각도 x min_severity 필터, dedup_key=sha256, 수신자
+  없으면 IN_APP 브로드캐스트 1행). dispatch(controlPlaneScheduler 5초) - PENDING/RETRY 를
+  severity_rank 순으로 claim: IN_APP 즉시 SENT, EMAIL 은 릴레이 미설정이라 RETRY→DEAD.
+- **AlertEngine 연동**: FIRING 확정 시 notifyFired() → notify_count++ + enqueue + NOTIFIED 이벤트.
+- **검증(end-to-end 전체 파이프라인)**: 임계 낮춰 발화 → alert_instance FIRING → notification_delivery
+  IN_APP 적재(ALERT-2-1, CRITICAL) → 디스패처 SENT, notify_count=1, NOTIFIED 이벤트 확인.
+  즉 신호→규칙→상태기계→아웃박스→발송이 통째로 동작.
+- **미완**: 실제 SMTP 발송(JavaMailSender)·심각도별 레이트리밋·서킷브레이커·배치 요약·재시도 백오프
+  (U14)·데드맨(U15)·자기알림·수신자/구독 관리 API·IN_APP 종 배지 조회 API.

@@ -37,10 +37,20 @@ public class AlertEngine {
 
     private final JdbcTemplate jdbc;
     private final SettingService settings;
+    private final com.company.pipeline.notification.NotificationService notificationService;
 
-    public AlertEngine(DataSource dataSource, SettingService settings) {
+    public AlertEngine(DataSource dataSource, SettingService settings,
+                       com.company.pipeline.notification.NotificationService notificationService) {
         this.jdbc = new JdbcTemplate(dataSource);
         this.settings = settings;
+        this.notificationService = notificationService;
+    }
+
+    /** FIRING 확정 시 아웃박스 발송 + 사건 기록. */
+    private void notifyFired(long id) {
+        jdbc.update("UPDATE alert_instance SET notify_count=notify_count+1, last_notified_at=now() WHERE id=?", id);
+        notificationService.enqueueForInstance(id);
+        event(id, "NOTIFIED", null, null, "SYSTEM");
     }
 
     /** 내장 규칙 시드(코드가 원천). 부팅 시 없으면 만든다. */
@@ -171,6 +181,7 @@ public class AlertEngine {
         event(id, "CREATED", null, state, "SYSTEM");
         if ("FIRING".equals(state)) {
             event(id, "FIRED", "PENDING", "FIRING", "SYSTEM");
+            notifyFired(id);
         }
         log.info("알림 인스턴스 생성 {} state={} mem={}%", id, state, memPct);
     }
@@ -180,6 +191,7 @@ public class AlertEngine {
                 + "observed_value=?, last_transition_at=now(), last_evaluated_at=now(), updated_at=now(), "
                 + "version=version+1 WHERE id=?", trueSec, memPct, id);
         event(((Number) id).longValue(), "FIRED", "PENDING", "FIRING", "SYSTEM");
+        notifyFired(((Number) id).longValue());
         log.info("알림 FIRING 전이 {} mem={}%", id, memPct);
     }
 
