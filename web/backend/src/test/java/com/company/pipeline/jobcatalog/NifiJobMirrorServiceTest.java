@@ -161,7 +161,7 @@ class NifiJobMirrorServiceTest {
 
     private void givenEmptyCanvas() {
         when(nifiClient.getFlow("root")).thenReturn(new NifiFlowResponse(
-                new ProcessGroupFlowEntity("root", null, null, new Flow(List.of(), List.of(), List.of()))));
+                new ProcessGroupFlowEntity("root", null, null, new Flow(List.of(), List.of(), List.of(), List.of()))));
     }
 
     /** DZ_UPSERT 레인 하나(extract -> upsert, upsert -> 오류로그)를 흉내낸 캔버스. */
@@ -171,10 +171,10 @@ class NifiJobMirrorServiceTest {
                 0, 3, 0, 0, null);
         when(nifiClient.getFlow("root")).thenReturn(new NifiFlowResponse(
                 new ProcessGroupFlowEntity("root", null, null,
-                        new Flow(List.of(new ProcessGroupEntity("pg-1", groupComponent)),
-                                List.of(), List.of()))));
+                        new Flow(List.of(new ProcessGroupEntity("pg-1", null, groupComponent)),
+                                List.of(), List.of(), List.of()))));
 
-        ProcessorEntity extract = new ProcessorEntity("p-extract", new ProcessorComponent(
+        ProcessorEntity extract = new ProcessorEntity("p-extract", null, new ProcessorComponent(
                 "p-extract", "extract-chg-COM001M",
                 "org.apache.nifi.processors.standard.ExecuteSQL",
                 new Position(1050.0, 320.0), "STOPPED", "VALID",
@@ -183,7 +183,7 @@ class NifiJobMirrorServiceTest {
                         "Database Connection Pooling Service", "oracle-pool"),
                         "TIMER_DRIVEN", "0 sec")));
 
-        ProcessorEntity upsert = new ProcessorEntity("p-upsert", new ProcessorComponent(
+        ProcessorEntity upsert = new ProcessorEntity("p-upsert", null, new ProcessorComponent(
                 "p-upsert", "upsert-dz-COM001M",
                 "org.apache.nifi.processors.standard.PutDatabaseRecord",
                 new Position(1400.0, 320.0), "STOPPED", "VALID",
@@ -202,20 +202,20 @@ class NifiJobMirrorServiceTest {
 
         when(nifiClient.getFlow("pg-1")).thenReturn(new NifiFlowResponse(
                 new ProcessGroupFlowEntity("pg-1", "root", null,
-                        new Flow(List.of(), List.of(extract, upsert), List.of(failureLink)))));
+                        new Flow(List.of(), List.of(extract, upsert), List.of(failureLink), List.of()))));
         when(nifiClient.getFlow(anyString())).thenAnswer(invocation -> {
             String groupId = invocation.getArgument(0);
             if ("root".equals(groupId)) {
                 return new NifiFlowResponse(new ProcessGroupFlowEntity("root", null, null,
-                        new Flow(List.of(new ProcessGroupEntity("pg-1", groupComponent)),
-                                List.of(), List.of())));
+                        new Flow(List.of(new ProcessGroupEntity("pg-1", null, groupComponent)),
+                                List.of(), List.of(), List.of())));
             }
             if ("pg-1".equals(groupId)) {
                 return new NifiFlowResponse(new ProcessGroupFlowEntity("pg-1", "root", null,
-                        new Flow(List.of(), List.of(extract, upsert), List.of(failureLink))));
+                        new Flow(List.of(), List.of(extract, upsert), List.of(failureLink), List.of())));
             }
             return new NifiFlowResponse(new ProcessGroupFlowEntity(groupId, "root", null,
-                    new Flow(List.of(), List.of(), List.of())));
+                    new Flow(List.of(), List.of(), List.of(), List.of())));
         });
         when(jobRepository.findByNifiPgId("pg-1")).thenReturn(Optional.empty());
     }

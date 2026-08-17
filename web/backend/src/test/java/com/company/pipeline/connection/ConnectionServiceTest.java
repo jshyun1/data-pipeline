@@ -12,6 +12,8 @@ import com.company.pipeline.common.crypto.PasswordCryptoService;
 import com.company.pipeline.connection.dto.ConnectionCreateRequest;
 import com.company.pipeline.connection.dto.ConnectionResponse;
 import com.company.pipeline.connection.dto.ConnectionUpdateRequest;
+import com.company.pipeline.nifi.NifiClient;
+import com.company.pipeline.nifi.dto.NifiControllerServiceEntity;
 import com.company.pipeline.pipeline.PipelineDefinition;
 import com.company.pipeline.pipeline.PipelineDefinitionRepository;
 import com.company.pipeline.pipeline.PipelineStatus;
@@ -37,13 +39,16 @@ class ConnectionServiceTest {
 
     @Mock
     private PipelineDefinitionRepository pipelineDefinitionRepository;
+    @Mock
+    private NifiClient nifiClient;
 
     private ConnectionService connectionService;
 
     @BeforeEach
     void setUp() {
         connectionService = new ConnectionService(
-                connectionRepository, passwordCryptoService, schemaDiscoveryService, pipelineDefinitionRepository);
+                connectionRepository, passwordCryptoService, schemaDiscoveryService, pipelineDefinitionRepository,
+                nifiClient);
     }
 
     @Test
@@ -54,6 +59,10 @@ class ConnectionServiceTest {
         when(passwordCryptoService.encrypt("plaintext-pw")).thenReturn("cipher-text");
         when(connectionRepository.save(any(PipelineConnection.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
+        when(nifiClient.createOracleDbcpControllerService(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new NifiControllerServiceEntity("svc-1", null,
+                        new NifiControllerServiceEntity.Component("svc-1", "oracle-source-poc-dbcp",
+                                "DBCPConnectionPool", "ENABLED")));
 
         ConnectionResponse response = connectionService.create(request);
 
