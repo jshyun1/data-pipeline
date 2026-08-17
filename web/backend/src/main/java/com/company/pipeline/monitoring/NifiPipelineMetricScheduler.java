@@ -78,6 +78,7 @@ public class NifiPipelineMetricScheduler {
     private final JobLookup jobLookup;
 
     private final HeartbeatService heartbeat;
+    private final com.company.pipeline.rollup.RollupService rollupService;
 
     public NifiPipelineMetricScheduler(
             NifiClient nifiClient,
@@ -85,13 +86,15 @@ public class NifiPipelineMetricScheduler {
             PipelineDailyLoadMetricService dailyLoadMetricService,
             NifiExecutionLogEntryRepository executionLogRepository,
             JobLookup jobLookup,
-            HeartbeatService heartbeat) {
+            HeartbeatService heartbeat,
+            com.company.pipeline.rollup.RollupService rollupService) {
         this.nifiClient = nifiClient;
         this.snapshotRepository = snapshotRepository;
         this.dailyLoadMetricService = dailyLoadMetricService;
         this.executionLogRepository = executionLogRepository;
         this.jobLookup = jobLookup;
         this.heartbeat = heartbeat;
+        this.rollupService = rollupService;
     }
 
     private record ProcessorRef(String id, String name, String groupId, String groupName) {
@@ -235,18 +238,22 @@ public class NifiPipelineMetricScheduler {
 
     private void checkOne(ProcessorRef ref, long currentValue) {
         Optional<NifiCounterSnapshot> previous = snapshotRepository.findById(ref.id());
+        long delta = 0;
         if (previous.isPresent()) {
             long previousValue = previous.get().getLastValue();
             // NiFi 재시작 등으로 카운터가 리셋되면 currentValue < previousValue가 될 수 있는데,
             // 이땐 음수 delta로 깎지 않고 리셋 이후 누적값 전체를 이번 증가분으로 잡는다.
-            long delta = currentValue >= previousValue ? currentValue - previousValue : currentValue;
-            if (delta > 0) {
-                dailyLoadMetricService.incrementLoadedCount(SOURCE, ref.id(), TASK_KEY, ref.name(), delta);
-                NifiExecutionLogEntry entry = new NifiExecutionLogEntry(ref.id(), ref.name(), ref.groupId(),
-                        ref.groupName(), LocalDateTime.now(), delta, NifiExecutionLogEntry.STATUS_SUCCESS);
-                entry.assignJob(jobLookup.resolveJobId(ref.id(), ref.groupId()).orElse(null));
-                executionLogRepository.save(entry);
-            }
+            delta = currentValue >= previousValue ? currentValue - previousValue : currentValue;
+        }
+        Long jobId = jobLookup.resolveJobId(ref.id(), ref.groupId()).orElse(null);
+        // delta==0(적재 없음/기준점) 에도 기록해 observation_count 를 올린다(U7 핵심, 가드 제거).
+        rollupService.recordObservation(SOURCE, ref.id(), TASK_KEY, ref.name(), jobId, delta);
+        if (delta > 0) {
+            dailyLoadMetricService.incrementLoadedCount(SOURCE, ref.id(), TASK_KEY, ref.name(), delta);
+            NifiExecutionLogEntry entry = new NifiExecutionLogEntry(ref.id(), ref.name(), ref.groupId(),
+                    ref.groupName(), LocalDateTime.now(), delta, NifiExecutionLogEntry.STATUS_SUCCESS);
+            entry.assignJob(jobId);
+            executionLogRepository.save(entry);
         }
         // 처음 보는 프로세서는 이번 값을 기준점으로만 잡고(그 이전 이력은 알 방법이 없음)
         // 증가분은 다음 주기부터 반영한다.

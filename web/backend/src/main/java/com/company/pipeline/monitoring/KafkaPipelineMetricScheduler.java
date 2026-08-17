@@ -2,6 +2,7 @@ package com.company.pipeline.monitoring;
 
 import com.company.pipeline.heartbeat.HeartbeatService;
 import com.company.pipeline.pipeline.PipelineDefinition;
+import com.company.pipeline.rollup.RollupService;
 import com.company.pipeline.pipeline.PipelineDefinitionRepository;
 import com.company.pipeline.pipeline.PipelineStatus;
 import java.util.List;
@@ -29,18 +30,21 @@ public class KafkaPipelineMetricScheduler {
     private final PipelineMetricSnapshotRepository pipelineMetricSnapshotRepository;
     private final PipelineDailyLoadMetricService dailyLoadMetricService;
     private final HeartbeatService heartbeat;
+    private final RollupService rollupService;
 
     public KafkaPipelineMetricScheduler(
             PipelineDefinitionRepository pipelineDefinitionRepository,
             PipelineMetricSnapshotService pipelineMetricSnapshotService,
             PipelineMetricSnapshotRepository pipelineMetricSnapshotRepository,
             PipelineDailyLoadMetricService dailyLoadMetricService,
-            HeartbeatService heartbeat) {
+            HeartbeatService heartbeat,
+            RollupService rollupService) {
         this.pipelineDefinitionRepository = pipelineDefinitionRepository;
         this.pipelineMetricSnapshotService = pipelineMetricSnapshotService;
         this.pipelineMetricSnapshotRepository = pipelineMetricSnapshotRepository;
         this.dailyLoadMetricService = dailyLoadMetricService;
         this.heartbeat = heartbeat;
+        this.rollupService = rollupService;
     }
 
     @Scheduled(fixedRate = 20_000, initialDelay = 20_000)
@@ -67,10 +71,15 @@ public class KafkaPipelineMetricScheduler {
                 pipelineMetricSnapshotRepository.findTopByPipelineIdOrderByCollectedAtDesc(pipeline.getId());
         PipelineMetricSnapshot current = pipelineMetricSnapshotService.recordSnapshot(pipeline.getId());
 
-        if (previous.isEmpty()) {
-            return;
+        long delta = 0;
+        if (previous.isPresent() && current.getCommittedOffset() != null
+                && previous.get().getCommittedOffset() != null) {
+            delta = Math.max(0, current.getCommittedOffset() - previous.get().getCommittedOffset());
         }
-        long delta = current.getCommittedOffset() - previous.get().getCommittedOffset();
+        // delta==0(적재 없음/기준점) 에도 기록해 observation_count 를 올린다 - "0건 관측"과 "미관측"을
+        // 구분하는 U7 의 핵심(가드 제거).
+        rollupService.recordObservation(SOURCE, pipeline.getId().toString(), TASK_KEY, pipeline.getName(),
+                pipeline.getId(), delta);
         if (delta > 0) {
             dailyLoadMetricService.incrementLoadedCount(
                     SOURCE, pipeline.getId().toString(), TASK_KEY, pipeline.getName(), delta);

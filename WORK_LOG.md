@@ -745,3 +745,17 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
   현재는 DEFAULT 파티션이 전부 받고 RetentionService 가 DELETE_BATCH 로 정리(동작하나 DROP 효율 미달).
 - **미완(서비스 계층)**: U7 롤업 기록/U8·U36 신호·리소스 수집/U9·U37·U10 판정엔진·상태기계/
   U11~U15 발송/U16~U19 프론트 화면. 이번은 데이터모델까지.
+
+### 19.10. U7 · 적재 롤업 기록 + KPI API — ✅ 코드 완료·검증
+설계서 4-5절. 신규 패키지 rollup/.
+- **RollupService**(JdbcTemplate): recordObservation 이 MIN5/HOUR/DAY 3해상도로 UPSERT. **delta==0
+  에도 호출**해 observation_count 를 올린다("0건 관측"과 "미관측" 구분, 사고1 데이터모델 뿌리). 버킷
+  경계는 install_info.display_zone 로컬 정시(저장은 절대시각 TIMESTAMPTZ).
+- **수집부 가드 제거**: KafkaPipelineMetricScheduler.checkOne / NifiPipelineMetricScheduler.checkOne 의
+  `if(delta>0)` 를 걷어내고 rollupService.recordObservation(...)로 매 관측 호출. 기존
+  dailyLoadMetricService(pipeline_daily_load_metric)/nifi_execution_log 는 delta>0 에만 유지(하위호환).
+- **KpiController** `/api/dashboard/kpi/timeline`(프리셋별 MIN5/HOUR/DAY 버킷) + `/summary`(소스별 합계).
+- **검증**: 빌드·healthy(배선 성공). recordObservation UPSERT 로직 직접 검증(관측 2회 delta 0→100 →
+  observation_count=2, loaded=100). KPI API 읽기 확인. (로컬 배포 파이프라인 0·NiFi 적재프로세서 없어
+  실데이터 누적은 없음 - SQL 로직/배선/API 로 검증.)
+- **미완**: 주기당 배치 flush 최적화(현재 직접 UPSERT), RollupBackfillJob(과거 백필), timeseries 차트 3종.
