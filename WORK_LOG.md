@@ -896,4 +896,18 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
   pipeline-api 에 SPRING_MAIL_HOST=mailhog/PORT=1025/NOTIFICATION_EMAIL_ENABLED=true env 주입.
 - **검증(end-to-end)**: EMAIL delivery 행 INSERT → dispatch → status=SENT, "EMAIL 발송 완료 to=o***@…"
   → MailHog API(:8025) 수신 1건(to=ops@example.com, subj="[관제] SMTP 릴레이 검증"). 
-- **후속(미구현)**: 심각도별 레이트리밋·서킷브레이커·배치요약·데드맨(U12/U14/U15 잔여).
+- **후속(미구현)**: 심각도별 레이트리밋·서킷브레이커·배치요약(U12/U14 잔여).
+
+### 19.22. 확장①(규칙 breadth) · 수집기 중단(데드맨, U15) — ✅ 코드 완료·검증
+설계서 필수 알림 3종 완성(JOB 실패·메모리 압박·수집기 중단). WatchdogService 의 결측 감지를 알림화.
+- **AlertEngine**: `COLLECTOR_DOWN:all` 시드(CRITICAL, mandatory). `evaluateCollectorOutage()`:
+  WatchdogService 가 연 collector_outage(ended_at IS NULL)마다 `COLLECTOR:{key}` FIRING 생성
+  (deep_link=/self-check 로 자가진단 화면 연결), outage 종료 시 자동 RESOLVED. 상태 기반 재조정.
+- **역할 분리**: 결측 "감지"는 기존 WatchdogService(collector_outage 기록), 이 규칙은 "알림화"만.
+  중복 없음. DATA 신선도와 동일하게 신호 테이블만 읽는다.
+- **검증(fire+resolve)**: 가짜 수집기(test-collector) 히트비트+열린 outage 삽입 → CRITICAL
+  "수집기 중단: 테스트 수집기 (5분 결측)"(tgt COLLECTOR:test-collector, link /self-check) →
+  outage 종료 → "알림 해소" → 큐/열린outage 0. **덤**: 리빌드 중 앱 다운으로 실제 수집기
+  (kafka-metrics·nifi-processor·nifi-counter) 결측이 워치독에 잡혀 함께 발화됐고, 복구 후 워치독이
+  outage 를 닫자 규칙이 자동 해소 — 실환경 재기동 시나리오까지 검증됨.
+- **잔여(로컬 런타임)**: test-collector 히트비트/종료된 outage 행이 남음(커밋 무관).

@@ -43,6 +43,9 @@ public class AlertEngine {
     private static final String DATA_RULE_TYPE = "DATA_FRESHNESS";
     private static final String DATA_BUILTIN_KEY = "DATA_FRESHNESS:all";
 
+    private static final String COLLECTOR_RULE_TYPE = "COLLECTOR_DOWN";
+    private static final String COLLECTOR_BUILTIN_KEY = "COLLECTOR_DOWN:all";
+
     private final JdbcTemplate jdbc;
     private final SettingService settings;
     private final com.company.pipeline.notification.NotificationService notificationService;
@@ -118,6 +121,24 @@ public class AlertEngine {
                         """, DATA_RULE_TYPE, DATA_BUILTIN_KEY, "{\"staleness_minutes\":30}");
                 log.info("내장 규칙 시드: {}", DATA_BUILTIN_KEY);
             }
+            // 수집기 중단(데드맨). WatchdogService 가 연 collector_outage 를 대기열 알림으로 승격.
+            jdbc.update("""
+                    INSERT INTO alert_rule_type
+                        (code, label, category, kpi_axis, mandatory, default_severity, min_severity, signal_keys_req, description)
+                    VALUES (?, '수집기 중단', 'HOST', 'CURRENT', true, 'CRITICAL', 'WARNING', 'heartbeat.outage', '신호 수집기 결측')
+                    ON CONFLICT (code) DO NOTHING
+                    """, COLLECTOR_RULE_TYPE);
+            Integer cn = jdbc.queryForObject(
+                    "SELECT count(*) FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL",
+                    Integer.class, COLLECTOR_BUILTIN_KEY);
+            if (cn != null && cn == 0) {
+                jdbc.update("""
+                        INSERT INTO alert_rule
+                            (rule_type_code, builtin_key, name, severity, params_json, for_seconds, clear_seconds, mandatory)
+                        VALUES (?, ?, '수집기 중단', 'CRITICAL', '{}'::jsonb, 0, 0, true)
+                        """, COLLECTOR_RULE_TYPE, COLLECTOR_BUILTIN_KEY);
+                log.info("내장 규칙 시드: {}", COLLECTOR_BUILTIN_KEY);
+            }
         } catch (Exception ex) {
             log.warn("내장 규칙 시드 실패(기동은 계속): {}", ex.getMessage());
         }
@@ -140,6 +161,11 @@ public class AlertEngine {
             evaluateDataFreshness();
         } catch (Exception ex) {
             log.warn("알림 평가 실패({}): {}", DATA_BUILTIN_KEY, ex.getMessage());
+        }
+        try {
+            evaluateCollectorOutage();
+        } catch (Exception ex) {
+            log.warn("알림 평가 실패({}): {}", COLLECTOR_BUILTIN_KEY, ex.getMessage());
         }
     }
 
@@ -267,6 +293,73 @@ public class AlertEngine {
             String tk = (String) inst.get("target_key");
             String source = tk.startsWith("DATA:") ? tk.substring(5) : tk;
             if (!stalledSources.contains(source)) {
+                resolve((Number) inst.get("id"), "FIRING");
+            }
+        }
+    }
+
+    /** 수집기 중단(데드맨). WatchdogService 가 연 collector_outage(미종료)를 대기열 알림으로 승격/해소한다. */
+    private void evaluateCollectorOutage() {
+        Map<String, Object> rule;
+        try {
+            rule = jdbc.queryForMap(
+                    "SELECT id, severity, enabled FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL",
+                    COLLECTOR_BUILTIN_KEY);
+        } catch (Exception ex) {
+            return;
+        }
+        if (!Boolean.TRUE.equals(rule.get("enabled"))) {
+            return;
+        }
+        long ruleId = ((Number) rule.get("id")).longValue();
+        String severity = (String) rule.get("severity");
+
+        List<Map<String, Object>> outages = jdbc.queryForList("""
+                SELECT co.component_key,
+                       COALESCE(sh.component_label, co.component_key) AS label,
+                       EXTRACT(EPOCH FROM (now() - co.started_at))::bigint AS age_sec
+                FROM collector_outage co
+                LEFT JOIN system_heartbeat sh ON sh.component_key = co.component_key
+                WHERE co.ended_at IS NULL
+                """);
+        Set<String> downKeys = new HashSet<>();
+        for (Map<String, Object> o : outages) {
+            String key = (String) o.get("component_key");
+            downKeys.add(key);
+            long ageSec = ((Number) o.get("age_sec")).longValue();
+            String label = (String) o.get("label");
+            String target = "COLLECTOR:" + key;
+            List<Long> open = jdbc.query(
+                    "SELECT id FROM alert_instance WHERE rule_id=? AND target_key=? AND closed_at IS NULL",
+                    (rs, i) -> rs.getLong(1), ruleId, target);
+            if (open.isEmpty()) {
+                long ageMin = ageSec / 60;
+                Long id = jdbc.queryForObject("""
+                        INSERT INTO alert_instance
+                            (rule_id, rule_type_code, kpi_axis, target_key, target_label, component_code, severity,
+                             state, condition_since, started_at, last_evaluated_at, last_transition_at, summary,
+                             observed_value, deep_link)
+                        VALUES (?, ?, 'CURRENT', ?, ?, 'HOST', ?, 'FIRING', now(), now(), now(), now(), ?, ?,
+                                '/self-check')
+                        RETURNING id
+                        """, Long.class, ruleId, COLLECTOR_RULE_TYPE, target, label, severity,
+                        "수집기 중단: " + label + " (" + ageMin + "분 결측)", (double) ageSec);
+                event(id, "CREATED", null, "FIRING", "SYSTEM");
+                event(id, "FIRED", null, "FIRING", "SYSTEM");
+                notifyFired(id);
+                log.info("수집기 중단 알림 생성 {} key={} age={}m", id, key, ageMin);
+            } else {
+                jdbc.update("UPDATE alert_instance SET observed_value=?, last_evaluated_at=now() WHERE id=?",
+                        (double) ageSec, open.get(0));
+            }
+        }
+        // 복구된 수집기(outage 종료)의 열린 인스턴스는 해소한다.
+        List<Map<String, Object>> openColl = jdbc.queryForList(
+                "SELECT id, target_key FROM alert_instance WHERE rule_id=? AND closed_at IS NULL", ruleId);
+        for (Map<String, Object> inst : openColl) {
+            String tk = (String) inst.get("target_key");
+            String key = tk.startsWith("COLLECTOR:") ? tk.substring(10) : tk;
+            if (!downKeys.contains(key)) {
                 resolve((Number) inst.get("id"), "FIRING");
             }
         }
