@@ -911,3 +911,26 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
   (kafka-metrics·nifi-processor·nifi-counter) 결측이 워치독에 잡혀 함께 발화됐고, 복구 후 워치독이
   outage 를 닫자 규칙이 자동 해소 — 실환경 재기동 시나리오까지 검증됨.
 - **잔여(로컬 런타임)**: test-collector 히트비트/종료된 outage 행이 남음(커밋 무관).
+
+### 19.23. 파티션 유지잡(미래 월파티션 사전 생성) — ✅ 코드 완료·검증
+설계서 파티션 유지. RetentionService 는 PARTITION_DROP(삭제)만 했고 **미래 파티션 생성이 없어**
+새 데이터가 계속 DEFAULT 로 쌓이던 문제를 해결.
+- **retention/PartitionMaintenanceService**: batchScheduler 로 6시간마다(기동 45s 뒤 1회) RANGE 파티션
+  테이블(infra_resource_sample=sampled_at, pipeline_metric_snapshot=collected_at)에 "다음 달부터"
+  3개월치 월파티션을 `CREATE TABLE IF NOT EXISTS … PARTITION OF … FOR VALUES` 로 확보.
+- **안전 원칙**: 현재/과거 월은 DEFAULT 에 이미 행이 있어 생성 시 겹침 오류 → 오직 미래 구간만 만든다
+  (미래엔 DEFAULT 행 없음). 기존 DEFAULT 백로그 재분배(일회성 이관)는 이 잡의 책임 아님(별도 마이그).
+- **검증**: 기동 후 로그 "파티션 유지잡 완료: 2 테이블, 2026-09-01부터 3개월 확보(6건)", 두 테이블에
+  _p202609/_p202610/_p202611 생성 확인. infra(timestamptz)는 KST 월경계(2026-08-31 15:00Z=09-01 00:00
+  KST), snapshot(timestamp)은 리터럴 경계 — 컬럼 타입별로 정확. 재실행 시 IF NOT EXISTS 로 멱등.
+- **효과**: 9월부터 신규 데이터가 월파티션에 떨어져 RetentionService 의 PARTITION_DROP 이 유효해짐.
+
+## 20. 이번 세션(2026-08-18 새벽) 확장 요약 — 7유닛 검증·커밋
+설계서 확장 3분야 전부 착수, 각 유닛 build→deploy→test 검증 후 개별 커밋:
+- **규칙 breadth(①)**: JOB 실패(480d611)·DATA 신선도(71e29be)·수집기 중단/데드맨(9a66932).
+  필수 알림 3종(JOB·메모리·수집기 중단) 완성.
+- **발송(②)**: 실 SMTP 릴레이 JavaMailSender(a995bed), MailHog end-to-end 검증.
+- **프론트(③)**: KPI 2축 카드(c8b4686)·자가진단 화면(d35536d).
+- **인프라**: 파티션 유지잡(이번 커밋).
+- **미구현(후속)**: 알림 레이트리밋·서킷브레이커·배치요약(U12/U14), 온보딩(U19), DEFAULT 백로그 일회 이관.
+- **로컬 검증 배선(커밋 제외)**: docker-compose.override.yml 에 mailhog + SMTP env(.git/info/exclude).
