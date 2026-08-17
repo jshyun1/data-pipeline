@@ -35,6 +35,9 @@ public class AlertEngine {
     private static final String TARGET_KEY = "HOST:host";
     private static final int EVAL_INTERVAL_SEC = 20;
 
+    private static final String JOB_RULE_TYPE = "JOB_FAILURE";
+    private static final String JOB_BUILTIN_KEY = "JOB_FAILURE:all";
+
     private final JdbcTemplate jdbc;
     private final SettingService settings;
     private final com.company.pipeline.notification.NotificationService notificationService;
@@ -74,6 +77,24 @@ public class AlertEngine {
                         """, RULE_TYPE, BUILTIN_KEY, "{\"threshold\":80,\"clear\":72}");
                 log.info("내장 규칙 시드: {}", BUILTIN_KEY);
             }
+            // JOB 실패(필수 알림 3종 중 하나). 이벤트 기반이라 for_seconds=0.
+            jdbc.update("""
+                    INSERT INTO alert_rule_type
+                        (code, label, category, kpi_axis, mandatory, default_severity, min_severity, signal_keys_req, description)
+                    VALUES (?, 'ETL Job 실패', 'JOB', 'CURRENT', true, 'WARNING', 'WARNING', 'job.run.status', 'Job 실행 실패')
+                    ON CONFLICT (code) DO NOTHING
+                    """, JOB_RULE_TYPE);
+            Integer jn = jdbc.queryForObject(
+                    "SELECT count(*) FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL",
+                    Integer.class, JOB_BUILTIN_KEY);
+            if (jn != null && jn == 0) {
+                jdbc.update("""
+                        INSERT INTO alert_rule
+                            (rule_type_code, builtin_key, name, severity, params_json, for_seconds, clear_seconds, mandatory)
+                        VALUES (?, ?, 'ETL Job 실패', 'WARNING', '{}'::jsonb, 0, 1800, true)
+                        """, JOB_RULE_TYPE, JOB_BUILTIN_KEY);
+                log.info("내장 규칙 시드: {}", JOB_BUILTIN_KEY);
+            }
         } catch (Exception ex) {
             log.warn("내장 규칙 시드 실패(기동은 계속): {}", ex.getMessage());
         }
@@ -81,12 +102,77 @@ public class AlertEngine {
 
     @Scheduled(fixedRate = 20_000, initialDelay = 45_000, scheduler = "controlPlaneScheduler")
     public void evaluate() {
+        // 한 규칙의 실패가 평가 루프를 죽이면 안 된다(다른 규칙/다음 주기 계속).
         try {
             evaluateMemoryRule();
         } catch (Exception ex) {
-            // 한 규칙의 실패가 평가 루프를 죽이면 안 된다(다른 규칙/다음 주기 계속).
             log.warn("알림 평가 실패({}): {}", BUILTIN_KEY, ex.getMessage());
         }
+        try {
+            evaluateJobRules();
+        } catch (Exception ex) {
+            log.warn("알림 평가 실패({}): {}", JOB_BUILTIN_KEY, ex.getMessage());
+        }
+    }
+
+    /** JOB 실패(이벤트 기반). 최근 실패한 잡 실행마다 발화하고, 30분 새 실패가 없으면 해소한다. */
+    private void evaluateJobRules() {
+        Long ruleId = jdbc.query(
+                "SELECT id FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL AND enabled",
+                (rs, i) -> rs.getLong(1), JOB_BUILTIN_KEY).stream().findFirst().orElse(null);
+        if (ruleId == null) {
+            return;
+        }
+        // ended_at 은 timestamp without time zone. 앱 세션 TZ 로 now() 와 비교되므로,
+        // 신호 기록(등록기)과 이 평가기는 반드시 같은 세션 TZ(앱 JVM 기본)에서 돈다.
+        List<Map<String, Object>> failed = jdbc.queryForList("""
+                SELECT r.id AS run_id, r.job_id, j.job_name
+                FROM etl_job_run r JOIN etl_job j ON j.id = r.job_id
+                WHERE r.status = 'FAILED' AND r.ended_at > now() - interval '10 minutes'
+                ORDER BY r.ended_at DESC
+                """);
+        for (Map<String, Object> f : failed) {
+            long runId = ((Number) f.get("run_id")).longValue();
+            long jobId = ((Number) f.get("job_id")).longValue();
+            String jobName = (String) f.get("job_name");
+            String target = "JOB:" + jobId;
+            List<Map<String, Object>> open = jdbc.queryForList(
+                    "SELECT id, last_failed_run_id FROM alert_instance WHERE rule_id=? AND target_key=? AND closed_at IS NULL",
+                    ruleId, target);
+            if (open.isEmpty()) {
+                Long id = jdbc.queryForObject("""
+                        INSERT INTO alert_instance
+                            (rule_id, rule_type_code, kpi_axis, target_key, target_label, component_code, severity,
+                             state, condition_since, started_at, last_evaluated_at, last_transition_at, summary,
+                             last_failed_run_id, fail_run_count, deep_link)
+                        VALUES (?, ?, 'CURRENT', ?, ?, 'JOB', 'WARNING', 'FIRING', now(), now(), now(), now(), ?, ?, 1,
+                                '/dashboard?panel=jobs')
+                        RETURNING id
+                        """, Long.class, ruleId, JOB_RULE_TYPE, target, jobName,
+                        "ETL Job 실패: " + jobName, runId);
+                event(id, "CREATED", null, "FIRING", "SYSTEM");
+                event(id, "FIRED", null, "FIRING", "SYSTEM");
+                notifyFired(id);
+                log.info("JOB 실패 알림 생성 {} job={}", id, jobName);
+            } else {
+                Map<String, Object> inst = open.get(0);
+                Long lastRun = inst.get("last_failed_run_id") == null ? null
+                        : ((Number) inst.get("last_failed_run_id")).longValue();
+                if (lastRun == null || lastRun != runId) {
+                    // 새 run 이 실패 - 반드시 다시 알린다.
+                    Number id = (Number) inst.get("id");
+                    jdbc.update("UPDATE alert_instance SET last_failed_run_id=?, fail_run_count=fail_run_count+1, "
+                            + "last_evaluated_at=now(), last_transition_at=now(), updated_at=now() WHERE id=?", runId, id);
+                    event(id.longValue(), "RECURRED", null, null, "SYSTEM");
+                    notifyFired(id.longValue());
+                }
+            }
+        }
+        // 30분간 새 실패가 없으면(마지막 전이 후 clear window) 해소.
+        jdbc.query("""
+                SELECT id FROM alert_instance WHERE rule_id=? AND closed_at IS NULL
+                  AND last_transition_at < now() - interval '30 minutes'
+                """, (rs, i) -> rs.getLong(1), ruleId).forEach(id -> resolve(id, "FIRING"));
     }
 
     private void evaluateMemoryRule() {

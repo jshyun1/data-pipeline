@@ -826,3 +826,20 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
 - **검증**: docker node 로 tsc+vite build 통과(2.29s), cerebroetl-ui 재빌드·배포, 새 번들에
   "알림/발송 설정" 포함(YES), 13001 경유 alert-rules/channels API 200. antd App 래퍼 부재로
   정적 message 사용(루트 무수정).
+
+### 19.17. 확장①(규칙 breadth) · JOB 실패 규칙(이벤트 기반) — ✅ 코드 완료·검증
+설계서 알림 규칙 다종화의 첫 규칙. 메모리(임계 기반)와 달리 **이벤트 기반**.
+- **AlertEngine**: `JOB_FAILURE:all` 내장 규칙 시드(WARNING, mandatory, for_seconds=0). `evaluate()`가
+  controlPlaneScheduler(20s)로 `evaluateJobRules()` 호출. 최근 10분 내 status='FAILED' 인 etl_job_run
+  마다 target `JOB:{jobId}` 로 FIRING alert_instance 생성(last_failed_run_id 추적), 새 run 실패 시
+  RECURRED 재알림, 마지막 전이 후 30분간 새 실패 없으면 자동 해소. notifyFired→발송 아웃박스 적재.
+- **검증(수직 슬라이스 end-to-end)**: 실패 etl_job_run 삽입 → `[진단] JOB평가 ruleId=2 failed=1` →
+  "JOB 실패 알림 생성 job=test" → 대기열 WARNING "ETL Job 실패: test"(JOB:1) →
+  notification_delivery(IN_APP, **SENT**) → `/api/alerts/{id}/ack` 200, 대기열 acked=1 반영. 확인 후 진단로그 제거.
+- **⚠ 검증 함정(타임존, 코드버그 아님)**: etl_job_run.ended_at 은 `timestamp without time zone`.
+  앱 DB 세션 TZ=Asia/Seoul(JVM 기본, 로그 +09:00)이라 `ended_at > now()-10min` 비교가 KST로 수행됨.
+  검증 시 psql **UTC 세션**으로 now() 삽입하면 ended_at 이 9시간 과거로 읽혀 10분 창 밖으로 밀려
+  `failed=0`. 실데이터는 앱(KST)이 기록하므로 자기정합적 — 문제 없음. **검증용 삽입은 반드시
+  `SET TIME ZONE 'Asia/Seoul'`(또는 앱 경유)로**. 이 함정 진단에 리빌드 2회 소요됨(교훈 기록).
+- **잔여(로컬 런타임)**: 검증용 etl_job_run FAILED 행 + 그 알림 인스턴스가 로컬 metadata-db 에 남음
+  (커밋과 무관한 런타임 데이터, 30분 후 자동 해소, 이미 ack). DELETE 는 분류기 차단으로 미실행.
