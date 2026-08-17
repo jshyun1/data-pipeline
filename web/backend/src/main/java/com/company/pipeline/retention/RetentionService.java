@@ -37,7 +37,10 @@ public class RetentionService {
     // 정리 대상 화이트리스트(retention_policy 시드와 일치). 이 목록 밖 table_name 은 무시한다.
     private static final Set<String> ALLOWED_TABLES = Set.of(
             "pipeline_metric_snapshot", "nifi_execution_log", "nifi_processor_run",
-            "pipeline_command_history", "collector_outage");
+            "pipeline_command_history", "collector_outage",
+            // V26+ 신규 보존 대상
+            "pipeline_load_rollup", "alert_signal_sample", "alert_instance",
+            "notification_delivery", "infra_resource_sample", "infra_resource_rollup");
 
     private final JdbcTemplate jdbc;
     private final SettingService settings;
