@@ -7,6 +7,7 @@ import {
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  MonitorOutlined,
   NodeIndexOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
@@ -27,6 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: "/dashboard", label: "대시보드", icon: <DashboardOutlined /> },
   { path: "/alerts", label: "조치 대기열", icon: <BellOutlined /> },
   { path: "/settings", label: "알림/발송 설정", icon: <SettingOutlined /> },
+  { path: "/self-check", label: "자가진단", icon: <MonitorOutlined /> },
   {
     path: "/airflow",
     label: "AirFlow",

@@ -8,6 +8,7 @@ import { ConsoleFramePage } from "./pages/ConsoleFramePage";
 import { AlertQueuePage } from "./pages/AlertQueuePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SelfCheckPage } from "./pages/SelfCheckPage";
 import { EtlCreatePage } from "./pages/EtlCreatePage";
 import { EtlLogsPage } from "./pages/EtlLogsPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -23,6 +24,7 @@ export function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/alerts" element={<AlertQueuePage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/self-check" element={<SelfCheckPage />} />
         <Route path="/airflow" element={<Navigate to="/airflow/dashboard" replace />} />
         <Route path="/airflow/dashboard" element={<AirflowDashboardPage />} />
         <Route

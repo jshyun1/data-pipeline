@@ -859,3 +859,14 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
 - **주의**: DualAxes 는 저장소 첫 사용. `{...config}`(children 배열=지오메트리 스펙) 스프레드 패턴 채택,
   un-annotated 로 tsc 통과 확인(ComponentProps 제약은 children:ReactNode 충돌 위험 있어 미사용).
 - **검증용 롤업 데이터**: pipeline_load_rollup HOUR 48행이 로컬에 남음(커밋 무관 런타임, KPI 카드 표시용).
+
+### 19.19. 확장③(프론트) · 자가진단 화면 — ✅ 빌드·배포 검증
+설계서 자가진단. 기존 SelfCheckController(/api/admin/self-check) 재사용, 화면만 신설.
+- **api/selfcheck.ts**: getSelfCheck() + 타입(CollectorStatus/SelfCheckResponse).
+- **pages/SelfCheckPage.tsx**: 수집기별 상태표(라벨·지표원·상태·마지막완주·주기 기대/관측·결과·오류),
+  15s 갱신, 상단 정상/지연/중단 집계 + 시계오차. 오차 30s 초과 시 Alert 경고. "판정이 아니라
+  판정기 자체가 살아있는가"를 보는 화면(설계 원칙). 여기선 상태색 사용 허용(상태 판정 화면이므로).
+- **App.tsx/AppLayout.tsx**: /self-check 라우트 + 사이드바 "자가진단"(MonitorOutlined) 메뉴.
+- **검증**: 재빌드(exit 0)·배포, 번들에 "자가진단"·"self-check" 포함, nginx(13001) 경유
+  /api/admin/self-check 200(수집기 4: kafka-metrics/nifi-counter/nifi-processor/infra-host, 전부 UP,
+  skew 0). 사용자 최종 시각 인수 대기.
