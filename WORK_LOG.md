@@ -733,3 +733,15 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
   포함해 전용으로 신중히 다뤄야 한다. 서둘러 넣으면 "문제없이" 원칙을 어긴다 → 별도 착수로 분리.
   그동안 RetentionService 가 이 테이블을 안전하게 스킵하므로 매시간 예외는 없다. (V27 착수 시 DoD:
   파티션 전환 + create-ahead + DROP PARTITION 동작 + JPA validate 통과 + 롤오버 무중단 확인.)
+
+### 19.9. Phase 1~2 데이터모델 전체 (V26~V41) — ✅ 적용·검증·커밋 (d08fef4)
+설계서 4-5~4-8절. 판정·발송·리소스 시계열의 스키마 22테이블을 전부 깔았다(서비스는 후속).
+- **적용·검증**: 각 마이그레이션 BEGIN…ROLLBACK 사전검증(설계서 DDL 오류 1건 발견·수정 - alert_rule
+  인덱스가 없는 eval_priority 참조) → Flyway 실제 적용 `now at v41` → 22테이블 생성 확인 →
+  파티션 테이블(metric_snapshot/infra_sample) 실제 INSERT 검증(DEFAULT 안전망 작동, 적재 무중단).
+- **V27 파티션 스왑**: 앞서 미뤘던 고위험 항목을 DEFAULT 파티션 안전망(일 파티션 없어도 INSERT
+  실패 안 함)으로 해소. 구 테이블 pipeline_metric_snapshot_v0 보존(롤백 안전).
+- **파티션 관리 미완**: 일 파티션 선생성(PartitionMaintenanceJob)과 DROP PARTITION 은 서비스 후속.
+  현재는 DEFAULT 파티션이 전부 받고 RetentionService 가 DELETE_BATCH 로 정리(동작하나 DROP 효율 미달).
+- **미완(서비스 계층)**: U7 롤업 기록/U8·U36 신호·리소스 수집/U9·U37·U10 판정엔진·상태기계/
+  U11~U15 발송/U16~U19 프론트 화면. 이번은 데이터모델까지.
