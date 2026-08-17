@@ -2,8 +2,10 @@ package com.company.pipeline.alert;
 
 import com.company.pipeline.settings.SettingKey;
 import com.company.pipeline.settings.SettingService;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +39,9 @@ public class AlertEngine {
 
     private static final String JOB_RULE_TYPE = "JOB_FAILURE";
     private static final String JOB_BUILTIN_KEY = "JOB_FAILURE:all";
+
+    private static final String DATA_RULE_TYPE = "DATA_FRESHNESS";
+    private static final String DATA_BUILTIN_KEY = "DATA_FRESHNESS:all";
 
     private final JdbcTemplate jdbc;
     private final SettingService settings;
@@ -95,6 +100,24 @@ public class AlertEngine {
                         """, JOB_RULE_TYPE, JOB_BUILTIN_KEY);
                 log.info("내장 규칙 시드: {}", JOB_BUILTIN_KEY);
             }
+            // DATA 신선도(적재 정체). 24h 내 활동한 소스가 임계(분)만큼 새 입력이 없으면 발화.
+            jdbc.update("""
+                    INSERT INTO alert_rule_type
+                        (code, label, category, kpi_axis, mandatory, default_severity, min_severity, signal_keys_req, description)
+                    VALUES (?, '적재 정체(신선도)', 'DATA', 'CURRENT', false, 'WARNING', 'INFO', 'load.rollup.age', '파이프라인 적재 정체')
+                    ON CONFLICT (code) DO NOTHING
+                    """, DATA_RULE_TYPE);
+            Integer dn = jdbc.queryForObject(
+                    "SELECT count(*) FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL",
+                    Integer.class, DATA_BUILTIN_KEY);
+            if (dn != null && dn == 0) {
+                jdbc.update("""
+                        INSERT INTO alert_rule
+                            (rule_type_code, builtin_key, name, severity, params_json, for_seconds, clear_seconds, mandatory)
+                        VALUES (?, ?, '적재 정체(신선도)', 'WARNING', ?::jsonb, 0, 0, false)
+                        """, DATA_RULE_TYPE, DATA_BUILTIN_KEY, "{\"staleness_minutes\":30}");
+                log.info("내장 규칙 시드: {}", DATA_BUILTIN_KEY);
+            }
         } catch (Exception ex) {
             log.warn("내장 규칙 시드 실패(기동은 계속): {}", ex.getMessage());
         }
@@ -112,6 +135,11 @@ public class AlertEngine {
             evaluateJobRules();
         } catch (Exception ex) {
             log.warn("알림 평가 실패({}): {}", JOB_BUILTIN_KEY, ex.getMessage());
+        }
+        try {
+            evaluateDataFreshness();
+        } catch (Exception ex) {
+            log.warn("알림 평가 실패({}): {}", DATA_BUILTIN_KEY, ex.getMessage());
         }
     }
 
@@ -173,6 +201,75 @@ public class AlertEngine {
                 SELECT id FROM alert_instance WHERE rule_id=? AND closed_at IS NULL
                   AND last_transition_at < now() - interval '30 minutes'
                 """, (rs, i) -> rs.getLong(1), ruleId).forEach(id -> resolve(id, "FIRING"));
+    }
+
+    /** DATA 신선도(적재 정체). 24h 내 활동한 소스가 임계(분)만큼 새 입력이 없으면 발화, 재개되면 해소한다. */
+    private void evaluateDataFreshness() {
+        Map<String, Object> rule;
+        try {
+            rule = jdbc.queryForMap(
+                    "SELECT id, severity, params_json::text AS params, enabled "
+                            + "FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL", DATA_BUILTIN_KEY);
+        } catch (Exception ex) {
+            return;   // 규칙 미시드
+        }
+        if (!Boolean.TRUE.equals(rule.get("enabled"))) {
+            return;
+        }
+        long ruleId = ((Number) rule.get("id")).longValue();
+        String severity = (String) rule.get("severity");
+        int stalenessMin = (int) jsonNum(rule.get("params").toString(), "staleness_minutes", 30);
+
+        // 정체 소스: 최근 24h HOUR 롤업 활동이 있었으나, 최신 관측이 임계(분)보다 오래됨.
+        // last_observed_at 은 timestamptz 라 세션 TZ 무관(신호기록·평가기 일관).
+        List<Map<String, Object>> stalled = jdbc.queryForList("""
+                SELECT pipeline_source,
+                       EXTRACT(EPOCH FROM (now() - MAX(last_observed_at)))::bigint AS age_sec
+                FROM pipeline_load_rollup
+                WHERE granularity='HOUR' AND bucket_start >= now() - interval '24 hours'
+                GROUP BY pipeline_source
+                HAVING MAX(last_observed_at) < now() - (? * interval '1 minute')
+                """, stalenessMin);
+        Set<String> stalledSources = new HashSet<>();
+        for (Map<String, Object> s : stalled) {
+            String source = (String) s.get("pipeline_source");
+            stalledSources.add(source);
+            long ageSec = ((Number) s.get("age_sec")).longValue();
+            String target = "DATA:" + source;
+            List<Long> open = jdbc.query(
+                    "SELECT id FROM alert_instance WHERE rule_id=? AND target_key=? AND closed_at IS NULL",
+                    (rs, i) -> rs.getLong(1), ruleId, target);
+            if (open.isEmpty()) {
+                long ageMin = ageSec / 60;
+                Long id = jdbc.queryForObject("""
+                        INSERT INTO alert_instance
+                            (rule_id, rule_type_code, kpi_axis, target_key, target_label, component_code, severity,
+                             state, condition_since, started_at, last_evaluated_at, last_transition_at, summary,
+                             observed_value, threshold_value, deep_link)
+                        VALUES (?, ?, 'CURRENT', ?, ?, 'DATA', ?, 'FIRING', now(), now(), now(), now(), ?, ?, ?,
+                                '/dashboard?panel=kpi')
+                        RETURNING id
+                        """, Long.class, ruleId, DATA_RULE_TYPE, target, source, severity,
+                        "적재 정체: " + source + " (" + ageMin + "분 무입력)", (double) ageSec, (double) stalenessMin * 60);
+                event(id, "CREATED", null, "FIRING", "SYSTEM");
+                event(id, "FIRED", null, "FIRING", "SYSTEM");
+                notifyFired(id);
+                log.info("DATA 신선도 알림 생성 {} source={} age={}m", id, source, ageMin);
+            } else {
+                jdbc.update("UPDATE alert_instance SET observed_value=?, last_evaluated_at=now() WHERE id=?",
+                        (double) ageSec, open.get(0));
+            }
+        }
+        // 재개된 소스(더 이상 정체 아님)의 열린 인스턴스는 해소한다.
+        List<Map<String, Object>> openData = jdbc.queryForList(
+                "SELECT id, target_key FROM alert_instance WHERE rule_id=? AND closed_at IS NULL", ruleId);
+        for (Map<String, Object> inst : openData) {
+            String tk = (String) inst.get("target_key");
+            String source = tk.startsWith("DATA:") ? tk.substring(5) : tk;
+            if (!stalledSources.contains(source)) {
+                resolve((Number) inst.get("id"), "FIRING");
+            }
+        }
     }
 
     private void evaluateMemoryRule() {

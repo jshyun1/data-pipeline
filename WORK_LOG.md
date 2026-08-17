@@ -870,3 +870,16 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
 - **검증**: 재빌드(exit 0)·배포, 번들에 "자가진단"·"self-check" 포함, nginx(13001) 경유
   /api/admin/self-check 200(수집기 4: kafka-metrics/nifi-counter/nifi-processor/infra-host, 전부 UP,
   skew 0). 사용자 최종 시각 인수 대기.
+
+### 19.20. 확장①(규칙 breadth) · DATA 신선도(적재 정체) 규칙 — ✅ 코드 완료·검증
+설계서 규칙 다종화 2번째. JOB(이벤트)·메모리(임계 누적)과 달리 **상태 기반 재조정**.
+- **AlertEngine**: `DATA_FRESHNESS:all` 시드(WARNING, non-mandatory, params staleness_minutes=30).
+  `evaluateDataFreshness()`: 최근 24h HOUR 롤업 활동이 있었으나 MAX(last_observed_at)이 임계(분)보다
+  오래된 소스마다 `DATA:{source}` FIRING 생성. 정체 해제(신선 관측 재개)된 소스의 열린 인스턴스는
+  자동 RESOLVED(CONDITION_CLEARED). notifyFired 로 발송 아웃박스 연결.
+- **검증(fire+resolve end-to-end)**: AIRFLOW를 40분 정체로 시드(NIFI/CDC는 신선화) → 다음 사이클
+  "DATA 신선도 알림 생성 source=AIRFLOW age=40m" → 큐 WARNING "적재 정체: AIRFLOW (40분 무입력)"
+  (AIRFLOW만, NIFI/CDC 제외) → AIRFLOW 신선 버킷 재삽입 → "알림 해소 7" → RESOLVED·closed·큐에서 제거.
+- **신호 TZ 안전**: last_observed_at 은 timestamptz 라 세션 TZ 무관(JOB 규칙의 timestamp-without-tz
+  함정 없음). RollupService.recordObservation 이 last_observed_at=now() 갱신하는 것을 신호로 사용.
+- **잔여(로컬 런타임)**: 검증용 AIRFLOW/신선화 롤업 행이 남음(커밋 무관 런타임 데이터).
