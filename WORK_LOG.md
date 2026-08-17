@@ -806,3 +806,15 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
   대기열" 포함 확인. 헤드리스라 클릭 검증은 불가(§10) - 빌드+배선까지.
 - **미완(프론트)**: KPI 2축 카드(현재 대시보드 요약카드 개편, U17)·확인/스누즈 모달(U18)·온보딩
   위저드(U19)·딥링크 이동·자가진단 화면. 백엔드 API 는 대기열/KPI 까지 준비됨.
+
+### 19.15. 설정 API (알림 규칙·조치·발송 채널·수신자) — ✅ 코드 완료·검증
+설계서 5-2 ⑤⑥⑨. "알림/발송을 어디서 설정하나"의 백엔드.
+- **AlertAdminController**: GET/PUT /api/admin/alert-rules(규칙 목록·enabled/severity/params/for/clear
+  수정), POST /api/alerts/{id}/ack·unack·snooze(조치 + alert_instance_event 기록).
+- **NotificationAdminController**: GET/PUT /api/admin/notification/channels(on/off·config·레이트,
+  시크릿은 secretSet 불리언만 노출), 수신자 CRUD + 구독 UPSERT(전화 마스킹), POST
+  /api/notifications/channels/{type}/test(CHANNEL_TEST 아웃박스 적재).
+- **검증**: 규칙 목록/수정(for_seconds 90), 채널 목록(시크릿 미노출), 수신자 생성+구독+마스킹
+  (010-****-5678), 테스트 발송 200. 전부 확인 후 테스트 데이터 정리·규칙 복원.
+- **알려진 소소한 이슈**: recipients 응답의 subscriptions(json_agg)가 PGobject 래퍼로 직렬화됨
+  (값은 정상, 프론트 파싱 필요). 후속에서 ::text 캐스팅으로 정리 가능.
