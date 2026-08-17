@@ -843,3 +843,19 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
   `SET TIME ZONE 'Asia/Seoul'`(또는 앱 경유)로**. 이 함정 진단에 리빌드 2회 소요됨(교훈 기록).
 - **잔여(로컬 런타임)**: 검증용 etl_job_run FAILED 행 + 그 알림 인스턴스가 로컬 metadata-db 에 남음
   (커밋과 무관한 런타임 데이터, 30분 후 자동 해소, 이미 ack). DELETE 는 분류기 차단으로 미실행.
+
+### 19.18. 확장③(프론트) · KPI 2축 카드(U17) — ✅ 빌드·배포 검증
+설계서 U17. 대시보드 상단에 "적재 KPI · 처리량·관측 2축" 카드 추가. 백엔드 KPI API(U7)는 기존 것 재사용.
+- **api/kpi.ts**: getKpiSummary/getKpiTimeline + 타입. summary 는 Map(snake_case), timeline 은
+  record(camelCase) 직렬화 차이 주석화.
+- **components/KpiLoadTrend.tsx**: 프리셋(1h/24h/7d/30d, antd Segmented) + 소스별 Statistic(총 적재/관측)
+  + DualAxes(@ant-design/plots v2) 2축 차트 — 시각별 합계로 접어 적재량(막대, 좌축)·관측수(선, 우축).
+  useQuery 30s 갱신. 데이터 없으면 Empty.
+- **DashboardPage.tsx**: import + dashboard-main 최상단 `<section className="dashboard-kpi-region">` 삽입
+  (기존 로직 무수정, 저위험).
+- **검증**: 롤업 시드(HOUR 24h×NIFI/CDC 48행) 후 KPI API 채워짐(NIFI 39,840·CDC 26,100), cerebroetl-ui
+  재빌드(tsc -b+vite 통과, exit 0)·배포, 번들에 "처리량·관측 2축" 포함, nginx(13001) index 200 +
+  /api/dashboard/kpi/summary 200(데이터). 사용자 최종 시각 인수 대기.
+- **주의**: DualAxes 는 저장소 첫 사용. `{...config}`(children 배열=지오메트리 스펙) 스프레드 패턴 채택,
+  un-annotated 로 tsc 통과 확인(ComponentProps 제약은 children:ReactNode 충돌 위험 있어 미사용).
+- **검증용 롤업 데이터**: pipeline_load_rollup HOUR 48행이 로컬에 남음(커밋 무관 런타임, KPI 카드 표시용).

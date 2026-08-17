@@ -30,6 +30,7 @@ import { summarizeKafkaConnectors } from "../utils/kafkaConnectors";
 import { categorizeDag, NIFI_METRICS_COLLECTOR_DAG_ID, resolveDagDisplayName, type DagCategory } from "../utils/dagHistory";
 import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
 import { InfraRegion } from "../components/InfraRegion";
+import { KpiLoadTrend } from "../components/KpiLoadTrend";
 
 const { RangePicker } = DatePicker;
 
@@ -569,6 +570,9 @@ export function DashboardPage() {
 
       <div className="dashboard-body">
       <main className="dashboard-main">
+      <section className="dashboard-kpi-region">
+        <KpiLoadTrend />
+      </section>
       <section className="dashboard-summary-grid">
         <Card className="dashboard-summary-card dashboard-summary-card--cdc" loading={kafkaLoading}>
           <div className="summary-card-heading">
