@@ -35,7 +35,6 @@ import { ActionQueuePanel } from "../components/ActionQueuePanel";
 import { TrendCharts } from "../components/TrendCharts";
 import { ChangeIndicator, FlowStateNote, MetricRow, NowDivider, TimeBadge } from "../components/kpi/kpiBits";
 import { formatRecovery, judgeCdcFlow } from "../components/kpi/flowState";
-import { KpiLoadTrend } from "../components/KpiLoadTrend";
 
 const { RangePicker } = DatePicker;
 
@@ -599,9 +598,6 @@ export function DashboardPage() {
       {/* 원본 5-1: 조치 대기열은 KPI 카드보다 위, 대시보드 최상단이다.
           "화면을 보고 무엇을 해야 하는지가 나오게 한다"가 이 배치의 이유다. */}
       <ActionQueuePanel />
-      <section className="dashboard-kpi-region">
-        <KpiLoadTrend />
-      </section>
       <section className="dashboard-summary-grid">
         {/* 원본 5-2 KPI 카드 재구성: 누적형(기간 배지) 위 / 진행형("지금" 구분선) 아래 */}
         <Card className="dashboard-summary-card dashboard-summary-card--cdc" loading={kafkaLoading}>

@@ -4,7 +4,6 @@ import { Button, Layout, Badge, Tooltip } from "antd";
 import {
   ApartmentOutlined,
   BellOutlined,
-  HistoryOutlined,
   DashboardOutlined,
   DeploymentUnitOutlined,
   LogoutOutlined,
@@ -35,7 +34,7 @@ function AlertBell() {
   const navigate = useNavigate();
   const { data } = useQuery({
     queryKey: ["alert-history", "unacked", "bell"],
-    queryFn: () => getAlertHistory("unacked", 7),
+    queryFn: () => getAlertHistory({ filter: "unacked", days: 7, page: 0, pageSize: 1 }),
     refetchInterval: 30000,
     placeholderData: (prev) => prev,
   });
@@ -48,7 +47,7 @@ function AlertBell() {
           size="small"
           icon={<BellOutlined />}
           aria-label="알림"
-          onClick={() => navigate("/alerts/history")}
+          onClick={() => navigate("/settings?tab=history")}
         />
       </Badge>
     </Tooltip>
@@ -58,7 +57,6 @@ function AlertBell() {
 const NAV_ITEMS: NavItem[] = [
   { path: "/dashboard", label: "대시보드", icon: <DashboardOutlined /> },
   { path: "/alerts", label: "조치 대기열", icon: <BellOutlined /> },
-  { path: "/alerts/history", label: "알림 이력", icon: <HistoryOutlined /> },
   { path: "/settings", label: "알림/발송 설정", icon: <SettingOutlined /> },
   { path: "/self-check", label: "자가진단", icon: <MonitorOutlined /> },
   {

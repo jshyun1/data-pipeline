@@ -76,16 +76,39 @@ export interface HistoryItem {
   resolved_at: string | null;
 }
 
+export type SeverityFilter = "ALL" | "CRITICAL" | "WARNING" | "INFO";
+
+export interface HistoryQuery {
+  filter: HistoryFilter;
+  severity?: SeverityFilter;
+  q?: string;
+  days: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface HistoryResponse {
   filter: string;
+  severity: string;
+  q: string;
   days: number;
+  page: number;
+  pageSize: number;
+  total: number;
   counts: { total: number; unacked: number; acked: number };
   items: HistoryItem[];
 }
 
-export async function getAlertHistory(filter: HistoryFilter, days = 7): Promise<HistoryResponse> {
+export async function getAlertHistory(query: HistoryQuery): Promise<HistoryResponse> {
   const res = await apiClient.get<ApiResponse<HistoryResponse>>("/dashboard/queue/history", {
-    params: { filter, days, limit: 200 },
+    params: {
+      filter: query.filter,
+      severity: query.severity ?? "ALL",
+      q: query.q ?? "",
+      days: query.days,
+      page: query.page,
+      pageSize: query.pageSize,
+    },
   });
   return unwrap(res.data);
 }

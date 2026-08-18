@@ -128,7 +128,7 @@ export async function createRecipient(body: {
 /** 부분 수정. 빈 문자열은 "지운다"는 뜻으로 서버가 NULL 처리한다. */
 export async function updateRecipient(
   id: number,
-  body: { displayName?: string; email?: string; phone?: string },
+  body: { displayName?: string; email?: string; phone?: string; enabled?: boolean },
 ): Promise<void> {
   await apiClient.put(`/admin/notification/recipients/${id}`, body);
 }

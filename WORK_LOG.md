@@ -969,3 +969,25 @@ PDF 5-1~5-7 요구사항과 병합본(내 작업 + 다른 PC pull) 대조 → �
 - **DATA_FRESHNESS 규칙이 현재 enabled=false** 상태(내 71e29be 는 enabled 로 시드; pull 이후 어딘가서
   비활성됨). 내 세션 검증 위해 잠시 켰다가 **발견 당시 상태(비활성)로 원복**함. 신선도 알림을 쓰려면
   설정 화면에서 켜야 함.
+
+## 22. 사용자 요청 7건 반영 — 이력탭·수신자토글·채널라벨·KPI제거·대기열접힘·SMS/EMAIL발송
+사용자 지정 7가지를 구현하고 build→deploy→test 검증. 로컬 검증 배선(mailhog·sms-echo, override)은 커밋 제외.
+
+1. **알림 이력 → 설정 탭(최좌측) + 페이징·조회조건**: 사이드바 "알림 이력" 메뉴 제거, 헤더 종아이콘은
+   /settings?tab=history 로 이동. `AlertHistoryTab`(신규) — antd Table 서버 페이징 + 조회조건(기간
+   1/7/30/90일, 심각도 ALL/위험/경고/정보, 확인여부, 내용·대상 검색). 백엔드 history API 확장
+   (severity·q·page·pageSize·total). 기존 AlertHistoryPage.tsx 삭제, /alerts/history 라우트 제거.
+   검증: page/pageSize/severity=CRITICAL(총 44, 3건), q="수집기"(39건) 필터 동작.
+2. **수신자 사용여부 on/off**: RecipientsTab 전화 오른쪽에 enabled Switch 컬럼. updateRecipient 에
+   enabled 파라미터 추가(프론트/백엔드). 검증: PUT {enabled:false↔true} 반영.
+3. **발송채널 IN_APP → «화면알림»**: IN_APP 이 조치대기열/화면 알림이라 사용자 표기를 화면알림으로
+   (EMAIL→이메일, SMS→SMS(문자)). 표시 라벨만 변경(내부 코드값 유지).
+4. **대시보드 KPI 2축 차트 제거**: 대시보드가 벅차다는 지적 반영, KpiLoadTrend 제외(파일·api/kpi 삭제).
+   하단 KPI 지표·차트는 유지.
+5. **조치대기열 기본 접힘**: 대시보드 진입 시 기본 접힘(open = manuallyOpen ?? false). 배지로 건수는 보임.
+6. **SMS·EMAIL 테스트발송 실동작**: (원인) 테스트발송이 수신자 주소 없이 INSERT → EMAIL 은 NO_ADDRESS,
+   SMS 는 릴레이 자체 없음. (조치) 테스트발송을 «등록된 활성 수신자의 실제 이메일/전화»로 각각 보내게
+   변경. SMS 릴레이 신설(NotificationService.relaySms) — notification.sms.gateway.url 로 {to,text} JSON
+   POST, 미설정이면 NO_RELAY(EMAIL 의 SMTP 와 동일 구조). 검증: EMAIL 2건→MailHog 수신, SMS 2건→
+   sms-echo 게이트웨이 POST 200(01099998888/01046550716). **운영 주의**: 실제 문자 발송은 사내/사업자
+   SMS 게이트웨이 URL(NOTIFICATION_SMS_GATEWAY_URL)이, 이메일은 SMTP(SPRING_MAIL_HOST)가 있어야 함.

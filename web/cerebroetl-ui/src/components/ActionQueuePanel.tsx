@@ -123,9 +123,8 @@ export function ActionQueuePanel() {
   }, [items]);
 
   const actionable = sorted.filter((i) => !i.acked);
-  // 원본 5-1 "기본 상태: 정상 시 접힘 / 이상 발생 시 자동 펼침".
-  const autoOpen = actionable.length > 0;
-  const open = manuallyOpen ?? autoOpen;
+  // 대시보드 처음 진입 시 기본은 접힘(사용자가 헤더로 펼침). 접혀 있어도 건수 배지로 이상은 보인다.
+  const open = manuallyOpen ?? false;
   const visible = sorted.slice(0, VISIBLE_LIMIT);
 
   async function handleAck(item: QueueItem) {

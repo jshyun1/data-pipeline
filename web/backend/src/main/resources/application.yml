@@ -36,11 +36,17 @@ spring:
           timeout: 5000
           writetimeout: 5000
 
-# 알림 이메일 발신 정책(설계서 발송). enabled=false 면 릴레이하지 않고 NO_RELAY 로 둔다.
+# 알림 발신 정책(설계서 발송). enabled=false 면 릴레이하지 않고 NO_RELAY 로 둔다.
 notification:
   email:
     enabled: ${NOTIFICATION_EMAIL_ENABLED:false}
     from: ${NOTIFICATION_EMAIL_FROM:alerts@pipeline.local}
+  # SMS 는 외부 게이트웨이(사내 문자 서버/사업자 API)가 필요하다. gateway.url 이 있고 enabled=true 일 때만
+  # {to,text} JSON 을 POST 해 실제 발송. 미설정이면 NO_RELAY(문자 안 감).
+  sms:
+    enabled: ${NOTIFICATION_SMS_ENABLED:false}
+    gateway:
+      url: ${NOTIFICATION_SMS_GATEWAY_URL:}
 
 server:
   port: ${SERVER_PORT:8081}

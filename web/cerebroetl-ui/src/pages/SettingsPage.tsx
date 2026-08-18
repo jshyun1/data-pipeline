@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
+import { AlertHistoryTab } from "../components/AlertHistoryTab";
 import {
   Button,
   Card,
@@ -329,18 +331,28 @@ function RuleFormModal({
   );
 }
 
+// IN_APP 은 세레브로 조치대기열/화면 상단에 뜨는 알림이라 사용자 표기는 «화면알림».
+const CHANNEL_LABEL: Record<string, string> = {
+  IN_APP: "화면알림",
+  EMAIL: "이메일",
+  SMS: "SMS(문자)",
+};
+function channelLabel(type: string): string {
+  return CHANNEL_LABEL[type] ?? type;
+}
+
 function ChannelsTab() {
   const qc = useQueryClient();
   const { data: channels = [], isLoading } = useQuery({ queryKey: ["channels"], queryFn: getChannels });
 
   async function toggle(ch: ChannelConfig, enabled: boolean) {
     await updateChannel(ch.channel_type, { enabled });
-    message.success(`${ch.channel_type} ${enabled ? "켜짐" : "꺼짐"}`);
+    message.success(`${channelLabel(ch.channel_type)} ${enabled ? "켜짐" : "꺼짐"}`);
     qc.invalidateQueries({ queryKey: ["channels"] });
   }
   async function test(ch: ChannelConfig) {
     await testChannel(ch.channel_type);
-    message.success(`${ch.channel_type} 테스트 발송 요청됨`);
+    message.success(`${channelLabel(ch.channel_type)} 테스트 발송 요청됨`);
   }
 
   return (
@@ -350,7 +362,7 @@ function ChannelsTab() {
       dataSource={channels}
       pagination={false}
       columns={[
-        { title: "채널", dataIndex: "channel_type", width: 120 },
+        { title: "채널", dataIndex: "channel_type", width: 120, render: (v: string) => channelLabel(v) },
         { title: "서킷", dataIndex: "circuit_state", width: 120 },
         { title: "최근 실패", dataIndex: "last_failure_reason", render: (v: string | null) => v ?? "-" },
         {
@@ -393,6 +405,11 @@ function RecipientsTab() {
     await deleteRecipient(id);
     qc.invalidateQueries({ queryKey: ["recipients"] });
   }
+  async function toggleEnabled(r: Recipient, enabled: boolean) {
+    await updateRecipient(r.id, { enabled });
+    message.success(`${r.display_name} ${enabled ? "사용" : "미사용"}`);
+    qc.invalidateQueries({ queryKey: ["recipients"] });
+  }
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="middle">
@@ -420,6 +437,14 @@ function RecipientsTab() {
           { title: "이메일", dataIndex: "email", render: (v: string | null) => v ?? "-" },
           // 마스킹하지 않는다 - 가려진 번호로는 맞는지 확인할 수도, 고칠 수도 없다.
           { title: "전화", dataIndex: "phone", width: 160, render: (v: string | null) => v ?? "-" },
+          {
+            title: "사용여부",
+            dataIndex: "enabled",
+            width: 90,
+            render: (enabled: boolean, r) => (
+              <Switch checked={enabled} onChange={(v) => toggleEnabled(r, v)} />
+            ),
+          },
           {
             title: "",
             width: 130,
@@ -513,12 +538,17 @@ function RecipientEditModal({
 }
 
 export function SettingsPage() {
+  const [params, setParams] = useSearchParams();
+  const active = params.get("tab") ?? "history";
   return (
     <div style={{ padding: 16 }}>
       <h2 style={{ marginTop: 0 }}>알림/발송 설정</h2>
       <Card>
         <Tabs
+          activeKey={active}
+          onChange={(k) => setParams({ tab: k })}
           items={[
+            { key: "history", label: "알림 이력", children: <AlertHistoryTab /> },
             { key: "rules", label: "알림 규칙", children: <RulesTab /> },
             { key: "channels", label: "발송 채널", children: <ChannelsTab /> },
             { key: "recipients", label: "수신자", children: <RecipientsTab /> },

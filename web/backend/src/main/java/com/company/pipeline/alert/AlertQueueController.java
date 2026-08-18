@@ -1,6 +1,7 @@
 package com.company.pipeline.alert;
 
 import com.company.pipeline.common.ApiResponse;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
@@ -71,15 +72,42 @@ public class AlertQueueController {
     @GetMapping("/history")
     public ApiResponse<Map<String, Object>> history(
             @RequestParam(defaultValue = "all") String filter,
-            @RequestParam(defaultValue = "100") int limit,
-            @RequestParam(defaultValue = "7") int days) {
+            @RequestParam(required = false) String severity,
+            @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "7") int days,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int pageSize) {
         int window = Math.max(1, Math.min(days, 90));
-        int cap = Math.max(1, Math.min(limit, 500));
-        String where = switch (filter) {
-            case "unacked" -> "AND ack_at IS NULL";
-            case "acked" -> "AND ack_at IS NOT NULL";
-            default -> "";
-        };
+        int size = Math.max(1, Math.min(pageSize, 100));
+        int offset = Math.max(0, page) * size;
+
+        // 조회조건을 WHERE 로 조립(ETL/CDC 로그 화면처럼 심각도·검색어·확인여부·기간).
+        StringBuilder where = new StringBuilder(
+                "WHERE COALESCE(started_at, condition_since, created_at) >= now() - make_interval(days => ?)");
+        List<Object> args = new ArrayList<>();
+        args.add(window);
+        if ("unacked".equals(filter)) {
+            where.append(" AND ack_at IS NULL");
+        } else if ("acked".equals(filter)) {
+            where.append(" AND ack_at IS NOT NULL");
+        }
+        if (severity != null && !severity.isBlank() && !"ALL".equalsIgnoreCase(severity)) {
+            where.append(" AND severity = ?");
+            args.add(severity);
+        }
+        if (q != null && !q.isBlank()) {
+            where.append(" AND (summary ILIKE ? OR target_label ILIKE ?)");
+            String like = "%" + q.trim() + "%";
+            args.add(like);
+            args.add(like);
+        }
+
+        Long total = jdbc.queryForObject(
+                "SELECT count(*) FROM alert_instance " + where, Long.class, args.toArray());
+
+        List<Object> itemArgs = new ArrayList<>(args);
+        itemArgs.add(size);
+        itemArgs.add(offset);
         List<Map<String, Object>> items = jdbc.queryForList("""
                 SELECT id, rule_type_code, severity, state, kpi_axis, target_key, target_label,
                        summary, observed_value, threshold_value, deep_link, notify_count,
@@ -89,12 +117,12 @@ public class AlertQueueController {
                        resolve_reason,
                        started_at, condition_since, last_transition_at, resolved_at
                 FROM alert_instance
-                WHERE COALESCE(started_at, condition_since, created_at) >= now() - make_interval(days => ?)
                 """ + where + "\n" + """
                 ORDER BY COALESCE(last_transition_at, condition_since) DESC
-                LIMIT ?
-                """, window, cap);
+                LIMIT ? OFFSET ?
+                """, itemArgs.toArray());
 
+        // 필터 배지용 집계는 기간 전체 기준(심각도·검색어와 무관하게 개수를 보여준다).
         Map<String, Object> counts = jdbc.queryForMap("""
                 SELECT count(*) AS total,
                        count(*) FILTER (WHERE ack_at IS NULL) AS unacked,
@@ -103,8 +131,17 @@ public class AlertQueueController {
                 WHERE COALESCE(started_at, condition_since, created_at) >= now() - make_interval(days => ?)
                 """, window);
 
-        return ApiResponse.success(Map.of(
-                "filter", filter, "days", window, "counts", counts, "items", items));
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("filter", filter);
+        body.put("severity", severity == null ? "ALL" : severity);
+        body.put("q", q == null ? "" : q);
+        body.put("days", window);
+        body.put("page", Math.max(0, page));
+        body.put("pageSize", size);
+        body.put("total", total == null ? 0 : total);
+        body.put("counts", counts);
+        body.put("items", items);
+        return ApiResponse.success(body);
     }
 
     /** 한 알림의 상태 전이 타임라인. 누가 언제 무엇을 했는지 그대로 보여준다. */

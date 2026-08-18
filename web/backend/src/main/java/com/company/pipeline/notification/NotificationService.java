@@ -38,15 +38,24 @@ public class NotificationService {
     private final ObjectProvider<JavaMailSender> mailSenderProvider;
     private final boolean emailEnabled;
     private final String emailFrom;
+    // SMS 는 EMAIL 의 SMTP 처럼 외부 게이트웨이가 필요하다. gateway.url 이 있을 때만 실제 발송.
+    private final boolean smsEnabled;
+    private final String smsGatewayUrl;
+    private final java.net.http.HttpClient httpClient = java.net.http.HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(5)).build();
 
     public NotificationService(DataSource dataSource,
                                ObjectProvider<JavaMailSender> mailSenderProvider,
                                @Value("${notification.email.enabled:false}") boolean emailEnabled,
-                               @Value("${notification.email.from:alerts@pipeline.local}") String emailFrom) {
+                               @Value("${notification.email.from:alerts@pipeline.local}") String emailFrom,
+                               @Value("${notification.sms.enabled:false}") boolean smsEnabled,
+                               @Value("${notification.sms.gateway.url:}") String smsGatewayUrl) {
         this.jdbc = new JdbcTemplate(dataSource);
         this.mailSenderProvider = mailSenderProvider;
         this.emailEnabled = emailEnabled;
         this.emailFrom = emailFrom;
+        this.smsEnabled = smsEnabled;
+        this.smsGatewayUrl = smsGatewayUrl;
     }
 
     /** FIRING 시 호출. 구독한 수신자별 IN_APP/EMAIL 아웃박스 행을 만든다(심각도 필터). */
@@ -140,8 +149,10 @@ public class NotificationService {
                             + "updated_at=now() WHERE id=?", id);
                 } else if ("EMAIL".equals(channel) && emailEnabled) {
                     relayEmail(id);
+                } else if ("SMS".equals(channel) && smsEnabled) {
+                    relaySms(id);
                 } else {
-                    // SMS 등 미지원 채널 또는 EMAIL 릴레이 비활성: 재시도 백오프 후 DEAD.
+                    // 미지원 채널 또는 릴레이 비활성(EMAIL SMTP·SMS 게이트웨이 미설정): 재시도 후 DEAD.
                     markNoRelay(id);
                 }
             } catch (Exception ex) {
@@ -192,6 +203,68 @@ public class NotificationService {
                     + "WHERE id=? AND attempt_count >= max_attempts", id);
             log.warn("EMAIL 발송 실패 id={}: {}", id, ex.getMessage());
         }
+    }
+
+    /**
+     * SMS 실 릴레이. 설정된 게이트웨이(notification.sms.gateway.url)로 {to,text} JSON 을 POST 한다.
+     * EMAIL 의 SMTP 처럼 외부 게이트웨이가 필요하며, 미설정이면 NO_RELAY 로 폴백한다(실제 문자 안 감).
+     */
+    private void relaySms(long id) {
+        if (smsGatewayUrl == null || smsGatewayUrl.isBlank()) {
+            markNoRelay(id);
+            return;
+        }
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT target_address, body FROM notification_delivery WHERE id=?", id);
+        String to = (String) row.get("target_address");
+        if (to == null || to.isBlank()) {
+            jdbc.update("UPDATE notification_delivery SET status='DEAD', failure_reason='NO_ADDRESS', "
+                    + "attempt_count=attempt_count+1, updated_at=now() WHERE id=?", id);
+            return;
+        }
+        String text = row.get("body") == null ? "" : row.get("body").toString();
+        try {
+            String json = "{\"to\":\"" + jsonEsc(to) + "\",\"text\":\"" + jsonEsc(text) + "\"}";
+            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder(java.net.URI.create(smsGatewayUrl))
+                    .timeout(java.time.Duration.ofSeconds(5))
+                    .header("Content-Type", "application/json")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                    .build();
+            java.net.http.HttpResponse<String> resp = httpClient.send(
+                    req, java.net.http.HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() / 100 == 2) {
+                jdbc.update("UPDATE notification_delivery SET status='SENT', sent_at=now(), "
+                        + "attempt_count=attempt_count+1, first_attempt_at=COALESCE(first_attempt_at, now()), "
+                        + "updated_at=now() WHERE id=?", id);
+                log.info("SMS 발송 완료 id={} to={}", id, maskPhone(to));
+            } else {
+                smsFail(id, "HTTP " + resp.statusCode());
+            }
+        } catch (Exception ex) {
+            smsFail(id, ex.getMessage());
+        }
+    }
+
+    private void smsFail(long id, String reason) {
+        String detail = reason == null ? null : (reason.length() > 480 ? reason.substring(0, 480) : reason);
+        jdbc.update("UPDATE notification_delivery SET status='RETRY', attempt_count=attempt_count+1, "
+                + "failure_reason='SMS_ERROR', failure_detail=?, "
+                + "next_attempt_at=now() + interval '2 minutes', updated_at=now() "
+                + "WHERE id=? AND attempt_count+1 < max_attempts", detail, id);
+        jdbc.update("UPDATE notification_delivery SET status='DEAD', updated_at=now() "
+                + "WHERE id=? AND attempt_count >= max_attempts", id);
+        log.warn("SMS 발송 실패 id={}: {}", id, reason);
+    }
+
+    private String jsonEsc(String s) {
+        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "");
+    }
+
+    private String maskPhone(String phone) {
+        if (phone.length() < 4) {
+            return "***";
+        }
+        return "***" + phone.substring(phone.length() - 4);
     }
 
     /** 릴레이 불가(미지원 채널/미설정): 재시도 백오프 후 최대치 도달 시 DEAD. */
