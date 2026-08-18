@@ -47,6 +47,9 @@ public class AlertQueueController {
                        deep_link, ack_at IS NOT NULL AS acked, notify_count
                 FROM alert_instance
                 WHERE closed_at IS NULL AND suppressed_by IS NULL
+                  -- 원본 5-1(f): 확인(ack)하면 목록에서 제거. 스누즈 중인 항목도 창이 지날 때까지 숨긴다.
+                  AND ack_at IS NULL
+                  AND (snooze_until IS NULL OR snooze_until <= now())
                 ORDER BY CASE severity WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END,
                          last_transition_at DESC
                 LIMIT ?

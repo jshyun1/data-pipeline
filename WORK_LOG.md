@@ -934,3 +934,38 @@ Postgres `@Primary`라 Flyway가 계정 DB를 집어가지 않음).
 - **인프라**: 파티션 유지잡(이번 커밋).
 - **미구현(후속)**: 알림 레이트리밋·서킷브레이커·배치요약(U12/U14), 온보딩(U19), DEFAULT 백로그 일회 이관.
 - **로컬 검증 배선(커밋 제외)**: docker-compose.override.yml 에 mailhog + SMTP env(.git/info/exclude).
+
+## 21. PDF 검토(Cerebro_ETL_기능개선_검토) 대조 후 갭 수정 — 연쇄억제·심각도분기·대기열
+PDF 5-1~5-7 요구사항과 병합본(내 작업 + 다른 PC pull) 대조 → 사용자 지정으로 2·4번만 수정
+(1번 Oracle/요청건수 규칙, 3번 웹훅은 제외). build→deploy→test 검증 완료.
+
+### 21.1 연쇄억제(5-7c) — ✅ 검증
+- **AlertEngine.evaluateChainSuppression()**: evaluate() 끝에서 실행. (a) SERVICE_UNREACHABLE(브로커
+  응답없음)가 FIRING 이면 열린 CONNECTOR_FAILED 를 그 아래로 suppressed_by 접기. (b) 상위원인 없이
+  CONNECTOR_FAILED 가 MASS_SUPPRESS_THRESHOLD(3) 이상 대량이면 가장 오래된 대표만 남기고 접기.
+  (c) 억제자가 닫히면 자동 해제. 대기열/카운트는 suppressed_by 로 이미 걸러짐.
+- **검증**: SERVICE + CONNECTOR×3 삽입(memory rule_id 로 Candidate reconcile 회피) → "SERVICE 상위원인
+  아래 CONNECTOR 3건 접기", suppressed=3, 대표만 노출 → SERVICE 닫기 → 해제 후 "대량 대표접기 2건"
+  전환(대표1+억제2). 인과·해제·대량 3동작 확인.
+
+### 21.2 심각도 발송분기(5-7d) — ✅ 검증
+- **NotificationService.enqueueForInstance()**: 정보(INFO)=화면내(IN_APP)만, 외부채널 차단
+  (rank>=2 early return). 위험(CRITICAL)=EMAIL 즉시(next_attempt_at now), 경고(WARNING)=배치 창
+  지연(WARNING_BATCH_SECONDS=120s). insertDelivery 에 delaySeconds 파라미터 추가.
+- **부수 버그 2건 수정**(같은 경로): ① min_severity 필터 **역전**(`? >= CASE` → `? <= CASE`) —
+  전엔 min=WARNING 구독자가 CRITICAL 을 못 받는 반대 동작이었음. ② EMAIL target_address 에
+  **마스킹된 주소**를 저장하던 것 → 실주소 저장(실 SMTP 발송이 마스킹주소로 실패하던 문제). 마스킹은
+  표시 계층 전용.
+- **검증**: CRITICAL→EMAIL 지연0 SENT / WARNING→EMAIL 지연120 PENDING / INFO 3건→IN_APP 3건·EMAIL 0
+  (구독 min=INFO 로 매칭시켜도 코드가 차단). min 역전 수정으로 min=WARNING 이 CRITICAL 도 정상 수신.
+
+### 21.3 조치대기열 2건(5-1 c·f) — ✅ 검증
+- **AlertQueueController**: 큐 items 쿼리에 `AND ack_at IS NULL AND (snooze_until IS NULL OR
+  snooze_until<=now())` 추가 — 확인(ack)/스누즈한 항목은 목록에서 제거(카운트·이력엔 유지).
+- **ActionQueuePanel**: 그룹 내 정렬을 지속시간 내림차순(오래된순)→오름차순(최신순)으로 수정.
+- **검증**: ack=7건 카운트되나 items 에 0건(제거 확인). 정렬은 tsc+vite 빌드 통과(컴포넌트 반영).
+
+### 21.4 발견 사항(수정 안 함, 사용자 판단)
+- **DATA_FRESHNESS 규칙이 현재 enabled=false** 상태(내 71e29be 는 enabled 로 시드; pull 이후 어딘가서
+  비활성됨). 내 세션 검증 위해 잠시 켰다가 **발견 당시 상태(비활성)로 원복**함. 신선도 알림을 쓰려면
+  설정 화면에서 켜야 함.

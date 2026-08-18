@@ -46,6 +46,10 @@ public class AlertEngine {
     private static final String COLLECTOR_RULE_TYPE = "COLLECTOR_DOWN";
     private static final String COLLECTOR_BUILTIN_KEY = "COLLECTOR_DOWN:all";
 
+    // 연쇄억제(원본 5-7): 뚜렷한 상위원인이 없어도 같은 유형 알림이 이 수 이상 대량 발생하면
+    // 대표 1건만 남기고 나머지를 접는다.
+    private static final int MASS_SUPPRESS_THRESHOLD = 3;
+
     private final JdbcTemplate jdbc;
     private final SettingService settings;
     private final com.company.pipeline.notification.NotificationService notificationService;
@@ -188,6 +192,66 @@ public class AlertEngine {
         evalSafely("SERVICE_UNREACHABLE", this::serviceUnreachableSignals);
         evalSafely("JOB_CONSECUTIVE_FAILURE", this::consecutiveFailureSignals);
         evalSafely("JOB_NOT_RUN", this::notRunSignals);
+        // 모든 규칙이 인스턴스를 만든 뒤, 연쇄로 쏟아진 하위 알림을 상위원인 아래로 접는다.
+        try {
+            evaluateChainSuppression();
+        } catch (Exception ex) {
+            log.warn("연쇄억제 실패: {}", ex.getMessage());
+        }
+    }
+
+    /**
+     * 연쇄억제(원본 5-7). 상위원인 하나로 하위 알림이 대량 발생하는 상황(예: Kafka Broker 장애 →
+     * 커넥터 전부 FAILED)에서 대기열이 폭주하지 않게, 하위 알림을 상위원인 아래로 접는다
+     * (suppressed_by). 대기열/이력은 suppressed_by 로 걸러 대표만 노출하고 나머지는 "억제 N"으로 센다.
+     */
+    private void evaluateChainSuppression() {
+        // 1) 억제 해제: 억제자(suppressor)가 닫혔거나 더는 FIRING 이 아니면 접기를 푼다.
+        jdbc.update("""
+                UPDATE alert_instance c SET suppressed_by = NULL, updated_at = now()
+                WHERE c.suppressed_by IS NOT NULL AND c.closed_at IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM alert_instance p
+                    WHERE p.id = c.suppressed_by AND p.closed_at IS NULL AND p.state = 'FIRING')
+                """);
+
+        // 2) 상위원인 있음: SERVICE_UNREACHABLE(브로커/서비스 응답없음)가 FIRING 이면
+        //    열린 CONNECTOR_FAILED 를 그 아래로 접는다.
+        Long root = jdbc.query("""
+                SELECT id FROM alert_instance
+                WHERE rule_type_code = 'SERVICE_UNREACHABLE' AND state = 'FIRING' AND closed_at IS NULL
+                ORDER BY started_at LIMIT 1
+                """, (rs, i) -> rs.getLong(1)).stream().findFirst().orElse(null);
+        if (root != null) {
+            int n = jdbc.update("""
+                    UPDATE alert_instance SET suppressed_by = ?, updated_at = now()
+                    WHERE rule_type_code = 'CONNECTOR_FAILED' AND closed_at IS NULL
+                      AND suppressed_by IS NULL AND id <> ?
+                    """, root, root);
+            if (n > 0) {
+                log.info("연쇄억제: SERVICE 상위원인({}) 아래 CONNECTOR {}건 접기", root, n);
+            }
+            return;
+        }
+
+        // 3) 상위원인 없음: 같은 유형(CONNECTOR_FAILED)이 임계 이상 대량이면
+        //    가장 오래된 것을 대표로 두고 나머지를 접는다.
+        List<Long> conns = jdbc.query("""
+                SELECT id FROM alert_instance
+                WHERE rule_type_code = 'CONNECTOR_FAILED' AND closed_at IS NULL AND suppressed_by IS NULL
+                ORDER BY started_at
+                """, (rs, i) -> rs.getLong(1));
+        if (conns.size() >= MASS_SUPPRESS_THRESHOLD) {
+            long rep = conns.get(0);
+            int n = jdbc.update("""
+                    UPDATE alert_instance SET suppressed_by = ?, updated_at = now()
+                    WHERE rule_type_code = 'CONNECTOR_FAILED' AND closed_at IS NULL
+                      AND suppressed_by IS NULL AND id <> ?
+                    """, rep, rep);
+            if (n > 0) {
+                log.info("연쇄억제(대량): 대표({}) 아래 CONNECTOR {}건 접기", rep, n);
+            }
+        }
     }
 
     private void evalSafely(String ruleType,

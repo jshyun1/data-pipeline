@@ -117,7 +117,8 @@ export function ActionQueuePanel() {
       const oa = SEVERITY_META[a.severity]?.order ?? 9;
       const ob = SEVERITY_META[b.severity]?.order ?? 9;
       if (oa !== ob) return oa - ob;
-      return (b.duration_seconds ?? 0) - (a.duration_seconds ?? 0);
+      // 원본 5-1 "그룹 내 최신순": 지속시간이 짧을수록(=최근 발생) 위로.
+      return (a.duration_seconds ?? 0) - (b.duration_seconds ?? 0);
     });
   }, [items]);
 

@@ -30,6 +30,9 @@ public class NotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
 
+    // 심각도 발송분기(원본 5-7): 경고는 즉시 폭주 대신 배치 창을 두고 지연 발송한다.
+    private static final int WARNING_BATCH_SECONDS = 120;
+
     private final JdbcTemplate jdbc;
     // JavaMailSender 는 spring.mail.host 가 있을 때만 존재한다(ObjectProvider 로 부재 허용).
     private final ObjectProvider<JavaMailSender> mailSenderProvider;
@@ -67,41 +70,48 @@ public class NotificationService {
                 SELECT r.id AS rid, r.display_name FROM notification_recipient r
                 JOIN notification_subscription s ON s.recipient_id = r.id AND s.channel_type = 'IN_APP' AND s.enabled
                 WHERE r.deleted_at IS NULL AND r.enabled
-                  AND ? >= CASE s.min_severity WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END
+                  AND ? <= CASE s.min_severity WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END
                 """, rank);
         if (recips.isEmpty()) {
-            insertDelivery(eventKey, "IN_APP", severity, rank, category, null, null, summary, deepLink);
+            insertDelivery(eventKey, "IN_APP", severity, rank, category, null, null, summary, deepLink, 0);
         } else {
             for (Map<String, Object> r : recips) {
                 insertDelivery(eventKey, "IN_APP", severity, rank, category,
-                        ((Number) r.get("rid")).longValue(), null, summary, deepLink);
+                        ((Number) r.get("rid")).longValue(), null, summary, deepLink, 0);
             }
         }
-        // EMAIL: 이메일 구독자.
+        // 심각도 발송분기(원본 5-7): 정보(INFO)는 «화면 내에만» — 외부 채널(EMAIL/SMS)로 내보내지 않는다.
+        if (rank >= 2) {
+            return;
+        }
+        // 위험(CRITICAL)=즉시 / 경고(WARNING)=배치 창 지연.
+        int emailDelaySec = rank == 0 ? 0 : WARNING_BATCH_SECONDS;
+        // EMAIL: 이메일 구독자. 실제 발송 주소는 원본 이메일을 저장한다(마스킹은 표시 계층에서만).
         List<Map<String, Object>> emailRecips = jdbc.queryForList("""
                 SELECT r.id AS rid, r.email FROM notification_recipient r
                 JOIN notification_subscription s ON s.recipient_id = r.id AND s.channel_type = 'EMAIL' AND s.enabled
                 WHERE r.deleted_at IS NULL AND r.enabled AND r.email IS NOT NULL AND r.email_disabled_at IS NULL
-                  AND ? >= CASE s.min_severity WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END
+                  AND ? <= CASE s.min_severity WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END
                 """, rank);
         for (Map<String, Object> r : emailRecips) {
             insertDelivery(eventKey, "EMAIL", severity, rank, category,
-                    ((Number) r.get("rid")).longValue(), maskEmail((String) r.get("email")), summary, deepLink);
+                    ((Number) r.get("rid")).longValue(), (String) r.get("email"), summary, deepLink, emailDelaySec);
         }
     }
 
     private void insertDelivery(String eventKey, String channel, String severity, int rank, String category,
-                                Long recipientId, String address, String summary, String deepLink) {
+                                Long recipientId, String address, String summary, String deepLink, int delaySeconds) {
         String dedup = sha256(eventKey + "|" + channel + "|" + recipientId + "|" + (address == null ? "" : address));
         try {
             jdbc.update("""
                     INSERT INTO notification_delivery
                         (event_key, dedup_key, channel_type, severity, severity_rank, category, recipient_id,
                          target_address, subject, body, deep_link, status, next_attempt_at, expires_at, occurred_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', now(), now() + interval '6 hours', now())
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING',
+                            now() + (? * interval '1 second'), now() + interval '6 hours', now())
                     ON CONFLICT (dedup_key) DO NOTHING
                     """, eventKey, dedup, channel, severity, rank, category, recipientId, address,
-                    "[관제] " + severity + " 알림", summary, deepLink);
+                    "[관제] " + severity + " 알림", summary, deepLink, delaySeconds);
         } catch (Exception ex) {
             log.warn("아웃박스 적재 실패({}, {}): {}", channel, eventKey, ex.getMessage());
         }
