@@ -2375,3 +2375,548 @@ button.airflow-tree-label:hover {
   font-size: 13px;
   font-weight: 600;
 }
+
+/* =========================================================================
+ * 원본 문서(대시보드 개선.md) 5-1 ~ 5-5 반영분
+ * 색은 기존 팔레트를 그대로 쓴다: 위험 #e5484d / 경고 #d98b00 / 정상 #16a34a /
+ * 본문 #172033 / 보조 #64748b. 상태색은 계열색과 절대 겹치지 않게 유지한다.
+ * ====================================================================== */
+
+/* --- 5-1 조치 대기열 (대시보드 최상단) --------------------------------- */
+.action-queue {
+  margin-bottom: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.action-queue.is-open {
+  border-color: #fca5a5;
+}
+
+.action-queue--error {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.action-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  flex-wrap: wrap;
+}
+
+.action-queue-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.action-queue-summary .ant-tag {
+  margin-inline-end: 0;
+}
+
+.action-queue-title {
+  color: #172033;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.action-queue-ok {
+  color: #16a34a;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.action-queue-hint {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.action-queue-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.action-queue-body {
+  border-top: 1px solid #eef2f7;
+  padding: 6px 10px 10px;
+}
+
+.action-queue-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.action-queue-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 4px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.action-queue-item:last-child {
+  border-bottom: 0;
+}
+
+/* 확인된 항목은 목록에서 지우지 않고 흐리게 내린다(확인 != 해결). */
+.action-queue-item.is-acked {
+  opacity: 0.55;
+}
+
+.action-queue-icon {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.action-queue-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.action-queue-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.action-queue-axis {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.action-queue-summary-text {
+  color: #172033;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.action-queue-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.action-queue-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.action-queue-more {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding-top: 6px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+/* --- 5-2 KPI 카드 (시점 배지 / "지금" 구분선 / 증감 / 딥링크) ---------- */
+.kpi-time-badge {
+  padding: 1px 7px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.summary-card-change {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.summary-card-change-label {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.kpi-change {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.kpi-change--up { color: #16a34a; }
+.kpi-change--down { color: #e5484d; }
+.kpi-change--flat { color: #64748b; }
+.kpi-change--none { color: #94a3b8; font-weight: 600; }
+
+/* 누적형과 진행형을 가르는 선. 이 아래는 전부 "지금" 값이다. */
+.kpi-now-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 9px 0 5px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.kpi-now-divider::before,
+.kpi-now-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: #e2e8f0;
+}
+
+.kpi-metric-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 1px 0;
+  font-size: 12px;
+}
+
+.kpi-metric-label { color: #64748b; }
+.kpi-metric-value { color: #172033; font-weight: 700; }
+.kpi-metric-row.is-warn .kpi-metric-value { color: #d98b00; }
+
+.kpi-flow-note {
+  margin-top: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.kpi-flow-note--ok { background: #f0fdf4; color: #15803d; }
+.kpi-flow-note--warn { background: #fffbeb; color: #b45309; }
+.kpi-flow-note--unknown { background: #f1f5f9; color: #475569; }
+
+.summary-card-links {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+/* --- 5-3 시스템 리소스 (임계 배지 / 스파크라인 / 용도별) --------------- */
+.infra-column-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px 2px;
+  color: #172033;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.infra-column-uptime {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.infra-tile-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.infra-tile-title .ant-tag {
+  margin-inline-end: 0;
+  font-size: 11px;
+}
+
+.infra-tile-headrow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.infra-tile-spark {
+  display: inline-flex;
+  padding-bottom: 3px;
+}
+
+.sparkline path { stroke: #64748b; }
+.sparkline circle { fill: #64748b; }
+.sparkline--warn path { stroke: #d98b00; }
+.sparkline--warn circle { fill: #d98b00; }
+.sparkline--danger path { stroke: #e5484d; }
+.sparkline--danger circle { fill: #e5484d; }
+
+.sparkline--empty {
+  display: inline-block;
+  width: 72px;
+  color: #cbd5e1;
+  font-size: 12px;
+  text-align: center;
+}
+
+.infra-tile-queue-link {
+  display: inline-block;
+  margin-top: 4px;
+  color: #d98b00;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.infra-disk-breakdown {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.infra-disk-breakdown-title {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  margin-bottom: 2px;
+}
+
+.infra-disk-breakdown-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.infra-disk-breakdown-label { color: #64748b; }
+.infra-disk-breakdown-value { color: #172033; font-weight: 700; }
+
+.infra-disk-breakdown-note {
+  margin-top: 4px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+/* --- 5-5 차트 (프리셋 / 자동 갱신 / 추이 / Top 5) ---------------------- */
+.trend-charts {
+  margin-bottom: 12px;
+}
+
+.trend-charts-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px 8px;
+  flex-wrap: wrap;
+}
+
+.trend-charts-label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.trend-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 1200px) {
+  .trend-charts-grid {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+}
+
+.trend-top5-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.trend-top5-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trend-top5-list button {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.trend-top5-list button:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.trend-top5-list button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.trend-top5-name {
+  color: #172033;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trend-top5-value {
+  color: #64748b;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.trend-top5-hint {
+  margin-top: 6px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+/* --- 5-4 주요 프로세스 현황 (이상 우선 / 정상 접기 / 미사용 / 판정 기준) ----- */
+.process-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.process-card-count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.process-card-count .ant-tag {
+  margin-inline-end: 0;
+}
+
+.process-card-total {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* 데이터 흐름은 프로세스 생존과 다른 축이라는 걸 배경색으로 갈라 놓는다. */
+.process-dataflow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.process-dataflow--ok { background: #f0fdf4; color: #15803d; }
+.process-dataflow--warn { background: #fffbeb; color: #b45309; }
+.process-dataflow--unknown { background: #f1f5f9; color: #475569; }
+
+.process-dataflow-axis {
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.process-dataflow-text {
+  font-weight: 600;
+}
+
+.infra-process-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.infra-process-group-tag {
+  flex: 0 0 auto;
+  width: 46px;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.infra-process-line .infra-process-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.process-mark {
+  flex: 0 0 auto;
+  width: 12px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.process-mark--down { color: #e5484d; }
+.process-mark--degraded { color: #d98b00; }
+.process-mark--unknown { color: #94a3b8; }
+.process-mark--stopped { color: #64748b; }
+.process-mark--up { color: #16a34a; }
+.process-mark--unconfigured { color: #cbd5e1; }
+
+/* 미사용은 "영원히 정상"이라 시선을 뺏지 않게 눌러 둔다. */
+.infra-process-row.is-unconfigured {
+  opacity: 0.55;
+}
+
+.process-collapse-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed #e2e8f0;
+  color: #16a34a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.process-boundary-note {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid #f1f5f9;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.process-tooltip-title {
+  margin-bottom: 3px;
+  font-weight: 800;
+}
+
+.process-tooltip-row {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.process-tooltip-row span {
+  opacity: 0.75;
+  white-space: nowrap;
+}

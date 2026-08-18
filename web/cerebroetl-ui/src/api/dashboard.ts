@@ -96,3 +96,48 @@ export async function getRealtimePipelineMetrics(): Promise<RealtimePipelineMetr
   const res = await apiClient.get<ApiResponse<RealtimePipelineMetricResponse[]>>("/metrics/daily-load/realtime");
   return unwrap(res.data);
 }
+
+/* -------------------------------------------------------------------------
+ * 차트 보강 — 원본 문서 5-5 (#4 실패·지연 추이, #6 Top 5 3종)
+ * ---------------------------------------------------------------------- */
+
+/** 화면 상단 프리셋 칩과 같은 값. 버킷 입도는 서버가 프리셋에서 유도한다. */
+export type TrendPreset = "1h" | "24h" | "7d" | "30d";
+
+export interface TrendPoint {
+  at: string;
+  count: number;
+}
+
+export interface TrendsResponse {
+  preset: string;
+  bucket: string;
+  failures: TrendPoint[];
+  lag: TrendPoint[];
+}
+
+export async function getDashboardTrends(preset: TrendPreset): Promise<TrendsResponse> {
+  const res = await apiClient.get<ApiResponse<TrendsResponse>>("/dashboard/trends", { params: { preset } });
+  return unwrap(res.data);
+}
+
+export type Top5Metric = "count" | "duration" | "failure";
+
+export interface Top5Item {
+  label: string;
+  value: number;
+  runs: number;
+  /** 드릴다운용. null 이면 이동할 화면을 특정할 수 없어 클릭을 막는다. */
+  job_id: number | null;
+}
+
+export interface Top5Response {
+  metric: Top5Metric;
+  preset: string;
+  items: Top5Item[];
+}
+
+export async function getDashboardTop5(metric: Top5Metric, preset: TrendPreset): Promise<Top5Response> {
+  const res = await apiClient.get<ApiResponse<Top5Response>>("/dashboard/top5", { params: { metric, preset } });
+  return unwrap(res.data);
+}

@@ -368,6 +368,14 @@ services:
       # 로그 파이프라인 배포 시 여기 파이프라인별 Filebeat input YAML을 쓴다 -
       # filebeat 컨테이너가 같은 볼륨을 읽기 전용으로 마운트해서 재시작 없이 반영한다.
       - filebeat-inputs:/filebeat-inputs
+      # 디스크 "용도별" 분해(원본 문서 5-3 #12)용 관측 마운트. named volume 은 전부 같은
+      # 파일시스템이라 df 로는 안 갈라지므로 디렉터리 크기를 직접 걷는다. 전부 읽기전용이고,
+      # /var/lib/docker 나 docker.sock 은 루트 권한 등가라서 마운트하지 않는다.
+      - kafka-data:/observed/kafka:ro
+      - nifi-content-repository:/observed/nifi-content:ro
+      - nifi-provenance-repository:/observed/nifi-provenance:ro
+      - nifi-flowfile-repository:/observed/nifi-flowfile:ro
+      - nifi-database-repository:/observed/nifi-database:ro
     ports:
       - "${PIPELINE_API_PUBLIC_PORT}:${PIPELINE_API_PORT}"
     healthcheck:

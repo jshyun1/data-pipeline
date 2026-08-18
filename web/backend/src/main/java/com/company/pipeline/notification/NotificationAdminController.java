@@ -84,8 +84,9 @@ public class NotificationAdminController {
     public ApiResponse<List<Map<String, Object>>> recipients() {
         return ApiResponse.success(jdbc.queryForList("""
                 SELECT r.id, r.user_id, r.display_name, r.email,
-                       CASE WHEN r.phone IS NULL THEN NULL
-                            ELSE regexp_replace(r.phone, '(\\d{3})\\d+(\\d{4})', '\\1-****-\\2') END AS phone_masked,
+                       -- 마스킹하지 않는다. 관리자만 여는 설정 화면이고, 가려진 번호로는
+                       -- "이 번호가 맞나"를 확인할 수도 수정할 수도 없다.
+                       r.phone,
                        r.enabled,
                        (SELECT json_agg(json_build_object('channel', s.channel_type, 'minSeverity', s.min_severity))
                         FROM notification_subscription s WHERE s.recipient_id = r.id AND s.enabled) AS subscriptions
@@ -107,6 +108,50 @@ public class NotificationAdminController {
                 VALUES (?, ?, ?, ?) RETURNING id
                 """, Long.class, req.userId(), req.displayName(), req.email(), req.phone());
         return ApiResponse.success(Map.of("id", id));
+    }
+
+    /**
+     * 수신자 수정. 지금까지 등록/삭제만 있어서 오타 하나를 고치려면 지웠다 다시 넣어야 했고,
+     * 그때마다 id 가 바뀌어 구독(notification_subscription)이 끊겼다.
+     *
+     * <p>null 인 필드는 건드리지 않는다(부분 수정). 빈 문자열은 "지운다"는 뜻으로 해석해 NULL 로 넣는다 —
+     * 이메일만 남기고 전화번호를 빼는 조작이 가능해야 한다.
+     */
+    @PutMapping("/api/admin/notification/recipients/{id}")
+    public ApiResponse<Void> updateRecipient(@PathVariable long id, @RequestBody RecipientRequest req) {
+        if (req.displayName() != null && req.displayName().isBlank()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "이름은 비울 수 없습니다.");
+        }
+        String email = normalize(req.email());
+        String phone = normalize(req.phone());
+        // 수정 후에도 연락 수단이 하나는 남아야 한다. 현재 값과 합쳐서 판단한다.
+        Map<String, Object> current;
+        try {
+            current = jdbc.queryForMap(
+                    "SELECT email, phone FROM notification_recipient WHERE id=? AND deleted_at IS NULL", id);
+        } catch (org.springframework.dao.EmptyResultDataAccessException ex) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "수신자를 찾을 수 없습니다: " + id);
+        }
+        String finalEmail = req.email() == null ? (String) current.get("email") : email;
+        String finalPhone = req.phone() == null ? (String) current.get("phone") : phone;
+        if (finalEmail == null && finalPhone == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "이메일 또는 전화번호 중 하나는 남아 있어야 합니다.");
+        }
+        jdbc.update("""
+                UPDATE notification_recipient SET
+                    display_name = COALESCE(?, display_name),
+                    email = ?,
+                    phone = ?,
+                    user_id = COALESCE(?, user_id),
+                    updated_at = now()
+                WHERE id = ? AND deleted_at IS NULL
+                """, req.displayName(), finalEmail, finalPhone, req.userId(), id);
+        return ApiResponse.success(null);
+    }
+
+    /** 빈 문자열은 "지운다"는 의사표시로 보고 NULL 로 바꾼다. */
+    private String normalize(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     @DeleteMapping("/api/admin/notification/recipients/{id}")

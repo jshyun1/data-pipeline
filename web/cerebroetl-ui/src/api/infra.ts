@@ -55,6 +55,17 @@ export interface ProcessItem {
   name: string;
   status: ProcessStatus;
   detail?: string | null;
+  /**
+   * false면 "이 설치에 구성되지 않음" = 미사용. 장애가 아니라 감시 대상이 아니라는 뜻이라
+   * 화면은 회색 ○로 그리고 이상 카운트에서 뺀다(원본 문서 5-4).
+   * UNKNOWN 하나로 "못 물어봤다"와 "안 쓴다"를 섞으면 회색을 아무도 안 보게 된다.
+   */
+  configured: boolean;
+  /** 마지막 성공 시각. 툴팁의 "마지막 성공" 줄에 쓴다. */
+  lastHeartbeatAt?: string | null;
+  /** 판정 기준(초). 화면에 하드코딩하면 설정이 바뀌는 순간 화면이 거짓말을 한다. */
+  staleAfterSeconds?: number | null;
+  downAfterSeconds?: number | null;
 }
 
 export interface ProcessGroup {
@@ -71,5 +82,51 @@ export interface ProcessHealthResponse {
 
 export async function getProcessHealth(): Promise<ProcessHealthResponse> {
   const res = await apiClient.get<ApiResponse<ProcessHealthResponse>>("/infra/processes");
+  return unwrap(res.data);
+}
+
+/* -------------------------------------------------------------------------
+ * 리소스 추이(스파크라인) — 원본 문서 5-3 #11
+ * ---------------------------------------------------------------------- */
+
+export interface ResourcePoint {
+  at: string;
+  usedPercent: number | null;
+  usedBytes: number | null;
+  totalBytes: number | null;
+}
+
+/** 키는 "CPU" | "MEMORY" | "LOAD1" | "DISK:{mount}". 결손 구간은 행이 아예 없다. */
+export type ResourceTimeseries = Record<string, ResourcePoint[]>;
+
+export async function getResourceTimeseries(minutes = 60): Promise<ResourceTimeseries> {
+  const res = await apiClient.get<ApiResponse<ResourceTimeseries>>("/infra/resources/timeseries", {
+    params: { minutes },
+  });
+  return unwrap(res.data);
+}
+
+/* -------------------------------------------------------------------------
+ * 디스크 용도별 — 원본 문서 5-3 #12
+ * ---------------------------------------------------------------------- */
+
+export interface DiskBreakdownEntry {
+  label: string;
+  path: string;
+  usedBytes: number;
+  isLowerBound: boolean;
+  /** BLOCKS=du 실측(정확) / APPARENT=파일 길이 합(희소 파일에서 과대) / NONE */
+  measuredBy: "BLOCKS" | "APPARENT" | "NONE";
+  error: string | null;
+}
+
+export interface DiskBreakdown {
+  collectedAt: string | null;
+  entries: DiskBreakdownEntry[];
+}
+
+// 마운트를 안 걸어둔 환경에서는 entries 가 비어 온다 - 화면은 구역을 통째로 감춘다.
+export async function getDiskBreakdown(): Promise<DiskBreakdown> {
+  const res = await apiClient.get<ApiResponse<DiskBreakdown>>("/infra/resources/breakdown");
   return unwrap(res.data);
 }

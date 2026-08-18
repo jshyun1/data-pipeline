@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Card, DatePicker, Empty, Space, Tag } from "antd";
+import { Button, Card, DatePicker, Empty, Space, Tooltip } from "antd";
+import { useNavigate } from "react-router-dom";
 import { Column } from "@ant-design/plots";
 import dayjs, { type Dayjs } from "dayjs";
 import {
@@ -30,6 +31,10 @@ import { summarizeKafkaConnectors } from "../utils/kafkaConnectors";
 import { categorizeDag, NIFI_METRICS_COLLECTOR_DAG_ID, resolveDagDisplayName, type DagCategory } from "../utils/dagHistory";
 import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
 import { InfraRegion } from "../components/InfraRegion";
+import { ActionQueuePanel } from "../components/ActionQueuePanel";
+import { TrendCharts } from "../components/TrendCharts";
+import { ChangeIndicator, FlowStateNote, MetricRow, NowDivider, TimeBadge } from "../components/kpi/kpiBits";
+import { formatRecovery, judgeCdcFlow } from "../components/kpi/flowState";
 import { KpiLoadTrend } from "../components/KpiLoadTrend";
 
 const { RangePicker } = DatePicker;
@@ -308,6 +313,7 @@ const HOUR_BUCKET_LEGEND = {
 export function DashboardPage() {
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(6, "day"), dayjs()]);
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
+  const navigate = useNavigate();
   const [airflowActiveTile, setAirflowActiveTile] = useState<AirflowTileKind | null>(null);
   const [nifiFailedOpen, setNifiFailedOpen] = useState(false);
   const [kafkaFailedOpen, setKafkaFailedOpen] = useState(false);
@@ -535,6 +541,26 @@ export function DashboardPage() {
     .sort((a, b) => new Date(b.datetime ?? 0).getTime() - new Date(a.datetime ?? 0).getTime())
     .slice(0, 10);
 
+  // 원본 5-2 "전일 대비 증감". 일별 시계열의 마지막 날과 그 전날을 비교한다.
+  // 하루치밖에 없으면 previous 를 null 로 둬서 "비교 불가"로 표시한다(0%로 속이지 않는다).
+  function previousDayCount(points: Array<{ count: number }>): number | null {
+    return points.length >= 2 ? points[points.length - 2].count : null;
+  }
+  function lastDayCount(points: Array<{ count: number }>): number {
+    return points.length >= 1 ? points[points.length - 1].count : 0;
+  }
+
+  // 원본 5-2 "처리율 0에 맥락 부여" + "#4 해소 예상 시간".
+  const cdcFlow = judgeCdcFlow(realtimeMetrics);
+  const cdcRecovery = formatRecovery(realtimeMetrics);
+  const nifiFlowText =
+    nifiActiveThreads > 0
+      ? `실행 중 ${nifiActiveThreads}개 작업`
+      : nifiQueued > 0
+        ? "대기 데이터가 남았는데 실행 중인 작업 없음 — 확인 필요"
+        : "대기 데이터 없음 (정상)";
+  const nifiFlowTone: "ok" | "warn" = nifiActiveThreads === 0 && nifiQueued > 0 ? "warn" : "ok";
+
   const connectorDriftCount = commandSummary?.connectorDrift.length ?? 0;
 
   const nifiLoading = nifiLoadQuery.isLoading && !nifiLoadQuery.data;
@@ -570,84 +596,150 @@ export function DashboardPage() {
 
       <div className="dashboard-body">
       <main className="dashboard-main">
+      {/* 원본 5-1: 조치 대기열은 KPI 카드보다 위, 대시보드 최상단이다.
+          "화면을 보고 무엇을 해야 하는지가 나오게 한다"가 이 배치의 이유다. */}
+      <ActionQueuePanel />
       <section className="dashboard-kpi-region">
         <KpiLoadTrend />
       </section>
       <section className="dashboard-summary-grid">
+        {/* 원본 5-2 KPI 카드 재구성: 누적형(기간 배지) 위 / 진행형("지금" 구분선) 아래 */}
         <Card className="dashboard-summary-card dashboard-summary-card--cdc" loading={kafkaLoading}>
           <div className="summary-card-heading">
-            <span>CDC</span>
-            {kafkaFailed > 0 ? (
-              <button type="button" className="summary-status-button" onClick={() => setKafkaFailedOpen(true)}>
-                <Tag color="error">장애 {kafkaFailed}</Tag>
-              </button>
-            ) : null}
+            <span>스트림 · CDC</span>
+            <TimeBadge label={selectedPeriodLabel} />
           </div>
           <div className="summary-card-value" title={`${formatCount(kafkaPeriodTotal)}건`}>
             {formatCompactCount(kafkaPeriodTotal)}
             <small>건 적재</small>
           </div>
-          <div className="summary-card-details">
-            <span>현재 처리율 <strong>{formatCompactCount(Math.round(kafkaThroughput))}</strong> rows/s</span>
-            <span>미처리 <strong>{formatCompactCount(kafkaBacklog)}</strong></span>
-            <span>일시정지 <strong>{kafkaPaused}</strong></span>
-            {connectorDriftCount > 0 ? <span className="summary-card-warning">커넥터 불일치 <strong>{connectorDriftCount}</strong></span> : null}
+          <div className="summary-card-change">
+            <ChangeIndicator current={lastDayCount(kafkaLoadDaily)} previous={previousDayCount(kafkaLoadDaily)} />
+            <span className="summary-card-change-label">전일 대비</span>
+          </div>
+
+          <NowDivider />
+          <MetricRow
+            label="미처리"
+            value={formatCompactCount(kafkaBacklog)}
+            warn={kafkaBacklog > 0}
+            hint="Kafka consumer lag 합계 — 아직 타깃에 반영되지 않은 건수"
+          />
+          <MetricRow label="해소 예상" value={cdcRecovery.text} warn={cdcRecovery.warn} />
+          <MetricRow label="처리율" value={`${kafkaThroughput.toFixed(1)} rows/s`} />
+          <MetricRow label="일시정지" value={String(kafkaPaused)} warn={kafkaPaused > 0} />
+          {connectorDriftCount > 0 ? (
+            <MetricRow label="커넥터 불일치" value={String(connectorDriftCount)} warn />
+          ) : null}
+          <FlowStateNote tone={cdcFlow.tone} text={cdcFlow.text} />
+
+          <div className="summary-card-links">
+            {kafkaFailed > 0 ? (
+              <Button size="small" danger onClick={() => setKafkaFailedOpen(true)}>
+                장애 {kafkaFailed}건
+              </Button>
+            ) : null}
+            <Button size="small" onClick={() => navigate("/cdc/logs")}>
+              처리 로그 →
+            </Button>
           </div>
         </Card>
 
         <Card className="dashboard-summary-card dashboard-summary-card--nifi" loading={nifiLoading}>
           <div className="summary-card-heading">
-            <span>ETL</span>
-            {nifiFailed > 0 ? (
-              <button type="button" className="summary-status-button" onClick={() => setNifiFailedOpen(true)}>
-                <Tag color="error">오류 그룹 {nifiFailed}</Tag>
-              </button>
-            ) : null}
+            <span>플로우 · ETL</span>
+            <TimeBadge label={selectedPeriodLabel} />
           </div>
           <div className="summary-card-value" title={`${formatCount(nifiPeriodTotal)}건`}>
             {formatCompactCount(nifiPeriodTotal)}
             <small>건 적재</small>
           </div>
-          <div className="summary-card-details">
-            <span>활성 스레드 <strong>{nifiActiveThreads}</strong></span>
-            <span>대기 <strong>{formatCompactCount(nifiQueued)}</strong> FlowFiles</span>
-            <span>실행 <strong>{nifiRunning}</strong></span>
-            <span>중지 <strong>{nifiStopped}</strong></span>
+          <div className="summary-card-change">
+            <ChangeIndicator current={lastDayCount(nifiLoadDaily)} previous={previousDayCount(nifiLoadDaily)} />
+            <span className="summary-card-change-label">전일 대비</span>
+          </div>
+
+          <NowDivider />
+          {/* 원본 #9 용어 정리: 활성 스레드 → 실행 중 작업, 대기 FlowFiles → 대기 데이터 */}
+          <MetricRow
+            label="실행 중 작업"
+            value={String(nifiActiveThreads)}
+            hint="NiFi 활성 스레드 수 — 지금 실제로 돌고 있는 작업"
+          />
+          <MetricRow
+            label="대기 데이터"
+            value={formatCompactCount(nifiQueued)}
+            warn={nifiQueued > 0 && nifiActiveThreads === 0}
+            hint="처리를 기다리며 큐에 쌓인 데이터 건수(FlowFile)"
+          />
+          <MetricRow label="실행" value={String(nifiRunning)} />
+          <MetricRow label="중지" value={String(nifiStopped)} warn={nifiStopped > 0} />
+          <FlowStateNote tone={nifiFlowTone} text={nifiFlowText} />
+
+          <div className="summary-card-links">
+            {nifiFailed > 0 ? (
+              <Button size="small" danger onClick={() => setNifiFailedOpen(true)}>
+                오류 그룹 {nifiFailed}건
+              </Button>
+            ) : null}
+            <Button size="small" onClick={() => navigate("/etl/logs")}>
+              ETL 로그 →
+            </Button>
           </div>
         </Card>
 
         <Card className="dashboard-summary-card dashboard-summary-card--airflow" loading={showAirflowInitialLoading}>
           <div className="summary-card-heading">
-            <span>Airflow</span>
-            {airflowHistory.failedEntries.length > 0 ? (
-              <Tag color="warning">실패 {airflowHistory.failedEntries.length}</Tag>
-            ) : null}
+            <span>배치 · Airflow</span>
+            <TimeBadge label={selectedPeriodLabel} />
           </div>
           <div className="summary-card-value">
             {airflowSuccessRate}
             <small>% 성공 (완료 실행 기준)</small>
           </div>
-          <div className="summary-card-details">
-            <button type="button" onClick={() => setAirflowActiveTile("success")}>
-              성공 <strong>{airflowHistory.successEntries.length}</strong>
-            </button>
-            <button type="button" onClick={() => setAirflowActiveTile("running")}>
-              실행 중 <strong>{airflowHistory.runningEntries.length}</strong>
-            </button>
-            <button type="button" onClick={() => setAirflowActiveTile("failed")}>
-              실패 <strong>{airflowHistory.failedEntries.length}</strong>
-            </button>
-            <button type="button" onClick={() => setAirflowActiveTile("dag")}>
-              DAG <strong>{airflowHistory.dagCount}</strong>
-            </button>
+          <div className="summary-card-change">
+            <span className="summary-card-change-label">
+              성공 {airflowHistory.successEntries.length} · 실패 {airflowHistory.failedEntries.length}
+            </span>
           </div>
+
+          <NowDivider />
+          <MetricRow label="실행 중" value={String(airflowHistory.runningEntries.length)} />
+          <MetricRow
+            label="실패"
+            value={String(airflowHistory.failedEntries.length)}
+            warn={airflowHistory.failedEntries.length > 0}
+          />
+          <MetricRow label="DAG" value={String(airflowHistory.dagCount)} />
+
+          {/* 원본 5-2 "Airflow 스트립 의미 불명 → 툴팁" */}
           <div className="airflow-run-strip" aria-label="최근 Airflow 실행 상태">
             {recentAirflowRuns.map((entry) => (
-              <span key={entry.id} className={`airflow-run-block airflow-run-block--${entry.state.toLowerCase()}`} />
+              <Tooltip
+                key={entry.id}
+                title={`${entry.basicContent} · ${entry.state}${entry.datetime ? ` · ${entry.datetime}` : ""}`}
+              >
+                <span className={`airflow-run-block airflow-run-block--${entry.state.toLowerCase()}`} />
+              </Tooltip>
             ))}
+          </div>
+
+          <div className="summary-card-links">
+            {airflowHistory.failedEntries.length > 0 ? (
+              <Button size="small" danger onClick={() => setAirflowActiveTile("failed")}>
+                실패 {airflowHistory.failedEntries.length}건 보기
+              </Button>
+            ) : null}
+            <Button size="small" onClick={() => navigate("/airflow/dashboard")}>
+              실행 이력 →
+            </Button>
           </div>
         </Card>
       </section>
+
+      {/* 원본 5-5: 실패·지연 추이 + Top 5 3종. 기간 프리셋과 자동 갱신은 이 구역이 자체적으로 갖는다
+          (상단 RangePicker 는 기존 일별 차트용으로 그대로 둔다). */}
+      <TrendCharts />
 
       <div className="dashboard-stats-grid">
         <ChartPanel
@@ -733,6 +825,9 @@ export function DashboardPage() {
         resourcesLoading={hostResourcesQuery.isLoading && !hostResourcesQuery.data}
         processes={processHealthQuery.data?.groups}
         processesLoading={processHealthQuery.isLoading && !processHealthQuery.data}
+        /* 원본 5-4: 프로세스 헬스와 데이터 흐름 헬스는 다른 축이다.
+           판정은 KPI 카드가 이미 했으므로 그 결과를 넘기기만 한다(중복 구현 금지). */
+        dataFlow={cdcFlow}
       />
       </div>
 

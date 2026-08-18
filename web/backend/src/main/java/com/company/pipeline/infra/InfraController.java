@@ -14,10 +14,13 @@ public class InfraController {
 
     private final HostResourceService hostResourceService;
     private final ProcessHealthService processHealthService;
+    private final DiskBreakdownService diskBreakdownService;
 
-    public InfraController(HostResourceService hostResourceService, ProcessHealthService processHealthService) {
+    public InfraController(HostResourceService hostResourceService, ProcessHealthService processHealthService,
+                           DiskBreakdownService diskBreakdownService) {
         this.hostResourceService = hostResourceService;
         this.processHealthService = processHealthService;
+        this.diskBreakdownService = diskBreakdownService;
     }
 
     @GetMapping("/resources")
@@ -28,5 +31,14 @@ public class InfraController {
     @GetMapping("/processes")
     public ApiResponse<ProcessHealthResponse> processes() {
         return ApiResponse.success(processHealthService.collect());
+    }
+
+    /**
+     * 디스크 용도별 사용량(원본 5-3 #12). 5분 주기로 백그라운드에서 계산된 캐시를 그대로 내린다.
+     * 마운트를 안 걸어둔 환경에서는 빈 목록이 오고, 화면은 그 구역을 통째로 감춘다.
+     */
+    @GetMapping("/resources/breakdown")
+    public ApiResponse<DiskBreakdownService.Snapshot> breakdown() {
+        return ApiResponse.success(diskBreakdownService.current());
     }
 }

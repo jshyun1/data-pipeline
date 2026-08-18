@@ -139,6 +139,20 @@ public class AlertEngine {
                         """, COLLECTOR_RULE_TYPE, COLLECTOR_BUILTIN_KEY);
                 log.info("내장 규칙 시드: {}", COLLECTOR_BUILTIN_KEY);
             }
+            // --- 원본 5-1 / PDF 3쪽 규칙표의 나머지 6종 ---
+            seedRule("SERVER_DISK", "디스크 임계", "HOST", false, "WARNING", "INFO",
+                    "disk.used.pct", "파일시스템 사용률", "{\"threshold\":80,\"clear\":72}", 120, 300);
+            seedRule("CDC_LAG", "CDC 지연 임계", "DATA", false, "WARNING", "INFO",
+                    "cdc.consumer.lag", "Kafka 미처리 건수", "{\"threshold\":50000,\"clear\":10000}", 300, 300);
+            seedRule("CONNECTOR_FAILED", "커넥터 FAILED", "PROCESS", true, "CRITICAL", "WARNING",
+                    "connector.state", "Kafka Connect 커넥터 실패", "{}", 0, 300);
+            seedRule("SERVICE_UNREACHABLE", "서비스 응답 없음", "PROCESS", true, "CRITICAL", "WARNING",
+                    "heartbeat.failure", "NiFi·Airflow 등 대상 서비스 무응답",
+                    "{\"consecutive_failures\":3}", 0, 300);
+            seedRule("JOB_CONSECUTIVE_FAILURE", "연속 실패", "JOB", false, "CRITICAL", "WARNING",
+                    "job.run.status", "동일 잡 연속 실패", "{\"count\":3}", 0, 1800);
+            seedRule("JOB_NOT_RUN", "장기 미실행", "JOB", false, "WARNING", "INFO",
+                    "job.run.age", "일정 기간 실행 이력 없음", "{\"days\":7}", 0, 0);
         } catch (Exception ex) {
             log.warn("내장 규칙 시드 실패(기동은 계속): {}", ex.getMessage());
         }
@@ -166,6 +180,22 @@ public class AlertEngine {
             evaluateCollectorOutage();
         } catch (Exception ex) {
             log.warn("알림 평가 실패({}): {}", COLLECTOR_BUILTIN_KEY, ex.getMessage());
+        }
+        // 원본 5-1 규칙표 나머지. 하나가 죽어도 나머지는 계속 돈다.
+        evalSafely("SERVER_DISK", this::diskSignals);
+        evalSafely("CDC_LAG", this::cdcLagSignals);
+        evalSafely("CONNECTOR_FAILED", this::connectorFailedSignals);
+        evalSafely("SERVICE_UNREACHABLE", this::serviceUnreachableSignals);
+        evalSafely("JOB_CONSECUTIVE_FAILURE", this::consecutiveFailureSignals);
+        evalSafely("JOB_NOT_RUN", this::notRunSignals);
+    }
+
+    private void evalSafely(String ruleType,
+                            java.util.function.Function<Map<String, Object>, List<Candidate>> signalFn) {
+        try {
+            evaluateWithCandidates(ruleType + ":all", ruleType, signalFn);
+        } catch (Exception ex) {
+            log.warn("알림 평가 실패({}): {}", ruleType, ex.getMessage());
         }
     }
 
@@ -509,4 +539,279 @@ public class AlertEngine {
             return def;
         }
     }
+
+    // ================================================================================
+    // 원본 문서 5-1 / PDF 3쪽 판정 규칙표 나머지 항목 (U9 확장)
+    //
+    // 대기열 화면은 있는데 그 안을 채울 규칙이 4종뿐이었다. 규칙표에서 신호 원천이 이미
+    // DB 에 저장되어 있는 6종을 추가한다. 설계 원칙 B("판정기는 외부 시스템을 절대 호출하지
+    // 않는다")를 지키려고 전부 저장된 관측값만 읽는다 — NiFi/Airflow 를 여기서 부르지 않는다.
+    // ================================================================================
+
+    /** 한 규칙이 지금 발화해야 한다고 본 대상 하나. targetKey 가 인스턴스의 동일성 기준이다. */
+    private record Candidate(String targetKey, String targetLabel, String componentCode,
+                             Double observed, Double threshold, String summary, String deepLink) {}
+
+    /** 규칙 유형과 내장 규칙을 한 번에 등록한다(이미 있으면 아무것도 하지 않는다). */
+    private void seedRule(String code, String label, String category, boolean mandatory,
+                          String defaultSeverity, String minSeverity, String signalKey,
+                          String description, String paramsJson, int forSeconds, int clearSeconds) {
+        jdbc.update("""
+                INSERT INTO alert_rule_type
+                    (code, label, category, kpi_axis, mandatory, default_severity, min_severity,
+                     signal_keys_req, description)
+                VALUES (?, ?, ?, 'CURRENT', ?, ?, ?, ?, ?)
+                ON CONFLICT (code) DO NOTHING
+                """, code, label, category, mandatory, defaultSeverity, minSeverity, signalKey, description);
+        String builtinKey = code + ":all";
+        Integer n = jdbc.queryForObject(
+                "SELECT count(*) FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL",
+                Integer.class, builtinKey);
+        if (n != null && n == 0) {
+            jdbc.update("""
+                    INSERT INTO alert_rule
+                        (rule_type_code, builtin_key, name, severity, params_json, for_seconds, clear_seconds, mandatory)
+                    VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?)
+                    """, code, builtinKey, label, defaultSeverity, paramsJson, forSeconds, clearSeconds, mandatory);
+            log.info("내장 규칙 시드: {}", builtinKey);
+        }
+    }
+
+    /**
+     * 공통 상태기계. 후보에 있으면 PENDING→FIRING 으로 밀어올리고, 후보에서 빠진 열린 인스턴스는
+     * clear_seconds 를 채운 뒤 해소한다.
+     *
+     * <p>메모리 규칙의 60줄짜리 상태 전이를 규칙마다 복사하면 언젠가 한 곳만 고쳐져서
+     * 규칙마다 다르게 동작하게 된다. 전이 규약은 한 군데만 둔다.
+     */
+    private void evaluateWithCandidates(String builtinKey, String ruleType,
+                                        java.util.function.Function<Map<String, Object>, List<Candidate>> signalFn) {
+        Map<String, Object> rule;
+        try {
+            rule = jdbc.queryForMap(
+                    "SELECT id, severity, for_seconds, clear_seconds, params_json::text AS params, enabled "
+                            + "FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL", builtinKey);
+        } catch (Exception ex) {
+            return;   // 아직 시드 안 됨
+        }
+        if (!Boolean.TRUE.equals(rule.get("enabled"))) {
+            return;
+        }
+        long ruleId = ((Number) rule.get("id")).longValue();
+        String severity = (String) rule.get("severity");
+        int forSec = ((Number) rule.get("for_seconds")).intValue();
+        int clearSec = ((Number) rule.get("clear_seconds")).intValue();
+
+        List<Candidate> candidates = signalFn.apply(rule);
+        if (candidates == null) {
+            // 신호 자체를 못 읽은 경우. "모름"을 "정상"으로 칠하지 않으려면 해소도 하지 않는다.
+            return;
+        }
+        Set<String> firingKeys = new HashSet<>();
+        for (Candidate c : candidates) {
+            firingKeys.add(c.targetKey());
+            advance(ruleId, ruleType, severity, forSec, c);
+        }
+        // 후보에서 빠진 열린 인스턴스 = 조건 해제 진행 중
+        for (Map<String, Object> open : jdbc.queryForList(
+                "SELECT id, state, target_key, false_observed_sec FROM alert_instance "
+                        + "WHERE rule_id=? AND closed_at IS NULL", ruleId)) {
+            if (firingKeys.contains((String) open.get("target_key"))) {
+                continue;
+            }
+            long falseSec = ((Number) open.get("false_observed_sec")).longValue() + EVAL_INTERVAL_SEC;
+            if (falseSec >= clearSec) {
+                resolve((Number) open.get("id"), (String) open.get("state"));
+            } else {
+                jdbc.update("UPDATE alert_instance SET false_observed_sec=?, true_observed_sec=0, "
+                        + "last_evaluated_at=now(), updated_at=now() WHERE id=?", falseSec, open.get("id"));
+            }
+        }
+    }
+
+    private void advance(long ruleId, String ruleType, String severity, int forSec, Candidate c) {
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT id, state, true_observed_sec FROM alert_instance "
+                        + "WHERE rule_id=? AND target_key=? AND closed_at IS NULL", ruleId, c.targetKey());
+        if (rows.isEmpty()) {
+            String state = forSec <= EVAL_INTERVAL_SEC ? "FIRING" : "PENDING";
+            Long id = jdbc.queryForObject("""
+                    INSERT INTO alert_instance
+                        (rule_id, rule_type_code, kpi_axis, target_key, target_label, component_code, severity, state,
+                         condition_since, true_observed_sec, started_at, last_evaluated_at, last_transition_at,
+                         observed_value, threshold_value, summary, deep_link)
+                    VALUES (?, ?, 'CURRENT', ?, ?, ?, ?, ?, now(), ?, CASE WHEN ?='FIRING' THEN now() END,
+                            now(), now(), ?, ?, ?, ?)
+                    RETURNING id
+                    """, Long.class, ruleId, ruleType, c.targetKey(), c.targetLabel(), c.componentCode(),
+                    severity, state, EVAL_INTERVAL_SEC, state, c.observed(), c.threshold(),
+                    c.summary(), c.deepLink());
+            event(id, "CREATED", null, state, "SYSTEM");
+            if ("FIRING".equals(state)) {
+                event(id, "FIRED", "PENDING", "FIRING", "SYSTEM");
+                notifyFired(id);
+            }
+            return;
+        }
+        Map<String, Object> open = rows.get(0);
+        long trueSec = ((Number) open.get("true_observed_sec")).longValue() + EVAL_INTERVAL_SEC;
+        if ("PENDING".equals(open.get("state")) && trueSec >= forSec) {
+            jdbc.update("UPDATE alert_instance SET state='FIRING', true_observed_sec=?, started_at=now(), "
+                    + "observed_value=?, summary=?, last_transition_at=now(), last_evaluated_at=now(), "
+                    + "updated_at=now(), version=version+1 WHERE id=?",
+                    trueSec, c.observed(), c.summary(), open.get("id"));
+            long id = ((Number) open.get("id")).longValue();
+            event(id, "FIRED", "PENDING", "FIRING", "SYSTEM");
+            notifyFired(id);
+        } else {
+            jdbc.update("UPDATE alert_instance SET true_observed_sec=?, false_observed_sec=0, observed_value=?, "
+                    + "summary=?, last_evaluated_at=now(), updated_at=now() WHERE id=?",
+                    trueSec, c.observed(), c.summary(), open.get("id"));
+        }
+    }
+
+    /** 디스크 사용률 임계(원본 규칙표 "디스크 > 80%", 경고). 마운트별로 인스턴스를 따로 연다. */
+    private List<Candidate> diskSignals(Map<String, Object> rule) {
+        double threshold = jsonNum(rule.get("params").toString(), "threshold", 80);
+        return jdbc.query("""
+                SELECT DISTINCT ON (target_key) target_key, used_percent
+                FROM infra_resource_sample
+                WHERE metric='DISK' AND sampled_at > now() - interval '5 minutes' AND used_percent IS NOT NULL
+                ORDER BY target_key, sampled_at DESC
+                """, (rs, i) -> {
+            double pct = rs.getDouble("used_percent");
+            if (pct <= threshold) {
+                return null;
+            }
+            String mount = rs.getString("target_key");
+            String label = (mount == null || mount.isBlank()) ? "루트" : mount;
+            return new Candidate("DISK:" + label, label, "HOST", pct, threshold,
+                    String.format("디스크 %s 사용률 %.1f%% (임계 %.0f%%)", label, pct, threshold),
+                    "/dashboard#infra");
+        }).stream().filter(java.util.Objects::nonNull).toList();
+    }
+
+    /** CDC 미처리 임계(원본 규칙표 "CDC 지연 > 5만 건", 경고). 파이프라인별로 연다. */
+    private List<Candidate> cdcLagSignals(Map<String, Object> rule) {
+        double threshold = jsonNum(rule.get("params").toString(), "threshold", 50000);
+        return jdbc.query("""
+                SELECT DISTINCT ON (s.pipeline_id) s.pipeline_id, s.consumer_lag, d.name
+                FROM pipeline_metric_snapshot s
+                LEFT JOIN pipeline_definition d ON d.id = s.pipeline_id
+                WHERE s.collected_at > now() - interval '10 minutes' AND s.consumer_lag IS NOT NULL
+                ORDER BY s.pipeline_id, s.collected_at DESC
+                """, (rs, i) -> {
+            long lag = rs.getLong("consumer_lag");
+            if (lag <= threshold) {
+                return null;
+            }
+            long pid = rs.getLong("pipeline_id");
+            String name = rs.getString("name");
+            String label = name != null ? name : ("파이프라인 " + pid);
+            return new Candidate("CDC_LAG:" + pid, label, "CDC", (double) lag, threshold,
+                    String.format("%s — 미처리 %,d건 (임계 %,.0f건)", label, lag, threshold),
+                    "/cdc/logs");
+        }).stream().filter(java.util.Objects::nonNull).toList();
+    }
+
+    /** 커넥터 FAILED(원본 규칙표, 위험). 최신 스냅샷의 소스/싱크 상태를 본다. */
+    private List<Candidate> connectorFailedSignals(Map<String, Object> rule) {
+        return jdbc.query("""
+                SELECT DISTINCT ON (s.pipeline_id) s.pipeline_id, d.name,
+                       s.connector_state, s.source_connector_state, s.sink_connector_state
+                FROM pipeline_metric_snapshot s
+                LEFT JOIN pipeline_definition d ON d.id = s.pipeline_id
+                WHERE s.collected_at > now() - interval '10 minutes'
+                ORDER BY s.pipeline_id, s.collected_at DESC
+                """, (rs, i) -> {
+            String source = rs.getString("source_connector_state");
+            String sink = rs.getString("sink_connector_state");
+            String single = rs.getString("connector_state");
+            String failed = "FAILED".equalsIgnoreCase(source) ? "Source"
+                    : "FAILED".equalsIgnoreCase(sink) ? "Sink"
+                    : "FAILED".equalsIgnoreCase(single) ? "커넥터" : null;
+            if (failed == null) {
+                return null;
+            }
+            long pid = rs.getLong("pipeline_id");
+            String name = rs.getString("name");
+            String label = name != null ? name : ("파이프라인 " + pid);
+            return new Candidate("CONNECTOR:" + pid, label, "CDC", null, null,
+                    String.format("%s — %s 커넥터 FAILED", label, failed), "/cdc/pipelines");
+        }).stream().filter(java.util.Objects::nonNull).toList();
+    }
+
+    /**
+     * NiFi·Airflow 응답 없음(원본 규칙표, 위험).
+     *
+     * <p>여기서 NiFi 를 직접 부르지 않는다(원칙 B). 그 서비스를 대상으로 도는 수집기가 실패를
+     * 연속으로 기록하고 있다는 사실 자체가 "응답 없음"의 저장된 증거다.
+     */
+    private List<Candidate> serviceUnreachableSignals(Map<String, Object> rule) {
+        double minFailures = jsonNum(rule.get("params").toString(), "consecutive_failures", 3);
+        return jdbc.query("""
+                SELECT metric_source, component_label, consecutive_failures, last_error
+                FROM system_heartbeat
+                WHERE consecutive_failures >= ? AND metric_source IS NOT NULL
+                """, (rs, i) -> {
+            String source = rs.getString("metric_source");
+            int fails = rs.getInt("consecutive_failures");
+            String err = rs.getString("last_error");
+            return new Candidate("SERVICE:" + source, source, source, (double) fails, minFailures,
+                    String.format("%s 응답 없음 — 수집 연속 실패 %d회%s", source, fails,
+                            err == null || err.isBlank() ? "" : " (" + err + ")"),
+                    "/self-check");
+        }, (int) minFailures);
+    }
+
+    /** 연속 N회 실패(원본 규칙표, 위험). 잡별 최근 실행을 훑어 연속 실패 길이를 센다. */
+    private List<Candidate> consecutiveFailureSignals(Map<String, Object> rule) {
+        int need = (int) jsonNum(rule.get("params").toString(), "count", 3);
+        return jdbc.query("""
+                WITH ranked AS (
+                    SELECT r.job_id, r.status, r.started_at,
+                           row_number() OVER (PARTITION BY r.job_id ORDER BY r.started_at DESC) AS rn
+                    FROM etl_job_run r
+                    WHERE r.started_at > now() - interval '30 days'
+                ),
+                streak AS (
+                    SELECT job_id, count(*) AS fails
+                    FROM ranked
+                    WHERE rn <= ? AND status = 'FAILED'
+                    GROUP BY job_id
+                )
+                SELECT s.job_id, s.fails, j.job_name
+                FROM streak s LEFT JOIN etl_job j ON j.id = s.job_id
+                WHERE s.fails >= ?
+                """, (rs, i) -> {
+            long jobId = rs.getLong("job_id");
+            int fails = rs.getInt("fails");
+            String name = rs.getString("job_name");
+            String label = name != null ? name : ("잡 " + jobId);
+            return new Candidate("JOB_STREAK:" + jobId, label, "ETL", (double) fails, (double) need,
+                    String.format("%s — 최근 %d회 연속 실패", label, fails), "/etl/logs?jobId=" + jobId);
+        }, need, need);
+    }
+
+    /** N일 이상 미실행(원본 규칙표, 경고). 한 번은 돌았던 잡만 대상으로 한다. */
+    private List<Candidate> notRunSignals(Map<String, Object> rule) {
+        int days = (int) jsonNum(rule.get("params").toString(), "days", 7);
+        return jdbc.query("""
+                SELECT r.job_id, j.job_name, max(r.started_at) AS last_run,
+                       EXTRACT(DAY FROM (now() - max(r.started_at)))::int AS idle_days
+                FROM etl_job_run r
+                LEFT JOIN etl_job j ON j.id = r.job_id
+                WHERE j.deleted_at IS NULL
+                GROUP BY r.job_id, j.job_name
+                HAVING max(r.started_at) < now() - make_interval(days => ?)
+                """, (rs, i) -> {
+            long jobId = rs.getLong("job_id");
+            int idle = rs.getInt("idle_days");
+            String name = rs.getString("job_name");
+            String label = name != null ? name : ("잡 " + jobId);
+            return new Candidate("JOB_IDLE:" + jobId, label, "ETL", (double) idle, (double) days,
+                    String.format("%s — %d일간 실행 없음", label, idle), "/airflow/dashboard");
+        }, days);
+    }
+
 }

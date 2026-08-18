@@ -95,6 +95,9 @@ airflow:
 infra:
   proc-path: ${INFRA_PROC_PATH:/proc}
   disk-paths: ${INFRA_DISK_PATHS:/}
+  # 디스크 용도별 분해(원본 5-3 #12). "라벨=경로" 목록이며, compose 에서 읽기전용으로
+  # 바인드한 경로만 유효하다. 마운트가 없으면 그 항목은 조용히 빠지고 화면도 구역을 감춘다.
+  volume-paths: ${INFRA_VOLUME_PATHS:Kafka 로그=/observed/kafka,NiFi 콘텐츠=/observed/nifi-content,NiFi 프로버넌스=/observed/nifi-provenance,NiFi FlowFile=/observed/nifi-flowfile,NiFi 데이터베이스=/observed/nifi-database}
 
 nifi:
   base-url: ${NIFI_BASE_URL:https://localhost:8443}

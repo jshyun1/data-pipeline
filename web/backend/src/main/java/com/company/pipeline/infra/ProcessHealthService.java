@@ -249,14 +249,19 @@ public class ProcessHealthService {
             return new ProcessItem("적재 지표 수집", ProcessStatus.UNKNOWN, "첫 수집 주기 대기 중");
         }
         Duration elapsed = Duration.between(lastRun.toInstant(), Instant.now());
-        Duration deadAfter = Duration.ofSeconds(settings.getInt(SettingKey.HEALTH_DEAD_SECONDS_NIFI));
-        Duration staleAfter = Duration.ofSeconds(settings.getInt(SettingKey.HEALTH_STALE_SECONDS_NIFI));
+        int deadSeconds = settings.getInt(SettingKey.HEALTH_DEAD_SECONDS_NIFI);
+        int staleSeconds = settings.getInt(SettingKey.HEALTH_STALE_SECONDS_NIFI);
+        Duration deadAfter = Duration.ofSeconds(deadSeconds);
+        Duration staleAfter = Duration.ofSeconds(staleSeconds);
         ProcessStatus status = elapsed.compareTo(deadAfter) > 0
                 ? ProcessStatus.DOWN
                 : elapsed.compareTo(staleAfter) > 0 ? ProcessStatus.DEGRADED : ProcessStatus.UP;
         // OffsetDateTime(DB는 UTC 오프셋)을 앱 타임존(KST)으로 변환해 표시한다.
-        return new ProcessItem("적재 지표 수집", status,
-                "마지막 수집 " + HEARTBEAT_FORMAT.format(lastRun.atZoneSameInstant(java.time.ZoneId.systemDefault())));
+        var localBeat = lastRun.atZoneSameInstant(java.time.ZoneId.systemDefault());
+        // 원본 5-4 "정상 판정 기준 불명 → 허용 지연을 툴팁으로": 임계값을 응답에 실어 보낸다.
+        return ProcessItem.withThresholds("적재 지표 수집", status,
+                "마지막 수집 " + HEARTBEAT_FORMAT.format(localBeat),
+                localBeat.toLocalDateTime(), staleSeconds, deadSeconds);
     }
 
     private FlowCounts countFlow(NifiFlowStatusResponse flow) {
@@ -323,12 +328,15 @@ public class ProcessHealthService {
                 response.dagProcessor() == null ? null : response.dagProcessor().status(),
                 response.dagProcessor() == null ? null : response.dagProcessor().latestHeartbeat()));
 
-        // triggerer는 이 배포에 컨테이너가 없어 항상 status=null로 온다 - 죽은 게 아니라
-        // 안 쓰는 것이므로 status가 실제로 내려올 때만 줄을 만든다.
+        // triggerer는 이 배포에 컨테이너가 없어 항상 status=null로 온다 - 죽은 게 아니라 안 쓰는 것이다.
+        // 예전에는 줄을 아예 만들지 않았는데, 그러면 "이 설치에서 트리거러를 안 쓴다"는 사실이
+        // 화면 어디에도 안 남는다. 원본 5-4 의 "미사용" 상태로 명시해서 내린다(이상 카운트 제외).
         String triggererStatus = response.triggerer() == null ? null : response.triggerer().status();
         if (StringUtils.hasText(triggererStatus)) {
             items.add(componentItem("트리거러", triggererStatus,
                     response.triggerer().latestHeartbeat()));
+        } else {
+            items.add(ProcessItem.unconfigured("트리거러", "이 설치에 구성되지 않음"));
         }
 
         return ProcessGroup.of("AIRFLOW", "Airflow", items);
@@ -336,11 +344,27 @@ public class ProcessHealthService {
 
     private ProcessItem componentItem(String name, String status, String heartbeat) {
         if (!StringUtils.hasText(status)) {
+            // 상태를 물어봤는데 안 준 것 - "안 쓴다"와 다르므로 configured=true 를 유지한다.
             return new ProcessItem(name, ProcessStatus.UNKNOWN, "상태 미보고");
         }
         ProcessStatus mapped = AIRFLOW_HEALTHY.equalsIgnoreCase(status) ? ProcessStatus.UP : ProcessStatus.DOWN;
         String detail = StringUtils.hasText(heartbeat) ? "heartbeat " + formatHeartbeat(heartbeat) : status;
-        return new ProcessItem(name, mapped, detail);
+        // Airflow 자체 판정이라 우리 임계값은 없다. 시각만 실어서 툴팁이 "마지막 성공"을 쓰게 한다.
+        return ProcessItem.withThresholds(name, mapped, detail, parseHeartbeat(heartbeat), null, null);
+    }
+
+    /** 툴팁이 쓸 구조화된 시각. 파싱 실패는 null(표시 생략)로 떨어뜨린다. */
+    private java.time.LocalDateTime parseHeartbeat(String isoTimestamp) {
+        if (!StringUtils.hasText(isoTimestamp)) {
+            return null;
+        }
+        try {
+            return java.time.OffsetDateTime.parse(isoTimestamp)
+                    .atZoneSameInstant(java.time.ZoneId.systemDefault())
+                    .toLocalDateTime();
+        } catch (java.time.format.DateTimeParseException ex) {
+            return null;
+        }
     }
 
     /** Airflow는 UTC ISO 시각을 주므로 화면 표기용으로만 서버 시간대로 옮긴다. */
