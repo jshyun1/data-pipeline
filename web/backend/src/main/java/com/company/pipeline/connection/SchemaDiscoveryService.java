@@ -101,15 +101,19 @@ public class SchemaDiscoveryService {
         };
     }
 
-    private Connection open(PipelineConnection connection) throws SQLException {
+    Connection open(PipelineConnection connection) throws SQLException {
         String password = passwordCryptoService.decrypt(connection.getEncryptedPassword());
-        String url = switch (connection.getDbType()) {
-            case POSTGRESQL -> "jdbc:postgresql://%s:%d/%s".formatted(
-                    connection.getHost(), connection.getPort(), connection.getDatabaseName());
-            case ORACLE -> "jdbc:oracle:thin:@%s:%d/%s".formatted(
-                    connection.getHost(), connection.getPort(), connection.getServiceName());
+        return open(connection.getDbType(), connection.getHost(), connection.getPort(),
+                connection.getDatabaseName(), connection.getServiceName(), connection.getUsername(), password);
+    }
+
+    Connection open(DbType dbType, String host, Integer port, String databaseName,
+            String serviceName, String username, String password) throws SQLException {
+        String url = switch (dbType) {
+            case POSTGRESQL -> "jdbc:postgresql://%s:%d/%s".formatted(host, port, databaseName);
+            case ORACLE -> "jdbc:oracle:thin:@%s:%d/%s".formatted(host, port, serviceName);
         };
-        return DriverManager.getConnection(url, connection.getUsername(), password);
+        return DriverManager.getConnection(url, username, password);
     }
 
     private PipelineConnection findOrThrow(Long id) {

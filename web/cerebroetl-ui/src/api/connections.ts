@@ -1,5 +1,13 @@
 import { apiClient, unwrap, type ApiResponse } from "./client";
-import type { ConnectionCreateRequest, ConnectionResponse, ConnectionUpdateRequest } from "../types/connection";
+import type {
+  CdcPrerequisiteResponse,
+  ConnectionCreateRequest,
+  ConnectionResponse,
+  ConnectionTestRequest,
+  ConnectionTestResponse,
+  ConnectionUpdateRequest,
+  ConnectionUsageResponse,
+} from "../types/connection";
 
 export async function listConnections(): Promise<ConnectionResponse[]> {
   const res = await apiClient.get<ApiResponse<ConnectionResponse[]>>("/connections");
@@ -19,6 +27,29 @@ export async function updateConnection(id: number, request: ConnectionUpdateRequ
 // 실제로 접속해봐서 status(SUCCESS/FAILED)를 갱신한다.
 export async function testConnection(id: number): Promise<ConnectionResponse> {
   const res = await apiClient.post<ApiResponse<ConnectionResponse>>(`/connections/${id}/test`);
+  return unwrap(res.data);
+}
+
+export async function validateNewConnection(request: ConnectionTestRequest): Promise<ConnectionTestResponse> {
+  const res = await apiClient.post<ApiResponse<ConnectionTestResponse>>("/connections/validate", request);
+  return unwrap(res.data);
+}
+
+export async function validateConnectionUpdate(
+  id: number,
+  request: ConnectionUpdateRequest,
+): Promise<ConnectionTestResponse> {
+  const res = await apiClient.post<ApiResponse<ConnectionTestResponse>>(`/connections/${id}/validate`, request);
+  return unwrap(res.data);
+}
+
+export async function listConnectionUsages(): Promise<ConnectionUsageResponse[]> {
+  const res = await apiClient.get<ApiResponse<ConnectionUsageResponse[]>>("/connections/usages");
+  return unwrap(res.data);
+}
+
+export async function checkCdcPrerequisites(id: number): Promise<CdcPrerequisiteResponse> {
+  const res = await apiClient.post<ApiResponse<CdcPrerequisiteResponse>>(`/connections/${id}/cdc-prerequisites`);
   return unwrap(res.data);
 }
 
