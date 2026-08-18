@@ -91,6 +91,11 @@ public class SchemaDiscoveryService {
         }
     }
 
+    /** 저장된 암호를 복호화해 제한된 메타데이터/검증 작업용 JDBC 연결을 연다. 호출자가 닫아야 한다. */
+    public Connection openConnection(Long connectionId) throws SQLException {
+        return open(findOrThrow(connectionId));
+    }
+
     private boolean isSystemSchema(DbType dbType, String schema) {
         if (schema == null) {
             return true;

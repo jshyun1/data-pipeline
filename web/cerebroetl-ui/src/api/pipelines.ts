@@ -5,6 +5,7 @@ import type {
   PipelineCreateRequest,
   PipelineResponse,
   PipelineRuntimeStatusResponse,
+  PipelineConsistencyCheckResponse,
 } from "../types/pipeline";
 
 export async function listPipelines(): Promise<PipelineResponse[]> {
@@ -19,6 +20,16 @@ export async function listPipelineRuntimeStatuses(): Promise<PipelineRuntimeStat
 
 export async function getPipelineHistory(id: number): Promise<PipelineCommandHistoryResponse[]> {
   const res = await apiClient.get<ApiResponse<PipelineCommandHistoryResponse[]>>(`/pipelines/${id}/history`);
+  return unwrap(res.data);
+}
+
+export async function listPipelineConsistencyChecks(id: number): Promise<PipelineConsistencyCheckResponse[]> {
+  const res = await apiClient.get<ApiResponse<PipelineConsistencyCheckResponse[]>>(`/pipelines/${id}/consistency-checks`);
+  return unwrap(res.data);
+}
+
+export async function checkPipelineConsistency(id: number): Promise<PipelineConsistencyCheckResponse> {
+  const res = await apiClient.post<ApiResponse<PipelineConsistencyCheckResponse>>(`/pipelines/${id}/consistency-checks`);
   return unwrap(res.data);
 }
 

@@ -31,9 +31,11 @@ import {
 } from "../api/dashboard";
 import {
   deletePipeline,
+  checkPipelineConsistency,
   dismissConnectorDrift,
   getPipelineHistory,
   listPipelineRuntimeStatuses,
+  listPipelineConsistencyChecks,
   listPipelines,
 } from "../api/pipelines";
 import type {
@@ -178,6 +180,11 @@ export function PipelinesPage() {
     enabled: detailPipelineId !== null,
   });
   const detailPipeline = pipelines?.find((p) => p.id === detailPipelineId) ?? null;
+  const { data: consistencyChecks, isLoading: consistencyLoading } = useQuery({
+    queryKey: ["pipeline-consistency-checks", detailPipelineId],
+    queryFn: () => listPipelineConsistencyChecks(detailPipelineId!),
+    enabled: detailPipelineId !== null,
+  });
 
   const matchesQuickFilter = (pipeline: PipelineResponse) => {
     const runtimeStatus = runtimeByPipeline.get(pipeline.id)?.runtimeStatus;
@@ -330,6 +337,17 @@ export function PipelinesPage() {
     onSuccess: () => {
       message.success("파이프라인을 삭제했습니다 (Kafka Connect 커넥터도 함께 정리됨).");
       invalidatePipelines();
+    },
+    onError: (error: Error) => message.error(error.message),
+  });
+
+  const consistencyMutation = useMutation({
+    mutationFn: checkPipelineConsistency,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["pipeline-consistency-checks", result.pipelineId] });
+      if (result.result === "MATCH") message.success("소스와 타깃의 통계 추정 행 수가 일치합니다.");
+      else if (result.result === "MISMATCH") message.warning("소스와 타깃의 통계 추정 행 수가 다릅니다.");
+      else message.info(result.message ?? "검증 결과를 확인하세요.");
     },
     onError: (error: Error) => message.error(error.message),
   });
@@ -670,6 +688,43 @@ export function PipelinesPage() {
                           </>
                         ),
                       }))}
+                    />
+                  </>
+                ),
+              },
+              {
+                key: "consistency",
+                label: "정합성",
+                children: (
+                  <>
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="부하 제한 통계 검증"
+                      description="운영 테이블을 COUNT(*)로 전체 스캔하지 않고 DB 옵티마이저 통계의 추정 행 수를 비교합니다. 불일치 시 실제 누락 확정이 아니라 추가 점검이 필요하다는 뜻입니다."
+                      style={{ marginBottom: 16 }}
+                    />
+                    <Button
+                      type="primary"
+                      loading={consistencyMutation.isPending}
+                      disabled={detailPipeline.pipelineType === "LOG_FILE"}
+                      onClick={() => consistencyMutation.mutate(detailPipeline.id)}
+                      style={{ marginBottom: 16 }}
+                    >지금 검증</Button>
+                    <Table
+                      rowKey="id"
+                      size="small"
+                      loading={consistencyLoading}
+                      dataSource={consistencyChecks}
+                      pagination={false}
+                      scroll={{ x: 650 }}
+                      columns={[
+                        { title: "검증 시각", dataIndex: "checkedAt", width: 170 },
+                        { title: "소스 추정", dataIndex: "sourceCount", width: 110, render: (value: number | null) => value == null ? "—" : value.toLocaleString() },
+                        { title: "타깃 추정", dataIndex: "targetCount", width: 110, render: (value: number | null) => value == null ? "—" : value.toLocaleString() },
+                        { title: "차이", dataIndex: "difference", width: 90, render: (value: number | null) => value == null ? "—" : value.toLocaleString() },
+                        { title: "결과", dataIndex: "result", width: 100, render: (value: string) => <Tag color={value === "MATCH" ? "success" : value === "MISMATCH" ? "warning" : "default"}>{value === "MATCH" ? "일치" : value === "MISMATCH" ? "불일치" : "확인 불가"}</Tag> },
+                      ]}
                     />
                   </>
                 ),

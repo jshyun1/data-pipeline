@@ -63,6 +63,18 @@ export interface PipelineRuntimeStatusResponse {
   lastCommandAt: string | null;
 }
 
+export interface PipelineConsistencyCheckResponse {
+  id: number;
+  pipelineId: number;
+  checkMode: "STATISTICS_ESTIMATE";
+  sourceCount: number | null;
+  targetCount: number | null;
+  difference: number | null;
+  result: "MATCH" | "MISMATCH" | "UNKNOWN" | "UNSUPPORTED";
+  message: string | null;
+  checkedAt: string;
+}
+
 export interface PipelineCreateRequest {
   name: string;
   sourceConnectionId: number;
