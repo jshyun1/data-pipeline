@@ -1,7 +1,9 @@
 import { Card, Tag, Tooltip } from "antd";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   getDiskBreakdown,
+  getMemoryBreakdown,
   getResourceTimeseries,
   type HostResourceResponse,
   type ProcessGroup,
@@ -120,44 +122,114 @@ function ResourceMeter({ title, percent, headline, caption, loading, spark }: Re
 }
 
 /**
+ * 상세 사용량 접기/펼치기 — 기본은 접힘이다.
+ *
+ * <p>평소에는 사용률 한 줄이면 충분하고, "무엇이 채우고 있나"는 이상할 때만 궁금하다.
+ * 항상 펼쳐두면 타일이 길어져 정작 봐야 할 수치가 밀린다.
+ *
+ * <p>펼치기 전에는 조회조차 하지 않는다({@code enabled}). 디스크 상세는 서버가 디렉터리를
+ * 걷는 비싼 작업이라, 아무도 안 보는 동안 5분마다 도는 것을 피한다.
+ */
+function BreakdownSection({
+  title,
+  rows,
+  loading,
+  expanded,
+  onToggle,
+  note,
+}: {
+  title: string;
+  rows: Array<{ label: string; usedBytes: number; note?: string; suffix?: string }>;
+  loading: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  note?: string | null;
+}) {
+  return (
+    <div className="infra-disk-breakdown">
+      <button type="button" className="infra-breakdown-toggle" onClick={onToggle} aria-expanded={expanded}>
+        <span>{title}</span>
+        <span className="infra-breakdown-caret">{expanded ? "접기 ▴" : "펼치기 ▾"}</span>
+      </button>
+      {expanded ? (
+        loading ? (
+          <div className="infra-disk-breakdown-note">불러오는 중…</div>
+        ) : rows.length === 0 ? (
+          <div className="infra-disk-breakdown-note">상세를 관측할 수 없는 환경입니다.</div>
+        ) : (
+          <>
+            {rows.map((r) => (
+              <Tooltip key={r.label} title={r.note}>
+                <div className="infra-disk-breakdown-row">
+                  <span className="infra-disk-breakdown-label">└ {r.label}</span>
+                  <span className="infra-disk-breakdown-value">
+                    {formatBytes(r.usedBytes)}
+                    {r.suffix ?? ""}
+                  </span>
+                </div>
+              </Tooltip>
+            ))}
+            {note ? <div className="infra-disk-breakdown-note">{note}</div> : null}
+          </>
+        )
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * 디스크 용도별 분해 — 원본 5-3 "#12 루트 단일 값 → Kafka / NiFi / 컨테이너로 분리".
  *
  * <p>"컨테이너·이미지" 항목은 제공하지 않는다. 그 값을 재려면 /var/lib/docker 를 마운트해야 하는데
- * 그건 루트 권한 등가라서(시크릿 평문 포함) 관측 목적으로 열 수 없다. 대신 관측 가능한
- * Kafka·NiFi 볼륨만 읽기전용으로 재고, 마운트가 없으면 이 구역 자체를 감춘다.
+ * 루트 권한 등가라(시크릿 평문 포함) 관측 목적으로 열 수 없다.
  */
 function DiskBreakdownList() {
-  const { data } = useQuery({
+  const [expanded, setExpanded] = useState(false);
+  const { data, isLoading } = useQuery({
     queryKey: ["infra-disk-breakdown"],
     queryFn: getDiskBreakdown,
-    // 서버가 5분 주기로 계산한 캐시를 읽을 뿐이라 자주 물어볼 이유가 없다.
-    refetchInterval: 300000,
+    enabled: expanded,
+    refetchInterval: expanded ? 300000 : false,
     placeholderData: (prev) => prev,
   });
 
   const entries = (data?.entries ?? []).filter((e) => e.error == null);
-  if (entries.length === 0) {
-    return null;
-  }
   const apparent = entries.some((e) => e.measuredBy === "APPARENT");
   return (
-    <div className="infra-disk-breakdown">
-      <div className="infra-disk-breakdown-title">용도별</div>
-      {entries.map((e) => (
-        <div key={e.path} className="infra-disk-breakdown-row">
-          <span className="infra-disk-breakdown-label">└ {e.label}</span>
-          <span className="infra-disk-breakdown-value">
-            {formatBytes(e.usedBytes)}
-            {e.isLowerBound ? "+" : ""}
-          </span>
-        </div>
-      ))}
-      {apparent ? (
-        <div className="infra-disk-breakdown-note">
-          일부 항목은 파일 길이 합계라 실제 점유량보다 클 수 있습니다.
-        </div>
-      ) : null}
-    </div>
+    <BreakdownSection
+      title="디스크 상세"
+      loading={isLoading && !data}
+      expanded={expanded}
+      onToggle={() => setExpanded(!expanded)}
+      rows={entries.map((e) => ({
+        label: e.label,
+        usedBytes: e.usedBytes,
+        suffix: e.isLowerBound ? "+" : "",
+        note: e.path,
+      }))}
+      note={apparent ? "일부 항목은 파일 길이 합계라 실제 점유량보다 클 수 있습니다." : null}
+    />
+  );
+}
+
+/** 메모리 용도별 분해. 82%가 프로세스인지 회수 가능한 캐시인지에 따라 조치가 완전히 다르다. */
+function MemoryBreakdownList() {
+  const [expanded, setExpanded] = useState(false);
+  const { data, isLoading } = useQuery({
+    queryKey: ["infra-memory-breakdown"],
+    queryFn: getMemoryBreakdown,
+    enabled: expanded,
+    refetchInterval: expanded ? 30000 : false,
+    placeholderData: (prev) => prev,
+  });
+  return (
+    <BreakdownSection
+      title="메모리 상세"
+      loading={isLoading && !data}
+      expanded={expanded}
+      onToggle={() => setExpanded(!expanded)}
+      rows={(data ?? []).map((e) => ({ label: e.label, usedBytes: e.usedBytes, note: e.note }))}
+    />
   );
 }
 
@@ -202,14 +274,17 @@ export function InfraRegion({ resources, resourcesLoading, processes, processesL
         loading={resourcesLoading}
         spark={sparkOf("CPU")}
       />
-      <ResourceMeter
-        title="메모리 사용률"
-        percent={memory ? memory.usedPercent : null}
-        headline={memory ? `${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}` : "-"}
-        caption={memory ? `여유 ${formatBytes(memory.availableBytes)}` : "서버(호스트) 기준"}
-        loading={resourcesLoading}
-        spark={sparkOf("MEMORY")}
-      />
+      <Card className="infra-tile infra-tile--memory" loading={resourcesLoading}>
+        <ResourceMeter
+          title="메모리 사용률"
+          percent={memory ? memory.usedPercent : null}
+          headline={memory ? `${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}` : "-"}
+          caption={memory ? `여유 ${formatBytes(memory.availableBytes)}` : "서버(호스트) 기준"}
+          loading={false}
+          spark={sparkOf("MEMORY")}
+        />
+        <MemoryBreakdownList />
+      </Card>
       <Card className="infra-tile infra-tile--disk" loading={resourcesLoading}>
         <ResourceMeter
           title="디스크 사용률"

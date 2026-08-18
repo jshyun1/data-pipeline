@@ -130,3 +130,18 @@ export async function getDiskBreakdown(): Promise<DiskBreakdown> {
   const res = await apiClient.get<ApiResponse<DiskBreakdown>>("/infra/resources/breakdown");
   return unwrap(res.data);
 }
+
+/* -------------------------------------------------------------------------
+ * 메모리 용도별 상세 — 디스크 용도별과 같은 질문에 답한다: 82%가 무엇으로 차 있는가
+ * ---------------------------------------------------------------------- */
+
+export interface MemoryBreakdownEntry {
+  label: string;
+  usedBytes: number;
+  note: string;
+}
+
+export async function getMemoryBreakdown(): Promise<MemoryBreakdownEntry[]> {
+  const res = await apiClient.get<ApiResponse<MemoryBreakdownEntry[]>>("/infra/resources/memory-breakdown");
+  return unwrap(res.data);
+}

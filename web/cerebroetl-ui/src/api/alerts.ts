@@ -48,3 +48,57 @@ export async function ackAlert(id: number, comment?: string): Promise<void> {
 export async function snoozeAlert(id: number, minutes = 60): Promise<void> {
   await apiClient.post(`/alerts/${id}/snooze`, { minutes });
 }
+
+/* -------------------------------------------------------------------------
+ * 알림 이력 — 원본 5-7 / PDF 8쪽
+ * 대기열은 "지금 열려 있는 것"만 본다. 종료된 알림과 확인 이력은 여기서 본다.
+ * ---------------------------------------------------------------------- */
+
+export type HistoryFilter = "all" | "unacked" | "acked";
+
+export interface HistoryItem {
+  id: number;
+  rule_type_code: string;
+  severity: "CRITICAL" | "WARNING" | "INFO";
+  state: string;
+  target_label: string | null;
+  summary: string;
+  deep_link: string | null;
+  ack_by: string | null;
+  ack_at: string | null;
+  ack_comment: string | null;
+  acked: boolean;
+  closed: boolean;
+  resolve_reason: string | null;
+  started_at: string | null;
+  condition_since: string | null;
+  last_transition_at: string | null;
+  resolved_at: string | null;
+}
+
+export interface HistoryResponse {
+  filter: string;
+  days: number;
+  counts: { total: number; unacked: number; acked: number };
+  items: HistoryItem[];
+}
+
+export async function getAlertHistory(filter: HistoryFilter, days = 7): Promise<HistoryResponse> {
+  const res = await apiClient.get<ApiResponse<HistoryResponse>>("/dashboard/queue/history", {
+    params: { filter, days, limit: 200 },
+  });
+  return unwrap(res.data);
+}
+
+export interface AlertEvent {
+  event_type: string;
+  from_state: string | null;
+  to_state: string | null;
+  actor: string | null;
+  occurred_at: string;
+}
+
+export async function getAlertEvents(id: number): Promise<AlertEvent[]> {
+  const res = await apiClient.get<ApiResponse<AlertEvent[]>>(`/dashboard/queue/history/${id}/events`);
+  return unwrap(res.data);
+}

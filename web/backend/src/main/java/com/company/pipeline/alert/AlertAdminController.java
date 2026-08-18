@@ -143,21 +143,15 @@ public class AlertAdminController {
     }
 
     /**
-     * 규칙 삭제. 필수 규칙(mandatory)은 지울 수 없다 — JOB/서버/서비스 장애 알림은 선택이 아니라는
-     * 전제가 있고, 지울 수 있게 두면 그 전제가 무너진다.
+     * 규칙 삭제. 운영자가 자기 환경에 맞게 규칙 구성을 정할 수 있어야 해서 필수 규칙도 삭제를 허용한다
+     * (mandatory 는 기본값 표시용으로만 남는다).
      */
     @DeleteMapping("/api/admin/alert-rules/{id}")
     public ApiResponse<Void> deleteRule(@PathVariable long id) {
-        Boolean mandatory = jdbc.query(
-                "SELECT mandatory FROM alert_rule WHERE id=? AND deleted_at IS NULL",
-                rs -> rs.next() ? rs.getBoolean(1) : null, id);
-        if (mandatory == null) {
+        int n = jdbc.update("UPDATE alert_rule SET deleted_at=now() WHERE id=? AND deleted_at IS NULL", id);
+        if (n == 0) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "규칙을 찾을 수 없습니다: " + id);
         }
-        if (mandatory) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "필수 규칙은 삭제할 수 없습니다.");
-        }
-        jdbc.update("UPDATE alert_rule SET deleted_at=now() WHERE id=?", id);
         return ApiResponse.success(null);
     }
 

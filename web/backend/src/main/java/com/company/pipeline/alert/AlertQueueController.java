@@ -6,6 +6,7 @@ import java.util.Map;
 import javax.sql.DataSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -55,5 +56,60 @@ public class AlertQueueController {
                 "totalOpen", totalOpen == null ? 0 : totalOpen,
                 "truncated", totalOpen != null && totalOpen > limit,
                 "items", items));
+    }
+
+    /**
+     * 알림 이력 (원본 5-7 / PDF 8쪽). 대기열은 "지금 열려 있는 것"만 보여주므로 종료된 알림과
+     * 누가 언제 확인했는지가 화면 어디에도 남지 않았다.
+     *
+     * <p>filter: all | unacked | acked. 해소된 알림도 포함한다 — "그때 그거 누가 봤더라"에
+     * 답하는 것이 이 화면의 목적이다.
+     */
+    @GetMapping("/history")
+    public ApiResponse<Map<String, Object>> history(
+            @RequestParam(defaultValue = "all") String filter,
+            @RequestParam(defaultValue = "100") int limit,
+            @RequestParam(defaultValue = "7") int days) {
+        int window = Math.max(1, Math.min(days, 90));
+        int cap = Math.max(1, Math.min(limit, 500));
+        String where = switch (filter) {
+            case "unacked" -> "AND ack_at IS NULL";
+            case "acked" -> "AND ack_at IS NOT NULL";
+            default -> "";
+        };
+        List<Map<String, Object>> items = jdbc.queryForList("""
+                SELECT id, rule_type_code, severity, state, kpi_axis, target_key, target_label,
+                       summary, observed_value, threshold_value, deep_link, notify_count,
+                       ack_by, ack_at, ack_comment,
+                       ack_at IS NOT NULL AS acked,
+                       closed_at IS NOT NULL AS closed,
+                       resolve_reason,
+                       started_at, condition_since, last_transition_at, resolved_at
+                FROM alert_instance
+                WHERE COALESCE(started_at, condition_since, created_at) >= now() - make_interval(days => ?)
+                """ + where + "\n" + """
+                ORDER BY COALESCE(last_transition_at, condition_since) DESC
+                LIMIT ?
+                """, window, cap);
+
+        Map<String, Object> counts = jdbc.queryForMap("""
+                SELECT count(*) AS total,
+                       count(*) FILTER (WHERE ack_at IS NULL) AS unacked,
+                       count(*) FILTER (WHERE ack_at IS NOT NULL) AS acked
+                FROM alert_instance
+                WHERE COALESCE(started_at, condition_since, created_at) >= now() - make_interval(days => ?)
+                """, window);
+
+        return ApiResponse.success(Map.of(
+                "filter", filter, "days", window, "counts", counts, "items", items));
+    }
+
+    /** 한 알림의 상태 전이 타임라인. 누가 언제 무엇을 했는지 그대로 보여준다. */
+    @GetMapping("/history/{id}/events")
+    public ApiResponse<List<Map<String, Object>>> events(@PathVariable long id) {
+        return ApiResponse.success(jdbc.queryForList("""
+                SELECT event_type, from_state, to_state, actor, occurred_at
+                FROM alert_instance_event WHERE instance_id = ? ORDER BY occurred_at, id
+                """, id));
     }
 }

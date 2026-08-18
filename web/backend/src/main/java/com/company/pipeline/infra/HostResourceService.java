@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -104,6 +105,74 @@ public class HostResourceService {
             }
         }
         return disks;
+    }
+
+    /**
+     * 메모리 "용도별" 분해 — 디스크 용도별(원본 5-3 #12)과 같은 질문에 답한다:
+     * 82%가 무엇으로 차 있는가.
+     *
+     * <p>사용률 숫자 하나만으로는 조치를 정할 수 없다. 버퍼·캐시가 대부분이면 커널이 알아서
+     * 회수하므로 기다리면 되고, 프로세스가 실제로 쥐고 있으면 뭔가를 내려야 한다. 이 둘은
+     * 같은 82%라도 완전히 다른 상황이다.
+     *
+     * <p>스왑을 함께 내리는 이유: 이 환경은 메모리 압박으로 호스트가 두 번 다운된 이력이 있고,
+     * 그때 선행 신호가 스왑 증가였다.
+     */
+    public List<Map<String, Object>> memoryBreakdown() {
+        List<String> lines = readLines("meminfo");
+        if (lines == null) {
+            return List.of();
+        }
+        Map<String, Long> kb = new java.util.HashMap<>();
+        for (String line : lines) {
+            int colon = line.indexOf(':');
+            if (colon <= 0) {
+                continue;
+            }
+            String key = line.substring(0, colon).trim();
+            String rest = line.substring(colon + 1).trim().replace(" kB", "");
+            try {
+                kb.put(key, Long.parseLong(rest.trim()));
+            } catch (NumberFormatException ignored) {
+                // 숫자가 아닌 항목(HugePages 단위 없는 줄 등)은 건너뛴다.
+            }
+        }
+        Long total = kb.get("MemTotal");
+        if (total == null || total <= 0) {
+            return List.of();
+        }
+        long available = kb.getOrDefault("MemAvailable", 0L);
+        long free = kb.getOrDefault("MemFree", 0L);
+        long buffers = kb.getOrDefault("Buffers", 0L);
+        long cached = kb.getOrDefault("Cached", 0L);
+        long sreclaim = kb.getOrDefault("SReclaimable", 0L);
+        long shmem = kb.getOrDefault("Shmem", 0L);
+        // 커널이 회수할 수 있는 몫. Shmem 은 캐시로 잡히지만 회수되지 않아 뺀다.
+        long reclaimable = Math.max(0, buffers + cached + sreclaim - shmem);
+        // "실제로 쥐고 있는" 몫 = 전체 - 회수 가능한 여유(MemAvailable).
+        long inUse = Math.max(0, total - available);
+
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        out.add(entry("프로세스 사용", inUse * 1024, "회수되지 않는 실사용분 (전체 - 사용 가능)"));
+        out.add(entry("버퍼·캐시", reclaimable * 1024, "압박 시 커널이 회수한다 — 즉시 위험은 아니다"));
+        out.add(entry("여유", free * 1024, "아직 아무도 쓰지 않는 몫"));
+
+        long swapTotal = kb.getOrDefault("SwapTotal", 0L);
+        if (swapTotal > 0) {
+            long swapUsed = Math.max(0, swapTotal - kb.getOrDefault("SwapFree", 0L));
+            out.add(entry("스왑 사용", swapUsed * 1024,
+                    String.format("스왑 전체 %.1fGB 중 — 증가 중이면 메모리 압박 신호",
+                            swapTotal / 1024.0 / 1024.0)));
+        }
+        return out;
+    }
+
+    private static Map<String, Object> entry(String label, long bytes, String note) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("label", label);
+        m.put("usedBytes", bytes);
+        m.put("note", note);
+        return m;
     }
 
     private List<String> readLines(String fileName) {

@@ -2920,3 +2920,111 @@ button.airflow-tree-label:hover {
   opacity: 0.75;
   white-space: nowrap;
 }
+
+/* --- 리소스 상세 접기/펼치기 (기본 접힘) --------------------------------- */
+.infra-breakdown-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.infra-breakdown-toggle:hover {
+  color: #334155;
+}
+
+.infra-breakdown-caret {
+  font-weight: 700;
+}
+
+/* --- 5-7 알림 이력 화면 --------------------------------------------------- */
+.alert-history-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.alert-history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alert-history-item {
+  padding: 9px 2px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.alert-history-item:last-child {
+  border-bottom: 0;
+}
+
+/* 해소된 항목은 지우지 않고 눌러 둔다 — "그때 그거 뭐였지"에 답하는 게 이 화면 목적이다. */
+.alert-history-item.is-closed {
+  opacity: 0.72;
+}
+
+.alert-history-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.alert-history-icon {
+  font-size: 12px;
+}
+
+.alert-history-when {
+  color: #64748b;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.alert-history-summary {
+  flex: 1 1 auto;
+  min-width: 200px;
+  color: #172033;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.alert-history-status .ant-tag {
+  margin-inline-end: 4px;
+}
+
+.alert-history-sub {
+  margin-top: 2px;
+  padding-left: 20px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.alert-history-detail {
+  margin-top: 8px;
+  padding: 8px 12px 0 32px;
+  background: #f8fafc;
+  border-radius: 6px;
+}
+
+.alert-history-timeline {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.alert-history-note {
+  color: #94a3b8;
+  font-size: 12px;
+}

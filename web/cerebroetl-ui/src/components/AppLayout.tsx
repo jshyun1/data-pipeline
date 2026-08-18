@@ -1,7 +1,10 @@
-import { Button, Layout } from "antd";
+import { useQuery } from "@tanstack/react-query";
+import { getAlertHistory } from "../api/alerts";
+import { Button, Layout, Badge, Tooltip } from "antd";
 import {
   ApartmentOutlined,
   BellOutlined,
+  HistoryOutlined,
   DashboardOutlined,
   DeploymentUnitOutlined,
   LogoutOutlined,
@@ -11,7 +14,7 @@ import {
   NodeIndexOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { useAuth } from "../auth/AuthContext";
 
@@ -24,9 +27,38 @@ interface NavItem {
   children?: Array<{ path: string; label: string }>;
 }
 
+/**
+ * 헤더 종 아이콘 — 원본 5-7 "상단 헤더 종 아이콘 + 전용 화면".
+ * 미확인 건수를 배지로 띄워 다른 화면을 보고 있어도 새 알림을 놓치지 않게 한다.
+ */
+function AlertBell() {
+  const navigate = useNavigate();
+  const { data } = useQuery({
+    queryKey: ["alert-history", "unacked", "bell"],
+    queryFn: () => getAlertHistory("unacked", 7),
+    refetchInterval: 30000,
+    placeholderData: (prev) => prev,
+  });
+  const unacked = data?.counts?.unacked ?? 0;
+  return (
+    <Tooltip title={unacked > 0 ? `미확인 알림 ${unacked}건` : "미확인 알림 없음"}>
+      <Badge count={unacked} size="small" offset={[-2, 2]}>
+        <Button
+          type="text"
+          size="small"
+          icon={<BellOutlined />}
+          aria-label="알림"
+          onClick={() => navigate("/alerts/history")}
+        />
+      </Badge>
+    </Tooltip>
+  );
+}
+
 const NAV_ITEMS: NavItem[] = [
   { path: "/dashboard", label: "대시보드", icon: <DashboardOutlined /> },
   { path: "/alerts", label: "조치 대기열", icon: <BellOutlined /> },
+  { path: "/alerts/history", label: "알림 이력", icon: <HistoryOutlined /> },
   { path: "/settings", label: "알림/발송 설정", icon: <SettingOutlined /> },
   { path: "/self-check", label: "자가진단", icon: <MonitorOutlined /> },
   {
@@ -88,6 +120,7 @@ export function AppLayout() {
           <div className="brand-title">Cerebro ETL</div>
         </Link>
         <div className="header-account">
+          <AlertBell />
           {user && (
             <span className="header-user">
               {user.userNm}

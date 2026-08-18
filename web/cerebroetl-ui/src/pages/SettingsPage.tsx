@@ -103,7 +103,7 @@ function RulesTab() {
       message.success("규칙 삭제됨");
       qc.invalidateQueries({ queryKey: ["alert-rules"] });
     } catch {
-      message.error("필수 규칙은 삭제할 수 없습니다.");
+      message.error("규칙 삭제에 실패했습니다.");
     }
   }
 
@@ -146,11 +146,8 @@ function RulesTab() {
             title: "사용",
             dataIndex: "enabled",
             width: 80,
-            render: (enabled: boolean, r) => (
-              <Tooltip title={r.mandatory ? "필수 알림이라 끌 수 없습니다" : undefined}>
-                <Switch checked={enabled} disabled={r.mandatory && enabled} onChange={(v) => toggle(r, v)} />
-              </Tooltip>
-            ),
+            // 필수 규칙도 운영자가 끌 수 있게 한다(환경마다 감시 대상이 다르다).
+            render: (enabled: boolean, r) => <Switch checked={enabled} onChange={(v) => toggle(r, v)} />,
           },
           {
             title: "",
@@ -160,7 +157,7 @@ function RulesTab() {
                 <Button size="small" onClick={() => setEditing(r)}>
                   수정
                 </Button>
-                <Button size="small" danger disabled={r.mandatory} onClick={() => remove(r)}>
+                <Button size="small" danger onClick={() => remove(r)}>
                   삭제
                 </Button>
               </Space>
