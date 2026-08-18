@@ -14,7 +14,6 @@ import {
   message,
   Modal,
   Popconfirm,
-  Segmented,
   Select,
   Space,
   Spin,
@@ -24,6 +23,7 @@ import {
   Typography,
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
+import { useNavigate } from "react-router-dom";
 import { listConnections, listConnectionSchemas, listConnectionTables } from "../api/connections";
 import {
   getPipelineDashboardSummary,
@@ -130,6 +130,7 @@ function formatRelativeTime(value: string | null) {
 }
 
 export function PipelinesPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
   const [pipelineType, setPipelineType] = useState<"TABLE_CDC" | "LOG_FILE">("TABLE_CDC");
@@ -410,15 +411,26 @@ export function PipelinesPage() {
               onChange={setTypeFilter}
             />
           </Space>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setModalOpen(true)}
-            disabled={!connections || connections.length < 1}
-            title={!connections || connections.length < 1 ? "연결정보가 최소 1개는 있어야 합니다" : undefined}
-          >
-            신규 생성
-          </Button>
+          <Space>
+            <Button
+              onClick={() => {
+                setPipelineType("LOG_FILE");
+                setModalOpen(true);
+              }}
+              disabled={!connections || connections.length < 1}
+            >
+              로그파일 생성
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => navigate("/cdc/create")}
+              disabled={!connections || connections.length < 1}
+              title={!connections || connections.length < 1 ? "연결정보가 최소 1개는 있어야 합니다" : undefined}
+            >
+              CDC 신규 생성
+            </Button>
+          </Space>
         </div>
 
         <Table<PipelineResponse>
@@ -492,16 +504,7 @@ export function PipelinesPage() {
         destroyOnHidden
         width={640}
       >
-        <Segmented
-          block
-          value={pipelineType}
-          onChange={(value) => setPipelineType(value as "TABLE_CDC" | "LOG_FILE")}
-          options={[
-            { label: "테이블 CDC", value: "TABLE_CDC" },
-            { label: "로그파일 적재", value: "LOG_FILE" },
-          ]}
-          style={{ marginBottom: 16 }}
-        />
+        <Alert type="info" showIcon message="로그파일 실시간 적재 파이프라인" style={{ marginBottom: 16 }} />
 
         {pipelineType === "TABLE_CDC" ? (
           <Form<PipelineCreateRequest>
