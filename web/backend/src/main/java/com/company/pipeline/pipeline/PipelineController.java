@@ -7,6 +7,7 @@ import com.company.pipeline.monitoring.dto.PipelineMetricSnapshotResponse;
 import com.company.pipeline.pipeline.dto.PipelineCommandHistoryResponse;
 import com.company.pipeline.pipeline.dto.PipelineCreateRequest;
 import com.company.pipeline.pipeline.dto.PipelineResponse;
+import com.company.pipeline.pipeline.dto.PipelineRuntimeStatusResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -26,16 +27,19 @@ public class PipelineController {
     private final PipelineCommandHistoryRepository pipelineCommandHistoryRepository;
     private final PipelineCommandHistoryRecorder pipelineCommandHistoryRecorder;
     private final PipelineMetricSnapshotService pipelineMetricSnapshotService;
+    private final PipelineRuntimeStatusService pipelineRuntimeStatusService;
 
     public PipelineController(PipelineService pipelineService, PipelineDeployService pipelineDeployService,
             PipelineCommandHistoryRepository pipelineCommandHistoryRepository,
             PipelineCommandHistoryRecorder pipelineCommandHistoryRecorder,
-            PipelineMetricSnapshotService pipelineMetricSnapshotService) {
+            PipelineMetricSnapshotService pipelineMetricSnapshotService,
+            PipelineRuntimeStatusService pipelineRuntimeStatusService) {
         this.pipelineService = pipelineService;
         this.pipelineDeployService = pipelineDeployService;
         this.pipelineCommandHistoryRepository = pipelineCommandHistoryRepository;
         this.pipelineCommandHistoryRecorder = pipelineCommandHistoryRecorder;
         this.pipelineMetricSnapshotService = pipelineMetricSnapshotService;
+        this.pipelineRuntimeStatusService = pipelineRuntimeStatusService;
     }
 
     @PostMapping
@@ -52,6 +56,16 @@ public class PipelineController {
     @GetMapping
     public ApiResponse<List<PipelineResponse>> list() {
         return ApiResponse.success(pipelineService.list());
+    }
+
+    @GetMapping("/runtime-statuses")
+    public ApiResponse<List<PipelineRuntimeStatusResponse>> runtimeStatuses() {
+        return ApiResponse.success(pipelineRuntimeStatusService.list());
+    }
+
+    @GetMapping("/{id}/runtime-status")
+    public ApiResponse<PipelineRuntimeStatusResponse> runtimeStatus(@PathVariable Long id) {
+        return ApiResponse.success(pipelineRuntimeStatusService.get(id));
     }
 
     @GetMapping("/{id}")

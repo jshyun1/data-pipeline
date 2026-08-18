@@ -4,10 +4,16 @@ import type {
   PipelineCommandHistoryResponse,
   PipelineCreateRequest,
   PipelineResponse,
+  PipelineRuntimeStatusResponse,
 } from "../types/pipeline";
 
 export async function listPipelines(): Promise<PipelineResponse[]> {
   const res = await apiClient.get<ApiResponse<PipelineResponse[]>>("/pipelines");
+  return unwrap(res.data);
+}
+
+export async function listPipelineRuntimeStatuses(): Promise<PipelineRuntimeStatusResponse[]> {
+  const res = await apiClient.get<ApiResponse<PipelineRuntimeStatusResponse[]>>("/pipelines/runtime-statuses");
   return unwrap(res.data);
 }
 

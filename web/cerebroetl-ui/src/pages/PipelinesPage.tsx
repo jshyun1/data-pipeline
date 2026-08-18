@@ -25,16 +25,27 @@ import {
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { listConnections, listConnectionSchemas, listConnectionTables } from "../api/connections";
-import { getPipelineDashboardSummary } from "../api/dashboard";
+import {
+  getPipelineDashboardSummary,
+  getRealtimePipelineMetrics,
+  type RealtimePipelineMetricResponse,
+} from "../api/dashboard";
 import {
   createLogFilePipeline,
   createPipeline,
   deletePipeline,
   dismissConnectorDrift,
   getPipelineHistory,
+  listPipelineRuntimeStatuses,
   listPipelines,
 } from "../api/pipelines";
-import type { LogPipelineCreateRequest, PipelineCommandHistoryResponse, PipelineCreateRequest, PipelineResponse } from "../types/pipeline";
+import type {
+  LogPipelineCreateRequest,
+  PipelineCommandHistoryResponse,
+  PipelineCreateRequest,
+  PipelineResponse,
+  PipelineRuntimeStatusResponse,
+} from "../types/pipeline";
 
 const STATUS_COLOR: Record<string, string> = {
   CREATED: "default",
@@ -66,6 +77,58 @@ const TYPE_OPTIONS = [
   { value: "LOG_FILE", label: "LOG_FILE" },
 ];
 
+const RUNTIME_STATUS_LABEL: Record<string, string> = {
+  NOT_DEPLOYED: "미배포",
+  READY: "실행 대기",
+  RUNNING: "실행 중",
+  PAUSED: "일시정지",
+  STOPPED: "중지",
+  FAILED: "실패",
+  MISSING: "구성 누락",
+  UNKNOWN: "확인 불가",
+  DEGRADED: "부분 이상",
+};
+
+const RUNTIME_STATUS_COLOR: Record<string, string> = {
+  NOT_DEPLOYED: "default",
+  READY: "blue",
+  RUNNING: "success",
+  PAUSED: "warning",
+  STOPPED: "default",
+  FAILED: "error",
+  MISSING: "error",
+  UNKNOWN: "default",
+  DEGRADED: "warning",
+};
+
+const STATUS_SEVERITY: Record<string, number> = {
+  FAILED: 0,
+  DEPLOYING: 1,
+  STOPPED: 2,
+  PAUSED: 3,
+  CREATED: 4,
+  READY: 5,
+  DEPLOYED: 6,
+};
+
+function formatDuration(seconds: number) {
+  if (seconds < 60) return `${seconds}초`;
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)}분`;
+  if (seconds < 86_400) return `${Math.ceil(seconds / 3600)}시간`;
+  return `${Math.ceil(seconds / 86_400)}일`;
+}
+
+function formatRelativeTime(value: string | null) {
+  if (!value) return "—";
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "—";
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return "방금 전";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}시간 전`;
+  return `${Math.floor(seconds / 86_400)}일 전`;
+}
+
 export function PipelinesPage() {
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
@@ -82,6 +145,15 @@ export function PipelinesPage() {
     queryKey: ["pipelines"],
     queryFn: listPipelines,
   });
+  const { data: runtimeStatuses } = useQuery({
+    queryKey: ["pipeline-runtime-statuses"],
+    queryFn: listPipelineRuntimeStatuses,
+    refetchInterval: 10_000,
+  });
+  const runtimeByPipeline = useMemo(
+    () => new Map((runtimeStatuses ?? []).map((runtime) => [runtime.pipelineId, runtime])),
+    [runtimeStatuses],
+  );
   const { data: connections } = useQuery({
     queryKey: ["connections"],
     queryFn: listConnections,
@@ -94,7 +166,16 @@ export function PipelinesPage() {
     queryFn: getPipelineDashboardSummary,
     refetchInterval: 30_000,
   });
+  const { data: realtimeMetrics } = useQuery({
+    queryKey: ["realtime-pipeline-metrics"],
+    queryFn: getRealtimePipelineMetrics,
+    refetchInterval: 20_000,
+  });
   const connectorDrift = dashboardSummary?.connectorDrift ?? [];
+  const metricByPipeline = useMemo(
+    () => new Map((realtimeMetrics ?? []).map((metric) => [metric.pipelineId, metric])),
+    [realtimeMetrics],
+  );
 
   // 스키마/테이블을 자유 텍스트로 입력받으면 실제 DB 카탈로그와 대소문자가 어긋나서
   // CDC 토픽이 조용히 끊기는 문제가 실제로 있었다 - 커넥션을 고르면 그 DB에 실제로
@@ -163,8 +244,52 @@ export function PipelinesPage() {
         return false;
       }
       return true;
+    }).sort((a, b) => {
+      const severity = (STATUS_SEVERITY[a.status] ?? 99) - (STATUS_SEVERITY[b.status] ?? 99);
+      if (severity !== 0) return severity;
+      const aLag = metricByPipeline.get(a.id)?.consumerLag ?? -1;
+      const bLag = metricByPipeline.get(b.id)?.consumerLag ?? -1;
+      return bLag - aLag;
     });
-  }, [pipelines, nameFilter, topicFilter, statusFilter, typeFilter]);
+  }, [pipelines, nameFilter, topicFilter, statusFilter, typeFilter, metricByPipeline]);
+
+  const renderLag = (metric: RealtimePipelineMetricResponse | undefined) => {
+    if (!metric || metric.collectionStatus === "NO_DATA" || metric.consumerLag == null) return "—";
+    const hasLag = metric.consumerLag > 0;
+    return (
+      <div>
+        <Typography.Text type={hasLag ? "warning" : undefined} strong={hasLag}>
+          {metric.consumerLag.toLocaleString()}
+        </Typography.Text>
+        {metric.estimatedRecoverySeconds != null && (
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              약 {formatDuration(metric.estimatedRecoverySeconds)}
+            </Typography.Text>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderRuntimeStatus = (pipeline: PipelineResponse, runtime: PipelineRuntimeStatusResponse | undefined) => {
+    if (!runtime) {
+      return <Tag color={STATUS_COLOR[pipeline.status] ?? "default"}>{STATUS_LABEL[pipeline.status] ?? pipeline.status}</Tag>;
+    }
+    return (
+      <div>
+        <Tag color={RUNTIME_STATUS_COLOR[runtime.runtimeStatus] ?? "default"}>
+          {RUNTIME_STATUS_LABEL[runtime.runtimeStatus] ?? runtime.runtimeStatus}
+        </Tag>
+        {runtime.statusMismatch && <Tag color="warning">저장 상태 불일치</Tag>}
+        <div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Source {runtime.sourceConnectorState ?? "—"} · Sink {runtime.sinkConnectorState ?? "—"}
+          </Typography.Text>
+        </div>
+      </div>
+    );
+  };
 
   const invalidatePipelines = () => queryClient.invalidateQueries({ queryKey: ["pipelines"] });
 
@@ -300,7 +425,7 @@ export function PipelinesPage() {
         rowKey="id"
         loading={isLoading}
         dataSource={filteredPipelines}
-        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
+        pagination={{ pageSize: 20, hideOnSinglePage: true, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
         columns={[
           { title: "이름", dataIndex: "name" },
           {
@@ -309,23 +434,34 @@ export function PipelinesPage() {
             render: (value: string) => <Tag color={value === "LOG_FILE" ? "purple" : "blue"}>{value}</Tag>,
           },
           {
-            title: "소스",
-            render: (_, r) => (r.pipelineType === "LOG_FILE" ? "Filebeat" : `${r.sourceDbType} · ${r.sourceSchema}.${r.sourceTable}`),
-          },
-          {
-            title: "타겟",
-            render: (_, r) => `${r.targetDbType} · ${r.targetSchema}.${r.targetTable}`,
+            title: "소스 → 타깃",
+            render: (_, r) => (
+              <div>
+                <div>{r.pipelineType === "LOG_FILE" ? "Filebeat" : `${r.sourceDbType} · ${r.sourceSchema}.${r.sourceTable}`}</div>
+                <Typography.Text type="secondary">
+                  → {r.targetDbType} · {r.targetSchema}.{r.targetTable}
+                </Typography.Text>
+              </div>
+            ),
           },
           { title: "Topic", dataIndex: "topicName" },
           {
             title: "상태",
-            dataIndex: "status",
-            render: (value: string) => (
-              <Tag color={STATUS_COLOR[value] ?? "default"}>{STATUS_LABEL[value] ?? value}</Tag>
-            ),
+            render: (_, record) => renderRuntimeStatus(record, runtimeByPipeline.get(record.id)),
           },
           {
-            title: "제어",
+            title: "지연",
+            render: (_, record) => renderLag(metricByPipeline.get(record.id)),
+          },
+          {
+            title: "마지막 처리",
+            render: (_, record) => {
+              const lastProgressAt = metricByPipeline.get(record.id)?.lastProgressAt ?? null;
+              return <span title={lastProgressAt ?? undefined}>{formatRelativeTime(lastProgressAt)}</span>;
+            },
+          },
+          {
+            title: "관리",
             render: (_, record) => (
               <Space wrap>
                 <Button size="small" onClick={() => setDetailPipelineId(record.id)}>
@@ -597,15 +733,61 @@ export function PipelinesPage() {
                     </Descriptions.Item>
                     <Descriptions.Item label="Topic">{detailPipeline.topicName}</Descriptions.Item>
                     <Descriptions.Item label="상태">
-                      <Tag color={STATUS_COLOR[detailPipeline.status] ?? "default"}>
-                        {STATUS_LABEL[detailPipeline.status] ?? detailPipeline.status}
-                      </Tag>
+                      {renderRuntimeStatus(detailPipeline, runtimeByPipeline.get(detailPipeline.id))}
                     </Descriptions.Item>
                     <Descriptions.Item label="설명">{detailPipeline.description ?? "-"}</Descriptions.Item>
                     <Descriptions.Item label="생성 시각">{detailPipeline.createdAt}</Descriptions.Item>
                     <Descriptions.Item label="수정 시각">{detailPipeline.updatedAt}</Descriptions.Item>
                   </Descriptions>
                 ),
+              },
+              {
+                key: "runtime",
+                label: "운영 상태",
+                children: (() => {
+                  const runtime = runtimeByPipeline.get(detailPipeline.id);
+                  if (!runtime) return <Spin size="small" />;
+                  return (
+                    <>
+                      {runtime.statusMismatch && (
+                        <Alert
+                          type="warning"
+                          showIcon
+                          message="저장 상태와 Kafka Connect 실측 상태가 다릅니다"
+                          description={runtime.runtimeStatusReason}
+                          style={{ marginBottom: 16 }}
+                        />
+                      )}
+                      <Descriptions column={1} bordered size="small">
+                        <Descriptions.Item label="화면 실측 상태">
+                          <Tag color={RUNTIME_STATUS_COLOR[runtime.runtimeStatus] ?? "default"}>
+                            {RUNTIME_STATUS_LABEL[runtime.runtimeStatus] ?? runtime.runtimeStatus}
+                          </Tag>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="메타데이터 저장 상태">
+                          {STATUS_LABEL[runtime.storedStatus] ?? runtime.storedStatus}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Source Connector">
+                          {runtime.sourceConnectorState ?? "—"} · Tasks {runtime.sourceTaskStates.join(", ") || "—"}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Sink Connector">
+                          {runtime.sinkConnectorState ?? "—"} · Tasks {runtime.sinkTaskStates.join(", ") || "—"}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="마지막 실측 시각">
+                          {runtime.runtimeCheckedAt ?? "확인 기록 없음"}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="최근 제어 요청">
+                          {runtime.lastCommand
+                            ? `${runtime.lastCommand} · ${runtime.lastCommandResult ?? "처리 중"} · ${runtime.lastCommandAt ?? "—"}`
+                            : "이력 없음"}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="최근 제어 메시지">
+                          {runtime.lastCommandMessage ?? "—"}
+                        </Descriptions.Item>
+                      </Descriptions>
+                    </>
+                  );
+                })(),
               },
               {
                 key: "connectors",

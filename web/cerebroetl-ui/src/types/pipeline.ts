@@ -46,6 +46,23 @@ export interface PipelineResponse {
   updatedAt: string;
 }
 
+export interface PipelineRuntimeStatusResponse {
+  pipelineId: number;
+  storedStatus: PipelineStatus;
+  runtimeStatus: "NOT_DEPLOYED" | "READY" | "RUNNING" | "PAUSED" | "STOPPED" | "FAILED" | "MISSING" | "UNKNOWN" | "DEGRADED";
+  sourceConnectorState: string | null;
+  sourceTaskStates: string[];
+  sinkConnectorState: string | null;
+  sinkTaskStates: string[];
+  runtimeCheckedAt: string | null;
+  statusMismatch: boolean;
+  runtimeStatusReason: string | null;
+  lastCommand: string | null;
+  lastCommandResult: string | null;
+  lastCommandMessage: string | null;
+  lastCommandAt: string | null;
+}
+
 export interface PipelineCreateRequest {
   name: string;
   sourceConnectionId: number;
