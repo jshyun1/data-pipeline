@@ -1034,3 +1034,18 @@ PDF 5-1~5-7 요구사항과 병합본(내 작업 + 다른 PC pull) 대조 → �
    메커니즘(수집기 결측을 감지해 대기열 알림화). 수집기 4종은 pipeline-api 내부에서 Kafka/NiFi/호스트를
    폴링 → 외부 시스템 장애 시 해당 수집기만 DOWN. 조치는 외부 시스템/인프라 쪽이라 화면에서 직접 못
    고침 → 메뉴 존치 실익 낮아 제거. 완전 삭제(라우트·알림규칙 포함) 원하면 후속.
+
+## 25. 대시보드 레이아웃 조정 + SMS 실제 알림 발송 추가
+사용자 요청. build→deploy→test 검증.
+
+1. **Job Top5 설명(ⓘ) 제거**: JobTop5Card 하단 힌트 문구 삭제 — 차트 영역을 가리던 설명 제거.
+2. **KPI 카드 압축 → 차트 확대**: 요약카드 패딩/값 폰트/now-divider/metric-row/details/links 여백을
+   전반 축소(index.css). summary-grid 높이가 줄어 stats-grid(차트 4칸)가 그만큼 커진다.
+3. **인프라 영역**: "시스템 리소스" 헤딩 + 가동시간 제거(InfraRegion) → 리소스 타일이 위로.
+   주요 프로세스 현황 카드 min-height 120→190px 로 키워 가시성 향상. (formatUptime/system 정리.)
+4. **SMS 실제 알림 발송 추가**: enqueueForInstance 에 SMS 블록 신설 — 그동안 실제 알림은 IN_APP/EMAIL
+   만 만들고 SMS 는 «테스트 발송»만 됐다. 이제 SMS 구독(전화번호)+심각도 라우팅에 따라 실제 알림도
+   SMS 발송건 생성. 검증: CRITICAL 수집기중단 → SMS 발송행 SENT → sms-echo 수신 확인.
+   - **심각도 라우팅 재확인**: INFO=화면알림(IN_APP)만, WARNING/CRITICAL=EMAIL+SMS(WARNING 배치지연/
+     CRITICAL 즉시). 각 수신자 구독 min_severity 로 추가 필터. «심각도 무관 전부 발송»이 아니다.
+     (단, 발송채널 «테스트 발송» 버튼은 채널 점검용이라 심각도와 무관하게 즉시 발송.)

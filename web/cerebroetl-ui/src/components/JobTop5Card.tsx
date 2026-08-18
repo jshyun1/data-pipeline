@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Card, Empty, Segmented, Tooltip } from "antd";
+import { Card, Empty, Segmented } from "antd";
 import { Column } from "@ant-design/plots";
 import type { Dayjs } from "dayjs";
 import { getDashboardTop5, type Top5Metric } from "../api/dashboard";
@@ -87,9 +87,6 @@ export function JobTop5Card({ title, from, to }: { title: string; from: Dayjs; t
               </li>
             ))}
           </ul>
-          <Tooltip title={tab.hint}>
-            <div className="trend-top5-hint">ⓘ {tab.hint}</div>
-          </Tooltip>
         </>
       ) : (
         <div className="empty-chart-placeholder">

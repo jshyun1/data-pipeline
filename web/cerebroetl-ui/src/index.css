@@ -1262,7 +1262,7 @@ button.airflow-tree-label:hover {
 }
 
 .dashboard-summary-card .ant-card-body {
-  padding: 10px 14px 9px;
+  padding: 7px 13px 6px;
 }
 
 .summary-card-heading {
@@ -1288,9 +1288,9 @@ button.airflow-tree-label:hover {
 }
 
 .summary-card-value {
-  margin-top: 7px;
+  margin-top: 3px;
   color: #111827;
-  font-size: clamp(21px, 1.7vw, 28px);
+  font-size: clamp(20px, 1.5vw, 24px);
   font-weight: 760;
   letter-spacing: -1.2px;
   line-height: 1;
@@ -1305,11 +1305,11 @@ button.airflow-tree-label:hover {
 }
 
 .summary-card-details {
-  margin-top: 8px;
+  margin-top: 5px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 18px;
+  gap: 5px 18px;
   color: #64748b;
   font-size: 12px;
 }
@@ -1694,7 +1694,7 @@ button.airflow-tree-label:hover {
 /* ----- 인프라 구역: 주요 프로세스 현황 ----- */
 .infra-process-card {
   flex: 1 1 auto;
-  min-height: 120px;
+  min-height: 190px;
   overflow: hidden;
 }
 
@@ -2565,7 +2565,7 @@ button.airflow-tree-label:hover {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 9px 0 5px;
+  margin: 5px 0 3px;
   color: #64748b;
   font-size: 11px;
   font-weight: 800;
@@ -2593,8 +2593,8 @@ button.airflow-tree-label:hover {
 .kpi-metric-row.is-warn .kpi-metric-value { color: #d98b00; }
 
 .kpi-flow-note {
-  margin-top: 6px;
-  padding: 4px 8px;
+  margin-top: 4px;
+  padding: 3px 8px;
   border-radius: 6px;
   font-size: 12px;
   font-weight: 600;
@@ -2609,7 +2609,7 @@ button.airflow-tree-label:hover {
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 5px;
   flex-wrap: wrap;
 }
 

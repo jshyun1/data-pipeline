@@ -106,6 +106,17 @@ public class NotificationService {
             insertDelivery(eventKey, "EMAIL", severity, rank, category,
                     ((Number) r.get("rid")).longValue(), (String) r.get("email"), summary, deepLink, emailDelaySec);
         }
+        // SMS: 문자 구독자(전화번호 보유). 게이트웨이가 설정돼 있으면 dispatch 가 실제 발송한다.
+        List<Map<String, Object>> smsRecips = jdbc.queryForList("""
+                SELECT r.id AS rid, r.phone FROM notification_recipient r
+                JOIN notification_subscription s ON s.recipient_id = r.id AND s.channel_type = 'SMS' AND s.enabled
+                WHERE r.deleted_at IS NULL AND r.enabled AND r.phone IS NOT NULL AND r.phone <> ''
+                  AND ? <= CASE s.min_severity WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END
+                """, rank);
+        for (Map<String, Object> r : smsRecips) {
+            insertDelivery(eventKey, "SMS", severity, rank, category,
+                    ((Number) r.get("rid")).longValue(), (String) r.get("phone"), summary, deepLink, emailDelaySec);
+        }
     }
 
     private void insertDelivery(String eventKey, String channel, String severity, int rank, String category,

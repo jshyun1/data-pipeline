@@ -49,16 +49,6 @@ function formatBytes(bytes: number) {
   return `${value.toFixed(value >= 100 || unitIndex === 0 ? 0 : 1)}${units[unitIndex]}`;
 }
 
-function formatUptime(seconds: number) {
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  if (days > 0) {
-    return `${days}일 ${hours}시간`;
-  }
-  return hours > 0 ? `${hours}시간 ${minutes}분` : `${minutes}분`;
-}
-
 interface ResourceMeterProps {
   title: string;
   percent: number | null;
@@ -238,7 +228,6 @@ export function InfraRegion({ resources, resourcesLoading, processes, processesL
   const cpu = resources?.cpu ?? null;
   const memory = resources?.memory ?? null;
   const disk = resources?.disks?.[0] ?? null;
-  const system = resources?.system ?? null;
 
   // 원본 5-3 #11 스파크라인용 최근 1시간 표본. 1분 간격이라 60점 안쪽이다.
   const { data: series } = useQuery({
@@ -255,17 +244,9 @@ export function InfraRegion({ resources, resourcesLoading, processes, processesL
   }
 
   const cpuHeadline = cpu ? `${cpu.cores} 코어` : "-";
-  // 원본 5-3 "가동 시간 맥락: 최근 재시작 이력 표시".
-  const uptimeText = system ? `가동 ${formatUptime(system.uptimeSeconds)}` : null;
 
   return (
     <aside className="dashboard-infra-column">
-      {uptimeText ? (
-        <div className="infra-column-heading">
-          <span>시스템 리소스</span>
-          <span className="infra-column-uptime">{uptimeText}</span>
-        </div>
-      ) : null}
       <ResourceMeter
         title="CPU 사용률"
         percent={cpu ? cpu.usedPercent : null}
