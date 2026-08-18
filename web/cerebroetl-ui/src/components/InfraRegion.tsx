@@ -4,11 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import {
   getDiskBreakdown,
   getMemoryBreakdown,
-  getResourceTimeseries,
   type HostResourceResponse,
   type ProcessGroup,
 } from "../api/infra";
-import { Sparkline, type SparkPoint } from "./Sparkline";
 import { ProcessHealthPanel } from "./ProcessHealthPanel";
 
 interface InfraRegionProps {
@@ -55,8 +53,6 @@ interface ResourceMeterProps {
   headline: string;
   caption: string;
   loading: boolean;
-  /** 최근 1시간 추이(원본 5-3 #11). 표본이 2개 미만이면 컴포넌트가 알아서 "—"로 그린다. */
-  spark?: SparkPoint[];
 }
 
 /**
@@ -66,7 +62,7 @@ interface ResourceMeterProps {
  * <p>원본 5-3 요구 3가지를 여기서 채운다 — 임계 판정 배지, 스파크라인, 그리고 임계를 넘었을 때
  * 조치 대기열로 보내는 링크(원본 표현: "색상 + 배지 + 조치 대기열 연동").
  */
-function ResourceMeter({ title, percent, headline, caption, loading, spark }: ResourceMeterProps) {
+function ResourceMeter({ title, percent, headline, caption, loading }: ResourceMeterProps) {
   const level: Level = percent === null ? "ok" : meterLevel(percent);
   const badge = percent === null ? null : LEVEL_BADGE[level];
   return (
@@ -84,13 +80,6 @@ function ResourceMeter({ title, percent, headline, caption, loading, spark }: Re
               {percent.toFixed(1)}
               <small>%</small>
             </div>
-            {spark ? (
-              <Tooltip title="최근 1시간 추이 · 수집이 끊긴 구간은 선을 끊습니다">
-                <span className="infra-tile-spark">
-                  <Sparkline points={spark} tone={level} />
-                </span>
-              </Tooltip>
-            ) : null}
           </div>
           <div className="infra-meter" role="img" aria-label={`${title} ${percent.toFixed(1)}%`}>
             <span
@@ -229,20 +218,6 @@ export function InfraRegion({ resources, resourcesLoading, processes, processesL
   const memory = resources?.memory ?? null;
   const disk = resources?.disks?.[0] ?? null;
 
-  // 원본 5-3 #11 스파크라인용 최근 1시간 표본. 1분 간격이라 60점 안쪽이다.
-  const { data: series } = useQuery({
-    queryKey: ["infra-resource-timeseries"],
-    queryFn: () => getResourceTimeseries(60),
-    refetchInterval: 60000,
-    placeholderData: (prev) => prev,
-  });
-
-  function sparkOf(key: string): SparkPoint[] | undefined {
-    const points = series?.[key];
-    if (!points || points.length === 0) return undefined;
-    return points.map((p) => ({ at: p.at, value: p.usedPercent }));
-  }
-
   const cpuHeadline = cpu ? `${cpu.cores} 코어` : "-";
 
   return (
@@ -253,7 +228,6 @@ export function InfraRegion({ resources, resourcesLoading, processes, processesL
         headline={cpuHeadline}
         caption="서버(호스트) 기준"
         loading={resourcesLoading}
-        spark={sparkOf("CPU")}
       />
       <Card className="infra-tile infra-tile--memory" loading={resourcesLoading}>
         <ResourceMeter
@@ -262,7 +236,6 @@ export function InfraRegion({ resources, resourcesLoading, processes, processesL
           headline={memory ? `${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}` : "-"}
           caption={memory ? `여유 ${formatBytes(memory.availableBytes)}` : "서버(호스트) 기준"}
           loading={false}
-          spark={sparkOf("MEMORY")}
         />
         <MemoryBreakdownList />
       </Card>
@@ -273,7 +246,6 @@ export function InfraRegion({ resources, resourcesLoading, processes, processesL
           headline={disk ? `${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}` : "-"}
           caption={disk ? `${disk.mount} · 여유 ${formatBytes(disk.availableBytes)}` : "마운트 조회 불가"}
           loading={false}
-          spark={disk ? sparkOf(`DISK:${disk.mount}`) : undefined}
         />
         <DiskBreakdownList />
       </Card>
