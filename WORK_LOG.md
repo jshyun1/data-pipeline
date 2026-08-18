@@ -991,3 +991,25 @@ PDF 5-1~5-7 요구사항과 병합본(내 작업 + 다른 PC pull) 대조 → �
    POST, 미설정이면 NO_RELAY(EMAIL 의 SMTP 와 동일 구조). 검증: EMAIL 2건→MailHog 수신, SMS 2건→
    sms-echo 게이트웨이 POST 200(01099998888/01046550716). **운영 주의**: 실제 문자 발송은 사내/사업자
    SMS 게이트웨이 URL(NOTIFICATION_SMS_GATEWAY_URL)이, 이메일은 SMTP(SPRING_MAIL_HOST)가 있어야 함.
+
+## 23. 설정/대시보드 추가 수정 — 페이징·필터·대기열메뉴제거·KPI명·카운트일치
+사용자 추가 요청 반영. build→deploy→test 검증.
+
+1. **알림 이력 기본 페이징 10**: AlertHistoryTab pageSize 기본 20→10(옵션 10/20/50/100).
+2. **알림규칙·수신자 사용여부 필터 + 페이징**: RulesTab/RecipientsTab 에 사용여부(전체/사용/미사용)
+   Select 필터 + 클라이언트 페이징 기본 10. (소규모 목록이라 클라이언트 측 처리.)
+3. **조치 대기열 메뉴 제거 + 모두보기 팝업**: 사이드바 "조치 대기열" 메뉴 삭제(/alerts 라우트·
+   AlertQueuePage.tsx 제거). 이력은 알림 이력 탭에 모두 있음. 대시보드 상단 대기열 패널의
+   «모두 보기»는 이제 페이지 이동 대신 Modal 팝업으로 전체 목록 조회(renderItem 공용화).
+4. **대시보드 KPI 명칭·라벨**: 「스트림 · CDC/플로우 · ETL/배치 · Airflow」→「CDC/ETL/Airflow」,
+   KPI 카드 내 구분선 "지금"→"현재".
+5. **대기열 배지 vs 목록 건수 불일치 수정**: 배지(counts.critical/warning/info)가 acked/snoozed/
+   suppressed 를 포함해 목록(조치대상만)과 어긋났다(위험1/경고3 배지 ↔ 경고2 목록). counts 와
+   totalOpen 을 목록과 같은 «조치가능» 필터로 맞춤. 검증: 배지==목록(위험1/경고2), WARNING ack 시
+   배지·목록 동시 감소 + acked 카운트로 이동.
+6. **자가진단 필요성 검토(코드 변경 없음, 분석·보고)**: 수집기 4종(kafka-metrics/nifi-counter/
+   nifi-processor/infra-host)은 pipeline-api 내부 @Scheduled 로 Kafka/NiFi/호스트를 폴링, 성공 beat()/
+   실패 beatFailed(). 외부 시스템(Kafka/NiFi) 장애 시 해당 수집기만 DOWN 가능. 가치는 "감시기가
+   거짓 초록을 내는" 상황 포착(Debezium형). COLLECTOR_DOWN 알림이 이미 대기열/이력에 이를 노출하고
+   /self-check 딥링크로 연결. 결론: 워치독+알림은 유지 가치 있으나 «자가진단 메뉴»는 선택(사용자
+   판단 대기) — 제거해도 알림 딥링크로 상세 접근 가능.

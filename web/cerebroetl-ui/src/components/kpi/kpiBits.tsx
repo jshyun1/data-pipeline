@@ -21,7 +21,7 @@ export function TimeBadge({ label }: { label: string }) {
 export function NowDivider() {
   return (
     <div className="kpi-now-divider">
-      <span>지금</span>
+      <span>현재</span>
     </div>
   );
 }

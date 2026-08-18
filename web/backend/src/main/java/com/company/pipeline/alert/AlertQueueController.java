@@ -28,19 +28,22 @@ public class AlertQueueController {
 
     @GetMapping
     public ApiResponse<Map<String, Object>> queue(@RequestParam(defaultValue = "20") int limit) {
+        // 심각도 배지(critical/warning/info)는 «목록에 실제로 보이는 조치 대상»과 같은 필터를 써야
+        // 배지 숫자와 펼친 목록 건수가 일치한다(확인·스누즈·억제 제외). acked/snoozed/suppressed 는 별도 카운트.
+        String actionable = "ack_at IS NULL AND (snooze_until IS NULL OR snooze_until <= now()) AND suppressed_by IS NULL";
         Map<String, Object> counts = jdbc.queryForMap("""
                 SELECT
-                    count(*) FILTER (WHERE severity='CRITICAL' AND state<>'RESOLVED') AS critical,
-                    count(*) FILTER (WHERE severity='WARNING'  AND state<>'RESOLVED') AS warning,
-                    count(*) FILTER (WHERE severity='INFO'     AND state<>'RESOLVED') AS info,
+                    count(*) FILTER (WHERE severity='CRITICAL' AND state<>'RESOLVED' AND %1$s) AS critical,
+                    count(*) FILTER (WHERE severity='WARNING'  AND state<>'RESOLVED' AND %1$s) AS warning,
+                    count(*) FILTER (WHERE severity='INFO'     AND state<>'RESOLVED' AND %1$s) AS info,
                     count(*) FILTER (WHERE state='UNKNOWN') AS unknown,
                     count(*) FILTER (WHERE ack_at IS NOT NULL) AS acked,
                     count(*) FILTER (WHERE snooze_until IS NOT NULL AND snooze_until > now()) AS snoozed,
                     count(*) FILTER (WHERE suppressed_by IS NOT NULL) AS suppressed
                 FROM alert_instance WHERE closed_at IS NULL
-                """);
+                """.formatted(actionable));
         Long totalOpen = jdbc.queryForObject(
-                "SELECT count(*) FROM alert_instance WHERE closed_at IS NULL", Long.class);
+                "SELECT count(*) FROM alert_instance WHERE closed_at IS NULL AND " + actionable, Long.class);
         List<Map<String, Object>> items = jdbc.queryForList("""
                 SELECT id, rule_type_code, severity, state, kpi_axis, target_key, target_label,
                        component_code, summary, observed_value, threshold_value,

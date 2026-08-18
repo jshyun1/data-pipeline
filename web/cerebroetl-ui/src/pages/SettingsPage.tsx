@@ -86,12 +86,18 @@ function RulesTab() {
   const { data: types = [] } = useQuery({ queryKey: ["alert-rule-types"], queryFn: getAlertRuleTypes });
   const [editing, setEditing] = useState<AlertRule | null>(null);
   const [creating, setCreating] = useState(false);
+  const [enabledFilter, setEnabledFilter] = useState<"all" | "on" | "off">("all");
 
   const specByCode = useMemo(() => {
     const m = new Map<string, RuleParamSpec[]>();
     types.forEach((t) => m.set(t.code, t.paramSpec ?? []));
     return m;
   }, [types]);
+
+  const filtered = useMemo(
+    () => rules.filter((r) => enabledFilter === "all" || (enabledFilter === "on" ? r.enabled : !r.enabled)),
+    [rules, enabledFilter],
+  );
 
   async function toggle(rule: AlertRule, enabled: boolean) {
     await updateAlertRule(rule.id, { enabled });
@@ -111,7 +117,21 @@ function RulesTab() {
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="middle">
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>
+          사용여부{" "}
+          <Select
+            size="small"
+            value={enabledFilter}
+            style={{ width: 110 }}
+            onChange={setEnabledFilter}
+            options={[
+              { label: "전체", value: "all" },
+              { label: "사용", value: "on" },
+              { label: "미사용", value: "off" },
+            ]}
+          />
+        </span>
         <Button type="primary" onClick={() => setCreating(true)}>
           + 규칙 추가
         </Button>
@@ -119,8 +139,8 @@ function RulesTab() {
       <Table<AlertRule>
         rowKey="id"
         loading={isLoading}
-        dataSource={rules}
-        pagination={false}
+        dataSource={filtered}
+        pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (t) => `총 ${t}건` }}
         size="middle"
         columns={[
           { title: "규칙명", dataIndex: "name", width: 190 },
@@ -389,7 +409,12 @@ function RecipientsTab() {
   const qc = useQueryClient();
   const [form] = Form.useForm();
   const [editing, setEditing] = useState<Recipient | null>(null);
+  const [enabledFilter, setEnabledFilter] = useState<"all" | "on" | "off">("all");
   const { data: recipients = [], isLoading } = useQuery({ queryKey: ["recipients"], queryFn: getRecipients });
+  const filtered = useMemo(
+    () => recipients.filter((r) => enabledFilter === "all" || (enabledFilter === "on" ? r.enabled : !r.enabled)),
+    [recipients, enabledFilter],
+  );
 
   async function add(values: { displayName: string; email?: string; phone?: string }) {
     try {
@@ -427,11 +452,25 @@ function RecipientsTab() {
           추가
         </Button>
       </Form>
+      <div>
+        사용여부{" "}
+        <Select
+          size="small"
+          value={enabledFilter}
+          style={{ width: 110 }}
+          onChange={setEnabledFilter}
+          options={[
+            { label: "전체", value: "all" },
+            { label: "사용", value: "on" },
+            { label: "미사용", value: "off" },
+          ]}
+        />
+      </div>
       <Table<Recipient>
         rowKey="id"
         loading={isLoading}
-        dataSource={recipients}
-        pagination={false}
+        dataSource={filtered}
+        pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (t) => `총 ${t}건` }}
         columns={[
           { title: "이름", dataIndex: "display_name", width: 140 },
           { title: "이메일", dataIndex: "email", render: (v: string | null) => v ?? "-" },

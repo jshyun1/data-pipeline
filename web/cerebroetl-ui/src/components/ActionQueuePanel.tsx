@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Dropdown, Empty, Spin, Tag, message } from "antd";
+import { Button, Dropdown, Empty, Modal, Spin, Tag, message } from "antd";
 import { ackAlert, getAlertQueue, snoozeAlert, type QueueItem } from "../api/alerts";
 
 /**
@@ -105,6 +105,7 @@ export function ActionQueuePanel() {
     placeholderData: (prev) => prev,
   });
   const [manuallyOpen, setManuallyOpen] = useState<boolean | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   const counts = data?.counts;
   const items = data?.items ?? [];
@@ -146,6 +147,51 @@ export function ActionQueuePanel() {
       message.error("스누즈에 실패했습니다");
     }
   }
+
+  // 목록과 «모두 보기» 팝업이 같은 행 UI 를 쓰도록 한 곳에서 그린다.
+  const renderItem = (item: QueueItem) => {
+    const meta = SEVERITY_META[item.severity] ?? SEVERITY_META.INFO;
+    const link = resolveDeepLink(item);
+    return (
+      <li key={item.id} className={`action-queue-item ${item.acked ? "is-acked" : ""}`}>
+        <span className="action-queue-icon" aria-label={meta.label}>
+          {meta.icon}
+        </span>
+        <div className="action-queue-text">
+          <div className="action-queue-line">
+            <span className="action-queue-axis">[{item.kpi_axis === "DAILY" ? "일집계" : "현재"}]</span>
+            <span className="action-queue-summary-text">{item.summary}</span>
+          </div>
+          <div className="action-queue-meta">
+            {item.target_label ? <span>{item.target_label}</span> : null}
+            <span>{formatDuration(item.duration_seconds)}</span>
+            {item.acked ? <Tag color="processing">확인됨</Tag> : null}
+          </div>
+        </div>
+        <div className="action-queue-buttons">
+          {link ? (
+            <Button size="small" onClick={() => navigate(link.path)}>
+              {link.label}
+            </Button>
+          ) : null}
+          <Button size="small" disabled={item.acked} onClick={() => handleAck(item)}>
+            확인
+          </Button>
+          <Dropdown
+            menu={{
+              items: SNOOZE_OPTIONS.map((o) => ({ key: o.key, label: o.label })),
+              onClick: ({ key }) => {
+                const opt = SNOOZE_OPTIONS.find((o) => o.key === key);
+                if (opt) handleSnooze(item, opt.minutes);
+              },
+            }}
+          >
+            <Button size="small">스누즈 ▾</Button>
+          </Dropdown>
+        </div>
+      </li>
+    );
+  };
 
   // 원본과 별개로 지키는 것: 백엔드가 죽었을 때 빈 화면(=정상처럼 보임)을 만들지 않는다.
   if (isError) {
@@ -190,7 +236,7 @@ export function ActionQueuePanel() {
           <Button size="small" type="link" onClick={() => setManuallyOpen(!open)}>
             {open ? "접기" : "펼치기"}
           </Button>
-          <Button size="small" type="link" onClick={() => navigate("/alerts")}>
+          <Button size="small" type="link" onClick={() => setShowAll(true)}>
             모두 보기
           </Button>
         </div>
@@ -201,62 +247,32 @@ export function ActionQueuePanel() {
           {visible.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="조치가 필요한 알림이 없습니다" />
           ) : (
-            <ul className="action-queue-list">
-              {visible.map((item) => {
-                const meta = SEVERITY_META[item.severity] ?? SEVERITY_META.INFO;
-                const link = resolveDeepLink(item);
-                return (
-                  <li key={item.id} className={`action-queue-item ${item.acked ? "is-acked" : ""}`}>
-                    <span className="action-queue-icon" aria-label={meta.label}>
-                      {meta.icon}
-                    </span>
-                    <div className="action-queue-text">
-                      <div className="action-queue-line">
-                        <span className="action-queue-axis">[{item.kpi_axis === "DAILY" ? "일집계" : "현재"}]</span>
-                        <span className="action-queue-summary-text">{item.summary}</span>
-                      </div>
-                      <div className="action-queue-meta">
-                        {item.target_label ? <span>{item.target_label}</span> : null}
-                        <span>{formatDuration(item.duration_seconds)}</span>
-                        {item.acked ? <Tag color="processing">확인됨</Tag> : null}
-                      </div>
-                    </div>
-                    <div className="action-queue-buttons">
-                      {link ? (
-                        <Button size="small" onClick={() => navigate(link.path)}>
-                          {link.label}
-                        </Button>
-                      ) : null}
-                      <Button size="small" disabled={item.acked} onClick={() => handleAck(item)}>
-                        확인
-                      </Button>
-                      <Dropdown
-                        menu={{
-                          items: SNOOZE_OPTIONS.map((o) => ({ key: o.key, label: o.label })),
-                          onClick: ({ key }) => {
-                            const opt = SNOOZE_OPTIONS.find((o) => o.key === key);
-                            if (opt) handleSnooze(item, opt.minutes);
-                          },
-                        }}
-                      >
-                        <Button size="small">스누즈 ▾</Button>
-                      </Dropdown>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+            <ul className="action-queue-list">{visible.map(renderItem)}</ul>
           )}
           {data && data.totalOpen > VISIBLE_LIMIT ? (
             <div className="action-queue-more">
               상위 {VISIBLE_LIMIT}건만 표시 · 전체 {data.totalOpen}건
-              <Button type="link" size="small" onClick={() => navigate("/alerts")}>
+              <Button type="link" size="small" onClick={() => setShowAll(true)}>
                 모두 보기
               </Button>
             </div>
           ) : null}
         </div>
       ) : null}
+
+      <Modal
+        open={showAll}
+        title={`조치 대기열 — 전체 ${sorted.length}건`}
+        onCancel={() => setShowAll(false)}
+        footer={null}
+        width={760}
+      >
+        {sorted.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="조치가 필요한 알림이 없습니다" />
+        ) : (
+          <ul className="action-queue-list">{sorted.map(renderItem)}</ul>
+        )}
+      </Modal>
     </section>
   );
 }

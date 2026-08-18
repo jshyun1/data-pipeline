@@ -68,7 +68,7 @@ export function AlertHistoryTab() {
   const [q, setQ] = useState("");
   const [days, setDays] = useState(7);
   const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
 
   const { data, isLoading } = useQuery({
     queryKey: ["alert-history", filter, severity, q, days, page, pageSize],
@@ -194,7 +194,7 @@ export function AlertHistoryTab() {
           pageSize,
           total,
           showSizeChanger: true,
-          pageSizeOptions: [20, 50, 100],
+          pageSizeOptions: [10, 20, 50, 100],
           showTotal: (t) => `총 ${t}건`,
           onChange: (p, ps) => {
             setPage(p - 1);

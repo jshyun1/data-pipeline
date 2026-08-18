@@ -602,7 +602,7 @@ export function DashboardPage() {
         {/* 원본 5-2 KPI 카드 재구성: 누적형(기간 배지) 위 / 진행형("지금" 구분선) 아래 */}
         <Card className="dashboard-summary-card dashboard-summary-card--cdc" loading={kafkaLoading}>
           <div className="summary-card-heading">
-            <span>스트림 · CDC</span>
+            <span>CDC</span>
             <TimeBadge label={selectedPeriodLabel} />
           </div>
           <div className="summary-card-value" title={`${formatCount(kafkaPeriodTotal)}건`}>
@@ -643,7 +643,7 @@ export function DashboardPage() {
 
         <Card className="dashboard-summary-card dashboard-summary-card--nifi" loading={nifiLoading}>
           <div className="summary-card-heading">
-            <span>플로우 · ETL</span>
+            <span>ETL</span>
             <TimeBadge label={selectedPeriodLabel} />
           </div>
           <div className="summary-card-value" title={`${formatCount(nifiPeriodTotal)}건`}>
@@ -686,7 +686,7 @@ export function DashboardPage() {
 
         <Card className="dashboard-summary-card dashboard-summary-card--airflow" loading={showAirflowInitialLoading}>
           <div className="summary-card-heading">
-            <span>배치 · Airflow</span>
+            <span>Airflow</span>
             <TimeBadge label={selectedPeriodLabel} />
           </div>
           <div className="summary-card-value">
