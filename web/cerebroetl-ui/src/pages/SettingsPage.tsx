@@ -488,12 +488,19 @@ function ChannelsTab() {
         dataSource={external}
         pagination={false}
         columns={[
-          { title: "채널", dataIndex: "channel_type", width: 120, render: (v: string) => channelLabel(v) },
-        { title: "서킷", dataIndex: "circuit_state", width: 120 },
-        { title: "최근 실패", dataIndex: "last_failure_reason", render: (v: string | null) => v ?? "-" },
+          { title: "채널", dataIndex: "channel_type", width: 160, render: (v: string) => channelLabel(v) },
+        {
+          title: "상태",
+          key: "status",
+          dataIndex: "enabled",
+          width: 120,
+          render: (enabled: boolean) =>
+            enabled ? <Tag color="success">정상</Tag> : <Tag>중지</Tag>,
+        },
         {
           title: "사용",
           dataIndex: "enabled",
+          key: "enabled-toggle",
           width: 90,
           render: (enabled: boolean, ch) => <Switch checked={enabled} onChange={(v) => toggle(ch, v)} />,
         },
