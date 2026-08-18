@@ -27,6 +27,7 @@ import {
   getAlertRules,
   getChannels,
   getRecipients,
+  getScopeTargets,
   testChannel,
   updateAlertRule,
   updateChannel,
@@ -216,6 +217,26 @@ function RulesTab() {
   );
 }
 
+// 감시 범위(scope)를 고를 수 있는 규칙 유형과, 대상 목록의 종류(ETL=잡 / CDC=파이프라인).
+const SCOPE_TYPES: Record<string, "ETL" | "CDC"> = {
+  JOB_FAILURE: "ETL",
+  JOB_CONSECUTIVE_FAILURE: "ETL",
+  JOB_NOT_RUN: "ETL",
+  CDC_LAG: "CDC",
+  CONNECTOR_FAILED: "CDC",
+};
+
+type ScopeKind = "ALL" | "INCLUDE" | "EXCLUDE";
+function parseScopeJson(s: string | null | undefined): { mode: ScopeKind; ids: number[] } {
+  if (!s) return { mode: "ALL", ids: [] };
+  try {
+    const o = JSON.parse(s) as { kind?: ScopeKind; ids?: number[] };
+    return { mode: o.kind ?? "ALL", ids: Array.isArray(o.ids) ? o.ids : [] };
+  } catch {
+    return { mode: "ALL", ids: [] };
+  }
+}
+
 /**
  * 규칙 추가/수정 폼. 조건 입력란은 서버가 내려준 paramSpec 으로 그린다 —
  * 화면에 조건 스키마를 하드코딩하면 규칙 유형이 늘 때마다 두 곳이 어긋난다.
@@ -239,16 +260,33 @@ function RuleFormModal({
 
   const activeCode = isEdit ? rule!.rule_type_code : typeCode;
   const spec = types.find((t) => t.code === activeCode)?.paramSpec ?? [];
+  const scopeCategory = activeCode ? SCOPE_TYPES[activeCode] : undefined;
+  const scopeMode = Form.useWatch("scopeMode", form) as ScopeKind | undefined;
+  const { data: scopeTargets = [] } = useQuery({
+    queryKey: ["scope-targets", scopeCategory],
+    queryFn: () => getScopeTargets(scopeCategory!),
+    enabled: !!scopeCategory,
+  });
 
   // 모달이 열릴 때마다 대상 규칙 값으로 초기화한다.
   const initial = useMemo(() => {
-    if (!rule) return { severity: undefined, forSeconds: 120, clearSeconds: 300 };
+    if (!rule) {
+      return {
+        severity: undefined, forSeconds: 120, clearSeconds: 300,
+        renotifyMinutes: 30, notifyMax: 1, scopeMode: "ALL" as ScopeKind, scopeIds: [] as number[],
+      };
+    }
     const params = readParams(rule.params_json);
+    const scope = parseScopeJson(rule.scope_json);
     return {
       name: rule.name,
       severity: rule.severity,
       forSeconds: rule.for_seconds,
       clearSeconds: rule.clear_seconds,
+      renotifyMinutes: Math.round((rule.renotify_seconds ?? 1800) / 60),
+      notifyMax: params.notify_max ?? 1,
+      scopeMode: scope.mode,
+      scopeIds: scope.ids,
       ...Object.fromEntries(spec.map((p) => [`param_${p.key}`, params[p.key] ?? p.defaultValue])),
     };
   }, [rule, spec]);
@@ -260,13 +298,30 @@ function RuleFormModal({
       const val = v[`param_${p.key}`];
       if (val != null) params[p.key] = Number(val);
     });
-    const payload = {
+    params.notify_max = Number(v.notifyMax ?? 1);
+    const payload: {
+      name: string;
+      severity: string;
+      paramsJson: string;
+      forSeconds: number;
+      clearSeconds: number;
+      renotifySeconds: number;
+      scopeJson?: string;
+    } = {
       name: v.name as string,
       severity: v.severity as string,
       paramsJson: JSON.stringify(params),
       forSeconds: v.forSeconds as number,
       clearSeconds: v.clearSeconds as number,
+      renotifySeconds: Number(v.renotifyMinutes ?? 30) * 60,
     };
+    if (scopeCategory) {
+      const mode = (v.scopeMode ?? "ALL") as ScopeKind;
+      payload.scopeJson = JSON.stringify({
+        kind: mode,
+        ids: mode === "ALL" ? [] : ((v.scopeIds as number[]) ?? []),
+      });
+    }
     try {
       if (isEdit) {
         await updateAlertRule(rule!.id, payload);
@@ -346,6 +401,50 @@ function RuleFormModal({
             <InputNumber min={0} max={86400} />
           </Form.Item>
         </Space>
+
+        <Space size="middle">
+          <Form.Item
+            label="재발송 간격(분)"
+            name="renotifyMinutes"
+            tooltip="진행 중·미확인이면 이 간격마다 다시 발송합니다(0=재발송 안 함)"
+          >
+            <InputNumber min={0} max={1440} />
+          </Form.Item>
+          <Form.Item
+            label="최대 발송 횟수"
+            name="notifyMax"
+            tooltip="처음 1회를 포함해 총 몇 번까지 보낼지(예: 5회)"
+          >
+            <InputNumber min={1} max={50} />
+          </Form.Item>
+        </Space>
+
+        {scopeCategory ? (
+          <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: 6, marginTop: 4 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
+              감시 범위 ({scopeCategory === "ETL" ? "ETL Job" : "CDC 파이프라인"})
+            </div>
+            <Form.Item name="scopeMode" style={{ marginBottom: 8 }}>
+              <Select
+                options={[
+                  { label: "전체 감시", value: "ALL" },
+                  { label: "선택한 것만 감시(포함)", value: "INCLUDE" },
+                  { label: "선택한 것 제외", value: "EXCLUDE" },
+                ]}
+              />
+            </Form.Item>
+            {scopeMode && scopeMode !== "ALL" ? (
+              <Form.Item name="scopeIds" style={{ marginBottom: 0 }}>
+                <Select
+                  mode="multiple"
+                  allowClear
+                  placeholder={scopeCategory === "ETL" ? "감시/제외할 Job 선택" : "감시/제외할 파이프라인 선택"}
+                  options={scopeTargets.map((t) => ({ label: t.name, value: t.id }))}
+                />
+              </Form.Item>
+            ) : null}
+          </div>
+        ) : null}
       </Form>
     </Modal>
   );

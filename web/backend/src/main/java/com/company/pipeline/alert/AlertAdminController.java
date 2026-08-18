@@ -11,6 +11,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -41,10 +42,25 @@ public class AlertAdminController {
                        -- jsonb 를 그대로 내리면 드라이버가 PGobject({type,value,null})로 감싸서
                        -- 화면이 조건 값을 못 읽는다. text 로 캐스팅해 순수 JSON 문자열로 보낸다.
                        r.params_json::text AS params_json,
+                       r.scope_json::text AS scope_json, r.renotify_seconds,
                        r.for_seconds, r.clear_seconds, r.mandatory,
                        r.last_evaluated_at, r.last_eval_error
                 FROM alert_rule r JOIN alert_rule_type rt ON r.rule_type_code = rt.code
                 WHERE r.deleted_at IS NULL ORDER BY rt.eval_priority, r.name"""));
+    }
+
+    /**
+     * 규칙 감시 범위 선택 후보. category=ETL → etl_job 목록(id,name), CDC → pipeline_definition 목록.
+     * 규칙 추가/수정 폼의 «감시 대상 선택»이 이 목록에서 고른다.
+     */
+    @GetMapping("/api/admin/alert-scope-targets")
+    public ApiResponse<List<Map<String, Object>>> scopeTargets(@RequestParam(defaultValue = "ETL") String category) {
+        if ("CDC".equalsIgnoreCase(category)) {
+            return ApiResponse.success(jdbc.queryForList(
+                    "SELECT id, name FROM pipeline_definition ORDER BY name"));
+        }
+        return ApiResponse.success(jdbc.queryForList(
+                "SELECT id, job_name AS name FROM etl_job WHERE deleted_at IS NULL ORDER BY job_name"));
     }
 
     /**
@@ -99,10 +115,12 @@ public class AlertAdminController {
     }
 
     public record UpdateRuleRequest(Boolean enabled, String severity, String paramsJson,
-                                    Integer forSeconds, Integer clearSeconds, String name) {}
+                                    Integer forSeconds, Integer clearSeconds, String name,
+                                    String scopeJson, Integer renotifySeconds) {}
 
     public record CreateRuleRequest(String ruleTypeCode, String name, String severity, String paramsJson,
-                                    Integer forSeconds, Integer clearSeconds) {}
+                                    Integer forSeconds, Integer clearSeconds,
+                                    String scopeJson, Integer renotifySeconds) {}
 
     /**
      * 규칙 추가 (PDF 9쪽 "[+ 규칙 추가]"). 같은 유형으로 임계값만 다른 규칙을 여러 개 두는 것을 허용한다 —
@@ -126,16 +144,18 @@ public class AlertAdminController {
         try {
             Long id = jdbc.queryForObject("""
                     INSERT INTO alert_rule
-                        (rule_type_code, name, severity, params_json, for_seconds, clear_seconds,
-                         enabled, mandatory, created_by, updated_by)
+                        (rule_type_code, name, severity, params_json, scope_json, for_seconds, clear_seconds,
+                         renotify_seconds, enabled, mandatory, created_by, updated_by)
                     VALUES (?, ?,
                             COALESCE(?, (SELECT default_severity FROM alert_rule_type WHERE code = ?)),
                             COALESCE(?::jsonb, '{}'::jsonb),
-                            COALESCE(?, 120), COALESCE(?, 300), TRUE, FALSE, ?, ?)
+                            COALESCE(?::jsonb, '{"kind": "ALL"}'::jsonb),
+                            COALESCE(?, 120), COALESCE(?, 300), COALESCE(?, 1800), TRUE, FALSE, ?, ?)
                     RETURNING id
                     """, Long.class,
                     req.ruleTypeCode(), req.name(), req.severity(), req.ruleTypeCode(),
-                    req.paramsJson(), req.forSeconds(), req.clearSeconds(), by, by);
+                    req.paramsJson(), req.scopeJson(), req.forSeconds(), req.clearSeconds(),
+                    req.renotifySeconds(), by, by);
             return ApiResponse.success(Map.of("id", id == null ? 0L : id));
         } catch (DataAccessException ex) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "규칙 값이 올바르지 않습니다(조건·심각도 확인).");
@@ -162,16 +182,18 @@ public class AlertAdminController {
         try {
             int n = jdbc.update("""
                     UPDATE alert_rule SET
-                        name          = COALESCE(?, name),
-                        enabled       = COALESCE(?, enabled),
-                        severity      = COALESCE(?, severity),
-                        params_json   = COALESCE(?::jsonb, params_json),
-                        for_seconds   = COALESCE(?, for_seconds),
-                        clear_seconds = COALESCE(?, clear_seconds),
+                        name             = COALESCE(?, name),
+                        enabled          = COALESCE(?, enabled),
+                        severity         = COALESCE(?, severity),
+                        params_json      = COALESCE(?::jsonb, params_json),
+                        scope_json       = COALESCE(?::jsonb, scope_json),
+                        for_seconds      = COALESCE(?, for_seconds),
+                        clear_seconds    = COALESCE(?, clear_seconds),
+                        renotify_seconds = COALESCE(?, renotify_seconds),
                         updated_by = ?, updated_at = now()
                     WHERE id = ? AND deleted_at IS NULL
                     """, req.name(), req.enabled(), req.severity(), req.paramsJson(),
-                    req.forSeconds(), req.clearSeconds(), by, id);
+                    req.scopeJson(), req.forSeconds(), req.clearSeconds(), req.renotifySeconds(), by, id);
             if (n == 0) {
                 throw new BusinessException(ErrorCode.VALIDATION_ERROR, "규칙을 찾을 수 없습니다: " + id);
             }

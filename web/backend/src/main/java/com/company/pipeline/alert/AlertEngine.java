@@ -2,6 +2,8 @@ package com.company.pipeline.alert;
 
 import com.company.pipeline.settings.SettingKey;
 import com.company.pipeline.settings.SettingService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -198,6 +200,37 @@ public class AlertEngine {
         } catch (Exception ex) {
             log.warn("연쇄억제 실패: {}", ex.getMessage());
         }
+        try {
+            evaluateRenotify();
+        } catch (Exception ex) {
+            log.warn("재발송 실패: {}", ex.getMessage());
+        }
+    }
+
+    /**
+     * 재발송 정책(규칙별). 진행 중·미확인·미종료 알림이 규칙의 renotify_seconds 간격을 지났고 아직
+     * 최대 발송 횟수(params.notify_max) 미만이면 다시 알린다. 예: 즉시 1회 + 5분마다 + 총 5회.
+     * (확인하거나 해소되면 자동으로 멈춘다 — ack_at·closed_at 조건.)
+     */
+    private void evaluateRenotify() {
+        List<Map<String, Object>> due = jdbc.queryForList("""
+                SELECT ai.id, ai.notify_count, r.params_json::text AS params
+                FROM alert_instance ai JOIN alert_rule r ON r.id = ai.rule_id
+                WHERE ai.closed_at IS NULL AND ai.state = 'FIRING'
+                  AND ai.ack_at IS NULL AND ai.suppressed_by IS NULL
+                  AND r.renotify_seconds > 0
+                  AND ai.last_notified_at IS NOT NULL
+                  AND ai.last_notified_at < now() - make_interval(secs => r.renotify_seconds)
+                """);
+        for (Map<String, Object> d : due) {
+            long id = ((Number) d.get("id")).longValue();
+            int notified = ((Number) d.get("notify_count")).intValue();
+            int max = (int) jsonNum((String) d.get("params"), "notify_max", 1);
+            if (notified < max) {
+                notifyFired(id);   // notify_count++ · last_notified_at=now() · 아웃박스 재적재
+                log.info("재발송 {} ({}/{}회)", id, notified + 1, max);
+            }
+        }
     }
 
     /**
@@ -265,12 +298,16 @@ public class AlertEngine {
 
     /** JOB 실패(이벤트 기반). 최근 실패한 잡 실행마다 발화하고, 30분 새 실패가 없으면 해소한다. */
     private void evaluateJobRules() {
-        Long ruleId = jdbc.query(
-                "SELECT id FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL AND enabled",
-                (rs, i) -> rs.getLong(1), JOB_BUILTIN_KEY).stream().findFirst().orElse(null);
-        if (ruleId == null) {
-            return;
+        Map<String, Object> jobRule;
+        try {
+            jobRule = jdbc.queryForMap(
+                    "SELECT id, scope_json::text AS scope FROM alert_rule "
+                            + "WHERE builtin_key = ? AND deleted_at IS NULL AND enabled", JOB_BUILTIN_KEY);
+        } catch (Exception ex) {
+            return;   // 규칙 미시드/비활성
         }
+        long ruleId = ((Number) jobRule.get("id")).longValue();
+        ScopeFilter scope = scopeOf(jobRule);
         // ended_at 은 timestamp without time zone. 앱 세션 TZ 로 now() 와 비교되므로,
         // 신호 기록(등록기)과 이 평가기는 반드시 같은 세션 TZ(앱 JVM 기본)에서 돈다.
         List<Map<String, Object>> failed = jdbc.queryForList("""
@@ -282,6 +319,9 @@ public class AlertEngine {
         for (Map<String, Object> f : failed) {
             long runId = ((Number) f.get("run_id")).longValue();
             long jobId = ((Number) f.get("job_id")).longValue();
+            if (!scope.allows(jobId)) {
+                continue;   // 감시 범위(job 선택) 밖은 건너뛴다.
+            }
             String jobName = (String) f.get("job_name");
             String target = "JOB:" + jobId;
             List<Map<String, Object>> open = jdbc.queryForList(
@@ -585,6 +625,44 @@ public class AlertEngine {
         return String.format("메모리 %.1f%% (임계 %.0f%%)", memPct, threshold);
     }
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /**
+     * 규칙 감시 범위(scope_json). ALL=전체 / INCLUDE=지정 대상만 / EXCLUDE=지정 대상 제외.
+     * ids 는 JOB 규칙이면 etl_job.id, CDC 규칙이면 pipeline_definition.id.
+     */
+    private record ScopeFilter(String kind, Set<Long> ids) {
+        boolean allows(long id) {
+            if ("INCLUDE".equals(kind)) {
+                return ids.isEmpty() || ids.contains(id);   // 지정 없으면 사실상 전체(미설정 방어)
+            }
+            if ("EXCLUDE".equals(kind)) {
+                return !ids.contains(id);
+            }
+            return true;   // ALL
+        }
+    }
+
+    /** rule 맵의 scope(scope_json::text)를 파싱. 파싱 실패/미지정은 ALL. */
+    private ScopeFilter scopeOf(Map<String, Object> rule) {
+        Object raw = rule.get("scope");
+        String json = raw == null ? null : raw.toString();
+        if (json == null || json.isBlank()) {
+            return new ScopeFilter("ALL", Set.of());
+        }
+        try {
+            JsonNode n = MAPPER.readTree(json);
+            String kind = n.path("kind").asText("ALL");
+            Set<Long> ids = new HashSet<>();
+            if (n.has("ids") && n.get("ids").isArray()) {
+                n.get("ids").forEach(x -> ids.add(x.asLong()));
+            }
+            return new ScopeFilter(kind, ids);
+        } catch (Exception ex) {
+            return new ScopeFilter("ALL", Set.of());
+        }
+    }
+
     /** 아주 단순한 JSON 숫자 추출(params_json 슬라이스용). 정식 파서는 후속. */
     private double jsonNum(String json, String key, double def) {
         try {
@@ -656,7 +734,8 @@ public class AlertEngine {
         Map<String, Object> rule;
         try {
             rule = jdbc.queryForMap(
-                    "SELECT id, severity, for_seconds, clear_seconds, params_json::text AS params, enabled "
+                    "SELECT id, severity, for_seconds, clear_seconds, params_json::text AS params, "
+                            + "scope_json::text AS scope, enabled "
                             + "FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL", builtinKey);
         } catch (Exception ex) {
             return;   // 아직 시드 안 됨
@@ -761,6 +840,7 @@ public class AlertEngine {
     /** CDC 미처리 임계(원본 규칙표 "CDC 지연 > 5만 건", 경고). 파이프라인별로 연다. */
     private List<Candidate> cdcLagSignals(Map<String, Object> rule) {
         double threshold = jsonNum(rule.get("params").toString(), "threshold", 50000);
+        ScopeFilter scope = scopeOf(rule);
         return jdbc.query("""
                 SELECT DISTINCT ON (s.pipeline_id) s.pipeline_id, s.consumer_lag, d.name
                 FROM pipeline_metric_snapshot s
@@ -773,6 +853,9 @@ public class AlertEngine {
                 return null;
             }
             long pid = rs.getLong("pipeline_id");
+            if (!scope.allows(pid)) {
+                return null;
+            }
             String name = rs.getString("name");
             String label = name != null ? name : ("파이프라인 " + pid);
             return new Candidate("CDC_LAG:" + pid, label, "CDC", (double) lag, threshold,
@@ -783,6 +866,7 @@ public class AlertEngine {
 
     /** 커넥터 FAILED(원본 규칙표, 위험). 최신 스냅샷의 소스/싱크 상태를 본다. */
     private List<Candidate> connectorFailedSignals(Map<String, Object> rule) {
+        ScopeFilter scope = scopeOf(rule);
         return jdbc.query("""
                 SELECT DISTINCT ON (s.pipeline_id) s.pipeline_id, d.name,
                        s.connector_state, s.source_connector_state, s.sink_connector_state
@@ -801,6 +885,9 @@ public class AlertEngine {
                 return null;
             }
             long pid = rs.getLong("pipeline_id");
+            if (!scope.allows(pid)) {
+                return null;
+            }
             String name = rs.getString("name");
             String label = name != null ? name : ("파이프라인 " + pid);
             return new Candidate("CONNECTOR:" + pid, label, "CDC", null, null,
@@ -834,6 +921,7 @@ public class AlertEngine {
     /** 연속 N회 실패(원본 규칙표, 위험). 잡별 최근 실행을 훑어 연속 실패 길이를 센다. */
     private List<Candidate> consecutiveFailureSignals(Map<String, Object> rule) {
         int need = (int) jsonNum(rule.get("params").toString(), "count", 3);
+        ScopeFilter scope = scopeOf(rule);
         return jdbc.query("""
                 WITH ranked AS (
                     SELECT r.job_id, r.status, r.started_at,
@@ -852,6 +940,9 @@ public class AlertEngine {
                 WHERE s.fails >= ?
                 """, (rs, i) -> {
             long jobId = rs.getLong("job_id");
+            if (!scope.allows(jobId)) {
+                return null;
+            }
             int fails = rs.getInt("fails");
             String name = rs.getString("job_name");
             String label = name != null ? name : ("잡 " + jobId);
@@ -863,6 +954,7 @@ public class AlertEngine {
     /** N일 이상 미실행(원본 규칙표, 경고). 한 번은 돌았던 잡만 대상으로 한다. */
     private List<Candidate> notRunSignals(Map<String, Object> rule) {
         int days = (int) jsonNum(rule.get("params").toString(), "days", 7);
+        ScopeFilter scope = scopeOf(rule);
         return jdbc.query("""
                 SELECT r.job_id, j.job_name, max(r.started_at) AS last_run,
                        EXTRACT(DAY FROM (now() - max(r.started_at)))::int AS idle_days
@@ -873,6 +965,9 @@ public class AlertEngine {
                 HAVING max(r.started_at) < now() - make_interval(days => ?)
                 """, (rs, i) -> {
             long jobId = rs.getLong("job_id");
+            if (!scope.allows(jobId)) {
+                return null;
+            }
             int idle = rs.getInt("idle_days");
             String name = rs.getString("job_name");
             String label = name != null ? name : ("잡 " + jobId);

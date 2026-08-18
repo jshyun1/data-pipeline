@@ -1063,3 +1063,25 @@ PDF 5-1~5-7 요구사항과 병합본(내 작업 + 다른 PC pull) 대조 → �
 3. **알림 이력 상세 한글화**: EventTimeline 이벤트/상태 코드를 한글 라벨로(감지·생성/발화·알림시작/
    발송·알림전송/재발생/확인/확인취소/해소·조건해제, 상태 대기·발생중·해소·판단불가, actor SYSTEM→자동).
    상세 상단에 정보 블록 추가(내용·대상·유형(한글)·관측값/임계·상태·확인자·해소사유).
+
+## 27. 규칙 재발송 정책(5) + ETL Job/CDC 파이프라인 감시범위(6·7)
+사용자 요청. alert_rule 의 기존 컬럼(scope_json, renotify_seconds) 활용 + 로직·API·폼 신설.
+
+**5. 재발송 정책** — ✅ 검증
+- AlertEngine.evaluateRenotify(): 진행 중(FIRING)·미확인·미종료 알림 중, 규칙 renotify_seconds 간격을
+  지났고 아직 최대(params.notify_max) 미만이면 notifyFired()로 재발송(notify_count++·아웃박스 재적재).
+  확인/해소되면 자동 중단.
+- 규칙 폼에 «재발송 간격(분)» + «최대 발송 횟수». (예: 즉시1 + 5분마다 + 총5회)
+- 검증: JOB_FAILURE renotify 30s·max 3 → notify_count 1→2→3, "재발송 (3/3회)"에서 멈춤(4 안 감).
+
+**6·7. 감시 범위(scope)** — ✅ 6 검증 / 7 대칭 구현
+- scope_json = {"kind":"ALL"} | {"kind":"INCLUDE","ids":[...]} | {"kind":"EXCLUDE","ids":[...]}.
+  ids = JOB규칙이면 etl_job.id, CDC규칙이면 pipeline_definition.id.
+- AlertEngine: evaluateJobRules + consecutiveFailure/notRun 신호는 job_id로, cdcLag/connectorFailed
+  신호는 pipeline_id로 scope.allows() 필터. ScopeFilter 헬퍼(Jackson 파싱).
+- API: 규칙 생성/수정에 scopeJson·renotifySeconds 추가, GET /admin/alert-scope-targets?category=ETL|CDC
+  (잡/파이프라인 목록).
+- 폼: JOB/CDC 유형일 때 «감시 범위(전체/포함/제외) + 대상 다중선택» 노출(SCOPE_TYPES).
+- 검증: JOB_FAILURE 스코프=EXCLUDE test(job1) → test 실패는 알림 없음, DW 실패는 알림 발생.
+  CDC(파이프라인)는 동일 코드 경로 + 대상 API 동작 확인(로컬에 pipeline_definition 데이터가 없어
+  실발화 테스트는 생략, JOB 스코프와 대칭).

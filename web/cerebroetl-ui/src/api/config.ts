@@ -10,10 +10,24 @@ export interface AlertRule {
   enabled: boolean;
   severity: string;
   params_json: unknown;
+  scope_json: string | null;
+  renotify_seconds: number;
   for_seconds: number;
   clear_seconds: number;
   mandatory: boolean;
   last_eval_error: string | null;
+}
+
+export interface ScopeTarget {
+  id: number;
+  name: string;
+}
+
+export async function getScopeTargets(category: string): Promise<ScopeTarget[]> {
+  const res = await apiClient.get<ApiResponse<ScopeTarget[]>>("/admin/alert-scope-targets", {
+    params: { category },
+  });
+  return unwrap(res.data);
 }
 
 export interface ChannelConfig {
@@ -69,6 +83,8 @@ export async function createAlertRule(body: {
   paramsJson?: string;
   forSeconds?: number;
   clearSeconds?: number;
+  scopeJson?: string;
+  renotifySeconds?: number;
 }): Promise<void> {
   await apiClient.post("/admin/alert-rules", body);
 }
@@ -91,6 +107,8 @@ export async function updateAlertRule(
     forSeconds?: number;
     clearSeconds?: number;
     name?: string;
+    scopeJson?: string;
+    renotifySeconds?: number;
   },
 ): Promise<void> {
   await apiClient.put(`/admin/alert-rules/${id}`, body);
