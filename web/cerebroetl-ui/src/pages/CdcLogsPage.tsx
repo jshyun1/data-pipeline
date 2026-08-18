@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Card, DatePicker, Input, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
 import { InfoCircleFilled } from "@ant-design/icons";
+import { Line } from "@ant-design/plots";
 import dayjs, { type Dayjs } from "dayjs";
 import {
   listCdcEventLogs,
@@ -87,12 +88,14 @@ function ConnectorStateTitle({ label, description }: { label: string; descriptio
 }
 
 export function CdcLogsPage() {
-  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(6, "day"), dayjs()]);
+  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(24, "hour"), dayjs()]);
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
   const [keyword, setKeyword] = useState("");
   const [activeTab, setActiveTab] = useState("processing");
   const [processingStatuses, setProcessingStatuses] = useState<string[]>([]);
   const [eventResults, setEventResults] = useState<string[]>([]);
+  const [selectedPipelineId, setSelectedPipelineId] = useState<number | undefined>();
+  const [refreshSeconds, setRefreshSeconds] = useState(30);
 
   const from = appliedRange[0].format("YYYY-MM-DD");
   const to = appliedRange[1].format("YYYY-MM-DD");
@@ -100,14 +103,20 @@ export function CdcLogsPage() {
     queryKey: ["cdc-processing-logs", from, to],
     queryFn: () => listCdcProcessingLogs(from, to),
     placeholderData: (previousData) => previousData,
+    refetchInterval: refreshSeconds > 0 ? refreshSeconds * 1000 : false,
   });
   const eventsQuery = useQuery({
     queryKey: ["cdc-event-logs", from, to],
     queryFn: () => listCdcEventLogs(from, to),
     placeholderData: (previousData) => previousData,
+    refetchInterval: refreshSeconds > 0 ? refreshSeconds * 1000 : false,
   });
 
   const normalizedKeyword = keyword.trim().toLowerCase();
+  const inAppliedRange = (occurredAt: string) => {
+    const occurred = dayjs(occurredAt);
+    return !occurred.isBefore(appliedRange[0]) && !occurred.isAfter(appliedRange[1]);
+  };
   const processingRows = useMemo(
     () =>
       (processingQuery.data ?? []).filter((row) => {
@@ -117,9 +126,12 @@ export function CdcLogsPage() {
           row.source.toLowerCase().includes(normalizedKeyword) ||
           row.target.toLowerCase().includes(normalizedKeyword) ||
           (row.topicName ?? "").toLowerCase().includes(normalizedKeyword);
-        return matchesKeyword && (processingStatuses.length === 0 || processingStatuses.includes(row.status));
+        return inAppliedRange(row.occurredAt)
+          && (selectedPipelineId == null || row.pipelineId === selectedPipelineId)
+          && matchesKeyword
+          && (processingStatuses.length === 0 || processingStatuses.includes(row.status));
       }),
-    [normalizedKeyword, processingQuery.data, processingStatuses],
+    [appliedRange, normalizedKeyword, processingQuery.data, processingStatuses, selectedPipelineId],
   );
   const eventRows = useMemo(
     () =>
@@ -128,13 +140,38 @@ export function CdcLogsPage() {
           !normalizedKeyword ||
           row.pipelineName.toLowerCase().includes(normalizedKeyword) ||
           (row.message ?? "").toLowerCase().includes(normalizedKeyword);
-        return matchesKeyword && (eventResults.length === 0 || eventResults.includes(row.result ?? ""));
+        return inAppliedRange(row.occurredAt)
+          && (selectedPipelineId == null || row.pipelineId === selectedPipelineId)
+          && matchesKeyword
+          && (eventResults.length === 0 || eventResults.includes(row.result ?? ""));
       }),
-    [eventResults, eventsQuery.data, normalizedKeyword],
+    [appliedRange, eventResults, eventsQuery.data, normalizedKeyword, selectedPipelineId],
   );
+  const pipelineOptions = useMemo(() => {
+    const rows = [...(processingQuery.data ?? []), ...(eventsQuery.data ?? [])];
+    return [...new Map(rows.map((row) => [row.pipelineId, row.pipelineName])).entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [eventsQuery.data, processingQuery.data]);
+  const lagTrend = useMemo(() => processingRows
+    .map((row) => ({ occurredAt: row.occurredAt, consumerLag: row.consumerLag, pipelineName: row.pipelineName }))
+    .sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()), [processingRows]);
+
+  const applyPreset = (amount: number, unit: "hour" | "day") => {
+    const end = dayjs();
+    const range: [Dayjs, Dayjs] = [end.subtract(amount, unit), end];
+    setDateRange(range);
+    setAppliedRange(range);
+  };
 
   const filters = (
     <Space style={{ marginBottom: 16 }} wrap>
+      <Space.Compact>
+        <Button onClick={() => applyPreset(1, "hour")}>1시간</Button>
+        <Button onClick={() => applyPreset(6, "hour")}>6시간</Button>
+        <Button onClick={() => applyPreset(24, "hour")}>24시간</Button>
+        <Button onClick={() => applyPreset(7, "day")}>7일</Button>
+      </Space.Compact>
       <RangePicker
         value={dateRange}
         onChange={(value) => {
@@ -151,6 +188,7 @@ export function CdcLogsPage() {
         value={keyword}
         onChange={(event) => setKeyword(event.target.value)}
       />
+      <Select allowClear showSearch optionFilterProp="label" placeholder="파이프라인" style={{ minWidth: 180 }} value={selectedPipelineId} onChange={setSelectedPipelineId} options={pipelineOptions} />
       <Select
         mode="multiple"
         allowClear
@@ -175,6 +213,12 @@ export function CdcLogsPage() {
       <Button type="primary" onClick={() => setAppliedRange(dateRange)}>
         조회
       </Button>
+      <Select
+        value={refreshSeconds}
+        onChange={setRefreshSeconds}
+        style={{ width: 130 }}
+        options={[{ value: 0, label: "자동갱신 끔" }, { value: 10, label: "10초 갱신" }, { value: 30, label: "30초 갱신" }, { value: 60, label: "60초 갱신" }]}
+      />
       <Tooltip
         placement="right"
         title={
@@ -203,6 +247,20 @@ export function CdcLogsPage() {
     <div>
       <Card title="CDC 처리 로그">
         {filters}
+        <Card size="small" title="Sink 소비 Lag 추이" style={{ marginBottom: 16 }}>
+          <Typography.Text type="secondary">Kafka Sink consumer의 미처리 offset 추정치이며 타깃 DB의 E2E 지연 시간은 아닙니다.</Typography.Text>
+          {lagTrend.length > 0 ? (
+            <Line
+              data={lagTrend}
+              xField="occurredAt"
+              yField="consumerLag"
+              colorField="pipelineName"
+              height={260}
+              axis={{ x: { labelFormatter: (value: string) => dayjs(value).format("MM-DD HH:mm") }, y: { labelFormatter: (value: number) => Number(value).toLocaleString("ko-KR") } }}
+              tooltip={{ title: (datum: { occurredAt: string }) => formatDateTime(datum.occurredAt) }}
+            />
+          ) : <div style={{ padding: 48, textAlign: "center", color: "#999" }}>선택한 기간의 Lag 데이터가 없습니다.</div>}
+        </Card>
         <Tabs
           activeKey={activeTab}
           onChange={setActiveTab}

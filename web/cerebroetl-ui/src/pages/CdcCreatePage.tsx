@@ -15,15 +15,16 @@ import {
   Select,
   Space,
   Spin,
+  Tabs,
   Tag,
   Typography,
 } from "antd";
 import { CheckCircleOutlined, LockOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { listConnections, listConnectionSchemas, listConnectionTables, testConnection } from "../api/connections";
-import { createPipeline } from "../api/pipelines";
+import { createLogFilePipeline, createPipeline } from "../api/pipelines";
 import type { ConnectionResponse } from "../types/connection";
-import type { PipelineCreateRequest, PipelineResponse } from "../types/pipeline";
+import type { LogPipelineCreateRequest, PipelineCreateRequest, PipelineResponse } from "../types/pipeline";
 
 type StepKey = "basic" | "connections" | "targets" | "options" | "review";
 
@@ -56,7 +57,7 @@ function connectionLabel(connection: ConnectionResponse) {
   return `${connection.name} (${connection.dbType} · ${connection.host}:${connection.port})`;
 }
 
-export function CdcCreatePage() {
+function CdcCreateWizard() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form] = Form.useForm<PipelineCreateRequest>();
@@ -415,6 +416,138 @@ export function CdcCreatePage() {
           ]}
         />
       </Form>
+    </div>
+  );
+}
+
+type LogStepKey = "basic" | "connection" | "target" | "options" | "review";
+const LOG_STEP_ORDER: LogStepKey[] = ["basic", "connection", "target", "options", "review"];
+
+function LogCreateWizard() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [form] = Form.useForm<LogPipelineCreateRequest>();
+  const [activeStep, setActiveStep] = useState<LogStepKey>("basic");
+  const [completedSteps, setCompletedSteps] = useState<LogStepKey[]>([]);
+  const [testedConnectionId, setTestedConnectionId] = useState<number | null>(null);
+  const [createdPipeline, setCreatedPipeline] = useState<PipelineResponse | null>(null);
+  const targetConnectionId = Form.useWatch("targetConnectionId", form);
+  const targetSchema = Form.useWatch("targetSchema", form);
+  const values = Form.useWatch([], form);
+
+  const { data: connections, isLoading: connectionsLoading } = useQuery({ queryKey: ["connections"], queryFn: listConnections });
+  const schemasQuery = useQuery({
+    queryKey: ["connection-schemas", targetConnectionId],
+    queryFn: () => listConnectionSchemas(targetConnectionId!),
+    enabled: testedConnectionId === targetConnectionId && targetConnectionId != null,
+  });
+  const tablesQuery = useQuery({
+    queryKey: ["connection-tables", targetConnectionId, targetSchema],
+    queryFn: () => listConnectionTables(targetConnectionId!, targetSchema!),
+    enabled: testedConnectionId === targetConnectionId && targetConnectionId != null && !!targetSchema,
+  });
+  const targetConnection = connections?.find((connection) => connection.id === targetConnectionId);
+  const unlocked = (step: LogStepKey) => {
+    const index = LOG_STEP_ORDER.indexOf(step);
+    return index === 0 || completedSteps.includes(LOG_STEP_ORDER[index - 1]);
+  };
+  const advance = (current: LogStepKey, next: LogStepKey) => {
+    setCompletedSteps((previous) => previous.includes(current) ? previous : [...previous, current]);
+    setActiveStep(next);
+  };
+  const invalidateFrom = (step: LogStepKey) => {
+    const index = LOG_STEP_ORDER.indexOf(step);
+    setCompletedSteps((previous) => previous.filter((item) => LOG_STEP_ORDER.indexOf(item) < index));
+  };
+  const label = (step: LogStepKey, title: string) => {
+    const isComplete = completedSteps.includes(step);
+    const isUnlocked = unlocked(step);
+    return <Space><Tag color={isComplete ? "success" : isUnlocked ? "blue" : "default"}>{LOG_STEP_ORDER.indexOf(step) + 1}</Tag><span>{title}</span>{isComplete && <CheckCircleOutlined style={{ color: "#52c41a" }} />}{!isUnlocked && <LockOutlined style={{ color: "#999" }} />}</Space>;
+  };
+  const testMutation = useMutation({
+    mutationFn: testConnection,
+    onSuccess: (result) => {
+      if (result.status === "SUCCESS") {
+        setTestedConnectionId(result.id);
+        message.success(`${result.name}: 타깃 연결 성공`);
+      } else {
+        setTestedConnectionId(null);
+        message.error(`${result.name}: 타깃 연결 실패`);
+      }
+    },
+    onError: (error: Error) => { setTestedConnectionId(null); message.error(error.message); },
+  });
+  const createMutation = useMutation({
+    mutationFn: createLogFilePipeline,
+    onSuccess: (result) => {
+      setCreatedPipeline(result);
+      queryClient.invalidateQueries({ queryKey: ["pipelines"] });
+      message.success("로그파일 파이프라인을 생성했습니다.");
+    },
+    onError: (error: Error) => message.error(error.message),
+  });
+  const notFound = (query: { isFetching: boolean; isError: boolean }, hint: string) => query.isFetching ? <Spin size="small" /> : query.isError ? "조회 실패 - 연결정보를 확인하세요" : hint;
+
+  if (createdPipeline) {
+    return <Card><Result status="success" title="로그파일 파이프라인 생성 완료" subTitle={`${createdPipeline.name}이(가) 생성되었습니다.`} extra={[
+      <Button type="primary" key="list" onClick={() => navigate("/cdc/pipelines")}>파이프라인 목록</Button>,
+      <Button key="again" onClick={() => { form.resetFields(); setCompletedSteps([]); setTestedConnectionId(null); setCreatedPipeline(null); setActiveStep("basic"); }}>하나 더 생성</Button>,
+    ]} /></Card>;
+  }
+
+  return <>
+    <Card title="로그파일 파이프라인 생성" style={{ marginBottom: 16 }}>
+      <Alert type="info" showIcon message="각 단계를 완료해야 다음 단계가 열립니다" description="타깃 연결 테스트가 성공해야 스키마와 테이블을 선택할 수 있습니다." />
+    </Card>
+    <Form<LogPipelineCreateRequest> form={form} layout="vertical" initialValues={{ readFrom: "END", encoding: "UTF-8" }}>
+      <Collapse accordion activeKey={activeStep} onChange={(key) => { const requested = (Array.isArray(key) ? key[0] : key) as LogStepKey; if (requested && unlocked(requested)) setActiveStep(requested); }} items={[
+        { key: "basic", label: label("basic", "기본 및 파일 정보"), children: <>
+          <Form.Item name="name" label="파이프라인명" rules={[{ required: true }, { pattern: /^[a-zA-Z0-9][a-zA-Z0-9_-]{2,149}$/, message: "영문·숫자로 시작하고 영문·숫자·_·- 조합 3자 이상으로 입력하세요." }]}><Input placeholder="예: app-log-ingest" /></Form.Item>
+          <Form.Item name="filePath" label="로그 파일 경로" rules={[{ required: true }]} tooltip="Filebeat 컨테이너 기준 경로입니다. docker-compose의 ./log-sources는 /var/log/app에 마운트됩니다."><Input placeholder="예: /var/log/app/app.log" /></Form.Item>
+          <Form.Item name="description" label="설명"><Input.TextArea rows={3} /></Form.Item>
+          <div style={{ textAlign: "right" }}><Button type="primary" onClick={async () => { await form.validateFields(["name", "filePath"]); advance("basic", "connection"); }}>다음: 연결</Button></div>
+        </> },
+        { key: "connection", collapsible: unlocked("connection") ? undefined : "disabled", label: label("connection", "타깃 연결"), children: <>
+          <Form.Item name="targetConnectionId" label="타깃 연결" rules={[{ required: true }]}><Select loading={connectionsLoading} options={connections?.map((connection) => ({ value: connection.id, label: connectionLabel(connection) }))} placeholder="랜딩할 DB 선택" onChange={() => { setTestedConnectionId(null); invalidateFrom("connection"); form.setFieldsValue({ targetSchema: undefined, targetTable: undefined }); }} /></Form.Item>
+          <Button block disabled={!targetConnectionId} loading={testMutation.isPending} onClick={() => targetConnectionId && testMutation.mutate(targetConnectionId)}>타깃 연결 테스트</Button>
+          {testedConnectionId === targetConnectionId && <Alert style={{ marginTop: 8 }} type="success" showIcon message="타깃 연결 성공" />}
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}><Button onClick={() => setActiveStep("basic")}>이전</Button><Button type="primary" disabled={testedConnectionId !== targetConnectionId} onClick={() => advance("connection", "target")}>다음: 적재 대상</Button></div>
+        </> },
+        { key: "target", collapsible: unlocked("target") ? undefined : "disabled", label: label("target", "적재 대상"), children: <>
+          <Space align="start" size="large" wrap style={{ width: "100%" }}>
+            <Form.Item name="targetSchema" label="타깃 스키마" rules={[{ required: true }]} style={{ minWidth: 300, flex: 1 }}><Select showSearch loading={schemasQuery.isFetching} options={schemasQuery.data?.map((value) => ({ value }))} notFoundContent={notFound(schemasQuery, "스키마 없음")} onChange={() => { form.setFieldValue("targetTable", undefined); invalidateFrom("target"); }} /></Form.Item>
+            <Form.Item name="targetTable" label="타깃 테이블" rules={[{ required: true }]} style={{ minWidth: 300, flex: 1 }}><AutoComplete disabled={!targetSchema} options={tablesQuery.data?.map((value) => ({ value }))} notFoundContent={notFound(tablesQuery, "기존 테이블 없음 - 새 이름 입력 가능")} placeholder="기존 테이블 선택 또는 새 이름 입력" onChange={() => invalidateFrom("target")} /></Form.Item>
+          </Space>
+          <div style={{ display: "flex", justifyContent: "space-between" }}><Button onClick={() => setActiveStep("connection")}>이전</Button><Button type="primary" onClick={async () => { await form.validateFields(["targetSchema", "targetTable"]); advance("target", "options"); }}>다음: 수집 옵션</Button></div>
+        </> },
+        { key: "options", collapsible: unlocked("options") ? undefined : "disabled", label: label("options", "수집 옵션"), children: <>
+          <Space align="start" size="large" wrap style={{ width: "100%" }}><Form.Item name="readFrom" label="읽기 시작 위치" style={{ minWidth: 300, flex: 1 }}><Select options={[{ value: "END", label: "END (신규 라인부터)" }, { value: "BEGINNING", label: "BEGINNING (파일 처음부터)" }]} /></Form.Item><Form.Item name="encoding" label="인코딩" style={{ minWidth: 300, flex: 1 }}><Input /></Form.Item></Space>
+          <Form.Item name="topicName" label="Kafka Topic" tooltip="비우면 log-{파이프라인 ID}로 자동 생성됩니다"><Input placeholder="비워두면 자동 생성" /></Form.Item>
+          <Form.Item name="agentHost" label="Agent Host" tooltip="메타데이터용 식별 필드 (선택)"><Input placeholder="예: filebeat" /></Form.Item>
+          <div style={{ display: "flex", justifyContent: "space-between" }}><Button onClick={() => setActiveStep("target")}>이전</Button><Button type="primary" onClick={() => advance("options", "review")}>다음: 검토</Button></div>
+        </> },
+        { key: "review", collapsible: unlocked("review") ? undefined : "disabled", label: label("review", "검토 및 생성"), children: <>
+          <Descriptions bordered column={1} size="small"><Descriptions.Item label="파이프라인명">{values?.name ?? "—"}</Descriptions.Item><Descriptions.Item label="로그 파일">{values?.filePath ?? "—"}</Descriptions.Item><Descriptions.Item label="타깃 연결">{targetConnection ? connectionLabel(targetConnection) : "—"}</Descriptions.Item><Descriptions.Item label="적재 대상">{values?.targetSchema}.{values?.targetTable}</Descriptions.Item><Descriptions.Item label="읽기 시작">{values?.readFrom}</Descriptions.Item><Descriptions.Item label="Kafka Topic">{values?.topicName || "자동 생성"}</Descriptions.Item></Descriptions>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}><Button onClick={() => setActiveStep("options")}>이전</Button><Button type="primary" loading={createMutation.isPending} onClick={async () => { const request = await form.validateFields(); if (testedConnectionId !== targetConnectionId) { message.error("타깃 연결을 다시 테스트하세요."); setActiveStep("connection"); return; } createMutation.mutate(request); }}>로그파일 파이프라인 생성</Button></div>
+        </> },
+      ]} />
+    </Form>
+  </>;
+}
+
+export function CdcCreatePage() {
+  const [activeTab, setActiveTab] = useState("cdc");
+  return (
+    <div style={{ maxWidth: 980, margin: "0 auto", minWidth: 0 }}>
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        destroyInactiveTabPane
+        items={[
+          { key: "cdc", label: "CDC 생성", children: <CdcCreateWizard /> },
+          { key: "log", label: "로그파일 생성", children: <LogCreateWizard /> },
+        ]}
+      />
     </div>
   );
 }

@@ -2,37 +2,34 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
-  AutoComplete,
   Button,
   Card,
-  Checkbox,
   Collapse,
   Descriptions,
   Drawer,
-  Form,
   Input,
   message,
-  Modal,
   Popconfirm,
+  Segmented,
   Select,
   Space,
   Spin,
   Table,
   Tabs,
   Tag,
+  Tree,
   Typography,
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
+import type { TreeProps } from "antd";
 import { useNavigate } from "react-router-dom";
-import { listConnections, listConnectionSchemas, listConnectionTables } from "../api/connections";
+import { listConnections } from "../api/connections";
 import {
   getPipelineDashboardSummary,
   getRealtimePipelineMetrics,
   type RealtimePipelineMetricResponse,
 } from "../api/dashboard";
 import {
-  createLogFilePipeline,
-  createPipeline,
   deletePipeline,
   dismissConnectorDrift,
   getPipelineHistory,
@@ -40,9 +37,7 @@ import {
   listPipelines,
 } from "../api/pipelines";
 import type {
-  LogPipelineCreateRequest,
   PipelineCommandHistoryResponse,
-  PipelineCreateRequest,
   PipelineResponse,
   PipelineRuntimeStatusResponse,
 } from "../types/pipeline";
@@ -132,15 +127,14 @@ function formatRelativeTime(value: string | null) {
 export function PipelinesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [modalOpen, setModalOpen] = useState(false);
-  const [pipelineType, setPipelineType] = useState<"TABLE_CDC" | "LOG_FILE">("TABLE_CDC");
-  const [form] = Form.useForm<PipelineCreateRequest>();
-  const [logForm] = Form.useForm<LogPipelineCreateRequest>();
   const [detailPipelineId, setDetailPipelineId] = useState<number | null>(null);
   const [nameFilter, setNameFilter] = useState("");
   const [topicFilter, setTopicFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [treeSearch, setTreeSearch] = useState("");
+  const [selectedTreeKey, setSelectedTreeKey] = useState<string>("all");
+  const [quickFilter, setQuickFilter] = useState("ALL");
 
   const { data: pipelines, isLoading } = useQuery({
     queryKey: ["pipelines"],
@@ -178,49 +172,6 @@ export function PipelinesPage() {
     [realtimeMetrics],
   );
 
-  // 스키마/테이블을 자유 텍스트로 입력받으면 실제 DB 카탈로그와 대소문자가 어긋나서
-  // CDC 토픽이 조용히 끊기는 문제가 실제로 있었다 - 커넥션을 고르면 그 DB에 실제로
-  // 존재하는 스키마/테이블 목록을 조회해서 드롭다운으로만 고르게 한다.
-  const sourceConnectionId = Form.useWatch("sourceConnectionId", form);
-  const sourceSchema = Form.useWatch("sourceSchema", form);
-  const targetConnectionId = Form.useWatch("targetConnectionId", form);
-  const targetSchema = Form.useWatch("targetSchema", form);
-  const logTargetConnectionId = Form.useWatch("targetConnectionId", logForm);
-  const logTargetSchema = Form.useWatch("targetSchema", logForm);
-
-  const sourceSchemasQuery = useQuery({
-    queryKey: ["connection-schemas", sourceConnectionId],
-    queryFn: () => listConnectionSchemas(sourceConnectionId!),
-    enabled: sourceConnectionId != null,
-  });
-  const sourceTablesQuery = useQuery({
-    queryKey: ["connection-tables", sourceConnectionId, sourceSchema],
-    queryFn: () => listConnectionTables(sourceConnectionId!, sourceSchema!),
-    enabled: sourceConnectionId != null && !!sourceSchema,
-  });
-  const targetSchemasQuery = useQuery({
-    queryKey: ["connection-schemas", targetConnectionId],
-    queryFn: () => listConnectionSchemas(targetConnectionId!),
-    enabled: targetConnectionId != null,
-  });
-  const targetTablesQuery = useQuery({
-    queryKey: ["connection-tables", targetConnectionId, targetSchema],
-    queryFn: () => listConnectionTables(targetConnectionId!, targetSchema!),
-    enabled: targetConnectionId != null && !!targetSchema,
-  });
-  const logTargetSchemasQuery = useQuery({
-    queryKey: ["connection-schemas", logTargetConnectionId],
-    queryFn: () => listConnectionSchemas(logTargetConnectionId!),
-    enabled: logTargetConnectionId != null,
-  });
-  const logTargetTablesQuery = useQuery({
-    queryKey: ["connection-tables", logTargetConnectionId, logTargetSchema],
-    queryFn: () => listConnectionTables(logTargetConnectionId!, logTargetSchema!),
-    enabled: logTargetConnectionId != null && !!logTargetSchema,
-  });
-
-  const schemaTableNotFoundContent = (query: { isFetching: boolean; isError: boolean }, emptyHint: string) =>
-    query.isFetching ? <Spin size="small" /> : query.isError ? "조회 실패 - 연결정보를 확인하세요" : emptyHint;
   const { data: history, isLoading: historyLoading } = useQuery({
     queryKey: ["pipeline-history", detailPipelineId],
     queryFn: () => getPipelineHistory(detailPipelineId!),
@@ -228,10 +179,33 @@ export function PipelinesPage() {
   });
   const detailPipeline = pipelines?.find((p) => p.id === detailPipelineId) ?? null;
 
+  const matchesQuickFilter = (pipeline: PipelineResponse) => {
+    const runtimeStatus = runtimeByPipeline.get(pipeline.id)?.runtimeStatus;
+    const lag = metricByPipeline.get(pipeline.id)?.consumerLag ?? 0;
+    if (quickFilter === "READY") return runtimeStatus === "READY" || (!runtimeStatus && pipeline.status === "READY");
+    if (quickFilter === "RUNNING") return runtimeStatus === "RUNNING";
+    if (quickFilter === "LAGGING") return lag > 0;
+    if (quickFilter === "ERROR") return ["FAILED", "MISSING", "DEGRADED"].includes(runtimeStatus ?? pipeline.status);
+    if (quickFilter === "STOPPED") return ["STOPPED", "PAUSED"].includes(runtimeStatus ?? pipeline.status);
+    return true;
+  };
+
   const filteredPipelines = useMemo(() => {
     const name = nameFilter.trim().toLowerCase();
     const topic = topicFilter.trim().toLowerCase();
     return (pipelines ?? []).filter((p) => {
+      if (!matchesQuickFilter(p)) return false;
+      if (selectedTreeKey.startsWith("connection:")) {
+        const connectionId = Number(selectedTreeKey.split(":")[1]);
+        if (p.sourceConnectionId !== connectionId) return false;
+      } else if (selectedTreeKey.startsWith("schema:")) {
+        const [, connectionId, schema] = selectedTreeKey.split(":");
+        if (p.sourceConnectionId !== Number(connectionId) || p.sourceSchema !== schema) return false;
+      } else if (selectedTreeKey.startsWith("pipeline:")) {
+        if (p.id !== Number(selectedTreeKey.split(":")[1])) return false;
+      } else if (selectedTreeKey === "log-files" && p.pipelineType !== "LOG_FILE") {
+        return false;
+      }
       if (name && !p.name.toLowerCase().includes(name)) {
         return false;
       }
@@ -252,7 +226,64 @@ export function PipelinesPage() {
       const bLag = metricByPipeline.get(b.id)?.consumerLag ?? -1;
       return bLag - aLag;
     });
-  }, [pipelines, nameFilter, topicFilter, statusFilter, typeFilter, metricByPipeline]);
+  }, [pipelines, nameFilter, topicFilter, statusFilter, typeFilter, metricByPipeline, runtimeByPipeline, selectedTreeKey, quickFilter]);
+
+  const pipelineTreeData = useMemo(() => {
+    const search = treeSearch.trim().toLowerCase();
+    const connectionNameById = new Map((connections ?? []).map((connection) => [connection.id, connection.name]));
+    const sourceGroups = new Map<number, Map<string, PipelineResponse[]>>();
+    const logPipelines: PipelineResponse[] = [];
+
+    for (const pipeline of pipelines ?? []) {
+      if (!matchesQuickFilter(pipeline)) continue;
+      if (pipeline.pipelineType === "LOG_FILE" || pipeline.sourceConnectionId == null) {
+        if (!search || pipeline.name.toLowerCase().includes(search) || pipeline.targetTable.toLowerCase().includes(search)) {
+          logPipelines.push(pipeline);
+        }
+        continue;
+      }
+      const matches = !search
+        || pipeline.name.toLowerCase().includes(search)
+        || (pipeline.sourceTable ?? "").toLowerCase().includes(search)
+        || (pipeline.sourceSchema ?? "").toLowerCase().includes(search)
+        || (connectionNameById.get(pipeline.sourceConnectionId) ?? "").toLowerCase().includes(search);
+      if (!matches) continue;
+      const schemas = sourceGroups.get(pipeline.sourceConnectionId) ?? new Map<string, PipelineResponse[]>();
+      const schema = pipeline.sourceSchema ?? "스키마 없음";
+      schemas.set(schema, [...(schemas.get(schema) ?? []), pipeline]);
+      sourceGroups.set(pipeline.sourceConnectionId, schemas);
+    }
+
+    const children: NonNullable<TreeProps["treeData"]> = [...sourceGroups.entries()].map(([connectionId, schemas]) => {
+      const count = [...schemas.values()].reduce((sum, rows) => sum + rows.length, 0);
+      return {
+        key: `connection:${connectionId}`,
+        title: <Space size={4}><span>{connectionNameById.get(connectionId) ?? `연결 ${connectionId}`}</span><Tag>{count}</Tag></Space>,
+        children: [...schemas.entries()].map(([schema, rows]) => ({
+          key: `schema:${connectionId}:${schema}`,
+          title: <Space size={4}><span>{schema}</span><Tag>{rows.length}</Tag></Space>,
+          children: rows.map((pipeline) => ({
+            key: `pipeline:${pipeline.id}`,
+            title: <Space size={4}><span>{pipeline.name}</span><Tag color={RUNTIME_STATUS_COLOR[runtimeByPipeline.get(pipeline.id)?.runtimeStatus ?? ""] ?? "default"}>{pipeline.sourceTable}</Tag></Space>,
+            isLeaf: true,
+          })),
+        })),
+      };
+    });
+    if (logPipelines.length > 0) {
+      children.push({
+        key: "log-files",
+        title: <Space size={4}><span>로그파일</span><Tag>{logPipelines.length}</Tag></Space>,
+        children: logPipelines.map((pipeline) => ({
+          key: `pipeline:${pipeline.id}`,
+          title: pipeline.name,
+          isLeaf: true,
+        })),
+      });
+    }
+    const visibleCount = (pipelines ?? []).filter(matchesQuickFilter).length;
+    return [{ key: "all", title: <Space size={4}><span>전체 파이프라인</span><Tag>{visibleCount}</Tag></Space>, children }];
+  }, [pipelines, connections, treeSearch, runtimeByPipeline, metricByPipeline, quickFilter]);
 
   const renderLag = (metric: RealtimePipelineMetricResponse | undefined) => {
     if (!metric || metric.collectionStatus === "NO_DATA" || metric.consumerLag == null) return "—";
@@ -293,35 +324,6 @@ export function PipelinesPage() {
   };
 
   const invalidatePipelines = () => queryClient.invalidateQueries({ queryKey: ["pipelines"] });
-
-  const closeModal = () => {
-    setModalOpen(false);
-    form.resetFields();
-    logForm.resetFields();
-  };
-
-  const createMutation = useMutation({
-    mutationFn: createPipeline,
-    onSuccess: () => {
-      message.success("CDC 파이프라인을 실행 대기 상태로 준비했습니다. Airflow DAG에서 시작하세요.");
-      invalidatePipelines();
-      closeModal();
-    },
-    onError: (error: Error) => {
-      invalidatePipelines();
-      message.error(error.message);
-    },
-  });
-
-  const createLogMutation = useMutation({
-    mutationFn: createLogFilePipeline,
-    onSuccess: () => {
-      message.success("로그 파이프라인을 생성했습니다. 이제 배포하세요.");
-      invalidatePipelines();
-      closeModal();
-    },
-    onError: (error: Error) => message.error(error.message),
-  });
 
   const deleteMutation = useMutation({
     mutationFn: deletePipeline,
@@ -376,7 +378,56 @@ export function PipelinesPage() {
             }
           />
         ))}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "290px minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
+          <Card size="small" title="파이프라인 탐색" styles={{ body: { padding: 12, overflowX: "auto" } }}>
+            <Segmented
+              block
+              size="small"
+              value={quickFilter}
+              onChange={(value) => { setQuickFilter(String(value)); setSelectedTreeKey("all"); }}
+              options={[
+                { value: "ALL", label: "전체" },
+                { value: "READY", label: "대기" },
+                { value: "RUNNING", label: "실행" },
+              ]}
+              style={{ marginBottom: 8 }}
+            />
+            <Segmented
+              block
+              size="small"
+              value={["LAGGING", "ERROR", "STOPPED"].includes(quickFilter) ? quickFilter : undefined}
+              onChange={(value) => { setQuickFilter(String(value)); setSelectedTreeKey("all"); }}
+              options={[
+                { value: "LAGGING", label: "지연" },
+                { value: "ERROR", label: "오류" },
+                { value: "STOPPED", label: "중지" },
+              ]}
+              style={{ marginBottom: 12 }}
+            />
+            <Input.Search
+              allowClear
+              placeholder="이름·스키마·테이블 검색"
+              value={treeSearch}
+              onChange={(event) => setTreeSearch(event.target.value)}
+              style={{ marginBottom: 12 }}
+            />
+            <Tree
+              blockNode
+              defaultExpandAll
+              autoExpandParent={Boolean(treeSearch)}
+              treeData={pipelineTreeData}
+              selectedKeys={[selectedTreeKey]}
+              onSelect={(keys) => {
+                const key = String(keys[0] ?? "all");
+                setSelectedTreeKey(key);
+                if (key.startsWith("pipeline:")) {
+                  setDetailPipelineId(Number(key.split(":")[1]));
+                }
+              }}
+            />
+          </Card>
+          <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
           <Space wrap>
             <Input
               placeholder="이름 검색"
@@ -411,16 +462,7 @@ export function PipelinesPage() {
               onChange={setTypeFilter}
             />
           </Space>
-          <Space>
-            <Button
-              onClick={() => {
-                setPipelineType("LOG_FILE");
-                setModalOpen(true);
-              }}
-              disabled={!connections || connections.length < 1}
-            >
-              로그파일 생성
-            </Button>
+          <Space wrap>
             <Button
               type="primary"
               icon={<PlusOutlined />}
@@ -428,7 +470,7 @@ export function PipelinesPage() {
               disabled={!connections || connections.length < 1}
               title={!connections || connections.length < 1 ? "연결정보가 최소 1개는 있어야 합니다" : undefined}
             >
-              CDC 신규 생성
+              파이프라인 신규 생성
             </Button>
           </Space>
         </div>
@@ -437,16 +479,19 @@ export function PipelinesPage() {
         rowKey="id"
         loading={isLoading}
         dataSource={filteredPipelines}
+        scroll={{ x: 1120 }}
         pagination={{ pageSize: 20, hideOnSinglePage: true, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
         columns={[
-          { title: "이름", dataIndex: "name" },
+          { title: "이름", dataIndex: "name", width: 160 },
           {
             title: "유형",
             dataIndex: "pipelineType",
+            width: 110,
             render: (value: string) => <Tag color={value === "LOG_FILE" ? "purple" : "blue"}>{value}</Tag>,
           },
           {
             title: "소스 → 타깃",
+            width: 240,
             render: (_, r) => (
               <div>
                 <div>{r.pipelineType === "LOG_FILE" ? "Filebeat" : `${r.sourceDbType} · ${r.sourceSchema}.${r.sourceTable}`}</div>
@@ -456,17 +501,20 @@ export function PipelinesPage() {
               </div>
             ),
           },
-          { title: "Topic", dataIndex: "topicName" },
+          { title: "Topic", dataIndex: "topicName", width: 180 },
           {
             title: "상태",
+            width: 170,
             render: (_, record) => renderRuntimeStatus(record, runtimeByPipeline.get(record.id)),
           },
           {
             title: "지연",
+            width: 90,
             render: (_, record) => renderLag(metricByPipeline.get(record.id)),
           },
           {
             title: "마지막 처리",
+            width: 110,
             render: (_, record) => {
               const lastProgressAt = metricByPipeline.get(record.id)?.lastProgressAt ?? null;
               return <span title={lastProgressAt ?? undefined}>{formatRelativeTime(lastProgressAt)}</span>;
@@ -474,6 +522,7 @@ export function PipelinesPage() {
           },
           {
             title: "관리",
+            width: 130,
             render: (_, record) => (
               <Space wrap>
                 <Button size="small" onClick={() => setDetailPipelineId(record.id)}>
@@ -492,222 +541,15 @@ export function PipelinesPage() {
             ),
           },
         ]}
+        onRow={(record) => ({
+          onClick: () => setSelectedTreeKey(`pipeline:${record.id}`),
+          style: { cursor: "pointer" },
+        })}
         />
+          </div>
+        </div>
       </Card>
 
-      <Modal
-        title="파이프라인 신규 생성"
-        open={modalOpen}
-        onCancel={closeModal}
-        onOk={() => (pipelineType === "TABLE_CDC" ? form.submit() : logForm.submit())}
-        confirmLoading={createMutation.isPending || createLogMutation.isPending}
-        destroyOnHidden
-        width={640}
-      >
-        <Alert type="info" showIcon message="로그파일 실시간 적재 파이프라인" style={{ marginBottom: 16 }} />
-
-        {pipelineType === "TABLE_CDC" ? (
-          <Form<PipelineCreateRequest>
-            form={form}
-            layout="vertical"
-            initialValues={{ deleteEnabled: true }}
-            onFinish={(values) => createMutation.mutate(values)}
-          >
-            <Form.Item name="name" label="파이프라인명" rules={[{ required: true }]}>
-              <Input placeholder="예: oracle-customers-to-postgres" />
-            </Form.Item>
-            <Space style={{ width: "100%" }} size="large">
-              <Form.Item
-                name="sourceConnectionId"
-                label="소스 연결"
-                rules={[{ required: true }]}
-                style={{ width: 260 }}
-              >
-                <Select
-                  options={connections?.map((c) => ({ value: c.id, label: `${c.name} (${c.dbType})` }))}
-                  placeholder="소스 DB 선택"
-                  onChange={(value) => {
-                    form.setFieldsValue({ sourceSchema: undefined, sourceTable: undefined });
-                    // 사용자가 이미 직접 입력한 값이 있으면 덮어쓰지 않고, 비어있을 때만
-                    // 소스 DB 종류 기준 기본값을 채워준다(원하면 언제든 직접 수정 가능).
-                    if (!form.getFieldValue("topicPrefix")) {
-                      const dbType = connections?.find((c) => c.id === value)?.dbType;
-                      if (dbType) {
-                        form.setFieldsValue({ topicPrefix: `${dbType.toLowerCase()}-cdc` });
-                      }
-                    }
-                  }}
-                />
-              </Form.Item>
-              <Form.Item
-                name="targetConnectionId"
-                label="타겟 연결"
-                rules={[{ required: true }]}
-                style={{ width: 260 }}
-              >
-                <Select
-                  options={connections?.map((c) => ({ value: c.id, label: `${c.name} (${c.dbType})` }))}
-                  placeholder="타겟 DB 선택"
-                  onChange={() => form.setFieldsValue({ targetSchema: undefined, targetTable: undefined })}
-                />
-              </Form.Item>
-            </Space>
-            <Space style={{ width: "100%" }} size="large">
-              <Form.Item name="sourceSchema" label="소스 스키마" rules={[{ required: true }]} style={{ width: 260 }}>
-                <Select
-                  showSearch
-                  disabled={!sourceConnectionId}
-                  loading={sourceSchemasQuery.isFetching}
-                  options={sourceSchemasQuery.data?.map((s) => ({ value: s, label: s }))}
-                  notFoundContent={schemaTableNotFoundContent(sourceSchemasQuery, "스키마 없음")}
-                  placeholder={sourceConnectionId ? "스키마 선택" : "먼저 소스 연결을 선택하세요"}
-                  onChange={() => form.setFieldsValue({ sourceTable: undefined })}
-                />
-              </Form.Item>
-              <Form.Item name="sourceTable" label="소스 테이블" rules={[{ required: true }]} style={{ width: 260 }}>
-                <Select
-                  showSearch
-                  disabled={!sourceSchema}
-                  loading={sourceTablesQuery.isFetching}
-                  options={sourceTablesQuery.data?.map((t) => ({ value: t, label: t }))}
-                  notFoundContent={schemaTableNotFoundContent(sourceTablesQuery, "테이블 없음")}
-                  placeholder={sourceSchema ? "테이블 선택" : "먼저 스키마를 선택하세요"}
-                />
-              </Form.Item>
-            </Space>
-            <Space style={{ width: "100%" }} size="large">
-              <Form.Item name="targetSchema" label="타겟 스키마" rules={[{ required: true }]} style={{ width: 260 }}>
-                <Select
-                  showSearch
-                  disabled={!targetConnectionId}
-                  loading={targetSchemasQuery.isFetching}
-                  options={targetSchemasQuery.data?.map((s) => ({ value: s, label: s }))}
-                  notFoundContent={schemaTableNotFoundContent(targetSchemasQuery, "스키마 없음")}
-                  placeholder={targetConnectionId ? "스키마 선택" : "먼저 타겟 연결을 선택하세요"}
-                  onChange={() => form.setFieldsValue({ targetTable: undefined })}
-                />
-              </Form.Item>
-              <Form.Item
-                name="targetTable"
-                label="타겟 테이블"
-                rules={[{ required: true }]}
-                style={{ width: 260 }}
-                tooltip="기존 테이블을 고르거나, 첫 배포 때 자동 생성될 새 테이블명을 직접 입력할 수 있습니다"
-              >
-                <AutoComplete
-                  disabled={!targetSchema}
-                  options={targetTablesQuery.data?.map((t) => ({ value: t, label: t }))}
-                  notFoundContent={schemaTableNotFoundContent(targetTablesQuery, "기존 테이블 없음 (새 이름으로 입력 가능)")}
-                  placeholder={targetSchema ? "기존 테이블 선택 또는 새 이름 입력" : "먼저 스키마를 선택하세요"}
-                  filterOption={(inputValue, option) =>
-                    (option?.value ?? "").toLowerCase().includes(inputValue.toLowerCase())
-                  }
-                />
-              </Form.Item>
-            </Space>
-            <Form.Item
-              name="topicPrefix"
-              label="Topic Prefix"
-              rules={[{ required: true }]}
-              tooltip="실제 Kafka 토픽명은 {prefix}.{소스 스키마}.{소스 테이블} 형식으로 자동 생성됩니다"
-            >
-              <Input placeholder="예: oracle-cdc" />
-            </Form.Item>
-            <Form.Item name="deleteEnabled" valuePropName="checked">
-              <Checkbox>DELETE 반영</Checkbox>
-            </Form.Item>
-            <Form.Item name="description" label="설명">
-              <Input.TextArea rows={2} />
-            </Form.Item>
-          </Form>
-        ) : (
-          <Form<LogPipelineCreateRequest>
-            form={logForm}
-            layout="vertical"
-            initialValues={{ readFrom: "END", encoding: "UTF-8" }}
-            onFinish={(values) => createLogMutation.mutate(values)}
-          >
-            <Form.Item name="name" label="파이프라인명" rules={[{ required: true }]}>
-              <Input placeholder="예: app-log-ingest" />
-            </Form.Item>
-            <Form.Item
-              name="filePath"
-              label="로그 파일 경로"
-              rules={[{ required: true }]}
-              tooltip="filebeat 컨테이너 기준 경로입니다 (호스트 경로 아님, docker-compose의 ./log-sources가 /var/log/app로 마운트됨)"
-            >
-              <Input placeholder="예: /var/log/app/app.log" />
-            </Form.Item>
-            <Space style={{ width: "100%" }} size="large">
-              <Form.Item name="readFrom" label="읽기 시작 위치" style={{ width: 260 }}>
-                <Select
-                  options={[
-                    { value: "END", label: "END (신규 라인부터)" },
-                    { value: "BEGINNING", label: "BEGINNING (파일 처음부터)" },
-                  ]}
-                />
-              </Form.Item>
-              <Form.Item name="encoding" label="인코딩" style={{ width: 260 }}>
-                <Input placeholder="UTF-8" />
-              </Form.Item>
-            </Space>
-            <Form.Item
-              name="targetConnectionId"
-              label="타겟 연결"
-              rules={[{ required: true }]}
-            >
-              <Select
-                options={connections?.map((c) => ({ value: c.id, label: `${c.name} (${c.dbType})` }))}
-                placeholder="랜딩할 DB 선택"
-                onChange={() => logForm.setFieldsValue({ targetSchema: undefined, targetTable: undefined })}
-              />
-            </Form.Item>
-            <Space style={{ width: "100%" }} size="large">
-              <Form.Item name="targetSchema" label="타겟 스키마" rules={[{ required: true }]} style={{ width: 260 }}>
-                <Select
-                  showSearch
-                  disabled={!logTargetConnectionId}
-                  loading={logTargetSchemasQuery.isFetching}
-                  options={logTargetSchemasQuery.data?.map((s) => ({ value: s, label: s }))}
-                  notFoundContent={schemaTableNotFoundContent(logTargetSchemasQuery, "스키마 없음")}
-                  placeholder={logTargetConnectionId ? "스키마 선택" : "먼저 타겟 연결을 선택하세요"}
-                  onChange={() => logForm.setFieldsValue({ targetTable: undefined })}
-                />
-              </Form.Item>
-              <Form.Item
-                name="targetTable"
-                label="타겟 테이블"
-                rules={[{ required: true }]}
-                style={{ width: 260 }}
-                tooltip="기존 테이블을 고르거나, 첫 배포 때 자동 생성될 새 테이블명을 직접 입력할 수 있습니다"
-              >
-                <AutoComplete
-                  disabled={!logTargetSchema}
-                  options={logTargetTablesQuery.data?.map((t) => ({ value: t, label: t }))}
-                  notFoundContent={schemaTableNotFoundContent(logTargetTablesQuery, "기존 테이블 없음 (새 이름으로 입력 가능)")}
-                  placeholder={logTargetSchema ? "기존 테이블 선택 또는 새 이름 입력" : "먼저 스키마를 선택하세요"}
-                  filterOption={(inputValue, option) =>
-                    (option?.value ?? "").toLowerCase().includes(inputValue.toLowerCase())
-                  }
-                />
-              </Form.Item>
-            </Space>
-            <Form.Item
-              name="topicName"
-              label="Kafka Topic"
-              tooltip="비우면 log-{파이프라인 ID}로 자동 생성됩니다"
-            >
-              <Input placeholder="비워두면 자동 생성" />
-            </Form.Item>
-            <Form.Item name="agentHost" label="Agent Host" tooltip="메타데이터용 식별 필드 (선택)">
-              <Input placeholder="예: filebeat" />
-            </Form.Item>
-            <Form.Item name="description" label="설명">
-              <Input.TextArea rows={2} />
-            </Form.Item>
-          </Form>
-        )}
-      </Modal>
 
       <Drawer
         title={detailPipeline ? `파이프라인 상세 · ${detailPipeline.name}` : "파이프라인 상세"}
