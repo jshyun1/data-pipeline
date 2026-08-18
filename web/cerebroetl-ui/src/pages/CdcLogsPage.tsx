@@ -1,15 +1,19 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Card, DatePicker, Input, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
+import { Alert, Button, Card, DatePicker, Drawer, Input, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
 import { InfoCircleFilled } from "@ant-design/icons";
 import { Line } from "@ant-design/plots";
 import dayjs, { type Dayjs } from "dayjs";
 import {
   listCdcEventLogs,
   listCdcProcessingLogs,
+  getDlqRecordDetail,
+  listDlqRecords,
   type CdcEventLogEntry,
   type CdcProcessingLogEntry,
+  type DlqRecordEntry,
 } from "../api/cdcLogs";
+import { listPipelines } from "../api/pipelines";
 
 const { RangePicker } = DatePicker;
 
@@ -96,6 +100,7 @@ export function CdcLogsPage() {
   const [eventResults, setEventResults] = useState<string[]>([]);
   const [selectedPipelineId, setSelectedPipelineId] = useState<number | undefined>();
   const [refreshSeconds, setRefreshSeconds] = useState(30);
+  const [selectedDlqRecord, setSelectedDlqRecord] = useState<DlqRecordEntry | null>(null);
 
   const from = appliedRange[0].format("YYYY-MM-DD");
   const to = appliedRange[1].format("YYYY-MM-DD");
@@ -110,6 +115,18 @@ export function CdcLogsPage() {
     queryFn: () => listCdcEventLogs(from, to),
     placeholderData: (previousData) => previousData,
     refetchInterval: refreshSeconds > 0 ? refreshSeconds * 1000 : false,
+  });
+  const pipelinesQuery = useQuery({ queryKey: ["pipelines"], queryFn: listPipelines });
+  const dlqQuery = useQuery({
+    queryKey: ["cdc-dlq", selectedPipelineId, appliedRange[0].toISOString(), appliedRange[1].toISOString()],
+    queryFn: () => listDlqRecords(selectedPipelineId!, appliedRange[0].toISOString(), appliedRange[1].toISOString()),
+    enabled: activeTab === "dlq" && selectedPipelineId != null,
+    refetchInterval: activeTab === "dlq" && refreshSeconds > 0 ? refreshSeconds * 1000 : false,
+  });
+  const dlqDetailQuery = useQuery({
+    queryKey: ["cdc-dlq-detail", selectedDlqRecord?.pipelineId, selectedDlqRecord?.partition, selectedDlqRecord?.offset],
+    queryFn: () => getDlqRecordDetail(selectedDlqRecord!.pipelineId, selectedDlqRecord!.partition, selectedDlqRecord!.offset),
+    enabled: selectedDlqRecord != null,
   });
 
   const normalizedKeyword = keyword.trim().toLowerCase();
@@ -149,10 +166,12 @@ export function CdcLogsPage() {
   );
   const pipelineOptions = useMemo(() => {
     const rows = [...(processingQuery.data ?? []), ...(eventsQuery.data ?? [])];
-    return [...new Map(rows.map((row) => [row.pipelineId, row.pipelineName])).entries()]
+    const names = new Map(rows.map((row) => [row.pipelineId, row.pipelineName]));
+    for (const pipeline of pipelinesQuery.data ?? []) names.set(pipeline.id, pipeline.name);
+    return [...names.entries()]
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [eventsQuery.data, processingQuery.data]);
+  }, [eventsQuery.data, pipelinesQuery.data, processingQuery.data]);
   const lagTrend = useMemo(() => processingRows
     .map((row) => ({ occurredAt: row.occurredAt, consumerLag: row.consumerLag, pipelineName: row.pipelineName }))
     .sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()), [processingRows]);
@@ -380,9 +399,48 @@ export function CdcLogsPage() {
                 />
               ),
             },
+            {
+              key: "dlq",
+              label: "실패 데이터",
+              children: (
+                <>
+                  <Alert type="warning" showIcon message="DLQ 조회 전용" description="현재는 실패 원인과 원문 확인만 지원합니다. 중복·순서 역전을 막을 승인 및 멱등성 정책이 마련되기 전까지 재처리는 제공하지 않습니다." style={{ marginBottom: 12 }} />
+                  {selectedPipelineId == null ? (
+                    <div style={{ padding: 48, textAlign: "center", color: "#999" }}>상단에서 파이프라인을 선택하세요.</div>
+                  ) : (
+                    <Table<DlqRecordEntry>
+                      rowKey={(row) => `${row.topic}-${row.partition}-${row.offset}`}
+                      size="small"
+                      loading={dlqQuery.isLoading}
+                      dataSource={dlqQuery.data}
+                      pagination={{ pageSize: 20 }}
+                      scroll={{ x: 1000 }}
+                      columns={[
+                        { title: "발생 시각", dataIndex: "occurredAt", width: 180, render: formatDateTime },
+                        { title: "파이프라인", dataIndex: "pipelineName", width: 160 },
+                        { title: "Connector", dataIndex: "connectorName", width: 190, render: (value: string | null) => value ?? "—" },
+                        { title: "오류 유형", dataIndex: "errorClass", width: 220, render: (value: string | null) => value ?? "—" },
+                        { title: "오류 메시지", dataIndex: "errorMessage", ellipsis: true, render: (value: string | null) => value ?? "—" },
+                        { title: "원문", width: 80, render: (_, row) => <Button size="small" onClick={() => setSelectedDlqRecord(row)}>보기</Button> },
+                      ]}
+                    />
+                  )}
+                </>
+              ),
+            },
           ]}
         />
       </Card>
+      <Drawer title="실패 데이터 원문" width={720} open={selectedDlqRecord != null} onClose={() => setSelectedDlqRecord(null)} destroyOnHidden>
+        {dlqDetailQuery.isLoading ? "불러오는 중…" : dlqDetailQuery.data ? <>
+          <Typography.Title level={5}>오류</Typography.Title>
+          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{dlqDetailQuery.data.errorMessage ?? "—"}</pre>
+          <Typography.Title level={5}>Key</Typography.Title>
+          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{dlqDetailQuery.data.key ?? "—"}</pre>
+          <Typography.Title level={5}>Payload</Typography.Title>
+          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{dlqDetailQuery.data.payload ?? "—"}</pre>
+        </> : <Alert type="error" message="원문을 불러올 수 없습니다." />}
+      </Drawer>
     </div>
   );
 }
