@@ -48,6 +48,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/health").permitAll()
                         // 현재 사용자 프로필 조회는 유효한 자체 토큰 필요
                         .requestMatchers("/api/auth/me").authenticated()
+                        .requestMatchers("/api/cdc/logs/dlq/replay-requests/**").authenticated()
                         // 나머지 업무 API는 이번 단계에선 개방 유지(위 주석 참고)
                         .anyRequest().permitAll())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)

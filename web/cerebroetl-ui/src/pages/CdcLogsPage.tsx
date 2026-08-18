@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Card, DatePicker, Drawer, Input, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Alert, Button, Card, DatePicker, Drawer, Input, message, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
 import { InfoCircleFilled } from "@ant-design/icons";
 import { Line } from "@ant-design/plots";
 import dayjs, { type Dayjs } from "dayjs";
@@ -9,11 +9,16 @@ import {
   listCdcProcessingLogs,
   getDlqRecordDetail,
   listDlqRecords,
+  approveDlqReplay,
+  listDlqReplayRequests,
+  requestDlqReplay,
   type CdcEventLogEntry,
   type CdcProcessingLogEntry,
   type DlqRecordEntry,
+  type DlqReplayRequestEntry,
 } from "../api/cdcLogs";
 import { listPipelines } from "../api/pipelines";
+import { useAuth } from "../auth/AuthContext";
 
 const { RangePicker } = DatePicker;
 
@@ -92,6 +97,8 @@ function ConnectorStateTitle({ label, description }: { label: string; descriptio
 }
 
 export function CdcLogsPage() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(24, "hour"), dayjs()]);
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
   const [keyword, setKeyword] = useState("");
@@ -101,6 +108,7 @@ export function CdcLogsPage() {
   const [selectedPipelineId, setSelectedPipelineId] = useState<number | undefined>();
   const [refreshSeconds, setRefreshSeconds] = useState(30);
   const [selectedDlqRecord, setSelectedDlqRecord] = useState<DlqRecordEntry | null>(null);
+  const [replayReason, setReplayReason] = useState("");
 
   const from = appliedRange[0].format("YYYY-MM-DD");
   const to = appliedRange[1].format("YYYY-MM-DD");
@@ -127,6 +135,23 @@ export function CdcLogsPage() {
     queryKey: ["cdc-dlq-detail", selectedDlqRecord?.pipelineId, selectedDlqRecord?.partition, selectedDlqRecord?.offset],
     queryFn: () => getDlqRecordDetail(selectedDlqRecord!.pipelineId, selectedDlqRecord!.partition, selectedDlqRecord!.offset),
     enabled: selectedDlqRecord != null,
+  });
+  const replayRequestsQuery = useQuery({
+    queryKey: ["cdc-dlq-replay-requests"], queryFn: listDlqReplayRequests, enabled: activeTab === "dlq",
+  });
+  const replayMutation = useMutation({
+    mutationFn: requestDlqReplay,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["cdc-dlq-replay-requests"] });
+      setReplayReason(""); setSelectedDlqRecord(null);
+      message.success(result.status === "SUCCEEDED" ? "재처리가 완료되었습니다." : "재처리 승인 요청이 등록되었습니다.");
+    },
+    onError: (error: Error) => message.error(error.message),
+  });
+  const approveMutation = useMutation({
+    mutationFn: approveDlqReplay,
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["cdc-dlq-replay-requests"] }); message.success("승인 및 재처리를 완료했습니다."); },
+    onError: (error: Error) => message.error(error.message),
   });
 
   const normalizedKeyword = keyword.trim().toLowerCase();
@@ -425,6 +450,20 @@ export function CdcLogsPage() {
                       ]}
                     />
                   )}
+                  <Typography.Title level={5} style={{ marginTop: 20 }}>재처리 요청 및 감사 이력</Typography.Title>
+                  <Table<DlqReplayRequestEntry>
+                    rowKey="id" size="small" loading={replayRequestsQuery.isLoading}
+                    dataSource={replayRequestsQuery.data} pagination={{ pageSize: 10 }} scroll={{ x: 1100 }}
+                    columns={[
+                      { title: "요청 시각", dataIndex: "requestedAt", width: 180, render: formatDateTime },
+                      { title: "요청자", dataIndex: "requestedBy", width: 110 },
+                      { title: "위험도", dataIndex: "riskLevel", width: 90, render: (value: string) => <Tag color={value === "HIGH" ? "error" : "blue"}>{value}</Tag> },
+                      { title: "대상", width: 170, render: (_, row) => `${row.dlqPartition}:${row.dlqOffset}` },
+                      { title: "사유", dataIndex: "reason", width: 220, ellipsis: true },
+                      { title: "상태", dataIndex: "status", width: 150, render: (value: string) => <Tag color={value === "SUCCEEDED" ? "success" : value === "FAILED" ? "error" : "warning"}>{value}</Tag> },
+                      { title: "승인/실행", width: 120, render: (_, row) => row.status.startsWith("PENDING") && user?.admin && row.requestedBy !== user.userId ? <Button size="small" type="primary" loading={approveMutation.isPending} onClick={() => approveMutation.mutate(row.id)}>승인 후 실행</Button> : row.approvedBy ?? "—" },
+                    ]}
+                  />
                 </>
               ),
             },
@@ -439,6 +478,9 @@ export function CdcLogsPage() {
           <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{dlqDetailQuery.data.key ?? "—"}</pre>
           <Typography.Title level={5}>Payload</Typography.Title>
           <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{dlqDetailQuery.data.payload ?? "—"}</pre>
+          <Alert type="warning" showIcon message="재처리 시 원본 Topic에 다시 발행됩니다" description="일반 단건은 관리자가 즉시 실행할 수 있지만 삭제 이벤트는 다른 관리자의 승인이 필요합니다." style={{ marginBottom: 12 }} />
+          <Input.TextArea rows={3} maxLength={1000} showCount value={replayReason} onChange={(event) => setReplayReason(event.target.value)} placeholder="재처리가 필요한 이유를 입력하세요." />
+          <Button type="primary" danger style={{ marginTop: 12 }} disabled={!replayReason.trim()} loading={replayMutation.isPending} onClick={() => selectedDlqRecord && replayMutation.mutate({ pipelineId: selectedDlqRecord.pipelineId, partition: selectedDlqRecord.partition, offset: selectedDlqRecord.offset, reason: replayReason })}>재처리 요청</Button>
         </> : <Alert type="error" message="원문을 불러올 수 없습니다." />}
       </Drawer>
     </div>

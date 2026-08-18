@@ -49,6 +49,13 @@ export interface DlqRecordDetail extends DlqRecordEntry {
   payload: string | null;
 }
 
+export interface DlqReplayRequestEntry {
+  id: number; pipelineId: number; dlqTopic: string; dlqPartition: number; dlqOffset: number;
+  originalTopic: string; riskLevel: "NORMAL" | "HIGH"; status: string; reason: string;
+  requestedBy: string; requestedAt: string; approvedBy: string | null; approvedAt: string | null;
+  executedAt: string | null; resultMessage: string | null;
+}
+
 export async function listCdcProcessingLogs(from: string, to: string): Promise<CdcProcessingLogEntry[]> {
   const res = await apiClient.get<ApiResponse<CdcProcessingLogEntry[]>>("/cdc/logs/processing", {
     params: { from, to },
@@ -70,5 +77,20 @@ export async function listDlqRecords(pipelineId: number, from: string, to: strin
 
 export async function getDlqRecordDetail(pipelineId: number, partition: number, offset: number): Promise<DlqRecordDetail> {
   const res = await apiClient.get<ApiResponse<DlqRecordDetail>>("/cdc/logs/dlq/detail", { params: { pipelineId, partition, offset } });
+  return unwrap(res.data);
+}
+
+export async function listDlqReplayRequests(): Promise<DlqReplayRequestEntry[]> {
+  const res = await apiClient.get<ApiResponse<DlqReplayRequestEntry[]>>("/cdc/logs/dlq/replay-requests");
+  return unwrap(res.data);
+}
+
+export async function requestDlqReplay(input: { pipelineId: number; partition: number; offset: number; reason: string }): Promise<DlqReplayRequestEntry> {
+  const res = await apiClient.post<ApiResponse<DlqReplayRequestEntry>>("/cdc/logs/dlq/replay-requests", input);
+  return unwrap(res.data);
+}
+
+export async function approveDlqReplay(id: number): Promise<DlqReplayRequestEntry> {
+  const res = await apiClient.post<ApiResponse<DlqReplayRequestEntry>>(`/cdc/logs/dlq/replay-requests/${id}/approve`);
   return unwrap(res.data);
 }

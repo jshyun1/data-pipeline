@@ -83,6 +83,20 @@ public class DlqReadService {
         throw new IllegalArgumentException("DLQ 레코드를 찾을 수 없습니다.");
     }
 
+    ConsumerRecord<byte[], byte[]> readRecord(Long pipelineId, int partition, long offset) {
+        findPipeline(pipelineId);
+        String topic = topic(pipelineId);
+        TopicPartition topicPartition = new TopicPartition(topic, partition);
+        try (KafkaConsumer<byte[], byte[]> consumer = consumer()) {
+            consumer.assign(List.of(topicPartition));
+            consumer.seek(topicPartition, offset);
+            for (ConsumerRecord<byte[], byte[]> record : consumer.poll(Duration.ofSeconds(2))) {
+                if (record.offset() == offset) return record;
+            }
+        }
+        throw new IllegalArgumentException("DLQ 레코드를 찾을 수 없습니다.");
+    }
+
     private KafkaConsumer<byte[], byte[]> consumer() {
         Properties config = new Properties();
         config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, properties.bootstrapServers());
