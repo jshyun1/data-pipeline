@@ -375,14 +375,21 @@ function ChannelsTab() {
     message.success(`${channelLabel(ch.channel_type)} 테스트 발송 요청됨`);
   }
 
+  // 화면알림(IN_APP)은 채널로 관리하지 않는다 — 알림 규칙을 «사용»으로 켜면 자동으로 화면에 뜬다.
+  const external = channels.filter((c) => c.channel_type !== "IN_APP");
   return (
-    <Table<ChannelConfig>
-      rowKey="channel_type"
-      loading={isLoading}
-      dataSource={channels}
-      pagination={false}
-      columns={[
-        { title: "채널", dataIndex: "channel_type", width: 120, render: (v: string) => channelLabel(v) },
+    <Space direction="vertical" style={{ width: "100%" }} size="small">
+      <span style={{ color: "#888", fontSize: 13 }}>
+        화면알림은 별도 설정이 없습니다 — 알림 규칙을 «사용»으로 켜면 조치 대기열·헤더 알림에 자동으로 표시됩니다.
+        외부 발송(이메일·SMS)만 여기서 켜고 끕니다.
+      </span>
+      <Table<ChannelConfig>
+        rowKey="channel_type"
+        loading={isLoading}
+        dataSource={external}
+        pagination={false}
+        columns={[
+          { title: "채널", dataIndex: "channel_type", width: 120, render: (v: string) => channelLabel(v) },
         { title: "서킷", dataIndex: "circuit_state", width: 120 },
         { title: "최근 실패", dataIndex: "last_failure_reason", render: (v: string | null) => v ?? "-" },
         {
@@ -400,8 +407,9 @@ function ChannelsTab() {
             </Button>
           ),
         },
-      ]}
-    />
+        ]}
+      />
+    </Space>
   );
 }
 

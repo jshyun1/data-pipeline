@@ -32,7 +32,7 @@ import { categorizeDag, NIFI_METRICS_COLLECTOR_DAG_ID, resolveDagDisplayName, ty
 import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
 import { InfraRegion } from "../components/InfraRegion";
 import { ActionQueuePanel } from "../components/ActionQueuePanel";
-import { TrendCharts } from "../components/TrendCharts";
+import { JobTop5Card } from "../components/JobTop5Card";
 import { ChangeIndicator, FlowStateNote, MetricRow, NowDivider, TimeBadge } from "../components/kpi/kpiBits";
 import { formatRecovery, judgeCdcFlow } from "../components/kpi/flowState";
 
@@ -40,7 +40,6 @@ const { RangePicker } = DatePicker;
 
 // 계열색: 상단 요약 카드의 강조색과 같은 값을 쓴다(같은 엔진이면 화면 어디서나 같은 색).
 // 상태색(정상/경고/중단)은 예약색이라 계열색으로 절대 쓰지 않는다.
-const NIFI_COLOR = "#e5484d";
 const CDC_COLOR = "#2878d0";
 
 interface DagInfo {
@@ -450,10 +449,6 @@ export function DashboardPage() {
     () => (kafkaLoadQuery.data?.daily ?? []).map((point) => ({ date: formatLoadDate(point.date), count: point.count })),
     [kafkaLoadQuery.data],
   );
-  const nifiLoadTop = useMemo(
-    () => (nifiLoadQuery.data?.topPipelines ?? []).map((point) => ({ label: point.label, count: point.count })),
-    [nifiLoadQuery.data],
-  );
   const kafkaLoadTop = useMemo(
     () => (kafkaLoadQuery.data?.topPipelines ?? []).map((point) => ({ label: point.label, count: point.count })),
     [kafkaLoadQuery.data],
@@ -733,10 +728,6 @@ export function DashboardPage() {
         </Card>
       </section>
 
-      {/* 원본 5-5: 실패·지연 추이 + Top 5 3종. 기간 프리셋과 자동 갱신은 이 구역이 자체적으로 갖는다
-          (상단 RangePicker 는 기존 일별 차트용으로 그대로 둔다). */}
-      <TrendCharts />
-
       <div className="dashboard-stats-grid">
         <ChartPanel
           title="ETL 일별·시간대별 적재 건수"
@@ -759,22 +750,7 @@ export function DashboardPage() {
           />
         </ChartPanel>
 
-        <ChartPanel
-          title="ETL Job 적재 건수 Top 5"
-          loading={nifiLoading}
-          hasData={nifiLoadTop.length > 0}
-          emptyText="조회 기간에 적재 이력이 없습니다."
-        >
-          <Column
-            autoFit
-            data={nifiLoadTop}
-            xField="label"
-            yField="count"
-            style={barStyle(NIFI_COLOR)}
-            axis={{ x: NAME_X_AXIS, y: COUNT_Y_AXIS }}
-            tooltip={COUNT_TOOLTIP}
-          />
-        </ChartPanel>
+        <JobTop5Card title="ETL Job Top 5" from={appliedRange[0]} to={appliedRange[1]} />
 
         <ChartPanel
           title="CDC 일별·시간대별 처리 건수"

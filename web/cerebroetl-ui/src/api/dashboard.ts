@@ -137,7 +137,12 @@ export interface Top5Response {
   items: Top5Item[];
 }
 
-export async function getDashboardTop5(metric: Top5Metric, preset: TrendPreset): Promise<Top5Response> {
-  const res = await apiClient.get<ApiResponse<Top5Response>>("/dashboard/top5", { params: { metric, preset } });
+export async function getDashboardTop5(
+  metric: Top5Metric,
+  opts: { preset?: TrendPreset; from?: string; to?: string },
+): Promise<Top5Response> {
+  const res = await apiClient.get<ApiResponse<Top5Response>>("/dashboard/top5", {
+    params: { metric, ...opts },
+  });
   return unwrap(res.data);
 }

@@ -9,7 +9,6 @@ import {
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  MonitorOutlined,
   NodeIndexOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
@@ -56,8 +55,6 @@ function AlertBell() {
 
 const NAV_ITEMS: NavItem[] = [
   { path: "/dashboard", label: "대시보드", icon: <DashboardOutlined /> },
-  { path: "/settings", label: "알림/발송 설정", icon: <SettingOutlined /> },
-  { path: "/self-check", label: "자가진단", icon: <MonitorOutlined /> },
   {
     path: "/airflow",
     label: "AirFlow",
@@ -85,6 +82,16 @@ const NAV_ITEMS: NavItem[] = [
       { path: "/cdc/pipelines", label: "파이프라인" },
       { path: "/cdc/connections", label: "연결정보" },
       { path: "/cdc/logs", label: "처리 로그" },
+    ],
+  },
+  {
+    path: "/settings",
+    label: "설정",
+    icon: <SettingOutlined />,
+    children: [
+      { path: "/settings", label: "알림/발송 관리" },
+      { path: "/users", label: "사용자 관리" },
+      { path: "/permissions", label: "권한 관리" },
     ],
   },
 ];
@@ -143,7 +150,13 @@ export function AppLayout() {
           <nav className="sidebar-nav" aria-label="주요 메뉴">
             {NAV_ITEMS.map((item) => {
               const groupPrefix = `/${item.path.split("/")[1]}`;
-              const active = location.pathname === item.path || location.pathname.startsWith(`${groupPrefix}/`);
+              const active =
+                location.pathname === item.path ||
+                location.pathname.startsWith(`${groupPrefix}/`) ||
+                (item.children?.some(
+                  (c) => location.pathname === c.path || location.pathname.startsWith(`${c.path}/`),
+                ) ??
+                  false);
               const expanded = item.children ? Boolean(openGroups[item.path]) || active : false;
               return (
                 <div key={item.path} className="sidebar-group">

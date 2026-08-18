@@ -108,43 +108,38 @@ public class DashboardTrendController {
     @GetMapping("/top5")
     public ApiResponse<Map<String, Object>> top5(
             @RequestParam(defaultValue = "count") String metric,
-            @RequestParam(defaultValue = "24h") String preset) {
+            @RequestParam(defaultValue = "24h") String preset,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        // from/to(YYYY-MM-DD)가 오면 상단 RangePicker 날짜범위로, 아니면 preset 롤링창으로 집계한다.
+        boolean useRange = from != null && !from.isBlank() && to != null && !to.isBlank();
         Window w = window(preset);
+        String timeCol = "duration".equals(metric) ? "r.started_at" : "occurred_at";
+        String timePred;
+        Object[] timeArgs;
+        if (useRange) {
+            timePred = timeCol + " >= ?::date AND " + timeCol + " < (?::date + 1)";
+            timeArgs = new Object[]{from, to};
+        } else {
+            timePred = timeCol + " >= now() - make_interval(mins => ?)";
+            timeArgs = new Object[]{w.minutes()};
+        }
         List<Map<String, Object>> rows = switch (metric) {
-            case "duration" -> jdbc.queryForList("""
-                    SELECT COALESCE(j.job_name, 'job#' || r.job_id) AS label,
-                           round(avg(EXTRACT(EPOCH FROM (r.ended_at - r.started_at))))::bigint AS value,
-                           count(*) AS runs,
-                           r.job_id AS job_id
-                    FROM etl_job_run r
-                    LEFT JOIN etl_job j ON j.id = r.job_id
-                    WHERE r.ended_at IS NOT NULL AND r.started_at >= now() - make_interval(mins => ?)
-                    GROUP BY r.job_id, j.job_name
-                    ORDER BY 2 DESC
-                    LIMIT 5
-                    """, w.minutes());
-            case "failure" -> jdbc.queryForList("""
-                    SELECT COALESCE(group_name, processor_name, '(미상)') AS label,
-                           count(*) AS value,
-                           count(*) AS runs,
-                           max(job_id) AS job_id
-                    FROM nifi_execution_log
-                    WHERE status = 'FAILED' AND occurred_at >= now() - make_interval(mins => ?)
-                    GROUP BY 1
-                    ORDER BY 2 DESC
-                    LIMIT 5
-                    """, w.minutes());
-            default -> jdbc.queryForList("""
-                    SELECT COALESCE(group_name, processor_name, '(미상)') AS label,
-                           COALESCE(sum(inserted_count), 0) AS value,
-                           count(*) AS runs,
-                           max(job_id) AS job_id
-                    FROM nifi_execution_log
-                    WHERE occurred_at >= now() - make_interval(mins => ?)
-                    GROUP BY 1
-                    ORDER BY 2 DESC
-                    LIMIT 5
-                    """, w.minutes());
+            case "duration" -> jdbc.queryForList(
+                    "SELECT COALESCE(j.job_name, 'job#' || r.job_id) AS label, "
+                            + "round(avg(EXTRACT(EPOCH FROM (r.ended_at - r.started_at))))::bigint AS value, "
+                            + "count(*) AS runs, r.job_id AS job_id "
+                            + "FROM etl_job_run r LEFT JOIN etl_job j ON j.id = r.job_id "
+                            + "WHERE r.ended_at IS NOT NULL AND " + timePred + " "
+                            + "GROUP BY r.job_id, j.job_name ORDER BY 2 DESC LIMIT 5", timeArgs);
+            case "failure" -> jdbc.queryForList(
+                    "SELECT COALESCE(group_name, processor_name, '(미상)') AS label, count(*) AS value, "
+                            + "count(*) AS runs, max(job_id) AS job_id FROM nifi_execution_log "
+                            + "WHERE status = 'FAILED' AND " + timePred + " GROUP BY 1 ORDER BY 2 DESC LIMIT 5", timeArgs);
+            default -> jdbc.queryForList(
+                    "SELECT COALESCE(group_name, processor_name, '(미상)') AS label, "
+                            + "COALESCE(sum(inserted_count), 0) AS value, count(*) AS runs, max(job_id) AS job_id "
+                            + "FROM nifi_execution_log WHERE " + timePred + " GROUP BY 1 ORDER BY 2 DESC LIMIT 5", timeArgs);
         };
         return ApiResponse.success(Map.of("metric", metric, "preset", preset, "items", rows));
     }
