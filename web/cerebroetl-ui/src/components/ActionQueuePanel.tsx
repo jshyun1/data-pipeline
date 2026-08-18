@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Dropdown, Empty, Modal, Spin, Tag, message } from "antd";
-import { ackAlert, getAlertQueue, snoozeAlert, type QueueItem } from "../api/alerts";
+import { Button, Empty, Modal, Spin, Tag, message } from "antd";
+import { ackAlert, getAlertQueue, type QueueItem } from "../api/alerts";
 
 /**
  * 조치 대기열 — 원본 문서 5-1. 대시보드 최상단(KPI 카드보다 위)에 놓인다.
@@ -20,20 +20,6 @@ const SEVERITY_META: Record<string, { icon: string; color: string; order: number
 
 /** 원본 5-1 "표시 건수: 상위 5건 + [모두 보기]". */
 const VISIBLE_LIMIT = 5;
-
-/** 원본 5-1 "스누즈: 1시간 / 4시간 / 오늘 하루". */
-const SNOOZE_OPTIONS = [
-  { key: "60", label: "1시간", minutes: 60 },
-  { key: "240", label: "4시간", minutes: 240 },
-  { key: "today", label: "오늘 하루", minutes: -1 },
-];
-
-function minutesUntilEndOfDay(): number {
-  const now = new Date();
-  const end = new Date(now);
-  end.setHours(23, 59, 59, 999);
-  return Math.max(1, Math.round((end.getTime() - now.getTime()) / 60000));
-}
 
 function formatDuration(sec: number | null): string {
   if (sec == null) return "";
@@ -138,16 +124,6 @@ export function ActionQueuePanel() {
     }
   }
 
-  async function handleSnooze(item: QueueItem, minutes: number) {
-    try {
-      await snoozeAlert(item.id, minutes < 0 ? minutesUntilEndOfDay() : minutes);
-      message.success("스누즈했습니다");
-      qc.invalidateQueries({ queryKey: ["alert-queue"] });
-    } catch {
-      message.error("스누즈에 실패했습니다");
-    }
-  }
-
   // 목록과 «모두 보기» 팝업이 같은 행 UI 를 쓰도록 한 곳에서 그린다.
   const renderItem = (item: QueueItem) => {
     const meta = SEVERITY_META[item.severity] ?? SEVERITY_META.INFO;
@@ -177,17 +153,6 @@ export function ActionQueuePanel() {
           <Button size="small" disabled={item.acked} onClick={() => handleAck(item)}>
             확인
           </Button>
-          <Dropdown
-            menu={{
-              items: SNOOZE_OPTIONS.map((o) => ({ key: o.key, label: o.label })),
-              onClick: ({ key }) => {
-                const opt = SNOOZE_OPTIONS.find((o) => o.key === key);
-                if (opt) handleSnooze(item, opt.minutes);
-              },
-            }}
-          >
-            <Button size="small">스누즈 ▾</Button>
-          </Dropdown>
         </div>
       </li>
     );
@@ -229,7 +194,7 @@ export function ActionQueuePanel() {
             </>
           )}
           <span className="action-queue-hint">
-            확인됨 {counts?.acked ?? 0} · 스누즈 {counts?.snoozed ?? 0} · 억제 {counts?.suppressed ?? 0}
+            확인됨 {counts?.acked ?? 0} · 억제 {counts?.suppressed ?? 0}
           </span>
         </div>
         <div className="action-queue-actions">

@@ -185,8 +185,6 @@ public class AlertAdminController {
 
     public record AckRequest(String comment) {}
 
-    public record SnoozeRequest(Integer minutes) {}
-
     @PostMapping("/api/alerts/{id}/ack")
     public ApiResponse<Void> ack(@PathVariable long id, @RequestBody(required = false) AckRequest req,
                                  @AuthenticationPrincipal AppUser user) {
@@ -206,19 +204,6 @@ public class AlertAdminController {
                 + "updated_at=now(), version=version+1 WHERE id=? AND closed_at IS NULL", id);
         requireFound(n, id);
         event(id, "UNACKED", actor, null);
-        return ApiResponse.success(null);
-    }
-
-    @PostMapping("/api/alerts/{id}/snooze")
-    public ApiResponse<Void> snooze(@PathVariable long id, @RequestBody SnoozeRequest req,
-                                    @AuthenticationPrincipal AppUser user) {
-        String actor = user != null ? user.getUserId() : "admin";
-        int minutes = req != null && req.minutes() != null ? req.minutes() : 60;
-        int n = jdbc.update("UPDATE alert_instance SET snooze_until=now() + (? * interval '1 minute'), "
-                + "snooze_by=?, updated_at=now(), version=version+1 WHERE id=? AND closed_at IS NULL",
-                minutes, actor, id);
-        requireFound(n, id);
-        event(id, "SNOOZED", actor, minutes + "분");
         return ApiResponse.success(null);
     }
 

@@ -566,8 +566,11 @@ public class AlertEngine {
     }
 
     private void resolve(Number id, String fromState) {
+        // 조건이 실제로 해제되면 자동으로 확인(ack) 처리한다 — 해소된 건이 «미확인»으로 남아
+        // 종 배지를 부풀리지 않게. 사람이 이미 확인했으면 그 기록을 유지한다.
         jdbc.update("UPDATE alert_instance SET state='RESOLVED', resolved_at=now(), closed_at=now(), "
                 + "display_until=now() + interval '24 hours', resolve_reason='CONDITION_CLEARED', "
+                + "ack_by=COALESCE(ack_by, 'SYSTEM'), ack_at=COALESCE(ack_at, now()), "
                 + "last_transition_at=now(), last_evaluated_at=now(), updated_at=now(), version=version+1 WHERE id=?", id);
         event(((Number) id).longValue(), "RESOLVED", fromState, "RESOLVED", "SYSTEM");
         log.info("알림 해소 {} (조건 해제)", id);

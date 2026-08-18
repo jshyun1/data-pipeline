@@ -45,10 +45,6 @@ export async function ackAlert(id: number, comment?: string): Promise<void> {
   await apiClient.post(`/alerts/${id}/ack`, { comment });
 }
 
-export async function snoozeAlert(id: number, minutes = 60): Promise<void> {
-  await apiClient.post(`/alerts/${id}/snooze`, { minutes });
-}
-
 /* -------------------------------------------------------------------------
  * 알림 이력 — 원본 5-7 / PDF 8쪽
  * 대기열은 "지금 열려 있는 것"만 본다. 종료된 알림과 확인 이력은 여기서 본다.
@@ -63,6 +59,8 @@ export interface HistoryItem {
   state: string;
   target_label: string | null;
   summary: string;
+  observed_value: number | null;
+  threshold_value: number | null;
   deep_link: string | null;
   ack_by: string | null;
   ack_at: string | null;

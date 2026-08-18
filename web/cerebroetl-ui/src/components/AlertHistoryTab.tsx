@@ -38,6 +38,36 @@ function formatWhen(iso: string | null): string {
   return iso.replace("T", " ").slice(0, 16);
 }
 
+// 상세 타임라인·정보를 한글로. 코드값이 그대로 노출되면 무슨 이력인지 알기 어렵다.
+const EVENT_LABEL: Record<string, string> = {
+  CREATED: "감지 · 알림 생성",
+  FIRED: "발화 · 알림 시작",
+  NOTIFIED: "발송 · 알림 전송",
+  RECURRED: "재발생 · 다시 알림",
+  ACKED: "확인",
+  UNACKED: "확인 취소",
+  RESOLVED: "해소 · 조건 해제",
+};
+const STATE_LABEL: Record<string, string> = {
+  PENDING: "대기",
+  FIRING: "발생 중",
+  RESOLVED: "해소",
+  UNKNOWN: "판단 불가",
+};
+const RULE_TYPE_LABEL: Record<string, string> = {
+  JOB_FAILURE: "ETL Job 실패",
+  JOB_CONSECUTIVE_FAILURE: "ETL Job 연속 실패",
+  JOB_NOT_RUN: "ETL Job 장기 미실행",
+  DATA_FRESHNESS: "적재 정체(신선도)",
+  CDC_LAG: "CDC 지연",
+  CONNECTOR_FAILED: "커넥터 실패",
+  SERVICE_UNREACHABLE: "서비스 응답없음",
+  SERVER_MEMORY: "서버 메모리 압박",
+  SERVER_DISK: "서버 디스크 부족",
+  COLLECTOR_DOWN: "수집기 중단",
+};
+const label = (map: Record<string, string>, k: string | null) => (k ? map[k] ?? k : "-");
+
 function EventTimeline({ id }: { id: number }) {
   const { data, isLoading } = useQuery({
     queryKey: ["alert-events", id],
@@ -51,9 +81,9 @@ function EventTimeline({ id }: { id: number }) {
       items={events.map((e) => ({
         children: (
           <span>
-            {formatWhen(e.occurred_at)} · <strong>{e.event_type}</strong>
-            {e.from_state ? ` (${e.from_state} → ${e.to_state})` : ""}
-            {e.actor && e.actor !== "SYSTEM" ? ` · ${e.actor}` : ""}
+            {formatWhen(e.occurred_at)} · <strong>{label(EVENT_LABEL, e.event_type)}</strong>
+            {e.from_state && e.to_state ? ` (${label(STATE_LABEL, e.from_state)} → ${label(STATE_LABEL, e.to_state)})` : ""}
+            {e.actor && e.actor !== "SYSTEM" ? ` · ${e.actor}` : e.actor === "SYSTEM" ? " · 자동" : ""}
           </span>
         ),
       }))}
@@ -204,6 +234,19 @@ export function AlertHistoryTab() {
         expandable={{
           expandedRowRender: (r) => (
             <div style={{ padding: "4px 8px" }}>
+              <div style={{ marginBottom: 10, fontSize: 13, color: "#334155", lineHeight: 1.7 }}>
+                <div style={{ fontWeight: 700, color: "#172033" }}>{r.summary}</div>
+                <div>
+                  대상: {r.target_label ?? "-"} · 유형: {label(RULE_TYPE_LABEL, r.rule_type_code)}
+                  {r.observed_value != null ? ` · 관측값 ${r.observed_value.toLocaleString()}` : ""}
+                  {r.threshold_value != null ? ` / 임계 ${r.threshold_value.toLocaleString()}` : ""}
+                </div>
+                <div>
+                  상태: {r.closed ? "해소됨" : "진행 중"}
+                  {r.acked ? ` · 확인: ${r.ack_by ?? "-"}${r.ack_at ? ` (${formatWhen(r.ack_at)})` : ""}` : " · 미확인"}
+                  {r.resolve_reason ? ` · 해소사유: ${r.resolve_reason === "CONDITION_CLEARED" ? "조건 해제" : r.resolve_reason}` : ""}
+                </div>
+              </div>
               <EventTimeline id={r.id} />
               {(() => {
                 const link = r.deep_link?.startsWith("/")

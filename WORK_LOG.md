@@ -1049,3 +1049,17 @@ PDF 5-1~5-7 요구사항과 병합본(내 작업 + 다른 PC pull) 대조 → �
    - **심각도 라우팅 재확인**: INFO=화면알림(IN_APP)만, WARNING/CRITICAL=EMAIL+SMS(WARNING 배치지연/
      CRITICAL 즉시). 각 수신자 구독 min_severity 로 추가 필터. «심각도 무관 전부 발송»이 아니다.
      (단, 발송채널 «테스트 발송» 버튼은 채널 점검용이라 심각도와 무관하게 즉시 발송.)
+
+## 26. 스누즈 제거 · 해소 시 자동확인 · 알림이력 상세 한글화
+사용자 요청. build→deploy→test 검증.
+
+1. **스누즈 기능 제거**: ActionQueuePanel 스누즈 드롭다운·핸들러·옵션 삭제, 헤더 "스누즈 N" 카운트 제거,
+   api/alerts snoozeAlert 삭제, 백엔드 AlertAdminController snooze 엔드포인트·SnoozeRequest 제거.
+   (alert_instance.snooze_* 컬럼과 큐의 스누즈 필터는 무해하게 잔존 — 항상 null이라 no-op.)
+2. **해소 시 자동 확인(ack)**: AlertEngine.resolve() 가 closed 처리 시 ack_by=COALESCE(ack_by,'SYSTEM'),
+   ack_at=COALESCE(ack_at,now()) 도 세팅 → 해소된 건이 «미확인»으로 남아 종 배지를 부풀리지 않음.
+   기존 해소+미확인 60건은 일회 백필(63→3 미확인). 사람이 이미 확인한 건은 그 기록 유지.
+   검증: DATA 정체 발화→재개→RESOLVED+ack_by=SYSTEM 확인.
+3. **알림 이력 상세 한글화**: EventTimeline 이벤트/상태 코드를 한글 라벨로(감지·생성/발화·알림시작/
+   발송·알림전송/재발생/확인/확인취소/해소·조건해제, 상태 대기·발생중·해소·판단불가, actor SYSTEM→자동).
+   상세 상단에 정보 블록 추가(내용·대상·유형(한글)·관측값/임계·상태·확인자·해소사유).
