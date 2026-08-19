@@ -22,6 +22,16 @@ const RUN_STATUS_COLOR: Record<string, string> = {
   SUCCESS: "success",
 };
 
+const EVENT_STATUS_LABEL: Record<string, string> = {
+  SUCCESS: "정상",
+  FAILED: "실패",
+};
+
+const EVENT_STATUS_COLOR: Record<string, string> = {
+  SUCCESS: "success",
+  FAILED: "error",
+};
+
 const LEVEL_LABEL: Record<string, string> = {
   ERROR: "오류",
   WARNING: "경고",
@@ -31,6 +41,15 @@ const LEVEL_COLOR: Record<string, string> = {
   ERROR: "error",
   WARNING: "warning",
 };
+
+interface NifiProcessorRunGroup {
+  groupKey: string;
+  groupName: string;
+  latestRun: NifiProcessorRun;
+  runs: NifiProcessorRun[];
+  runCount: number;
+  totalInserted: number;
+}
 
 function formatDateTime(value?: string | null) {
   if (!value) {
@@ -49,6 +68,14 @@ function formatDateTime(value?: string | null) {
 
 function formatCount(value?: number | null) {
   return value == null ? "-" : value.toLocaleString();
+}
+
+function eventGroupName(row: NifiExecutionLogEntry) {
+  return row.groupName ?? row.rootGroupName ?? "-";
+}
+
+function runGroupName(row: NifiProcessorRun) {
+  return row.groupName ?? "-";
 }
 
 /** 733초를 "12분 13초"처럼. 한 관측 주기 안에 끝난 구간은 0초로 들어온다. */
@@ -107,7 +134,8 @@ export function EtlLogsPage() {
       if (row.groupName) names.add(row.groupName);
     }
     for (const row of eventsQuery.data ?? []) {
-      if (row.groupName) names.add(row.groupName);
+      const name = eventGroupName(row);
+      if (name !== "-") names.add(name);
     }
     return [...names].sort().map((name) => ({ value: name, label: name }));
   }, [runsQuery.data, eventsQuery.data]);
@@ -127,6 +155,31 @@ export function EtlLogsPage() {
     });
   }, [runsQuery.data, keyword, groupFilter]);
 
+  const runGroupRows = useMemo<NifiProcessorRunGroup[]>(() => {
+    const groups = new Map<string, NifiProcessorRun[]>();
+    for (const row of runRows) {
+      const groupName = runGroupName(row);
+      const groupKey = row.groupId ?? groupName;
+      groups.set(groupKey, [...(groups.get(groupKey) ?? []), row]);
+    }
+
+    return [...groups.entries()]
+      .map(([groupKey, rows]) => {
+        const runs = [...rows].sort(
+          (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
+        );
+        return {
+          groupKey,
+          groupName: runGroupName(runs[0]),
+          latestRun: runs[0],
+          runs,
+          runCount: runs.length,
+          totalInserted: runs.reduce((sum, row) => sum + row.insertedCount, 0),
+        };
+      })
+      .sort((a, b) => new Date(b.latestRun.startedAt).getTime() - new Date(a.latestRun.startedAt).getTime());
+  }, [runRows]);
+
   // 오류·상태 이력은 bulletin 기반 행만 보여준다. 카운터 기반 SUCCESS 행은 처리 이력
   // 탭이 구간으로 대신 보여주므로, 여기 섞이면 같은 적재가 두 탭에 중복으로 나온다.
   const eventRows = useMemo(() => {
@@ -134,19 +187,20 @@ export function EtlLogsPage() {
     return (eventsQuery.data ?? [])
       .filter((row) => row.status !== "SUCCESS")
       .filter((row) => {
-        if (groupFilter.length > 0 && !groupFilter.includes(row.groupName ?? "")) {
+        const displayGroupName = eventGroupName(row);
+        if (groupFilter.length > 0 && !groupFilter.includes(displayGroupName)) {
           return false;
         }
         if (!needle) {
           return true;
         }
-        return [row.processorName, row.groupName, row.message].some((text) =>
+        return [row.processorName, displayGroupName, row.jobName, row.status, row.level, row.message].some((text) =>
           (text ?? "").toLowerCase().includes(needle),
         );
       });
   }, [eventsQuery.data, keyword, groupFilter]);
 
-  const errorCount = eventRows.filter((row) => row.level !== "WARNING").length;
+  const errorCount = eventRows.filter((row) => row.status === "FAILED" && row.level !== "WARNING").length;
 
   const filters = (
     <Space style={{ marginBottom: 16 }} wrap>
@@ -213,75 +267,149 @@ export function EtlLogsPage() {
                     적재 프로세서가 연속으로 일한 구간을 하나의 실행으로 묶어 표시합니다. 처리량은 적재 건수를
                     소요시간으로 나눈 값입니다.
                   </Typography.Text>
-                  <Table<NifiProcessorRun>
-                    rowKey="id"
+                  <Table<NifiProcessorRunGroup>
+                    rowKey="groupKey"
                     style={{ marginTop: 12 }}
                     size="small"
                     loading={runsQuery.isLoading && !runsQuery.data}
-                    dataSource={runRows}
+                    dataSource={runGroupRows}
                     pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
-                    scroll={{ x: 1470 }}
+                    scroll={{ x: 1330 }}
                     columns={[
-                      { title: "시작 시각", dataIndex: "startedAt", width: 180, fixed: "left", render: formatDateTime },
-                      { title: "종료 시각", dataIndex: "endedAt", width: 180, render: formatDateTime },
                       {
-                        title: "소요",
-                        dataIndex: "durationSeconds",
-                        width: 110,
-                        align: "right",
-                        render: formatDuration,
+                        title: "최근 시작 시각",
+                        dataIndex: ["latestRun", "startedAt"],
+                        width: 180,
+                        fixed: "left",
+                        render: formatDateTime,
                       },
-                      { title: "프로세서", dataIndex: "processorName", width: 190 },
                       {
-                        title: "유형",
-                        dataIndex: "processorType",
-                        width: 165,
-                        render: (value?: string | null) => value ?? "-",
+                        title: "최근 종료 시각",
+                        dataIndex: ["latestRun", "endedAt"],
+                        width: 180,
+                        render: formatDateTime,
                       },
                       {
                         title: "그룹(파이프라인)",
                         dataIndex: "groupName",
-                        width: 150,
+                        width: 180,
+                      },
+                      {
+                        title: "최근 프로세서",
+                        dataIndex: ["latestRun", "processorName"],
+                        width: 190,
+                      },
+                      {
+                        title: "최근 유형",
+                        dataIndex: ["latestRun", "processorType"],
+                        width: 165,
                         render: (value?: string | null) => value ?? "-",
                       },
                       {
-                        title: "적재 대상",
-                        dataIndex: "targetTable",
+                        title: "최근 적재 대상",
+                        dataIndex: ["latestRun", "targetTable"],
                         width: 190,
                         // 스크립트 안에 테이블명이 박혀 있는 적재(ExecuteGroovyScript)는
                         // 프로세서 설정에서 읽을 수 없어 비어 있다.
                         render: (value?: string | null) => value ?? "-",
                       },
                       {
-                        title: "적재 건수",
-                        dataIndex: "insertedCount",
+                        title: "최근 적재 건수",
+                        dataIndex: ["latestRun", "insertedCount"],
                         width: 120,
                         align: "right",
                         render: formatCount,
                       },
                       {
-                        title: "처리량",
-                        dataIndex: "rowsPerSecond",
-                        width: 125,
+                        title: "총 적재 건수",
+                        dataIndex: "totalInserted",
+                        width: 120,
                         align: "right",
-                        render: (value?: number | null) =>
-                          value == null ? (
-                            <Tooltip title="한 관측 주기(15초) 안에 끝나 소요시간을 잴 수 없습니다.">
-                              <span style={{ color: "#999" }}>-</span>
-                            </Tooltip>
-                          ) : (
-                            `${value.toLocaleString()} 행/초`
-                          ),
+                        render: formatCount,
                       },
                       {
-                        title: "상태",
-                        dataIndex: "status",
+                        title: "이력 수",
+                        dataIndex: "runCount",
+                        width: 90,
+                        align: "right",
+                        render: (value: number) => `${value.toLocaleString()}건`,
+                      },
+                      {
+                        title: "최근 상태",
+                        dataIndex: ["latestRun", "status"],
                         width: 100,
                         render: (value: string) => (
                           <Tag color={RUN_STATUS_COLOR[value] ?? "default"}>{RUN_STATUS_LABEL[value] ?? value}</Tag>
                         ),
                       },
                     ]}
+                    expandable={{
+                      expandedRowRender: (group) => (
+                        <Table<NifiProcessorRun>
+                          rowKey="id"
+                          size="small"
+                          dataSource={group.runs}
+                          pagination={false}
+                          scroll={{ x: 1470 }}
+                          columns={[
+                            { title: "시작 시각", dataIndex: "startedAt", width: 180, render: formatDateTime },
+                            { title: "종료 시각", dataIndex: "endedAt", width: 180, render: formatDateTime },
+                            {
+                              title: "소요",
+                              dataIndex: "durationSeconds",
+                              width: 110,
+                              align: "right",
+                              render: formatDuration,
+                            },
+                            { title: "프로세서", dataIndex: "processorName", width: 190 },
+                            {
+                              title: "유형",
+                              dataIndex: "processorType",
+                              width: 165,
+                              render: (value?: string | null) => value ?? "-",
+                            },
+                            {
+                              title: "적재 대상",
+                              dataIndex: "targetTable",
+                              width: 190,
+                              render: (value?: string | null) => value ?? "-",
+                            },
+                            {
+                              title: "적재 건수",
+                              dataIndex: "insertedCount",
+                              width: 120,
+                              align: "right",
+                              render: formatCount,
+                            },
+                            {
+                              title: "처리량",
+                              dataIndex: "rowsPerSecond",
+                              width: 125,
+                              align: "right",
+                              render: (value?: number | null) =>
+                                value == null ? (
+                                  <Tooltip title="한 관측 주기(15초) 안에 끝나 소요시간을 잴 수 없습니다.">
+                                    <span style={{ color: "#999" }}>-</span>
+                                  </Tooltip>
+                                ) : (
+                                  `${value.toLocaleString()} 행/초`
+                                ),
+                            },
+                            {
+                              title: "상태",
+                              dataIndex: "status",
+                              width: 100,
+                              render: (value: string) => (
+                                <Tag color={RUN_STATUS_COLOR[value] ?? "default"}>
+                                  {RUN_STATUS_LABEL[value] ?? value}
+                                </Tag>
+                              ),
+                            },
+                          ]}
+                        />
+                      ),
+                      rowExpandable: (group) => group.runs.length > 0,
+                    }}
                   />
                 </>
               ),
@@ -302,14 +430,23 @@ export function EtlLogsPage() {
                     loading={eventsQuery.isLoading && !eventsQuery.data}
                     dataSource={eventRows}
                     pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
+                    scroll={{ x: 1010 }}
                     columns={[
-                      { title: "발생 시각", dataIndex: "occurredAt", width: 190, render: formatDateTime },
+                      { title: "발생 시각", dataIndex: "occurredAt", width: 180, fixed: "left", render: formatDateTime },
                       { title: "프로세서", dataIndex: "processorName", width: 200 },
                       {
                         title: "그룹(파이프라인)",
                         dataIndex: "groupName",
                         width: 150,
-                        render: (value?: string | null) => value ?? "-",
+                        render: (_value: string | null | undefined, row) => eventGroupName(row),
+                      },
+                      {
+                        title: "상태",
+                        dataIndex: "status",
+                        width: 95,
+                        render: (value: string) => (
+                          <Tag color={EVENT_STATUS_COLOR[value] ?? "default"}>{EVENT_STATUS_LABEL[value] ?? value}</Tag>
+                        ),
                       },
                       {
                         title: "수준",
@@ -328,7 +465,9 @@ export function EtlLogsPage() {
                     // 실패 원인은 스택트레이스까지 길어서 한 줄에 다 못 보여준다.
                     expandable={{
                       expandedRowRender: (row) => (
-                        <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: 12 }}>{row.message}</pre>
+                        <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: 12 }}>
+                          {row.message ?? "상세 메시지 없음"}
+                        </pre>
                       ),
                       rowExpandable: (row) => Boolean(row.message),
                     }}

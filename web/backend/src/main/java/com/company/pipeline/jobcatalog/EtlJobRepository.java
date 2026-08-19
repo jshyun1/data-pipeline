@@ -8,6 +8,8 @@ public interface EtlJobRepository extends JpaRepository<EtlJob, Long> {
 
     Optional<EtlJob> findByNifiPgId(String nifiPgId);
 
+    List<EtlJob> findByNifiPgIdIn(List<String> nifiPgIds);
+
     List<EtlJob> findByDeletedAtIsNullOrderByJobNameAsc();
 
     long countByDeletedAtIsNull();

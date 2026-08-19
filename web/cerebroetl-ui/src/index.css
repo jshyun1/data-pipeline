@@ -802,6 +802,67 @@ button.airflow-tree-label:hover {
   gap: 6px;
 }
 
+.etl-truncate-sql {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+  width: min(520px, 100%);
+}
+
+.etl-truncate-sql-toggle {
+  justify-self: start;
+  min-height: 34px;
+  padding: 0 12px;
+  color: #1473e6;
+  background: #ffffff;
+  border: 1px solid #1473e6;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.etl-truncate-sql textarea {
+  min-height: 76px;
+  padding: 10px 12px;
+  border: 1px solid #b7c0cc;
+  border-radius: 5px;
+  color: #293442;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.etl-change-key-column {
+  width: min(520px, 100%);
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  align-items: stretch;
+  border: 1px solid #eceff3;
+  background: #ffffff;
+}
+
+.etl-change-key-column label {
+  min-height: 38px;
+  padding: 8px 10px;
+  color: #111827;
+  background: #f8fafc;
+  border-right: 1px solid #eceff3;
+  font-weight: 800;
+}
+
+.etl-change-key-column input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  color: #374151;
+  border: 0;
+  font: inherit;
+}
+
 .etl-preview-title {
   margin-top: 28px;
   color: #293442;
@@ -2108,6 +2169,23 @@ button.airflow-tree-label:hover {
   overflow-wrap: anywhere;
   color: #111827;
   font-weight: 600;
+}
+
+.nifi-detail-properties > div {
+  grid-template-columns: 1fr;
+  row-gap: 2px;
+}
+
+.nifi-detail-properties dt {
+  color: #475569;
+  font-size: 12px;
+}
+
+.nifi-detail-properties dd {
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .nifi-detail-link {

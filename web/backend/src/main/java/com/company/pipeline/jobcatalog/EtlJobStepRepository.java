@@ -8,6 +8,8 @@ public interface EtlJobStepRepository extends JpaRepository<EtlJobStep, Long> {
 
     Optional<EtlJobStep> findByNifiProcessorId(String nifiProcessorId);
 
+    List<EtlJobStep> findByNifiProcessorIdIn(List<String> nifiProcessorIds);
+
     List<EtlJobStep> findByJobIdAndDeletedAtIsNull(Long jobId);
 
     List<EtlJobStep> findByJobIdAndDeletedAtIsNullOrderByStepNameAsc(Long jobId);

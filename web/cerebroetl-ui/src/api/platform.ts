@@ -7,6 +7,9 @@ export interface NifiExecutionLogEntry {
   processorName: string;
   groupId?: string;
   groupName?: string;
+  jobId?: number | null;
+  jobName?: string | null;
+  rootGroupName?: string | null;
   occurredAt: string;
   /** 실패 행은 셀 대상이 없어 null. */
   insertedCount: number | null;
@@ -117,6 +120,88 @@ export interface NifiProcessGroupTreeNode {
   invalidCount: number;
   disabledCount: number;
   children: NifiProcessGroupTreeNode[];
+}
+
+export interface NifiProcessorDetailResponse {
+  id?: string;
+  revision?: { version?: number | null };
+  permissions?: { canRead?: boolean; canWrite?: boolean };
+  component?: {
+    id?: string;
+    parentGroupId?: string;
+    name?: string;
+    type?: string;
+    bundleGroup?: string;
+    bundleArtifact?: string;
+    bundleVersion?: string;
+    bundle?: { group?: string; artifact?: string; version?: string };
+    state?: string;
+    validationStatus?: string;
+    position?: { x?: number; y?: number };
+    comments?: string | null;
+    config?: {
+      properties?: Record<string, string | null | undefined>;
+      descriptors?: Record<
+        string,
+        {
+          name?: string;
+          displayName?: string;
+          description?: string;
+          sensitive?: boolean;
+          dynamic?: boolean;
+          required?: boolean;
+          identifiesControllerService?: boolean;
+        }
+      >;
+      schedulingStrategy?: string;
+      schedulingPeriod?: string;
+      executionNode?: string;
+      penaltyDuration?: string;
+      yieldDuration?: string;
+      concurrentlySchedulableTaskCount?: number;
+      comments?: string | null;
+      runDurationMillis?: string;
+      bulletinLevel?: string;
+      retryCount?: string;
+      retriedRelationships?: string;
+      autoTerminatedRelationships?: string[];
+    };
+    descriptors?: Record<string, NifiProcessorPropertyDescriptor>;
+    propertyDescriptors?: Record<string, NifiProcessorPropertyDescriptor>;
+    relationships?: Array<{ name?: string; description?: string; autoTerminate?: boolean }>;
+    autoTerminatedRelationships?: string[];
+    supportsParallelProcessing?: string;
+    supportsEventDriven?: string;
+    supportsBatching?: string;
+  };
+  status?: {
+    runStatus?: string;
+    validationStatus?: string;
+    activeThreadCount?: number;
+    aggregateSnapshot?: {
+      runStatus?: string;
+      validationStatus?: string;
+      activeThreadCount?: number;
+    };
+  };
+  bulletins?: Array<{
+    bulletin?: {
+      level?: string;
+      category?: string;
+      message?: string;
+      timestamp?: string;
+    };
+  }>;
+}
+
+interface NifiProcessorPropertyDescriptor {
+  name?: string;
+  displayName?: string;
+  description?: string;
+  sensitive?: boolean;
+  dynamic?: boolean;
+  required?: boolean;
+  identifiesControllerService?: boolean;
 }
 
 export interface NifiControllerServiceEntity {
@@ -334,7 +419,9 @@ export interface InitialDbToDbFlowCreateRequest {
   targetDatabaseType: string;
   targetSchema: string;
   targetTable: string;
-  loadMode: "INSERT";
+  loadMode: "INSERT" | "TRUNCATE" | "UPSERT";
+  truncateSql?: string;
+  changeKeyColumn?: string;
 }
 
 export async function createInitialDbToDbFlow(
@@ -347,6 +434,13 @@ export async function createInitialDbToDbFlow(
 export async function getNifiProcessGroupTree(): Promise<NifiProcessGroupTreeNode> {
   const res = await apiClient.get<ApiResponse<NifiProcessGroupTreeNode>>("/nifi/process-group-tree");
   return unwrap<NifiProcessGroupTreeNode>(res.data);
+}
+
+export async function getNifiProcessor(processorId: string): Promise<NifiProcessorDetailResponse> {
+  const res = await apiClient.get<ApiResponse<NifiProcessorDetailResponse>>(
+    `/nifi/processors/${encodeURIComponent(processorId)}`,
+  );
+  return unwrap<NifiProcessorDetailResponse>(res.data);
 }
 
 async function saveAirflowVariable(key: string, value: string): Promise<void> {
