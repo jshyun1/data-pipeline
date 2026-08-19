@@ -514,11 +514,25 @@ function ConnectionStep({
 
 function TargetStep({
   loadMode,
+  truncateSql,
+  changeKeyColumn,
+  showTruncateSql,
   onLoadModeChange,
+  onTruncateSqlChange,
+  onChangeKeyColumnChange,
+  onShowTruncateSqlChange,
 }: {
   loadMode: LoadMode;
   onLoadModeChange: (loadMode: LoadMode) => void;
+  truncateSql: string;
+  changeKeyColumn: string;
+  showTruncateSql: boolean;
+  onTruncateSqlChange: (truncateSql: string) => void;
+  onChangeKeyColumnChange: (changeKeyColumn: string) => void;
+  onShowTruncateSqlChange: (show: boolean) => void;
 }) {
+  const showChangeKeyColumn = loadMode === "TRUNCATE" || loadMode === "UPSERT";
+
   return (
     <div className="etl-target-preview">
       <div className="etl-load-mode">
@@ -551,6 +565,36 @@ function TargetStep({
           UPSERT
         </label>
       </div>
+      {loadMode === "TRUNCATE" ? (
+        <div className="etl-truncate-sql">
+          <button
+            type="button"
+            className="etl-truncate-sql-toggle"
+            onClick={() => onShowTruncateSqlChange(!showTruncateSql)}
+          >
+            TRUNCATE 문 직접 작성
+          </button>
+          {showTruncateSql ? (
+            <textarea
+              value={truncateSql}
+              onChange={(event) => onTruncateSqlChange(event.target.value)}
+              placeholder="예: TRUNCATE TABLE public.target_table"
+            />
+          ) : null}
+        </div>
+      ) : null}
+
+      {showChangeKeyColumn ? (
+        <div className="etl-change-key-column">
+          <label htmlFor="etl-change-key-column-input">변경기준 컬럼</label>
+          <input
+            id="etl-change-key-column-input"
+            value={changeKeyColumn}
+            onChange={(event) => onChangeKeyColumnChange(event.target.value)}
+            placeholder="예: UPDATED_AT"
+          />
+        </div>
+      ) : null}
 
       <div className="etl-preview-title">컬럼 매핑 미리보기</div>
       <table className="etl-preview-table">
@@ -660,6 +704,9 @@ export function EtlCreatePage() {
     targetTable: "",
   });
   const [loadMode, setLoadMode] = useState<LoadMode>("INSERT");
+  const [showTruncateSql, setShowTruncateSql] = useState(false);
+  const [truncateSql, setTruncateSql] = useState("");
+  const [changeKeyColumn, setChangeKeyColumn] = useState("");
 
   const moveStep = (stepId: WizardStepId) => {
     if (completed) {
@@ -674,10 +721,6 @@ export function EtlCreatePage() {
   };
 
   const completeWizard = async () => {
-    if (loadMode !== "INSERT") {
-      message.warning("현재 Initial 템플릿 복제는 INSERT 적재 방식만 지원합니다.");
-      return;
-    }
     if (!basicInfo.jobName.trim() || !basicInfo.parentGroupId) {
       message.warning("기본 정보의 작업명과 상위 그룹을 입력하세요.");
       moveStep("basic");
@@ -695,6 +738,10 @@ export function EtlCreatePage() {
       moveStep("connection");
       return;
     }
+    if (loadMode === "UPSERT" && !changeKeyColumn.trim()) {
+      message.warning("UPSERT 적재 방식은 변경기준 컬럼을 입력해야 합니다.");
+      return;
+    }
 
     setIsCreating(true);
     try {
@@ -710,7 +757,9 @@ export function EtlCreatePage() {
         targetDatabaseType: connectionInfo.targetDatabaseType,
         targetSchema: connectionInfo.targetSchema.trim(),
         targetTable: connectionInfo.targetTable.trim(),
-        loadMode: "INSERT",
+        loadMode,
+        truncateSql: loadMode === "TRUNCATE" ? truncateSql.trim() : undefined,
+        changeKeyColumn: (loadMode === "TRUNCATE" || loadMode === "UPSERT") ? changeKeyColumn.trim() : undefined,
       });
       const processGroupId = createdGroup.id;
       if (!processGroupId) {
@@ -722,7 +771,7 @@ export function EtlCreatePage() {
         processorCount: createdGroup.processorCount ?? 0,
         loadMode,
       });
-      message.success("NiFi Initial 그룹을 복제하고 설정을 반영했습니다.");
+      message.success("NiFi 템플릿 그룹을 복제하고 설정을 반영했습니다.");
       setCompleted(true);
       setActiveStep("target");
     } catch {
@@ -747,7 +796,23 @@ export function EtlCreatePage() {
         onChange={(nextValue) => setConnectionInfo((current) => ({ ...current, ...nextValue }))}
       />
     ),
-    target: <TargetStep loadMode={loadMode} onLoadModeChange={setLoadMode} />,
+    target: (
+      <TargetStep
+        loadMode={loadMode}
+        truncateSql={truncateSql}
+        changeKeyColumn={changeKeyColumn}
+        showTruncateSql={showTruncateSql}
+        onLoadModeChange={(nextLoadMode) => {
+          setLoadMode(nextLoadMode);
+          if (nextLoadMode !== "TRUNCATE") {
+            setShowTruncateSql(false);
+          }
+        }}
+        onTruncateSqlChange={setTruncateSql}
+        onChangeKeyColumnChange={setChangeKeyColumn}
+        onShowTruncateSqlChange={setShowTruncateSql}
+      />
+    ),
   } satisfies Record<WizardStepId, ReactNode>;
 
   return (
@@ -790,7 +855,12 @@ export function EtlCreatePage() {
 
         {!completed && activeStep === "target" ? (
           <div className="etl-target-actions">
-            <button type="button" className="etl-target-complete" disabled={isCreating} onClick={completeWizard}>
+            <button
+              type="button"
+              className="etl-target-complete"
+              disabled={isCreating || (loadMode === "UPSERT" && !changeKeyColumn.trim())}
+              onClick={completeWizard}
+            >
               {isCreating ? "생성 중" : "완료"}
             </button>
           </div>

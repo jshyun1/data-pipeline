@@ -10,10 +10,16 @@ import {
   type EtlJobResponse,
   type EtlJobRunResponse,
 } from "../api/etlJobs";
-import { getNifiProcessGroupTree, type NifiProcessGroupTreeNode } from "../api/platform";
+import {
+  getNifiProcessor,
+  getNifiProcessGroupTree,
+  type NifiProcessorDetailResponse,
+  type NifiProcessGroupTreeNode,
+} from "../api/platform";
 
 const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
 const CANVAS_SELECTION_SYNC_ATTRIBUTE = "data-cerebro-canvas-selection-sync";
+const KOREAN_TOOLTIP_PATCH_ATTRIBUTE = "data-cerebro-korean-tooltip-patch";
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
 // 보이게 한다. 번들 분석으로 실제 렌더링되는 요소를 확인한 선택자:
 // - NiFi: 두 곳에 있었다.
@@ -43,6 +49,18 @@ const HIDE_TOOL_CHROME_CSS = `
   .current-user, .current-user ~ a { display: none !important; }
 `;
 
+const NIFI_TOOLTIP_TEXT: Record<string, string> = {
+  Processor: "프로세서",
+  "Process Group": "프로세스 그룹",
+  "Remote Process Group": "원격 프로세스 그룹",
+  "Input Port": "입력 포트",
+  "Output Port": "출력 포트",
+  Funnel: "퍼널",
+  Label: "라벨",
+  Template: "템플릿",
+};
+const NIFI_TOOLTIP_ATTRIBUTES = ["title", "aria-label", "data-tooltip", "matTooltip", "mattooltip"];
+
 function iframeDocument(frame: HTMLIFrameElement) {
   try {
     return frame.contentDocument;
@@ -67,6 +85,57 @@ function hideToolChrome(frame: HTMLIFrameElement) {
   } catch {
     // 문서가 아직 교체 중이면 다음 iframe load에서 다시 시도한다.
   }
+}
+
+function patchKoreanTooltips(frame: HTMLIFrameElement) {
+  const doc = iframeDocument(frame);
+  if (!doc) {
+    return;
+  }
+
+  const patchElement = (element: Element) => {
+    NIFI_TOOLTIP_ATTRIBUTES.forEach((attributeName) => {
+      const value = element.getAttribute(attributeName);
+      const translated = value ? NIFI_TOOLTIP_TEXT[value.trim()] : undefined;
+      if (translated) {
+        element.setAttribute(attributeName, translated);
+      }
+    });
+  };
+
+  const patchDocument = () => {
+    doc.querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip]").forEach(patchElement);
+  };
+
+  patchDocument();
+
+  if (doc.documentElement.getAttribute(KOREAN_TOOLTIP_PATCH_ATTRIBUTE) === "true") {
+    return;
+  }
+  doc.documentElement.setAttribute(KOREAN_TOOLTIP_PATCH_ATTRIBUTE, "true");
+
+  const DocumentMutationObserver = doc.defaultView?.MutationObserver ?? MutationObserver;
+  const observer = new DocumentMutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      if (mutation.type === "attributes" && mutation.target instanceof Element) {
+        patchElement(mutation.target);
+      }
+      mutation.addedNodes.forEach((node) => {
+        if (!(node instanceof Element)) {
+          return;
+        }
+        patchElement(node);
+        node.querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip]").forEach(patchElement);
+      });
+    }
+  });
+
+  observer.observe(doc.documentElement, {
+    attributeFilter: NIFI_TOOLTIP_ATTRIBUTES,
+    attributes: true,
+    childList: true,
+    subtree: true,
+  });
 }
 
 function looksLikeUuid(value: string | null | undefined) {
@@ -127,7 +196,59 @@ function readProcessGroupIdFromOperationPanel(doc: Document) {
   return null;
 }
 
-function installCanvasSelectionSync(frame: HTMLIFrameElement, onProcessGroupSelect: (groupId: string) => void) {
+function readProcessorIdFromElement(element: Element | null) {
+  let current = element;
+  while (current && current instanceof Element) {
+    const className = elementClassName(current).toLowerCase();
+    const role = `${current.getAttribute("data-component-type") ?? ""} ${current.getAttribute("data-type") ?? ""}`.toLowerCase();
+    const isProcessorElement =
+      !className.includes("process-group") && (className.includes("processor") || /\bprocessor\b/.test(role));
+
+    if (isProcessorElement) {
+      const candidates = [
+        current.getAttribute("data-id"),
+        current.getAttribute("data-component-id"),
+        current.getAttribute("data-identifier"),
+        current.getAttribute("component-id"),
+        current.id,
+      ];
+      const matched = candidates.map(cleanDomId).find(looksLikeUuid);
+      if (matched) {
+        return matched;
+      }
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+type CanvasSelection =
+  | { type: "processGroup"; id: string }
+  | { type: "processor"; id: string };
+
+function readSelectionFromOperationPanel(doc: Document): CanvasSelection | null {
+  const panels = Array.from(doc.querySelectorAll("aside, section, div")).filter((element) =>
+    /operation/i.test(elementClassName(element)) || /Operation/.test(element.textContent ?? ""),
+  );
+
+  for (const panel of panels) {
+    const text = panel.textContent ?? "";
+    const id = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
+    if (!id) {
+      continue;
+    }
+    if (/Process\s+Group/i.test(text)) {
+      return { type: "processGroup", id };
+    }
+    if (/\bProcessor\b/i.test(text)) {
+      return { type: "processor", id };
+    }
+  }
+  const groupId = readProcessGroupIdFromOperationPanel(doc);
+  return groupId ? { type: "processGroup", id: groupId } : null;
+}
+
+function installCanvasSelectionSync(frame: HTMLIFrameElement, onSelectionChange: (selection: CanvasSelection) => void) {
   const doc = iframeDocument(frame);
   if (!doc || doc.documentElement.getAttribute(CANVAS_SELECTION_SYNC_ATTRIBUTE) === "true") {
     return;
@@ -135,16 +256,22 @@ function installCanvasSelectionSync(frame: HTMLIFrameElement, onProcessGroupSele
   doc.documentElement.setAttribute(CANVAS_SELECTION_SYNC_ATTRIBUTE, "true");
 
   const notifyFromDocument = (target: Element | null) => {
+    const clickedProcessorId = readProcessorIdFromElement(target);
+    if (clickedProcessorId) {
+      onSelectionChange({ type: "processor", id: clickedProcessorId });
+      return;
+    }
+
     const clickedGroupId = readProcessGroupIdFromElement(target);
     if (clickedGroupId) {
-      onProcessGroupSelect(clickedGroupId);
+      onSelectionChange({ type: "processGroup", id: clickedGroupId });
       return;
     }
 
     window.setTimeout(() => {
-      const selectedGroupId = readProcessGroupIdFromOperationPanel(doc);
-      if (selectedGroupId) {
-        onProcessGroupSelect(selectedGroupId);
+      const selected = readSelectionFromOperationPanel(doc);
+      if (selected) {
+        onSelectionChange(selected);
       }
     }, 80);
   };
@@ -389,6 +516,308 @@ function uniqueValues(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => !!value)));
 }
 
+function displayValue(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  if (typeof value === "boolean") {
+    return value ? "예" : "아니오";
+  }
+  if (Array.isArray(value)) {
+    return value.length ? value.join(", ") : "-";
+  }
+  return String(value);
+}
+
+function shortProcessorType(type?: string) {
+  if (!type) {
+    return "-";
+  }
+  const lastDot = type.lastIndexOf(".");
+  return lastDot < 0 ? type : type.slice(lastDot + 1);
+}
+
+function processorStateClass(processor: NifiProcessorDetailResponse | null) {
+  const runStatus = processor?.status?.aggregateSnapshot?.runStatus ?? processor?.status?.runStatus ?? processor?.component?.state;
+  const validationStatus =
+    processor?.status?.aggregateSnapshot?.validationStatus ??
+    processor?.status?.validationStatus ??
+    processor?.component?.validationStatus;
+  if (validationStatus?.toUpperCase() === "INVALID") {
+    return "error";
+  }
+  if (runStatus?.toUpperCase() === "RUNNING") {
+    return "running";
+  }
+  return "done";
+}
+
+function processorStateText(processor: NifiProcessorDetailResponse | null) {
+  const runStatus = processor?.status?.aggregateSnapshot?.runStatus ?? processor?.status?.runStatus ?? processor?.component?.state;
+  const validationStatus =
+    processor?.status?.aggregateSnapshot?.validationStatus ??
+    processor?.status?.validationStatus ??
+    processor?.component?.validationStatus;
+  if (validationStatus?.toUpperCase() === "INVALID") {
+    return "실패";
+  }
+  if (runStatus?.toUpperCase() === "RUNNING") {
+    return "실행중";
+  }
+  if (runStatus) {
+    return runStatus;
+  }
+  return "완료";
+}
+
+function propertyRows(processor: NifiProcessorDetailResponse | null) {
+  const properties = processor?.component?.config?.properties ?? {};
+  const descriptors =
+    processor?.component?.config?.descriptors ??
+    processor?.component?.descriptors ??
+    processor?.component?.propertyDescriptors ??
+    {};
+  return Object.entries(properties)
+    .map(([key, value]) => ({
+      key,
+      label: descriptors[key]?.displayName || descriptors[key]?.name || key,
+      value,
+      sensitive: descriptors[key]?.sensitive,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+interface ProcessorDetailPanelProps {
+  processorId: string;
+  onParentGroupFound?: (groupId: string) => void;
+}
+
+function ProcessorDetailPanel({ processorId, onParentGroupFound }: ProcessorDetailPanelProps) {
+  const [processor, setProcessor] = useState<NifiProcessorDetailResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
+    setProcessor(null);
+
+    getNifiProcessor(processorId)
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+        setProcessor(result);
+        if (result.component?.parentGroupId) {
+          onParentGroupFound?.(result.component.parentGroupId);
+        }
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setError(ex instanceof Error ? ex.message : "프로세서 상세를 불러오지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onParentGroupFound, processorId]);
+
+  const component = processor?.component;
+  const config = component?.config;
+  const bundle = component?.bundle;
+  const rows = propertyRows(processor);
+  const bulletins = processor?.bulletins?.map((entry) => entry.bulletin).filter(Boolean) ?? [];
+  const relationships = component?.relationships ?? [];
+  const autoTerminated = component?.autoTerminatedRelationships ?? config?.autoTerminatedRelationships ?? [];
+  const activeThreadCount = processor?.status?.aggregateSnapshot?.activeThreadCount ?? processor?.status?.activeThreadCount;
+
+  return (
+    <aside className="nifi-detail-panel" aria-label="선택한 프로세서 상세">
+      <div className="nifi-detail-header">
+        <div className="nifi-detail-title" title={component?.name ?? "프로세서"}>
+          {component?.name ?? "프로세서"}
+        </div>
+        <div className={`nifi-detail-status ${processorStateClass(processor)}`}>
+          <span className="nifi-detail-dot" aria-hidden="true" />
+          <span>{processorStateText(processor)}</span>
+          <span>{shortProcessorType(component?.type)}</span>
+        </div>
+      </div>
+
+      {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
+      {!isLoading && error ? <div className="nifi-detail-message error">조회 실패</div> : null}
+
+      <section className="nifi-detail-section">
+        <h3>기본 정보</h3>
+        <dl>
+          <div>
+            <dt>대상 유형</dt>
+            <dd>Processor</dd>
+          </div>
+          <div>
+            <dt>ID</dt>
+            <dd>{component?.id ?? processor?.id ?? processorId}</dd>
+          </div>
+          <div>
+            <dt>상위 그룹</dt>
+            <dd>{component?.parentGroupId ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>타입</dt>
+            <dd title={component?.type}>{shortProcessorType(component?.type)}</dd>
+          </div>
+          <div>
+            <dt>검증</dt>
+            <dd>{component?.validationStatus ?? processor?.status?.validationStatus ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>설명</dt>
+            <dd>{component?.comments ?? config?.comments ?? "-"}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="nifi-detail-section">
+        <h3>실행</h3>
+        <dl>
+          <div>
+            <dt>상태</dt>
+            <dd>{processor?.status?.aggregateSnapshot?.runStatus ?? processor?.status?.runStatus ?? component?.state ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>스케줄</dt>
+            <dd>{config?.schedulingStrategy ?? "-"} / {config?.schedulingPeriod ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>태스크</dt>
+            <dd>{displayValue(config?.concurrentlySchedulableTaskCount)}</dd>
+          </div>
+          <div>
+            <dt>스레드</dt>
+            <dd>{displayValue(activeThreadCount)}</dd>
+          </div>
+          <div>
+            <dt>실행 노드</dt>
+            <dd>{config?.executionNode ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>패널티</dt>
+            <dd>{config?.penaltyDuration ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>Yield</dt>
+            <dd>{config?.yieldDuration ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>Bulletin</dt>
+            <dd>{config?.bulletinLevel ?? "-"}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="nifi-detail-section">
+        <h3>번들 / 위치</h3>
+        <dl>
+          <div>
+            <dt>그룹</dt>
+            <dd>{component?.bundleGroup ?? bundle?.group ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>아티팩트</dt>
+            <dd>{component?.bundleArtifact ?? bundle?.artifact ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>버전</dt>
+            <dd>{component?.bundleVersion ?? bundle?.version ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>좌표</dt>
+            <dd>
+              {component?.position ? `${component.position.x ?? "-"}, ${component.position.y ?? "-"}` : "-"}
+            </dd>
+          </div>
+          <div>
+            <dt>Revision</dt>
+            <dd>{displayValue(processor?.revision?.version)}</dd>
+          </div>
+          <div>
+            <dt>권한</dt>
+            <dd>
+              읽기 {displayValue(processor?.permissions?.canRead)} / 쓰기{" "}
+              {displayValue(processor?.permissions?.canWrite)}
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="nifi-detail-section">
+        <h3>관계</h3>
+        {relationships.length || autoTerminated.length ? (
+          <dl>
+            {relationships.map((relationship) => (
+              <div key={relationship.name ?? relationship.description}>
+                <dt>{relationship.name ?? "-"}</dt>
+                <dd>{relationship.autoTerminate ? "자동 종료" : relationship.description ?? "-"}</dd>
+              </div>
+            ))}
+            {autoTerminated.length ? (
+              <div>
+                <dt>자동 종료</dt>
+                <dd>{autoTerminated.join(", ")}</dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : (
+          <div className="nifi-detail-empty">-</div>
+        )}
+      </section>
+
+      <section className="nifi-detail-section">
+        <h3>변수</h3>
+        {rows.length ? (
+          <dl className="nifi-detail-properties">
+            {rows.map((row) => (
+              <div key={row.key}>
+                <dt title={row.key}>{row.label}</dt>
+                <dd>{row.sensitive ? "********" : displayValue(row.value)}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <div className="nifi-detail-empty">-</div>
+        )}
+      </section>
+
+      <section className="nifi-detail-section">
+        <h3>알림</h3>
+        {bulletins.length ? (
+          <dl>
+            {bulletins.map((bulletin, index) => (
+              <div key={`${bulletin?.timestamp ?? index}-${bulletin?.message ?? ""}`}>
+                <dt>{bulletin?.level ?? "-"}</dt>
+                <dd>
+                  {[formatDateTime(bulletin?.timestamp), bulletin?.category, bulletin?.message]
+                    .filter(Boolean)
+                    .join(" / ")}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <div className="nifi-detail-empty">-</div>
+        )}
+      </section>
+    </aside>
+  );
+}
+
 interface ProcessGroupDetailPanelProps {
   activeGroupId: string | null;
   tree: NifiProcessGroupTreeNode | null;
@@ -608,10 +1037,14 @@ export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage, show
   const [processGroupTree, setProcessGroupTree] = useState<NifiProcessGroupTreeNode | null>(null);
   const processGroupId = new URLSearchParams(location.search).get("processGroupId");
   const [selectedProcessGroupId, setSelectedProcessGroupId] = useState<string | null>(processGroupId);
+  const [selectedCanvasItem, setSelectedCanvasItem] = useState<CanvasSelection | null>(
+    processGroupId ? { type: "processGroup", id: processGroupId } : null,
+  );
   const frameSrc = processGroupId ? withProcessGroupId(src, processGroupId) : src;
 
   useEffect(() => {
     setSelectedProcessGroupId(processGroupId);
+    setSelectedCanvasItem(processGroupId ? { type: "processGroup", id: processGroupId } : null);
   }, [processGroupId]);
 
   useEffect(() => {
@@ -660,15 +1093,19 @@ export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage, show
     setFrameKey((key) => key + 1);
   };
 
-  const selectCanvasProcessGroup = (groupId: string) => {
-    setSelectedProcessGroupId(groupId);
+  const selectCanvasItem = (selection: CanvasSelection) => {
+    setSelectedCanvasItem(selection);
+    if (selection.type === "processGroup") {
+      setSelectedProcessGroupId(selection.id);
+    }
   };
 
   const handleFrameLoad = (event: SyntheticEvent<HTMLIFrameElement>) => {
     const frame = event.currentTarget;
     hideToolChrome(frame);
+    patchKoreanTooltips(frame);
     if (showProcessGroupTree) {
-      installCanvasSelectionSync(frame, selectCanvasProcessGroup);
+      installCanvasSelectionSync(frame, selectCanvasItem);
     }
   };
 
@@ -699,7 +1136,13 @@ export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage, show
           />
         )}
       </div>
-      {showProcessGroupTree ? <ProcessGroupDetailPanel activeGroupId={selectedProcessGroupId} tree={processGroupTree} /> : null}
+      {showProcessGroupTree ? (
+        selectedCanvasItem?.type === "processor" ? (
+          <ProcessorDetailPanel processorId={selectedCanvasItem.id} onParentGroupFound={setSelectedProcessGroupId} />
+        ) : (
+          <ProcessGroupDetailPanel activeGroupId={selectedProcessGroupId} tree={processGroupTree} />
+        )
+      ) : null}
     </div>
   );
 }
