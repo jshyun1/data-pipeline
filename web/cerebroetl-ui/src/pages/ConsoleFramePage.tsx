@@ -93,6 +93,17 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     return;
   }
 
+  const patchTitleElement = (element: Element) => {
+    if (element.tagName.toLowerCase() !== "title") {
+      return;
+    }
+    const value = element.textContent?.trim();
+    const translated = value ? NIFI_TOOLTIP_TEXT[value] : undefined;
+    if (translated) {
+      element.textContent = translated;
+    }
+  };
+
   const patchElement = (element: Element) => {
     NIFI_TOOLTIP_ATTRIBUTES.forEach((attributeName) => {
       const value = element.getAttribute(attributeName);
@@ -101,10 +112,11 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
         element.setAttribute(attributeName, translated);
       }
     });
+    patchTitleElement(element);
   };
 
   const patchDocument = () => {
-    doc.querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip]").forEach(patchElement);
+    doc.querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], title").forEach(patchElement);
   };
 
   patchDocument();
@@ -120,12 +132,15 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
       if (mutation.type === "attributes" && mutation.target instanceof Element) {
         patchElement(mutation.target);
       }
+      if (mutation.type === "characterData" && mutation.target.parentElement) {
+        patchTitleElement(mutation.target.parentElement);
+      }
       mutation.addedNodes.forEach((node) => {
         if (!(node instanceof Element)) {
           return;
         }
         patchElement(node);
-        node.querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip]").forEach(patchElement);
+        node.querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], title").forEach(patchElement);
       });
     }
   });
@@ -133,6 +148,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
   observer.observe(doc.documentElement, {
     attributeFilter: NIFI_TOOLTIP_ATTRIBUTES,
     attributes: true,
+    characterData: true,
     childList: true,
     subtree: true,
   });
