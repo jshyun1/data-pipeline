@@ -87,6 +87,7 @@ function CdcCreateWizard() {
   const [selectedTables, setSelectedTables] = useState<string[]>([]);
   const [targetTableBySource, setTargetTableBySource] = useState<Record<string, string>>({});
   const [excludedColumnsBySource, setExcludedColumnsBySource] = useState<Record<string, string[]>>({});
+  const [maskedColumnsBySource, setMaskedColumnsBySource] = useState<Record<string, string[]>>({});
   const [tablePattern, setTablePattern] = useState("");
 
   const { data: connections, isLoading: connectionsLoading } = useQuery({
@@ -128,7 +129,7 @@ function CdcCreateWizard() {
       staleTime: 30_000,
     })),
   });
-  const sourceColumnsByTable = useMemo(() => Object.fromEntries(selectedTables.map((table, index) => [
+  const sourceMetadataByTable = useMemo(() => Object.fromEntries(selectedTables.map((table, index) => [
     table, sourceColumnQueries[index]?.data ?? [],
   ])), [selectedTables, sourceColumnQueries]);
 
@@ -193,8 +194,9 @@ function CdcCreateWizard() {
       sourceTable,
       targetTable: targetTableBySource[sourceTable] ?? sourceTable.toLowerCase(),
       excludedColumns: excludedColumnsBySource[sourceTable] ?? [],
+      maskedColumns: maskedColumnsBySource[sourceTable] ?? [],
     }));
-  }, [formValues, selectedTables, targetTableBySource, excludedColumnsBySource]);
+  }, [formValues, selectedTables, targetTableBySource, excludedColumnsBySource, maskedColumnsBySource]);
 
   const createMutation = useMutation({
     mutationFn: async (requests: PipelineCreateRequest[]) => requests.length === 1
@@ -217,6 +219,7 @@ function CdcCreateWizard() {
     `${request.topicPrefix}.${request.sourceSchema}.${request.sourceTable}`), [batchRequests]);
   const filteredSourceTables = useMemo(() => (sourceTablesQuery.data ?? [])
     .filter((table) => matchesTablePattern(table, tablePattern)), [sourceTablesQuery.data, tablePattern]);
+  const hasMaskedColumns = Object.values(maskedColumnsBySource).some((columns) => columns.length > 0);
 
   if (createdPipelines.length > 0) {
     return (
@@ -237,6 +240,7 @@ function CdcCreateWizard() {
               setSelectedTables([]);
               setTargetTableBySource({});
               setExcludedColumnsBySource({});
+              setMaskedColumnsBySource({});
               setTablePattern("");
               setActiveStep("basic");
             }}>하나 더 생성</Button>,
@@ -316,7 +320,7 @@ function CdcCreateWizard() {
                             setSourceTestedId(null);
                             invalidateFrom("connections");
                             form.setFieldsValue({ sourceSchema: undefined, sourceTable: undefined });
-                            setSelectedTables([]); setTargetTableBySource({}); setExcludedColumnsBySource({}); setTablePattern("");
+                            setSelectedTables([]); setTargetTableBySource({}); setExcludedColumnsBySource({}); setMaskedColumnsBySource({}); setTablePattern("");
                             if (!form.getFieldValue("topicPrefix")) {
                               const selected = connections?.find((connection) => connection.id === value);
                               if (selected) form.setFieldValue("topicPrefix", `${selected.dbType.toLowerCase()}-cdc`);
@@ -378,7 +382,7 @@ function CdcCreateWizard() {
                         notFoundContent={schemaTableNotFoundContent(sourceSchemasQuery, "스키마 없음")}
                         onChange={() => {
                           form.setFieldsValue({ sourceTable: undefined, targetTable: undefined });
-                          setSelectedTables([]); setTargetTableBySource({}); setExcludedColumnsBySource({}); setTablePattern(""); invalidateFrom("targets");
+                          setSelectedTables([]); setTargetTableBySource({}); setExcludedColumnsBySource({}); setMaskedColumnsBySource({}); setTablePattern(""); invalidateFrom("targets");
                         }} />
                     </Form.Item>
                     <Form.Item name="targetSchema" label="타깃 스키마" rules={[{ required: true }]} style={{ minWidth: 300, flex: 1 }}>
@@ -410,12 +414,22 @@ function CdcCreateWizard() {
                         setSelectedTables(next);
                         setTargetTableBySource((previous) => Object.fromEntries(next.map((table) => [table, previous[table] ?? table.toLowerCase()])));
                         setExcludedColumnsBySource((previous) => Object.fromEntries(next.map((table) => [table, previous[table] ?? []])));
+                        setMaskedColumnsBySource((previous) => Object.fromEntries(next.map((table) => [table, previous[table] ?? []])));
                         invalidateFrom("targets");
                       },
-                      getCheckboxProps: (row) => ({ disabled: selectedTables.length >= 50 && !selectedTables.includes(row.sourceTable) }),
+                      getCheckboxProps: (row) => ({
+                        disabled: (selectedTables.length >= 50 && !selectedTables.includes(row.sourceTable))
+                          || (!selectedTables.includes(row.sourceTable) && sourceMetadataByTable[row.sourceTable]?.length > 0
+                            && !sourceMetadataByTable[row.sourceTable].some((column) => column.primaryKey)),
+                      }),
                     }}
                     columns={[
-                      { title: "소스 테이블", dataIndex: "sourceTable", width: "25%" },
+                      { title: "소스 테이블", dataIndex: "sourceTable", width: "20%", render: (value) => {
+                        const metadata = sourceMetadataByTable[value] ?? [];
+                        const keys = metadata.filter((column) => column.primaryKey).map((column) => column.name);
+                        return <Space direction="vertical" size={2}><span>{value}</span>{metadata.length > 0 && (keys.length > 0
+                          ? <Tag color="success">PK · {keys.join(", ")}</Tag> : <Tag color="error">PK 없음</Tag>)}</Space>;
+                      } },
                       {
                         title: "타깃 테이블",
                         render: (_, row) => {
@@ -450,14 +464,15 @@ function CdcCreateWizard() {
                         width: "33%",
                         render: (_, row) => {
                           const selected = selectedTables.includes(row.sourceTable);
-                          const columns = sourceColumnsByTable[row.sourceTable] ?? [];
+                          const columns = sourceMetadataByTable[row.sourceTable] ?? [];
+                          const masked = maskedColumnsBySource[row.sourceTable] ?? [];
                           return <Select
                             mode="multiple"
                             allowClear
                             disabled={!selected}
                             loading={selected && columns.length === 0 && sourceColumnQueries[selectedTables.indexOf(row.sourceTable)]?.isFetching}
                             value={excludedColumnsBySource[row.sourceTable] ?? []}
-                            options={columns.map((value) => ({ value }))}
+                            options={columns.map((column) => ({ value: column.name, disabled: column.primaryKey || masked.includes(column.name), label: column.primaryKey ? `${column.name} (PK)` : column.name }))}
                             placeholder="전송하지 않을 컬럼"
                             maxTagCount="responsive"
                             style={{ width: "100%" }}
@@ -465,13 +480,45 @@ function CdcCreateWizard() {
                           />;
                         },
                       },
+                      {
+                        title: "마스킹 컬럼 (선택)",
+                        width: "27%",
+                        render: (_, row) => {
+                          const selected = selectedTables.includes(row.sourceTable);
+                          const columns = sourceMetadataByTable[row.sourceTable] ?? [];
+                          const excluded = excludedColumnsBySource[row.sourceTable] ?? [];
+                          return <Select
+                            mode="multiple" allowClear disabled={!selected}
+                            value={maskedColumnsBySource[row.sourceTable] ?? []}
+                            options={columns.map((column) => ({
+                              value: column.name,
+                              disabled: column.primaryKey || !column.maskable || excluded.includes(column.name),
+                              label: `${column.name} (${column.dataType}${column.primaryKey ? ", PK" : !column.maskable ? ", 마스킹 불가" : ""})`,
+                            }))}
+                            placeholder="8자리로 마스킹할 컬럼" maxTagCount="responsive" style={{ width: "100%" }}
+                            onChange={(value) => { setMaskedColumnsBySource((previous) => ({ ...previous, [row.sourceTable]: value })); invalidateFrom("targets"); }}
+                          />;
+                        },
+                      },
                     ]}
                   />
+                  {hasMaskedColumns && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="마스킹된 값은 타깃에서 원본으로 복원할 수 없습니다"
+                      description="원본 값을 화면에 표시해야 하는 컬럼은 CDC 마스킹을 사용하지 말고, API·화면의 조회 권한과 표시 단계 마스킹으로 보호하세요. 마스킹을 나중에 해제해도 이미 적재된 값은 자동 복구되지 않습니다."
+                      style={{ marginBottom: 16 }}
+                    />
+                  )}
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <Button onClick={() => setActiveStep("connections")}>이전</Button>
                     <Button type="primary" onClick={async () => {
                       await form.validateFields(["sourceSchema", "targetSchema"]);
                       if (selectedTables.length === 0) { message.error("소스 테이블을 하나 이상 선택하세요."); return; }
+                      if (sourceColumnQueries.some((query) => query.isFetching)) { message.info("선택한 테이블의 PK와 컬럼 정보를 조회 중입니다."); return; }
+                      const noPrimaryKey = selectedTables.filter((table) => !(sourceMetadataByTable[table] ?? []).some((column) => column.primaryKey));
+                      if (noPrimaryKey.length > 0) { message.error(`PK가 없는 테이블은 CDC로 생성할 수 없습니다: ${noPrimaryKey.join(", ")}`); return; }
                       if (selectedTables.some((table) => !(targetTableBySource[table] ?? "").trim())) { message.error("선택한 모든 타깃 테이블명을 입력하세요."); return; }
                       completeAndOpen("targets", "options");
                     }}>다음: 실행 옵션</Button>
@@ -548,6 +595,7 @@ function CdcCreateWizard() {
                       { title: "소스", width: 180, render: (_, row) => `${row.sourceSchema}.${row.sourceTable}` },
                       { title: "타깃", width: 220, render: (_, row) => <Space size={4} wrap><span>{row.targetSchema}.{row.targetTable}</span>{findExistingTable(targetTablesQuery.data, row.targetTable) ? <Tag color="success">기존</Tag> : <Tag color="processing">신규</Tag>}</Space> },
                       { title: "제외 컬럼", width: 160, render: (_, row) => row.excludedColumns?.length ? row.excludedColumns.join(", ") : "없음" },
+                      { title: "마스킹 컬럼", width: 160, render: (_, row) => row.maskedColumns?.length ? row.maskedColumns.join(", ") : "없음" },
                       { title: "Topic", width: 220, render: (_, row) => `${row.topicPrefix}.${row.sourceSchema}.${row.sourceTable}` },
                     ]}
                   />
@@ -557,6 +605,15 @@ function CdcCreateWizard() {
                       showIcon
                       message="신규 타깃 테이블은 첫 데이터 도착 시 생성됩니다"
                       description="타깃 스키마는 미리 존재해야 합니다. NO_DATA 모드에서는 소스 변경이 발생하기 전까지 테이블이 생성되지 않을 수 있습니다."
+                      style={{ marginTop: 12 }}
+                    />
+                  )}
+                  {hasMaskedColumns && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="마스킹 정책 최종 확인"
+                      description="선택한 컬럼의 원본 값은 Kafka와 타깃 DB에 전달되지 않으며 복원할 수 없습니다. 원본 조회가 필요한 컬럼인지 생성 전에 다시 확인하세요."
                       style={{ marginTop: 12 }}
                     />
                   )}

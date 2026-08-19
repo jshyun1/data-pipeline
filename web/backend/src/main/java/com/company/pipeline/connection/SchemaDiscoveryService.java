@@ -3,6 +3,7 @@ package com.company.pipeline.connection;
 import com.company.pipeline.common.BusinessException;
 import com.company.pipeline.common.ErrorCode;
 import com.company.pipeline.common.crypto.PasswordCryptoService;
+import com.company.pipeline.connection.dto.ColumnMetadataResponse;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
@@ -81,12 +82,26 @@ public class SchemaDiscoveryService {
         }
     }
 
-    public List<String> listColumns(Long connectionId, String schema, String table) {
+    public List<ColumnMetadataResponse> listColumns(Long connectionId, String schema, String table) {
         PipelineConnection connection = findOrThrow(connectionId);
         try (Connection jdbc = open(connection)) {
-            List<String> columns = new ArrayList<>();
+            Set<String> primaryKeys = new java.util.HashSet<>();
+            try (ResultSet rs = jdbc.getMetaData().getPrimaryKeys(null, schema, table)) {
+                while (rs.next()) primaryKeys.add(rs.getString("COLUMN_NAME").toLowerCase());
+            }
+            List<ColumnMetadataResponse> columns = new ArrayList<>();
             try (ResultSet rs = jdbc.getMetaData().getColumns(null, schema, table, "%")) {
-                while (rs.next()) columns.add(rs.getString("COLUMN_NAME"));
+                while (rs.next()) {
+                    String name = rs.getString("COLUMN_NAME");
+                    int jdbcType = rs.getInt("DATA_TYPE");
+                    boolean maskable = switch (jdbcType) {
+                        case java.sql.Types.CHAR, java.sql.Types.VARCHAR, java.sql.Types.LONGVARCHAR,
+                                java.sql.Types.NCHAR, java.sql.Types.NVARCHAR, java.sql.Types.LONGNVARCHAR -> true;
+                        default -> false;
+                    };
+                    columns.add(new ColumnMetadataResponse(name, rs.getString("TYPE_NAME"),
+                            primaryKeys.contains(name.toLowerCase()), maskable));
+                }
             }
             return columns;
         } catch (SQLException e) {

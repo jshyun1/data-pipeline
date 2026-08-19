@@ -70,8 +70,10 @@ export async function listConnectionTables(connectionId: number, schema: string)
   return unwrap(res.data);
 }
 
-export async function listConnectionColumns(connectionId: number, schema: string, table: string): Promise<string[]> {
-  const res = await apiClient.get<ApiResponse<string[]>>(`/connections/${connectionId}/columns`, {
+export interface ColumnMetadataResponse { name: string; dataType: string; primaryKey: boolean; maskable: boolean }
+
+export async function listConnectionColumns(connectionId: number, schema: string, table: string): Promise<ColumnMetadataResponse[]> {
+  const res = await apiClient.get<ApiResponse<ColumnMetadataResponse[]>>(`/connections/${connectionId}/columns`, {
     params: { schema, table },
   });
   return unwrap(res.data);

@@ -78,6 +78,12 @@ public class DebeziumOracleTemplate {
                     .map(column -> tableIncludeList + "." + column)
                     .collect(java.util.stream.Collectors.joining(",")));
         }
+        if (request.maskedColumns() != null && !request.maskedColumns().isBlank()) {
+            config.put("column.mask.with.8.chars", java.util.Arrays.stream(request.maskedColumns().split(","))
+                    .map(String::trim).filter(value -> !value.isEmpty())
+                    .map(column -> tableIncludeList + "." + column)
+                    .collect(java.util.stream.Collectors.joining(",")));
+        }
         config.put("tombstones.on.delete", "false");
         config.put("decimal.handling.mode", "double");
         config.put("include.schema.changes", "true");

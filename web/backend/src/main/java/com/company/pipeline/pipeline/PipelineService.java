@@ -113,6 +113,16 @@ public class PipelineService {
         entity.setExcludedColumns(request.excludedColumns() == null ? null
                 : request.excludedColumns().stream().map(String::trim).filter(value -> !value.isEmpty())
                         .distinct().sorted().reduce((left, right) -> left + "," + right).orElse(null));
+        entity.setMaskedColumns(request.maskedColumns() == null ? null
+                : request.maskedColumns().stream().map(String::trim).filter(value -> !value.isEmpty())
+                        .distinct().sorted().reduce((left, right) -> left + "," + right).orElse(null));
+        if (entity.getExcludedColumns() != null && entity.getMaskedColumns() != null) {
+            Set<String> excluded = Set.of(entity.getExcludedColumns().toLowerCase().split(","));
+            boolean overlap = java.util.Arrays.stream(entity.getMaskedColumns().toLowerCase().split(","))
+                    .anyMatch(excluded::contains);
+            if (overlap) throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "같은 컬럼을 제외와 마스킹에 동시에 지정할 수 없습니다.");
+        }
         return entity;
     }
 

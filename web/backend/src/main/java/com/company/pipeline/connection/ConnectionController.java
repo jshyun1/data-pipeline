@@ -8,6 +8,7 @@ import com.company.pipeline.connection.dto.ConnectionTestResponse;
 import com.company.pipeline.connection.dto.ConnectionUpdateRequest;
 import com.company.pipeline.connection.dto.ConnectionUsageResponse;
 import com.company.pipeline.connection.dto.CdcPrerequisiteResponse;
+import com.company.pipeline.connection.dto.ColumnMetadataResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -112,7 +113,7 @@ public class ConnectionController {
     }
 
     @GetMapping("/{id}/columns")
-    public ApiResponse<List<String>> listColumns(@PathVariable Long id, @RequestParam String schema,
+    public ApiResponse<List<ColumnMetadataResponse>> listColumns(@PathVariable Long id, @RequestParam String schema,
             @RequestParam String table) {
         return ApiResponse.success(schemaDiscoveryService.listColumns(id, schema, table));
     }
