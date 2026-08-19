@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<tenants>
+    <groups/>
+    <users>
+        <user identifier="03d4a4c4-df34-368a-a90a-5c8be8247f62" identity="cerebro-admin"/>
+        <user identifier="67062b75-f0d3-4b12-843e-7b27748d588c" identity="admin"/>
+            <user identifier="4d764e99-7fc2-4f7f-9c59-b3baea07284e" identity="8f55f947-9952-4130-8cda-3f24bd129c3e"/>
+    </users>
+</tenants>
