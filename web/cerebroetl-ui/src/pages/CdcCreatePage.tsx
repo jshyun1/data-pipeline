@@ -15,6 +15,7 @@ import {
   Select,
   Space,
   Spin,
+  Table,
   Tabs,
   Tag,
   Typography,
@@ -22,7 +23,7 @@ import {
 import { CheckCircleOutlined, LockOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { listConnections, listConnectionSchemas, listConnectionTables, testConnection } from "../api/connections";
-import { createLogFilePipeline, createPipeline } from "../api/pipelines";
+import { createLogFilePipeline, createPipeline, createPipelineBatch } from "../api/pipelines";
 import type { ConnectionResponse } from "../types/connection";
 import type { LogPipelineCreateRequest, PipelineCreateRequest, PipelineResponse } from "../types/pipeline";
 
@@ -57,6 +58,23 @@ function connectionLabel(connection: ConnectionResponse) {
   return `${connection.name} (${connection.dbType} · ${connection.host}:${connection.port})`;
 }
 
+function pipelineTableSuffix(table: string) {
+  return table.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function matchesTablePattern(table: string, pattern: string) {
+  const trimmed = pattern.trim();
+  if (!trimmed) return true;
+  const escaped = trimmed.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".");
+  try { return new RegExp(`^${escaped}$`, "i").test(table) || table.toLowerCase().includes(trimmed.toLowerCase()); }
+  catch { return table.toLowerCase().includes(trimmed.toLowerCase()); }
+}
+
+function findExistingTable(tables: string[] | undefined, candidate: string | undefined) {
+  if (!candidate) return undefined;
+  return tables?.find((table) => table.toLowerCase() === candidate.trim().toLowerCase());
+}
+
 function CdcCreateWizard() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -65,7 +83,10 @@ function CdcCreateWizard() {
   const [completedSteps, setCompletedSteps] = useState<StepKey[]>([]);
   const [sourceTestedId, setSourceTestedId] = useState<number | null>(null);
   const [targetTestedId, setTargetTestedId] = useState<number | null>(null);
-  const [createdPipeline, setCreatedPipeline] = useState<PipelineResponse | null>(null);
+  const [createdPipelines, setCreatedPipelines] = useState<PipelineResponse[]>([]);
+  const [selectedTables, setSelectedTables] = useState<string[]>([]);
+  const [targetTableBySource, setTargetTableBySource] = useState<Record<string, string>>({});
+  const [tablePattern, setTablePattern] = useState("");
 
   const { data: connections, isLoading: connectionsLoading } = useQuery({
     queryKey: ["connections"],
@@ -152,12 +173,24 @@ function CdcCreateWizard() {
     },
   });
 
+  const batchRequests = useMemo<PipelineCreateRequest[]>(() => {
+    if (!formValues || selectedTables.length === 0) return [];
+    return selectedTables.map((sourceTable) => ({
+      ...formValues,
+      name: selectedTables.length === 1 ? formValues.name : `${formValues.name}-${pipelineTableSuffix(sourceTable)}`.slice(0, 150),
+      sourceTable,
+      targetTable: targetTableBySource[sourceTable] ?? sourceTable.toLowerCase(),
+    }));
+  }, [formValues, selectedTables, targetTableBySource]);
+
   const createMutation = useMutation({
-    mutationFn: createPipeline,
+    mutationFn: async (requests: PipelineCreateRequest[]) => requests.length === 1
+      ? [await createPipeline(requests[0])]
+      : (await createPipelineBatch(requests)).pipelines,
     onSuccess: (result) => {
-      setCreatedPipeline(result);
+      setCreatedPipelines(result);
       queryClient.invalidateQueries({ queryKey: ["pipelines"] });
-      message.success("CDC 파이프라인을 실행 대기 상태로 준비했습니다.");
+      message.success(`${result.length}개 CDC 파이프라인을 실행 대기 상태로 준비했습니다.`);
     },
     onError: (error: Error) => message.error(error.message),
   });
@@ -167,18 +200,18 @@ function CdcCreateWizard() {
     emptyHint: string,
   ) => query.isFetching ? <Spin size="small" /> : query.isError ? "조회 실패 - 연결정보를 확인하세요" : emptyHint;
 
-  const topicPreview = useMemo(() => {
-    if (!formValues?.topicPrefix || !formValues?.sourceSchema || !formValues?.sourceTable) return "—";
-    return `${formValues.topicPrefix}.${formValues.sourceSchema}.${formValues.sourceTable}`;
-  }, [formValues]);
+  const topicPreview = useMemo(() => batchRequests.map((request) =>
+    `${request.topicPrefix}.${request.sourceSchema}.${request.sourceTable}`), [batchRequests]);
+  const filteredSourceTables = useMemo(() => (sourceTablesQuery.data ?? [])
+    .filter((table) => matchesTablePattern(table, tablePattern)), [sourceTablesQuery.data, tablePattern]);
 
-  if (createdPipeline) {
+  if (createdPipelines.length > 0) {
     return (
       <Card>
         <Result
           status="success"
-          title="CDC 파이프라인 생성 완료"
-          subTitle={`${createdPipeline.name}이(가) 실행 대기 상태로 준비되었습니다. 실행 제어는 AirFlow에서 진행하세요.`}
+          title={`${createdPipelines.length}개 CDC 파이프라인 생성 완료`}
+          subTitle={`${createdPipelines.map((pipeline) => pipeline.name).join(", ")}이(가) 실행 대기 상태로 준비되었습니다. 실행 제어는 AirFlow에서 진행하세요.`}
           extra={[
             <Button type="primary" key="list" onClick={() => navigate("/cdc/pipelines")}>파이프라인 목록</Button>,
             <Button key="airflow" onClick={() => navigate("/airflow/dashboard")}>AirFlow에서 열기</Button>,
@@ -187,7 +220,10 @@ function CdcCreateWizard() {
               setCompletedSteps([]);
               setSourceTestedId(null);
               setTargetTestedId(null);
-              setCreatedPipeline(null);
+              setCreatedPipelines([]);
+              setSelectedTables([]);
+              setTargetTableBySource({});
+              setTablePattern("");
               setActiveStep("basic");
             }}>하나 더 생성</Button>,
           ]}
@@ -225,9 +261,10 @@ function CdcCreateWizard() {
               label: <StepLabel step="basic" title="기본 정보" completed={completedSteps.includes("basic")} unlocked />,
               children: (
                 <>
-                  <Form.Item name="name" label="파이프라인명" rules={[
+                  <Form.Item name="name" label="파이프라인 기본명" tooltip="여러 테이블을 선택하면 기본명-테이블명으로 각각 생성됩니다." rules={[
                     { required: true, message: "파이프라인명을 입력하세요." },
                     { pattern: /^[a-zA-Z0-9][a-zA-Z0-9_-]{2,149}$/, message: "영문·숫자로 시작하고 영문·숫자·_·- 조합 3자 이상으로 입력하세요." },
+                    { max: 100, message: "다중 테이블 이름 조합을 위해 기본명은 100자 이하로 입력하세요." },
                   ]}>
                     <Input placeholder="예: postgres-orders-to-warehouse" />
                   </Form.Item>
@@ -265,6 +302,7 @@ function CdcCreateWizard() {
                             setSourceTestedId(null);
                             invalidateFrom("connections");
                             form.setFieldsValue({ sourceSchema: undefined, sourceTable: undefined });
+                            setSelectedTables([]); setTargetTableBySource({}); setTablePattern("");
                             if (!form.getFieldValue("topicPrefix")) {
                               const selected = connections?.find((connection) => connection.id === value);
                               if (selected) form.setFieldValue("topicPrefix", `${selected.dbType.toLowerCase()}-cdc`);
@@ -324,32 +362,82 @@ function CdcCreateWizard() {
                     <Form.Item name="sourceSchema" label="소스 스키마" rules={[{ required: true }]} style={{ minWidth: 300, flex: 1 }}>
                       <Select showSearch loading={sourceSchemasQuery.isFetching} options={sourceSchemasQuery.data?.map((value) => ({ value }))}
                         notFoundContent={schemaTableNotFoundContent(sourceSchemasQuery, "스키마 없음")}
-                        onChange={() => { form.setFieldValue("sourceTable", undefined); invalidateFrom("targets"); }} />
+                        onChange={() => {
+                          form.setFieldsValue({ sourceTable: undefined, targetTable: undefined });
+                          setSelectedTables([]); setTargetTableBySource({}); setTablePattern(""); invalidateFrom("targets");
+                        }} />
                     </Form.Item>
-                    <Form.Item name="sourceTable" label="소스 테이블" rules={[{ required: true }]} style={{ minWidth: 300, flex: 1 }}>
-                      <Select showSearch disabled={!sourceSchema} loading={sourceTablesQuery.isFetching}
-                        options={sourceTablesQuery.data?.map((value) => ({ value }))}
-                        notFoundContent={schemaTableNotFoundContent(sourceTablesQuery, "테이블 없음")}
-                        onChange={() => invalidateFrom("targets")} />
-                    </Form.Item>
-                  </Space>
-                  <Typography.Title level={5}>타깃</Typography.Title>
-                  <Space align="start" size="large" wrap style={{ width: "100%" }}>
                     <Form.Item name="targetSchema" label="타깃 스키마" rules={[{ required: true }]} style={{ minWidth: 300, flex: 1 }}>
                       <Select showSearch loading={targetSchemasQuery.isFetching} options={targetSchemasQuery.data?.map((value) => ({ value }))}
                         notFoundContent={schemaTableNotFoundContent(targetSchemasQuery, "스키마 없음")}
-                        onChange={() => { form.setFieldValue("targetTable", undefined); invalidateFrom("targets"); }} />
-                    </Form.Item>
-                    <Form.Item name="targetTable" label="타깃 테이블" rules={[{ required: true }]} style={{ minWidth: 300, flex: 1 }}>
-                      <AutoComplete disabled={!targetSchema} options={targetTablesQuery.data?.map((value) => ({ value }))}
-                        notFoundContent={schemaTableNotFoundContent(targetTablesQuery, "기존 테이블 없음 - 새 이름 입력 가능")}
-                        onChange={() => invalidateFrom("targets")} placeholder="기존 테이블 선택 또는 새 이름 입력" />
+                        onChange={() => invalidateFrom("targets")} />
                     </Form.Item>
                   </Space>
+                  <Input.Search
+                    allowClear
+                    disabled={!sourceSchema}
+                    value={tablePattern}
+                    onChange={(event) => setTablePattern(event.target.value)}
+                    placeholder="테이블명 또는 패턴 검색 (예: TB_IMP% )"
+                    style={{ marginBottom: 12 }}
+                  />
+                  <Alert type="info" showIcon message={`${selectedTables.length}개 선택 · 최대 50개`} style={{ marginBottom: 12 }} />
+                  <Table<{ sourceTable: string }>
+                    rowKey="sourceTable"
+                    size="small"
+                    loading={sourceTablesQuery.isFetching}
+                    dataSource={filteredSourceTables.map((sourceTable) => ({ sourceTable }))}
+                    pagination={{ pageSize: 10, hideOnSinglePage: true }}
+                    rowSelection={{
+                      preserveSelectedRowKeys: true,
+                      selectedRowKeys: selectedTables,
+                      onChange: (keys) => {
+                        const next = keys.map(String).slice(0, 50);
+                        setSelectedTables(next);
+                        setTargetTableBySource((previous) => Object.fromEntries(next.map((table) => [table, previous[table] ?? table.toLowerCase()])));
+                        invalidateFrom("targets");
+                      },
+                      getCheckboxProps: (row) => ({ disabled: selectedTables.length >= 50 && !selectedTables.includes(row.sourceTable) }),
+                    }}
+                    columns={[
+                      { title: "소스 테이블", dataIndex: "sourceTable", width: "42%" },
+                      {
+                        title: "타깃 테이블",
+                        render: (_, row) => {
+                          const targetName = targetTableBySource[row.sourceTable] ?? row.sourceTable.toLowerCase();
+                          const existingTable = findExistingTable(targetTablesQuery.data, targetName);
+                          const selected = selectedTables.includes(row.sourceTable);
+                          return (
+                            <div>
+                              <AutoComplete
+                                disabled={!targetSchema || !selected}
+                                value={targetName}
+                                options={targetTablesQuery.data?.map((value) => ({ value }))}
+                                onChange={(value) => { setTargetTableBySource((previous) => ({ ...previous, [row.sourceTable]: value })); invalidateFrom("targets"); }}
+                                placeholder="기존 테이블 또는 새 이름"
+                                style={{ width: "100%" }}
+                              />
+                              {selected && targetSchema && targetName.trim() && (
+                                <div style={{ marginTop: 6 }}>
+                                  {existingTable ? (
+                                    <Tag color="success">기존 테이블 · {existingTable}</Tag>
+                                  ) : (
+                                    <Tag color="processing">신규 생성 예정</Tag>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        },
+                      },
+                    ]}
+                  />
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <Button onClick={() => setActiveStep("connections")}>이전</Button>
                     <Button type="primary" onClick={async () => {
-                      await form.validateFields(["sourceSchema", "sourceTable", "targetSchema", "targetTable"]);
+                      await form.validateFields(["sourceSchema", "targetSchema"]);
+                      if (selectedTables.length === 0) { message.error("소스 테이블을 하나 이상 선택하세요."); return; }
+                      if (selectedTables.some((table) => !(targetTableBySource[table] ?? "").trim())) { message.error("선택한 모든 타깃 테이블명을 입력하세요."); return; }
                       completeAndOpen("targets", "options");
                     }}>다음: 실행 옵션</Button>
                   </div>
@@ -383,7 +471,13 @@ function CdcCreateWizard() {
                   <Form.Item name="deleteEnabled" valuePropName="checked">
                     <Checkbox>소스 DELETE 이벤트를 타깃에 반영</Checkbox>
                   </Form.Item>
-                  <Alert type="info" showIcon message={`생성 예정 Topic: ${topicPreview}`} style={{ marginBottom: 16 }} />
+                  <Alert
+                    type="info"
+                    showIcon
+                    message={`생성 예정 Topic ${topicPreview.length}개`}
+                    description={topicPreview.length > 0 ? <div>{topicPreview.slice(0, 5).map((topic) => <div key={topic}>{topic}</div>)}{topicPreview.length > 5 && <div>외 {topicPreview.length - 5}개</div>}</div> : "대상 테이블을 선택하세요."}
+                    style={{ marginBottom: 16 }}
+                  />
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <Button onClick={() => setActiveStep("targets")}>이전</Button>
                     <Button type="primary" onClick={async () => {
@@ -401,27 +495,50 @@ function CdcCreateWizard() {
               children: (
                 <>
                   <Descriptions bordered column={1} size="small">
-                    <Descriptions.Item label="파이프라인명">{formValues?.name ?? "—"}</Descriptions.Item>
+                    <Descriptions.Item label="생성 개수">{batchRequests.length}개</Descriptions.Item>
                     <Descriptions.Item label="소스 연결">{sourceConnection ? connectionLabel(sourceConnection) : "—"}</Descriptions.Item>
-                    <Descriptions.Item label="소스 대상">{formValues?.sourceSchema}.{formValues?.sourceTable}</Descriptions.Item>
                     <Descriptions.Item label="타깃 연결">{targetConnection ? connectionLabel(targetConnection) : "—"}</Descriptions.Item>
-                    <Descriptions.Item label="타깃 대상">{formValues?.targetSchema}.{formValues?.targetTable}</Descriptions.Item>
-                    <Descriptions.Item label="Kafka Topic">{topicPreview}</Descriptions.Item>
                     <Descriptions.Item label="스냅샷 모드">{formValues?.snapshotMode === "NO_DATA" ? "기존 데이터 미적재 · 이후 CDC" : "초기 적재 후 CDC"}</Descriptions.Item>
                     <Descriptions.Item label="DELETE 반영">{formValues?.deleteEnabled ? "사용" : "사용 안 함"}</Descriptions.Item>
                   </Descriptions>
+                  <Table<PipelineCreateRequest>
+                    rowKey="name"
+                    size="small"
+                    pagination={{ pageSize: 10, hideOnSinglePage: true }}
+                    dataSource={batchRequests}
+                    style={{ marginTop: 16 }}
+                    scroll={{ x: 760 }}
+                    columns={[
+                      { title: "파이프라인명", dataIndex: "name", width: 220 },
+                      { title: "소스", width: 180, render: (_, row) => `${row.sourceSchema}.${row.sourceTable}` },
+                      { title: "타깃", width: 220, render: (_, row) => <Space size={4} wrap><span>{row.targetSchema}.{row.targetTable}</span>{findExistingTable(targetTablesQuery.data, row.targetTable) ? <Tag color="success">기존</Tag> : <Tag color="processing">신규</Tag>}</Space> },
+                      { title: "Topic", width: 220, render: (_, row) => `${row.topicPrefix}.${row.sourceSchema}.${row.sourceTable}` },
+                    ]}
+                  />
+                  {batchRequests.some((request) => !findExistingTable(targetTablesQuery.data, request.targetTable)) && (
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="신규 타깃 테이블은 첫 데이터 도착 시 생성됩니다"
+                      description="타깃 스키마는 미리 존재해야 합니다. NO_DATA 모드에서는 소스 변경이 발생하기 전까지 테이블이 생성되지 않을 수 있습니다."
+                      style={{ marginTop: 12 }}
+                    />
+                  )}
                   <Alert type="warning" showIcon style={{ marginTop: 16 }} message="생성 시 Kafka Connect 커넥터까지 준비됩니다" description="완료 후 실행은 AirFlow에서 진행합니다." />
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
                     <Button onClick={() => setActiveStep("options")}>이전</Button>
                     <Button type="primary" loading={createMutation.isPending} onClick={async () => {
-                      const values = await form.validateFields();
+                      await form.validateFields();
                       if (!connectionsVerified) {
                         message.error("연결정보가 변경되었습니다. 소스와 타깃 연결을 다시 테스트하세요.");
                         setActiveStep("connections");
                         return;
                       }
-                      createMutation.mutate(values);
-                    }}>파이프라인 생성</Button>
+                      if (batchRequests.length === 0) { message.error("생성할 테이블이 없습니다."); setActiveStep("targets"); return; }
+                      const names = batchRequests.map((request) => request.name);
+                      if (new Set(names).size !== names.length) { message.error("생성될 파이프라인명이 중복됩니다. 기본명을 줄이거나 테이블 선택을 확인하세요."); return; }
+                      createMutation.mutate(batchRequests);
+                    }}>{batchRequests.length > 1 ? `${batchRequests.length}개 파이프라인 생성` : "파이프라인 생성"}</Button>
                   </div>
                 </>
               ),
