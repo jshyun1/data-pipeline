@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Input, Segmented, Select, Space, Spin, Table, Tag, Timeline } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import dayjs from "dayjs";
 import {
   getAlertEvents,
   getAlertHistory,
@@ -35,7 +36,9 @@ const RULE_LINK: Record<string, { path: string; label: string }> = {
 
 function formatWhen(iso: string | null): string {
   if (!iso) return "-";
-  return iso.replace("T", " ").slice(0, 16);
+  // 서버는 UTC(+00:00)로 내려주므로, 문자열을 그냥 자르지 말고 지역시각(KST)으로 변환해 표시한다.
+  const d = dayjs(iso);
+  return d.isValid() ? d.format("YYYY-MM-DD HH:mm") : iso;
 }
 
 // 상세 타임라인·정보를 한글로. 코드값이 그대로 노출되면 무슨 이력인지 알기 어렵다.

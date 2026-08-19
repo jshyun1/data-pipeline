@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, Tag, Tooltip } from "antd";
+import dayjs from "dayjs";
 import type { ProcessGroup, ProcessItem, ProcessStatus } from "../api/infra";
 
 /**
@@ -79,7 +80,10 @@ function formatAgo(iso: string): string {
 function ProcessTooltip({ item }: { item: ProcessItem }) {
   const lines: Array<[string, string]> = [];
   if (item.lastHeartbeatAt) {
-    lines.push(["마지막 성공", `${item.lastHeartbeatAt.replace("T", " ").slice(0, 19)} (${formatAgo(item.lastHeartbeatAt)})`]);
+    lines.push([
+      "마지막 성공",
+      `${dayjs(item.lastHeartbeatAt).format("YYYY-MM-DD HH:mm:ss")} (${formatAgo(item.lastHeartbeatAt)})`,
+    ]);
   }
   if (item.staleAfterSeconds != null) {
     lines.push(["판정 기준", `${formatSeconds(item.staleAfterSeconds)} 초과 → 경고`]);
