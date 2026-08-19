@@ -19,12 +19,20 @@ public record SourceConnectorRequest(
         String schema,
         String table,
         String topicPrefix,
-        String snapshotMode
+        String snapshotMode,
+        String excludedColumns
 ) {
+    public SourceConnectorRequest(Long pipelineId, DbType sourceDbType, String hostname, int port,
+            String username, String password, String databaseName, String serviceName,
+            String schema, String table, String topicPrefix, String snapshotMode) {
+        this(pipelineId, sourceDbType, hostname, port, username, password, databaseName, serviceName,
+                schema, table, topicPrefix, snapshotMode, null);
+    }
+
     public SourceConnectorRequest(Long pipelineId, DbType sourceDbType, String hostname, int port,
             String username, String password, String databaseName, String serviceName,
             String schema, String table, String topicPrefix) {
         this(pipelineId, sourceDbType, hostname, port, username, password, databaseName, serviceName,
-                schema, table, topicPrefix, "INITIAL");
+                schema, table, topicPrefix, "INITIAL", null);
     }
 }

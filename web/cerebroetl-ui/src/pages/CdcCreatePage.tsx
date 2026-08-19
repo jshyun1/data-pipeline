@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   AutoComplete,
@@ -22,7 +22,7 @@ import {
 } from "antd";
 import { CheckCircleOutlined, LockOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
-import { listConnections, listConnectionSchemas, listConnectionTables, testConnection } from "../api/connections";
+import { listConnections, listConnectionColumns, listConnectionSchemas, listConnectionTables, testConnection } from "../api/connections";
 import { createLogFilePipeline, createPipeline, createPipelineBatch } from "../api/pipelines";
 import type { ConnectionResponse } from "../types/connection";
 import type { LogPipelineCreateRequest, PipelineCreateRequest, PipelineResponse } from "../types/pipeline";
@@ -86,6 +86,7 @@ function CdcCreateWizard() {
   const [createdPipelines, setCreatedPipelines] = useState<PipelineResponse[]>([]);
   const [selectedTables, setSelectedTables] = useState<string[]>([]);
   const [targetTableBySource, setTargetTableBySource] = useState<Record<string, string>>({});
+  const [excludedColumnsBySource, setExcludedColumnsBySource] = useState<Record<string, string[]>>({});
   const [tablePattern, setTablePattern] = useState("");
 
   const { data: connections, isLoading: connectionsLoading } = useQuery({
@@ -119,6 +120,17 @@ function CdcCreateWizard() {
     queryFn: () => listConnectionTables(targetConnectionId!, targetSchema!),
     enabled: targetTestedId === targetConnectionId && targetConnectionId != null && !!targetSchema,
   });
+  const sourceColumnQueries = useQueries({
+    queries: selectedTables.map((table) => ({
+      queryKey: ["connection-columns", sourceConnectionId, sourceSchema, table],
+      queryFn: () => listConnectionColumns(sourceConnectionId!, sourceSchema!, table),
+      enabled: sourceConnectionId != null && !!sourceSchema,
+      staleTime: 30_000,
+    })),
+  });
+  const sourceColumnsByTable = useMemo(() => Object.fromEntries(selectedTables.map((table, index) => [
+    table, sourceColumnQueries[index]?.data ?? [],
+  ])), [selectedTables, sourceColumnQueries]);
 
   const sourceConnection = connections?.find((connection) => connection.id === sourceConnectionId);
   const targetConnection = connections?.find((connection) => connection.id === targetConnectionId);
@@ -180,8 +192,9 @@ function CdcCreateWizard() {
       name: selectedTables.length === 1 ? formValues.name : `${formValues.name}-${pipelineTableSuffix(sourceTable)}`.slice(0, 150),
       sourceTable,
       targetTable: targetTableBySource[sourceTable] ?? sourceTable.toLowerCase(),
+      excludedColumns: excludedColumnsBySource[sourceTable] ?? [],
     }));
-  }, [formValues, selectedTables, targetTableBySource]);
+  }, [formValues, selectedTables, targetTableBySource, excludedColumnsBySource]);
 
   const createMutation = useMutation({
     mutationFn: async (requests: PipelineCreateRequest[]) => requests.length === 1
@@ -223,6 +236,7 @@ function CdcCreateWizard() {
               setCreatedPipelines([]);
               setSelectedTables([]);
               setTargetTableBySource({});
+              setExcludedColumnsBySource({});
               setTablePattern("");
               setActiveStep("basic");
             }}>하나 더 생성</Button>,
@@ -302,7 +316,7 @@ function CdcCreateWizard() {
                             setSourceTestedId(null);
                             invalidateFrom("connections");
                             form.setFieldsValue({ sourceSchema: undefined, sourceTable: undefined });
-                            setSelectedTables([]); setTargetTableBySource({}); setTablePattern("");
+                            setSelectedTables([]); setTargetTableBySource({}); setExcludedColumnsBySource({}); setTablePattern("");
                             if (!form.getFieldValue("topicPrefix")) {
                               const selected = connections?.find((connection) => connection.id === value);
                               if (selected) form.setFieldValue("topicPrefix", `${selected.dbType.toLowerCase()}-cdc`);
@@ -364,7 +378,7 @@ function CdcCreateWizard() {
                         notFoundContent={schemaTableNotFoundContent(sourceSchemasQuery, "스키마 없음")}
                         onChange={() => {
                           form.setFieldsValue({ sourceTable: undefined, targetTable: undefined });
-                          setSelectedTables([]); setTargetTableBySource({}); setTablePattern(""); invalidateFrom("targets");
+                          setSelectedTables([]); setTargetTableBySource({}); setExcludedColumnsBySource({}); setTablePattern(""); invalidateFrom("targets");
                         }} />
                     </Form.Item>
                     <Form.Item name="targetSchema" label="타깃 스키마" rules={[{ required: true }]} style={{ minWidth: 300, flex: 1 }}>
@@ -395,12 +409,13 @@ function CdcCreateWizard() {
                         const next = keys.map(String).slice(0, 50);
                         setSelectedTables(next);
                         setTargetTableBySource((previous) => Object.fromEntries(next.map((table) => [table, previous[table] ?? table.toLowerCase()])));
+                        setExcludedColumnsBySource((previous) => Object.fromEntries(next.map((table) => [table, previous[table] ?? []])));
                         invalidateFrom("targets");
                       },
                       getCheckboxProps: (row) => ({ disabled: selectedTables.length >= 50 && !selectedTables.includes(row.sourceTable) }),
                     }}
                     columns={[
-                      { title: "소스 테이블", dataIndex: "sourceTable", width: "42%" },
+                      { title: "소스 테이블", dataIndex: "sourceTable", width: "25%" },
                       {
                         title: "타깃 테이블",
                         render: (_, row) => {
@@ -428,6 +443,26 @@ function CdcCreateWizard() {
                               )}
                             </div>
                           );
+                        },
+                      },
+                      {
+                        title: "제외 컬럼 (선택)",
+                        width: "33%",
+                        render: (_, row) => {
+                          const selected = selectedTables.includes(row.sourceTable);
+                          const columns = sourceColumnsByTable[row.sourceTable] ?? [];
+                          return <Select
+                            mode="multiple"
+                            allowClear
+                            disabled={!selected}
+                            loading={selected && columns.length === 0 && sourceColumnQueries[selectedTables.indexOf(row.sourceTable)]?.isFetching}
+                            value={excludedColumnsBySource[row.sourceTable] ?? []}
+                            options={columns.map((value) => ({ value }))}
+                            placeholder="전송하지 않을 컬럼"
+                            maxTagCount="responsive"
+                            style={{ width: "100%" }}
+                            onChange={(value) => { setExcludedColumnsBySource((previous) => ({ ...previous, [row.sourceTable]: value })); invalidateFrom("targets"); }}
+                          />;
                         },
                       },
                     ]}
@@ -512,6 +547,7 @@ function CdcCreateWizard() {
                       { title: "파이프라인명", dataIndex: "name", width: 220 },
                       { title: "소스", width: 180, render: (_, row) => `${row.sourceSchema}.${row.sourceTable}` },
                       { title: "타깃", width: 220, render: (_, row) => <Space size={4} wrap><span>{row.targetSchema}.{row.targetTable}</span>{findExistingTable(targetTablesQuery.data, row.targetTable) ? <Tag color="success">기존</Tag> : <Tag color="processing">신규</Tag>}</Space> },
+                      { title: "제외 컬럼", width: 160, render: (_, row) => row.excludedColumns?.length ? row.excludedColumns.join(", ") : "없음" },
                       { title: "Topic", width: 220, render: (_, row) => `${row.topicPrefix}.${row.sourceSchema}.${row.sourceTable}` },
                     ]}
                   />

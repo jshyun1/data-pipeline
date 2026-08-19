@@ -81,6 +81,20 @@ public class SchemaDiscoveryService {
         }
     }
 
+    public List<String> listColumns(Long connectionId, String schema, String table) {
+        PipelineConnection connection = findOrThrow(connectionId);
+        try (Connection jdbc = open(connection)) {
+            List<String> columns = new ArrayList<>();
+            try (ResultSet rs = jdbc.getMetaData().getColumns(null, schema, table, "%")) {
+                while (rs.next()) columns.add(rs.getString("COLUMN_NAME"));
+            }
+            return columns;
+        } catch (SQLException e) {
+            throw new BusinessException(ErrorCode.SCHEMA_DISCOVERY_ERROR,
+                    "컬럼 목록을 조회할 수 없습니다: " + e.getMessage());
+        }
+    }
+
     /** 실제로 접속 가능한지 확인만 한다(성공/실패). ConnectionService가 이 결과로 status를 갱신한다. */
     public boolean testConnection(Long connectionId) {
         PipelineConnection connection = findOrThrow(connectionId);

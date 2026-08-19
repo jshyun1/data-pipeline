@@ -72,6 +72,12 @@ public class DebeziumOracleTemplate {
         config.put("schema.include.list", request.schema());
         config.put("table.include.list", tableIncludeList);
         config.put("snapshot.mode", PipelineSnapshotMode.from(request.snapshotMode()).connectorValue());
+        if (request.excludedColumns() != null && !request.excludedColumns().isBlank()) {
+            config.put("column.exclude.list", java.util.Arrays.stream(request.excludedColumns().split(","))
+                    .map(String::trim).filter(value -> !value.isEmpty())
+                    .map(column -> tableIncludeList + "." + column)
+                    .collect(java.util.stream.Collectors.joining(",")));
+        }
         config.put("tombstones.on.delete", "false");
         config.put("decimal.handling.mode", "double");
         config.put("include.schema.changes", "true");

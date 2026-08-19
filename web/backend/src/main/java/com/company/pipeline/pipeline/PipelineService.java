@@ -110,6 +110,9 @@ public class PipelineService {
                 null
         );
         entity.setSnapshotMode(PipelineSnapshotMode.from(request.snapshotMode()).name());
+        entity.setExcludedColumns(request.excludedColumns() == null ? null
+                : request.excludedColumns().stream().map(String::trim).filter(value -> !value.isEmpty())
+                        .distinct().sorted().reduce((left, right) -> left + "," + right).orElse(null));
         return entity;
     }
 

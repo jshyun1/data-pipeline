@@ -147,7 +147,7 @@ public class PipelineDeployService {
                 source.getUsername(), passwordCryptoService.decrypt(source.getEncryptedPassword()),
                 source.getDatabaseName(), source.getServiceName(),
                 pipeline.getSourceSchema(), pipeline.getSourceTable(), pipeline.getTopicName(),
-                PipelineSnapshotMode.from(pipeline.getSnapshotMode()).name()));
+                PipelineSnapshotMode.from(pipeline.getSnapshotMode()).name(), pipeline.getExcludedColumns()));
         prepareStoppedConnector(pipeline.getId(), "SOURCE", sourceConfig);
 
         RenderedConnectorConfig sinkConfig = connectorConfigRenderer.renderSink(new SinkConnectorRequest(

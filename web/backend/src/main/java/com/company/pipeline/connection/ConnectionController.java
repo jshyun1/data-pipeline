@@ -110,4 +110,10 @@ public class ConnectionController {
     public ApiResponse<List<String>> listTables(@PathVariable Long id, @RequestParam String schema) {
         return ApiResponse.success(schemaDiscoveryService.listTables(id, schema));
     }
+
+    @GetMapping("/{id}/columns")
+    public ApiResponse<List<String>> listColumns(@PathVariable Long id, @RequestParam String schema,
+            @RequestParam String table) {
+        return ApiResponse.success(schemaDiscoveryService.listColumns(id, schema, table));
+    }
 }

@@ -40,6 +40,7 @@ export interface PipelineResponse {
   topicName: string;
   status: PipelineStatus;
   snapshotMode: "INITIAL" | "NO_DATA";
+  excludedColumns: string | null;
   deleteEnabled: boolean;
   description: string | null;
   connectors: PipelineConnectorSummary[];
@@ -86,6 +87,7 @@ export interface PipelineCreateRequest {
   targetTable: string;
   topicPrefix: string;
   snapshotMode?: "INITIAL" | "NO_DATA";
+  excludedColumns?: string[];
   deleteEnabled?: boolean;
   description?: string;
 }
