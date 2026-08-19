@@ -18,6 +18,8 @@ import com.company.pipeline.logpipeline.dto.LogPipelineCreateRequest;
 import com.company.pipeline.pipeline.dto.PipelineCreateRequest;
 import com.company.pipeline.pipeline.dto.PipelineResponse;
 import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,6 +56,32 @@ public class PipelineService {
 
     @Transactional
     public PipelineResponse create(PipelineCreateRequest request) {
+        PipelineDefinition entity = buildDefinition(request);
+        pipelineDefinitionRepository.save(entity);
+        return PipelineResponse.from(entity, List.of());
+    }
+
+    /** 모든 항목을 먼저 검증한 뒤 한 DB 트랜잭션에서 정의를 저장한다. Connector 준비는 별도 보상 단계다. */
+    @Transactional
+    public List<PipelineResponse> createBatchDefinitions(List<PipelineCreateRequest> requests) {
+        if (requests == null || requests.isEmpty() || requests.size() > 50) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "배치 생성은 1건 이상 50건 이하만 가능합니다.");
+        }
+        Set<String> names = new HashSet<>();
+        for (PipelineCreateRequest request : requests) {
+            if (!names.add(request.name())) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR, "배치 안에 중복된 파이프라인명이 있습니다: " + request.name());
+            }
+        }
+        List<PipelineDefinition> entities = requests.stream().map(this::buildDefinition).toList();
+        return pipelineDefinitionRepository.saveAllAndFlush(entities).stream()
+                .map(entity -> PipelineResponse.from(entity, List.of())).toList();
+    }
+
+    private PipelineDefinition buildDefinition(PipelineCreateRequest request) {
+        if (pipelineDefinitionRepository.existsByName(request.name())) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "이미 사용 중인 파이프라인명입니다: " + request.name());
+        }
         PipelineConnection source = findConnectionOrThrow(request.sourceConnectionId());
         PipelineConnection target = findConnectionOrThrow(request.targetConnectionId());
 
@@ -82,8 +110,7 @@ public class PipelineService {
                 null
         );
         entity.setSnapshotMode(PipelineSnapshotMode.from(request.snapshotMode()).name());
-        pipelineDefinitionRepository.save(entity);
-        return PipelineResponse.from(entity, List.of());
+        return entity;
     }
 
     /**

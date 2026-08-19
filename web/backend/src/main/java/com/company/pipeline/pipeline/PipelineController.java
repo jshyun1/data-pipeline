@@ -9,6 +9,8 @@ import com.company.pipeline.pipeline.dto.PipelineCreateRequest;
 import com.company.pipeline.pipeline.dto.PipelineResponse;
 import com.company.pipeline.pipeline.dto.PipelineRuntimeStatusResponse;
 import com.company.pipeline.pipeline.dto.PipelineConsistencyCheckResponse;
+import com.company.pipeline.pipeline.dto.PipelineBatchCreateRequest;
+import com.company.pipeline.pipeline.dto.PipelineBatchCreateResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -30,13 +32,15 @@ public class PipelineController {
     private final PipelineMetricSnapshotService pipelineMetricSnapshotService;
     private final PipelineRuntimeStatusService pipelineRuntimeStatusService;
     private final PipelineConsistencyService pipelineConsistencyService;
+    private final PipelineBatchCreateService pipelineBatchCreateService;
 
     public PipelineController(PipelineService pipelineService, PipelineDeployService pipelineDeployService,
             PipelineCommandHistoryRepository pipelineCommandHistoryRepository,
             PipelineCommandHistoryRecorder pipelineCommandHistoryRecorder,
             PipelineMetricSnapshotService pipelineMetricSnapshotService,
             PipelineRuntimeStatusService pipelineRuntimeStatusService,
-            PipelineConsistencyService pipelineConsistencyService) {
+            PipelineConsistencyService pipelineConsistencyService,
+            PipelineBatchCreateService pipelineBatchCreateService) {
         this.pipelineService = pipelineService;
         this.pipelineDeployService = pipelineDeployService;
         this.pipelineCommandHistoryRepository = pipelineCommandHistoryRepository;
@@ -44,12 +48,19 @@ public class PipelineController {
         this.pipelineMetricSnapshotService = pipelineMetricSnapshotService;
         this.pipelineRuntimeStatusService = pipelineRuntimeStatusService;
         this.pipelineConsistencyService = pipelineConsistencyService;
+        this.pipelineBatchCreateService = pipelineBatchCreateService;
     }
 
     @PostMapping
     public ApiResponse<PipelineResponse> create(@Valid @RequestBody PipelineCreateRequest request) {
         PipelineResponse created = pipelineService.create(request);
         return ApiResponse.success(pipelineDeployService.deploy(created.id()));
+    }
+
+    @PostMapping("/batch")
+    public ApiResponse<PipelineBatchCreateResponse> createBatch(
+            @Valid @RequestBody PipelineBatchCreateRequest request) {
+        return ApiResponse.success(pipelineBatchCreateService.create(request));
     }
 
     @PostMapping("/log-file")

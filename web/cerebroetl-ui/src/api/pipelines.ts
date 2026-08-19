@@ -38,6 +38,16 @@ export async function createPipeline(request: PipelineCreateRequest): Promise<Pi
   return unwrap(res.data);
 }
 
+export interface PipelineBatchCreateResponse {
+  createdCount: number;
+  pipelines: PipelineResponse[];
+}
+
+export async function createPipelineBatch(requests: PipelineCreateRequest[]): Promise<PipelineBatchCreateResponse> {
+  const res = await apiClient.post<ApiResponse<PipelineBatchCreateResponse>>("/pipelines/batch", { pipelines: requests });
+  return unwrap(res.data);
+}
+
 export async function createLogFilePipeline(request: LogPipelineCreateRequest): Promise<PipelineResponse> {
   const res = await apiClient.post<ApiResponse<PipelineResponse>>("/pipelines/log-file", request);
   return unwrap(res.data);
