@@ -90,7 +90,7 @@ class HostResourceServiceTest {
         Files.write(procDir.resolve("meminfo"), List.of("MemTotal: 2000 kB", "MemAvailable: 500 kB"));
         Files.write(procDir.resolve("uptime"), List.of("3600.00 7200.00"));
         Files.write(procDir.resolve("loadavg"), List.of("0.10 0.20 0.30 1/100 200"));
-        var service = new HostResourceService(new InfraProperties(procDir.toString(), List.of("/")));
+        var service = new HostResourceService(new InfraProperties(procDir.toString(), List.of("/"), List.of()));
 
         var response = service.collect();
 
@@ -104,7 +104,7 @@ class HostResourceServiceTest {
 
     @Test
     void collect_withoutProcfs_returnsNullSectionsInsteadOfFailing(@TempDir Path emptyDir) {
-        var service = new HostResourceService(new InfraProperties(emptyDir.toString(), List.of("/")));
+        var service = new HostResourceService(new InfraProperties(emptyDir.toString(), List.of("/"), List.of()));
 
         var response = service.collect();
 
@@ -116,7 +116,7 @@ class HostResourceServiceTest {
 
     @Test
     void properties_fillDefaultsWhenUnset() {
-        var properties = new InfraProperties(null, null);
+        var properties = new InfraProperties(null, null, null);
 
         assertThat(properties.procPath()).isEqualTo("/proc");
         assertThat(properties.diskPaths()).containsExactly("/");

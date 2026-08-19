@@ -12,6 +12,7 @@ import com.company.pipeline.heartbeat.HeartbeatService;
 import com.company.pipeline.jobcatalog.JobLookup;
 import com.company.pipeline.nifi.NifiClient;
 import com.company.pipeline.nifi.dto.NifiBulletinBoardResponse;
+import com.company.pipeline.rollup.RollupService;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -43,10 +44,12 @@ class NifiBulletinCollectionTest {
     private NifiExecutionLogEntryRepository executionLogRepository;
     @Mock
     private HeartbeatService heartbeat;
+    @Mock
+    private RollupService rollupService;
 
     private NifiPipelineMetricScheduler scheduler() {
         return new NifiPipelineMetricScheduler(nifiClient, snapshotRepository, dailyLoadMetricService,
-                executionLogRepository, jobLookup, heartbeat);
+                executionLogRepository, jobLookup, heartbeat, rollupService);
     }
 
     private static NifiBulletinBoardResponse board(NifiBulletinBoardResponse.Bulletin... bulletins) {
