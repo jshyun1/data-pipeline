@@ -523,6 +523,7 @@ export interface InitialDbToDbFlowCreateRequest {
   loadMode: "INSERT" | "TRUNCATE" | "UPSERT";
   truncateSql?: string;
   changeKeyColumn?: string;
+  primaryKeys?: string;
 }
 
 export async function createInitialDbToDbFlow(
