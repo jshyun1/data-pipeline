@@ -306,6 +306,11 @@ body {
   color: #dc2626;
 }
 
+.airflow-business-metric--waiting,
+.airflow-business-metric--waiting strong {
+  color: #d97706;
+}
+
 .airflow-business-card > .ant-btn {
   margin-left: auto;
   font-weight: 700;

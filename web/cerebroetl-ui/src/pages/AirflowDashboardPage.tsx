@@ -4,6 +4,7 @@ import { Button, Descriptions, Dropdown, Empty, Input, InputNumber, message, Mod
 import {
   ApartmentOutlined,
   CheckCircleFilled,
+  ClockCircleFilled,
   CloseCircleFilled,
   DeploymentUnitOutlined,
   DeleteOutlined,
@@ -13,7 +14,6 @@ import {
   InfoCircleOutlined,
   PlayCircleOutlined,
   ProfileOutlined,
-  ReloadOutlined,
   RightOutlined,
   SyncOutlined,
 } from "@ant-design/icons";
@@ -235,7 +235,8 @@ function StatusCard({
   const dagIds = new Set(dags.map((dag) => dag.dag_id));
   const today = dayjs().startOf("day");
   const runs = [...runsByDag.values()].flat().filter((run) => run.dag_id && dagIds.has(run.dag_id));
-  const active = runs.filter((run) => run.state === "running" || run.state === "queued").length;
+  const active = new Set(runs.filter((run) => run.state === "running").map((run) => run.dag_id)).size;
+  const waiting = new Set(runs.filter((run) => run.state === "queued").map((run) => run.dag_id)).size;
   const todayRuns = runs.filter((run) => {
     const startedAt = runAt(run);
     return Boolean(startedAt && dayjs(startedAt).isAfter(today));
@@ -268,6 +269,10 @@ function StatusCard({
         <CloseCircleFilled />
         <span>실패<strong>{failed}</strong></span>
       </div>
+      {category === "CDC" && <div className="airflow-business-metric airflow-business-metric--waiting">
+        <ClockCircleFilled />
+        <span>대기<strong>{waiting}</strong></span>
+      </div>}
       <Button danger={actionCount > 0} disabled={actionCount === 0} onClick={onActionClick}>
         조치 필요 {actionCount}건{actionCount > 0 ? ` · 위험 ${severityCounts.DANGER} · 경고 ${severityCounts.WARNING} · 정보 ${severityCounts.INFO}` : ""}
       </Button>
@@ -940,6 +945,7 @@ export function AirflowDashboardPage() {
   const [monitoringOpen, setMonitoringOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [executionOpen, setExecutionOpen] = useState(false);
+  const [synchronizing, setSynchronizing] = useState(false);
   const initialSyncQuery = useQuery({
     queryKey: ["airflow-dag-catalog-sync"],
     queryFn: syncAirflowDagCatalog,
@@ -996,15 +1002,20 @@ export function AirflowDashboardPage() {
     setExecutionOpen(true);
   };
   const synchronizeDags = async () => {
-    const result = await initialSyncQuery.refetch();
-    if (result.error || !result.data) {
-      message.error("DAG 동기화에 실패했습니다.");
-      return;
+    setSynchronizing(true);
+    try {
+      const result = await initialSyncQuery.refetch();
+      if (result.error || !result.data) {
+        message.error("DAG 동기화에 실패했습니다. 기존 대시보드 정보를 갱신합니다.");
+      } else {
+        message.success(result.data.createdCount || result.data.disabledCount
+          ? `동기화 완료: 신규 ${result.data.createdCount}건, 삭제 ${result.data.disabledCount}건`
+          : "동기화할 DAG 변경사항이 없습니다.");
+      }
+      await dashboardQuery.refetch();
+    } finally {
+      setSynchronizing(false);
     }
-    message.success(result.data.createdCount || result.data.disabledCount
-      ? `DAG 동기화 완료: 신규 ${result.data.createdCount}건, 삭제 ${result.data.disabledCount}건`
-      : "동기화할 DAG 변경사항이 없습니다.");
-    await dashboardQuery.refetch();
   };
   const showDagDetail = (dag: DashboardDag) => {
     setSelectedDagId(dag.dag_id);
@@ -1033,7 +1044,7 @@ export function AirflowDashboardPage() {
     <div className="airflow-dashboard-page">
       <header className="airflow-dashboard-heading">
         <div><h1>AirFlow 대시보드</h1><p>작업 상태와 실행 이력을 한 화면에서 확인하고 조치합니다.</p></div>
-        <div className="airflow-refresh-controls"><Button icon={<SyncOutlined />} loading={initialSyncQuery.isFetching} onClick={() => void synchronizeDags()}>DAG 동기화</Button><span>갱신 주기</span><Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} /><Button type="text" icon={<ReloadOutlined />} loading={dashboardQuery.isFetching} onClick={() => dashboardQuery.refetch()} aria-label="새로고침" /><span>마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}</span></div>
+        <div className="airflow-refresh-controls"><Button icon={<SyncOutlined />} loading={synchronizing || initialSyncQuery.isFetching} onClick={() => void synchronizeDags()}>동기화</Button><span>갱신 주기</span><Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} /><span>마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}</span></div>
       </header>
 
       {initialLoading ? <div className="airflow-dashboard-loading"><Spin size="large" /><span>{!initialSyncQuery.isFetched ? "DAG 동기화 중..." : "대시보드 로딩 중..."}</span></div> : dashboardQuery.isError ? <Empty description="Airflow 현황을 불러올 수 없습니다." /> : (
