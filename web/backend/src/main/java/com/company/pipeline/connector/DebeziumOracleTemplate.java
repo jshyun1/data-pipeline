@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
+import com.company.pipeline.pipeline.PipelineSnapshotMode;
 
 /**
  * kafka-connect/connectors/oracle-cdc-source.json.template과 동일한 필드 구성.
@@ -70,6 +71,7 @@ public class DebeziumOracleTemplate {
         config.put("topic.prefix", request.topicPrefix());
         config.put("schema.include.list", request.schema());
         config.put("table.include.list", tableIncludeList);
+        config.put("snapshot.mode", PipelineSnapshotMode.from(request.snapshotMode()).connectorValue());
         config.put("tombstones.on.delete", "false");
         config.put("decimal.handling.mode", "double");
         config.put("include.schema.changes", "true");

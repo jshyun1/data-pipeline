@@ -41,4 +41,11 @@ class DebeziumPostgresTemplateTest {
         assertThat(template.render(a).config().get("slot.name"))
                 .isNotEqualTo(template.render(b).config().get("slot.name"));
     }
+
+    @Test
+    void render_mapsNoDataSnapshotMode() {
+        SourceConnectorRequest request = new SourceConnectorRequest(
+                3L, DbType.POSTGRESQL, "host", 5432, "u", "p", "db", null, "s", "t", "pg-cdc", "NO_DATA");
+        assertThat(template.render(request).config().get("snapshot.mode")).isEqualTo("no_data");
+    }
 }

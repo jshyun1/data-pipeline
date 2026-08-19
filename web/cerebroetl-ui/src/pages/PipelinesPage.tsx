@@ -595,6 +595,11 @@ export function PipelinesPage() {
                       {`${detailPipeline.targetDbType} · ${detailPipeline.targetSchema}.${detailPipeline.targetTable}`}
                     </Descriptions.Item>
                     <Descriptions.Item label="Topic">{detailPipeline.topicName}</Descriptions.Item>
+                    {detailPipeline.pipelineType === "TABLE_CDC" && (
+                      <Descriptions.Item label="스냅샷 모드">
+                        {detailPipeline.snapshotMode === "NO_DATA" ? "기존 데이터 미적재 · 이후 CDC" : "초기 적재 후 CDC"}
+                      </Descriptions.Item>
+                    )}
                     <Descriptions.Item label="상태">
                       {renderRuntimeStatus(detailPipeline, runtimeByPipeline.get(detailPipeline.id))}
                     </Descriptions.Item>

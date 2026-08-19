@@ -81,6 +81,7 @@ public class PipelineService {
                 request.description(),
                 null
         );
+        entity.setSnapshotMode(PipelineSnapshotMode.from(request.snapshotMode()).name());
         pipelineDefinitionRepository.save(entity);
         return PipelineResponse.from(entity, List.of());
     }

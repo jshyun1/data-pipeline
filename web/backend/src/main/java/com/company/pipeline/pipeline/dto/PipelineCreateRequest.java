@@ -12,7 +12,14 @@ public record PipelineCreateRequest(
         @NotBlank String targetSchema,
         @NotBlank String targetTable,
         @NotBlank String topicPrefix,
+        String snapshotMode,
         Boolean deleteEnabled,
         String description
 ) {
+    public PipelineCreateRequest(String name, Long sourceConnectionId, Long targetConnectionId,
+            String sourceSchema, String sourceTable, String targetSchema, String targetTable,
+            String topicPrefix, Boolean deleteEnabled, String description) {
+        this(name, sourceConnectionId, targetConnectionId, sourceSchema, sourceTable, targetSchema, targetTable,
+                topicPrefix, "INITIAL", deleteEnabled, description);
+    }
 }

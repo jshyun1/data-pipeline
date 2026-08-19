@@ -210,7 +210,7 @@ function CdcCreateWizard() {
       <Form<PipelineCreateRequest>
         form={form}
         layout="vertical"
-        initialValues={{ deleteEnabled: false }}
+        initialValues={{ deleteEnabled: false, snapshotMode: "INITIAL" }}
       >
         <Collapse
           accordion
@@ -362,9 +362,21 @@ function CdcCreateWizard() {
               label: <StepLabel step="options" title="실행 옵션" completed={completedSteps.includes("options")} unlocked={isUnlocked("options")} />,
               children: (
                 <>
-                  <Form.Item label="스냅샷 모드">
-                    <Select value="initial" disabled options={[{ value: "initial", label: "초기 적재 후 CDC (현재 지원 모드)" }]} />
+                  <Form.Item name="snapshotMode" label="스냅샷 모드" rules={[{ required: true }]}>
+                    <Select options={[
+                      { value: "INITIAL", label: "초기 적재 후 CDC (권장)" },
+                      { value: "NO_DATA", label: "기존 데이터 미적재 · 이후 변경부터 CDC" },
+                    ]} />
                   </Form.Item>
+                  {formValues?.snapshotMode === "NO_DATA" && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="기존 행은 적재되지 않습니다"
+                      description="Connector가 시작된 이후 발생하는 변경만 수집합니다. 기존 데이터가 이미 타깃에 있거나 별도로 초기 적재한 경우에만 선택하세요."
+                      style={{ marginBottom: 16 }}
+                    />
+                  )}
                   <Form.Item name="topicPrefix" label="Topic Prefix" rules={[{ required: true }]} tooltip="실제 토픽은 prefix.schema.table 형식입니다.">
                     <Input placeholder="예: postgres-cdc" />
                   </Form.Item>
@@ -375,7 +387,7 @@ function CdcCreateWizard() {
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <Button onClick={() => setActiveStep("targets")}>이전</Button>
                     <Button type="primary" onClick={async () => {
-                      await form.validateFields(["topicPrefix"]);
+                      await form.validateFields(["snapshotMode", "topicPrefix"]);
                       completeAndOpen("options", "review");
                     }}>다음: 검토</Button>
                   </div>
@@ -395,6 +407,7 @@ function CdcCreateWizard() {
                     <Descriptions.Item label="타깃 연결">{targetConnection ? connectionLabel(targetConnection) : "—"}</Descriptions.Item>
                     <Descriptions.Item label="타깃 대상">{formValues?.targetSchema}.{formValues?.targetTable}</Descriptions.Item>
                     <Descriptions.Item label="Kafka Topic">{topicPreview}</Descriptions.Item>
+                    <Descriptions.Item label="스냅샷 모드">{formValues?.snapshotMode === "NO_DATA" ? "기존 데이터 미적재 · 이후 CDC" : "초기 적재 후 CDC"}</Descriptions.Item>
                     <Descriptions.Item label="DELETE 반영">{formValues?.deleteEnabled ? "사용" : "사용 안 함"}</Descriptions.Item>
                   </Descriptions>
                   <Alert type="warning" showIcon style={{ marginTop: 16 }} message="생성 시 Kafka Connect 커넥터까지 준비됩니다" description="완료 후 실행은 AirFlow에서 진행합니다." />

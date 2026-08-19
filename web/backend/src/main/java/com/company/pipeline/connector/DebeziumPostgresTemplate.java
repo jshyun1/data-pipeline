@@ -5,6 +5,7 @@ import com.company.pipeline.connector.dto.SourceConnectorRequest;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.stereotype.Component;
+import com.company.pipeline.pipeline.PipelineSnapshotMode;
 
 /**
  * docs/kafka-webservice-design.md §11.2. pgoutput는 Postgres 10+ 내장 플러그인이라
@@ -39,6 +40,7 @@ public class DebeziumPostgresTemplate {
         config.put("publication.autocreate.mode", "filtered");
         config.put("schema.include.list", request.schema());
         config.put("table.include.list", tableIncludeList);
+        config.put("snapshot.mode", PipelineSnapshotMode.from(request.snapshotMode()).connectorValue());
 
         return new RenderedConnectorConfig(connectorName, "SOURCE",
                 "io.debezium.connector.postgresql.PostgresConnector", config);
