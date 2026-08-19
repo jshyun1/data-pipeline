@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -40,4 +41,32 @@ public class AirflowDagCatalog {
 
     @Column(name = "enabled", nullable = false)
     private boolean enabled;
+
+    @Column(name = "monitoring_enabled", nullable = false)
+    private boolean monitoringEnabled;
+
+    @Column(name = "consecutive_failure_threshold", nullable = false)
+    private int consecutiveFailureThreshold;
+
+    @Column(name = "stale_days_threshold", nullable = false)
+    private int staleDaysThreshold;
+
+    @Column(name = "duration_multiplier", nullable = false, precision = 5, scale = 2)
+    private BigDecimal durationMultiplier;
+
+    @Column(name = "sla_minutes")
+    private Integer slaMinutes;
+
+    public void updateMonitoring(
+            boolean monitoringEnabled,
+            int consecutiveFailureThreshold,
+            int staleDaysThreshold,
+            BigDecimal durationMultiplier,
+            Integer slaMinutes) {
+        this.monitoringEnabled = monitoringEnabled;
+        this.consecutiveFailureThreshold = consecutiveFailureThreshold;
+        this.staleDaysThreshold = staleDaysThreshold;
+        this.durationMultiplier = durationMultiplier;
+        this.slaMinutes = slaMinutes;
+    }
 }

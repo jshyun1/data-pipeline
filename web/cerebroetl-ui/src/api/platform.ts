@@ -32,6 +32,11 @@ export interface AirflowDagCatalogEntry {
   businessFolder: string;
   displayName: string;
   description?: string;
+  monitoringEnabled: boolean;
+  consecutiveFailureThreshold: number;
+  staleDaysThreshold: number;
+  durationMultiplier: number;
+  slaMinutes: number | null;
 }
 
 export async function listAirflowDagCatalog(): Promise<AirflowDagCatalogEntry[]> {
@@ -39,10 +44,81 @@ export async function listAirflowDagCatalog(): Promise<AirflowDagCatalogEntry[]>
   return unwrap(res.data);
 }
 
+export interface AirflowDagCatalogSyncResult {
+  discoveredCount: number;
+  eligibleCount: number;
+  createdCount: number;
+  createdDagIds: string[];
+  disabledCount: number;
+  disabledDagIds: string[];
+}
+
+export async function syncAirflowDagCatalog(): Promise<AirflowDagCatalogSyncResult> {
+  const res = await apiClient.post<ApiResponse<AirflowDagCatalogSyncResult>>("/airflow/dag-catalog/sync");
+  return unwrap(res.data);
+}
+
+export async function deleteAirflowDagCatalog(dagId: string): Promise<void> {
+  const res = await apiClient.delete<ApiResponse<void>>(
+    `/airflow/dag-catalog/${encodeURIComponent(dagId)}`,
+  );
+  unwrap(res.data);
+}
+
+export interface AirflowMonitoringSettings {
+  dagId: string;
+  monitoringEnabled: boolean;
+  consecutiveFailureThreshold: number;
+  staleDaysThreshold: number;
+  durationMultiplier: number;
+  slaMinutes: number | null;
+}
+
+export interface AirflowDagAlert {
+  id: number;
+  dagId: string;
+  ruleType: "CONSECUTIVE_FAILURE" | "STALE" | "DURATION_ANOMALY" | "SLA_EXCEEDED";
+  severity: "DANGER" | "WARNING" | "INFO";
+  status: "OPEN" | "ACKNOWLEDGED" | "RESOLVED";
+  message: string;
+  detectedAt: string;
+  lastDetectedAt: string;
+  acknowledgedAt?: string | null;
+  resolvedAt?: string | null;
+}
+
+export async function listAirflowDagAlerts(): Promise<AirflowDagAlert[]> {
+  const res = await apiClient.get<ApiResponse<AirflowDagAlert[]>>("/airflow/alerts");
+  return unwrap(res.data);
+}
+
+export async function listAirflowDagAlertHistory(): Promise<AirflowDagAlert[]> {
+  const res = await apiClient.get<ApiResponse<AirflowDagAlert[]>>("/airflow/alerts/history");
+  return unwrap(res.data);
+}
+
+export async function saveAirflowMonitoringSettings(
+  dagId: string,
+  settings: Omit<AirflowMonitoringSettings, "dagId">,
+): Promise<AirflowMonitoringSettings> {
+  const res = await apiClient.patch<ApiResponse<AirflowMonitoringSettings>>(
+    `/airflow/dag-catalog/${encodeURIComponent(dagId)}/monitoring`,
+    settings,
+  );
+  return unwrap(res.data);
+}
+
+export async function acknowledgeAirflowDagAlert(id: number): Promise<AirflowDagAlert> {
+  const res = await apiClient.patch<ApiResponse<AirflowDagAlert>>(`/airflow/alerts/${id}/acknowledge`);
+  return unwrap(res.data);
+}
+
 export interface AirflowDagRun {
   dag_id?: string;
   dag_run_id: string;
   state?: string;
+  run_type?: string;
+  duration?: number;
   start_date?: string;
   end_date?: string;
   execution_date?: string;
@@ -330,6 +406,17 @@ export async function listAllAirflowDagRuns(
   return runs;
 }
 
+export async function triggerAirflowDag(
+  dagId: string,
+  conf: Record<string, unknown> = {},
+): Promise<AirflowDagRun> {
+  const res = await axios.post<AirflowDagRun>(
+    `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/dagRuns`,
+    { logical_date: null, conf },
+  );
+  return res.data;
+}
+
 export async function listAirflowTaskInstances(dagId: string, dagRunId: string): Promise<AirflowTaskInstance[]> {
   const res = await axios.get<{ task_instances?: AirflowTaskInstance[] }>(
     `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/dagRuns/${encodeURIComponent(dagRunId)}/taskInstances`,
@@ -337,9 +424,21 @@ export async function listAirflowTaskInstances(dagId: string, dagRunId: string):
   return res.data.task_instances ?? [];
 }
 
+export async function retryAirflowTaskFrom(dagId: string, dagRunId: string, taskId: string): Promise<void> {
+  await axios.post(`${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/clearTaskInstances`, {
+    dry_run: false,
+    dag_run_id: dagRunId,
+    task_ids: [taskId],
+    include_downstream: true,
+    only_failed: false,
+    reset_dag_runs: true,
+  });
+}
+
 interface AirflowLogMessage {
   timestamp?: string;
   event?: string;
+  error_detail?: Array<{ exc_type?: string; exc_value?: string }>;
 }
 
 export async function getAirflowTaskLog(
@@ -357,9 +456,11 @@ export async function getAirflowTaskLog(
     return "로그가 없습니다.";
   }
   return content
-    .map((entry) =>
-      typeof entry === "string" ? entry : `${entry.timestamp ? `[${entry.timestamp}] ` : ""}${entry.event ?? ""}`,
-    )
+    .map((entry) => {
+      if (typeof entry === "string") return entry;
+      const error = entry.error_detail?.map((detail) => [detail.exc_type, detail.exc_value].filter(Boolean).join(": ")).filter(Boolean).join("; ");
+      return `${entry.timestamp ? `[${entry.timestamp}] ` : ""}${entry.event ?? ""}${error ? `: ${error}` : ""}`;
+    })
     .join("\n");
 }
 
@@ -457,6 +558,31 @@ async function saveAirflowVariable(key: string, value: string): Promise<void> {
   }
 }
 
+async function deleteAirflowVariable(key: string): Promise<void> {
+  try {
+    await axios.delete(`${AIRFLOW_API_BASE}/variables/${encodeURIComponent(key)}`);
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return;
+    }
+    throw error;
+  }
+}
+
+/** NiFi 동적 DAG의 실행 주기를 저장한다. 빈 값은 수동 실행 전용으로 되돌린다. */
+export async function saveAirflowDagSchedule(dagId: string, cron?: string): Promise<void> {
+  if (!/^nifi_pipeline_[a-z0-9]{8}_control$/i.test(dagId)) {
+    throw new Error("NiFi에서 생성된 DAG만 화면에서 스케줄을 변경할 수 있습니다.");
+  }
+  const scheduleKey = `${dagId}__schedule`;
+  if (cron?.trim()) {
+    await saveAirflowVariable(scheduleKey, cron.trim());
+  } else {
+    await deleteAirflowVariable(scheduleKey);
+  }
+  await saveAirflowVariable(`${dagId}__auto_stop_after_run`, "true");
+}
+
 /** NiFi 동적 DAG가 읽는 스케줄과 배치 실행 후 자동 정지 설정을 함께 저장한다. */
 export async function saveNifiDagSchedule(processGroupId: string, cron: string): Promise<string> {
   if (processGroupId.length < 8) {
@@ -464,10 +590,7 @@ export async function saveNifiDagSchedule(processGroupId: string, cron: string):
   }
 
   const dagId = `nifi_pipeline_${processGroupId.slice(0, 8)}_control`;
-  await Promise.all([
-    saveAirflowVariable(`${dagId}__schedule`, cron),
-    saveAirflowVariable(`${dagId}__auto_stop_after_run`, "true"),
-  ]);
+  await saveAirflowDagSchedule(dagId, cron);
   return dagId;
 }
 

@@ -155,6 +155,33 @@ public class NifiClient {
         }
     }
 
+    public void deleteRootProcessGroupByIdPrefix(String idPrefix) {
+        List<NifiFlowResponse.ProcessGroupEntity> matches = childProcessGroups(ROOT_GROUP_ID).stream()
+                .filter(candidate -> componentId(candidate).startsWith(idPrefix))
+                .toList();
+        if (matches.size() != 1) {
+            throw new NifiClientException(
+                    "NiFi 최상위 Processor Group 식별 결과가 1건이 아닙니다: "
+                            + idPrefix + " (" + matches.size() + "건)", null);
+        }
+        NifiFlowResponse.ProcessGroupEntity group = matches.getFirst();
+        long version = group.revision() == null || group.revision().version() == null
+                ? 0L
+                : group.revision().version();
+        try {
+            restClient.delete()
+                    .uri(uri -> uri.path("/nifi-api/process-groups/{id}")
+                            .queryParam("version", version)
+                            .build(componentId(group)))
+                    .header("Authorization", "Bearer " + getToken())
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientException ex) {
+            throw new NifiClientException(
+                    "NiFi Processor Group 삭제 실패(실행 중이면 먼저 중지해야 합니다): " + ex.getMessage(), ex);
+        }
+    }
+
     public NifiProcessGroupResponse createInitialDbToDbFlow(NifiInitialDbToDbCreateRequest request) {
         String loadMode = nullToBlank(request.loadMode()).trim().toUpperCase();
         if (!"INSERT".equals(loadMode) && !"TRUNCATE".equals(loadMode) && !"UPSERT".equals(loadMode)) {
@@ -478,14 +505,7 @@ public class NifiClient {
     }
 
     private NifiFlowResponse.ProcessGroupEntity findChildProcessGroup(String parentGroupId, String childName) {
-        NifiFlowResponse flow = getFlow(parentGroupId);
-        List<NifiFlowResponse.ProcessGroupEntity> groups = flow == null
-                || flow.processGroupFlow() == null
-                || flow.processGroupFlow().flow() == null
-                || flow.processGroupFlow().flow().processGroups() == null
-                ? List.of()
-                : flow.processGroupFlow().flow().processGroups();
-        return groups.stream()
+        return childProcessGroups(parentGroupId).stream()
                 .filter(group -> group.component() != null)
                 .filter(group -> childName.equalsIgnoreCase(nullToBlank(group.component().name()).trim()))
                 .findFirst()
@@ -512,17 +532,20 @@ public class NifiClient {
     }
 
     private Set<String> childProcessGroupIds(String parentGroupId) {
+        return childProcessGroups(parentGroupId).stream()
+                .map(group -> componentId(group))
+                .filter(StringUtils::hasText)
+                .collect(Collectors.toSet());
+    }
+
+    private List<NifiFlowResponse.ProcessGroupEntity> childProcessGroups(String parentGroupId) {
         NifiFlowResponse flow = getFlow(parentGroupId);
-        List<NifiFlowResponse.ProcessGroupEntity> groups = flow == null
+        return flow == null
                 || flow.processGroupFlow() == null
                 || flow.processGroupFlow().flow() == null
                 || flow.processGroupFlow().flow().processGroups() == null
                 ? List.of()
                 : flow.processGroupFlow().flow().processGroups();
-        return groups.stream()
-                .map(group -> componentId(group))
-                .filter(StringUtils::hasText)
-                .collect(Collectors.toSet());
     }
 
     private String findNewChildProcessGroupId(String parentGroupId, Set<String> existingChildGroupIds) {
