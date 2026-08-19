@@ -3,6 +3,7 @@ import { AppLayout } from "./components/AppLayout";
 import { RequireAuth } from "./auth/RequireAuth";
 import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { CdcLogsPage } from "./pages/CdcLogsPage";
+import { CdcCreatePage } from "./pages/CdcCreatePage";
 import { AirflowDashboardPage } from "./pages/AirflowDashboardPage";
 import { ConsoleFramePage } from "./pages/ConsoleFramePage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -56,6 +57,7 @@ export function App() {
         />
         <Route path="/etl/logs" element={<EtlLogsPage />} />
         <Route path="/cdc" element={<Navigate to="/cdc/pipelines" replace />} />
+        <Route path="/cdc/create" element={<CdcCreatePage />} />
         <Route path="/cdc/pipelines" element={<PipelinesPage />} />
         <Route path="/cdc/connections" element={<ConnectionsPage />} />
         <Route path="/cdc/logs" element={<CdcLogsPage />} />

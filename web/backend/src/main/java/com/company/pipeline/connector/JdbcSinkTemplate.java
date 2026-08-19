@@ -39,6 +39,7 @@ public class JdbcSinkTemplate {
         config.put("schema.evolution", "basic");
         config.put("table.name.format", request.targetSchema() + "." + request.targetTable());
         config.put("delete.enabled", String.valueOf(request.deleteEnabled()));
+        addDlqSettings(config, request.pipelineId());
 
         return new RenderedConnectorConfig(connectorName, "SINK",
                 "io.debezium.connector.jdbc.JdbcSinkConnector", config);
@@ -72,9 +73,20 @@ public class JdbcSinkTemplate {
         config.put("table.name.format", request.targetSchema() + "." + request.targetTable());
         config.put("delete.enabled", "false");
         config.put("key.converter", "org.apache.kafka.connect.storage.StringConverter");
+        addDlqSettings(config, request.pipelineId());
 
         return new RenderedConnectorConfig(connectorName, "SINK",
                 "io.debezium.connector.jdbc.JdbcSinkConnector", config);
+    }
+
+    private void addDlqSettings(Map<String, Object> config, Long pipelineId) {
+        config.put("errors.tolerance", "all");
+        config.put("errors.deadletterqueue.topic.name", "dlq.pipeline-" + pipelineId);
+        config.put("errors.deadletterqueue.topic.replication.factor", "1");
+        config.put("errors.deadletterqueue.context.headers.enable", "true");
+        config.put("errors.log.enable", "true");
+        // 원문 데이터가 Connect 로그에 평문으로 남지 않게 한다.
+        config.put("errors.log.include.messages", "false");
     }
 
     private String connectionUrl(SinkConnectorRequest request) {

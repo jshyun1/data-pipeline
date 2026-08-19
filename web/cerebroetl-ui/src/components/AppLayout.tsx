@@ -79,6 +79,7 @@ const NAV_ITEMS: NavItem[] = [
     label: "CDC",
     icon: <NodeIndexOutlined />,
     children: [
+      { path: "/cdc/create", label: "생성" },
       { path: "/cdc/pipelines", label: "파이프라인" },
       { path: "/cdc/connections", label: "연결정보" },
       { path: "/cdc/logs", label: "처리 로그" },

@@ -7,6 +7,10 @@ import com.company.pipeline.monitoring.dto.PipelineMetricSnapshotResponse;
 import com.company.pipeline.pipeline.dto.PipelineCommandHistoryResponse;
 import com.company.pipeline.pipeline.dto.PipelineCreateRequest;
 import com.company.pipeline.pipeline.dto.PipelineResponse;
+import com.company.pipeline.pipeline.dto.PipelineRuntimeStatusResponse;
+import com.company.pipeline.pipeline.dto.PipelineConsistencyCheckResponse;
+import com.company.pipeline.pipeline.dto.PipelineBatchCreateRequest;
+import com.company.pipeline.pipeline.dto.PipelineBatchCreateResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -26,22 +30,37 @@ public class PipelineController {
     private final PipelineCommandHistoryRepository pipelineCommandHistoryRepository;
     private final PipelineCommandHistoryRecorder pipelineCommandHistoryRecorder;
     private final PipelineMetricSnapshotService pipelineMetricSnapshotService;
+    private final PipelineRuntimeStatusService pipelineRuntimeStatusService;
+    private final PipelineConsistencyService pipelineConsistencyService;
+    private final PipelineBatchCreateService pipelineBatchCreateService;
 
     public PipelineController(PipelineService pipelineService, PipelineDeployService pipelineDeployService,
             PipelineCommandHistoryRepository pipelineCommandHistoryRepository,
             PipelineCommandHistoryRecorder pipelineCommandHistoryRecorder,
-            PipelineMetricSnapshotService pipelineMetricSnapshotService) {
+            PipelineMetricSnapshotService pipelineMetricSnapshotService,
+            PipelineRuntimeStatusService pipelineRuntimeStatusService,
+            PipelineConsistencyService pipelineConsistencyService,
+            PipelineBatchCreateService pipelineBatchCreateService) {
         this.pipelineService = pipelineService;
         this.pipelineDeployService = pipelineDeployService;
         this.pipelineCommandHistoryRepository = pipelineCommandHistoryRepository;
         this.pipelineCommandHistoryRecorder = pipelineCommandHistoryRecorder;
         this.pipelineMetricSnapshotService = pipelineMetricSnapshotService;
+        this.pipelineRuntimeStatusService = pipelineRuntimeStatusService;
+        this.pipelineConsistencyService = pipelineConsistencyService;
+        this.pipelineBatchCreateService = pipelineBatchCreateService;
     }
 
     @PostMapping
     public ApiResponse<PipelineResponse> create(@Valid @RequestBody PipelineCreateRequest request) {
         PipelineResponse created = pipelineService.create(request);
         return ApiResponse.success(pipelineDeployService.deploy(created.id()));
+    }
+
+    @PostMapping("/batch")
+    public ApiResponse<PipelineBatchCreateResponse> createBatch(
+            @Valid @RequestBody PipelineBatchCreateRequest request) {
+        return ApiResponse.success(pipelineBatchCreateService.create(request));
     }
 
     @PostMapping("/log-file")
@@ -54,6 +73,16 @@ public class PipelineController {
         return ApiResponse.success(pipelineService.list());
     }
 
+    @GetMapping("/runtime-statuses")
+    public ApiResponse<List<PipelineRuntimeStatusResponse>> runtimeStatuses() {
+        return ApiResponse.success(pipelineRuntimeStatusService.list());
+    }
+
+    @GetMapping("/{id}/runtime-status")
+    public ApiResponse<PipelineRuntimeStatusResponse> runtimeStatus(@PathVariable Long id) {
+        return ApiResponse.success(pipelineRuntimeStatusService.get(id));
+    }
+
     @GetMapping("/{id}")
     public ApiResponse<PipelineResponse> get(@PathVariable Long id) {
         return ApiResponse.success(pipelineService.get(id));
@@ -63,6 +92,16 @@ public class PipelineController {
     public ApiResponse<List<PipelineCommandHistoryResponse>> history(@PathVariable Long id) {
         return ApiResponse.success(pipelineCommandHistoryRepository.findByPipelineIdOrderByRequestedAtDesc(id)
                 .stream().map(PipelineCommandHistoryResponse::from).toList());
+    }
+
+    @GetMapping("/{id}/consistency-checks")
+    public ApiResponse<List<PipelineConsistencyCheckResponse>> consistencyChecks(@PathVariable Long id) {
+        return ApiResponse.success(pipelineConsistencyService.history(id));
+    }
+
+    @PostMapping("/{id}/consistency-checks")
+    public ApiResponse<PipelineConsistencyCheckResponse> checkConsistency(@PathVariable Long id) {
+        return ApiResponse.success(pipelineConsistencyService.check(id));
     }
 
     @PostMapping("/{id}/deploy")

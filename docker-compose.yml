@@ -417,6 +417,8 @@ services:
         condition: service_healthy
       airflow-apiserver:
         condition: service_healthy
+      pipeline-api:
+        condition: service_healthy
     environment:
       # NiFi/Airflow 공유 서비스계정 - 컨테이너 안의 crond가 주기적으로 이 계정으로
       # 재로그인해서 nginx가 모든 요청에 얹어 보낼 토큰을 갱신한다(refresh-credentials.sh).

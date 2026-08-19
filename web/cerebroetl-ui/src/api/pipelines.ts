@@ -4,10 +4,17 @@ import type {
   PipelineCommandHistoryResponse,
   PipelineCreateRequest,
   PipelineResponse,
+  PipelineRuntimeStatusResponse,
+  PipelineConsistencyCheckResponse,
 } from "../types/pipeline";
 
 export async function listPipelines(): Promise<PipelineResponse[]> {
   const res = await apiClient.get<ApiResponse<PipelineResponse[]>>("/pipelines");
+  return unwrap(res.data);
+}
+
+export async function listPipelineRuntimeStatuses(): Promise<PipelineRuntimeStatusResponse[]> {
+  const res = await apiClient.get<ApiResponse<PipelineRuntimeStatusResponse[]>>("/pipelines/runtime-statuses");
   return unwrap(res.data);
 }
 
@@ -16,8 +23,28 @@ export async function getPipelineHistory(id: number): Promise<PipelineCommandHis
   return unwrap(res.data);
 }
 
+export async function listPipelineConsistencyChecks(id: number): Promise<PipelineConsistencyCheckResponse[]> {
+  const res = await apiClient.get<ApiResponse<PipelineConsistencyCheckResponse[]>>(`/pipelines/${id}/consistency-checks`);
+  return unwrap(res.data);
+}
+
+export async function checkPipelineConsistency(id: number): Promise<PipelineConsistencyCheckResponse> {
+  const res = await apiClient.post<ApiResponse<PipelineConsistencyCheckResponse>>(`/pipelines/${id}/consistency-checks`);
+  return unwrap(res.data);
+}
+
 export async function createPipeline(request: PipelineCreateRequest): Promise<PipelineResponse> {
   const res = await apiClient.post<ApiResponse<PipelineResponse>>("/pipelines", request);
+  return unwrap(res.data);
+}
+
+export interface PipelineBatchCreateResponse {
+  createdCount: number;
+  pipelines: PipelineResponse[];
+}
+
+export async function createPipelineBatch(requests: PipelineCreateRequest[]): Promise<PipelineBatchCreateResponse> {
+  const res = await apiClient.post<ApiResponse<PipelineBatchCreateResponse>>("/pipelines/batch", { pipelines: requests });
   return unwrap(res.data);
 }
 

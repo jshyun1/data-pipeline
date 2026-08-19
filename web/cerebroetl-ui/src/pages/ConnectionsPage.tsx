@@ -1,10 +1,27 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from "antd";
+import { Alert, Button, Card, Descriptions, Form, Input, InputNumber, List, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
-import { createConnection, deleteConnection, listConnections, testConnection, updateConnection } from "../api/connections";
+import {
+  checkCdcPrerequisites,
+  createConnection,
+  deleteConnection,
+  listConnections,
+  listConnectionUsages,
+  testConnection,
+  updateConnection,
+  validateConnectionUpdate,
+  validateNewConnection,
+} from "../api/connections";
 import { listPipelines } from "../api/pipelines";
-import type { ConnectionCreateRequest, ConnectionResponse, ConnectionUpdateRequest, DbType } from "../types/connection";
+import type {
+  CdcPrerequisiteResponse,
+  ConnectionCreateRequest,
+  ConnectionResponse,
+  ConnectionTestResponse,
+  ConnectionUpdateRequest,
+  DbType,
+} from "../types/connection";
 
 const STATUS_COLOR: Record<string, string> = {
   UNKNOWN: "default",
@@ -18,12 +35,20 @@ export function ConnectionsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [readOnly, setReadOnly] = useState(false);
+  const [formTestResult, setFormTestResult] = useState<ConnectionTestResponse | null>(null);
+  const [prerequisites, setPrerequisites] = useState<CdcPrerequisiteResponse | null>(null);
   const [form] = Form.useForm<ConnectionCreateRequest>();
 
   const { data: connections, isLoading } = useQuery({
     queryKey: ["connections"],
     queryFn: listConnections,
   });
+
+  const { data: usages } = useQuery({
+    queryKey: ["connection-usages"],
+    queryFn: listConnectionUsages,
+  });
+  const usageById = new Map((usages ?? []).map((usage) => [usage.connectionId, usage]));
 
   // 수정 화면에서 "이미 배포된 파이프라인은 재배포해야 반영된다"는 안내에 쓴다 -
   // 연결정보를 바꿔도 Kafka Connect에 이미 등록된 커넥터 설정은 자동으로 안 바뀐다.
@@ -32,12 +57,17 @@ export function ConnectionsPage() {
     queryFn: listPipelines,
   });
 
-  const invalidateConnections = () => queryClient.invalidateQueries({ queryKey: ["connections"] });
+  const invalidateConnections = () => {
+    queryClient.invalidateQueries({ queryKey: ["connections"] });
+    queryClient.invalidateQueries({ queryKey: ["connection-usages"] });
+  };
 
   const closeModal = () => {
     setModalOpen(false);
     setEditingId(null);
     setReadOnly(false);
+    setFormTestResult(null);
+    setPrerequisites(null);
     form.resetFields();
   };
 
@@ -83,12 +113,45 @@ export function ConnectionsPage() {
     onError: (error: Error) => message.error(error.message),
   });
 
+  const validateMutation = useMutation({
+    mutationFn: async (values: ConnectionCreateRequest) => {
+      if (editingId === null) {
+        return validateNewConnection({
+          dbType: values.dbType,
+          host: values.host,
+          port: values.port,
+          databaseName: values.databaseName,
+          serviceName: values.serviceName,
+          username: values.username,
+          password: values.password,
+        });
+      }
+      const { password, ...rest } = values;
+      return validateConnectionUpdate(editingId, { ...rest, password: password || undefined });
+    },
+    onSuccess: (result) => {
+      setFormTestResult(result);
+      result.success ? message.success(`연결 성공 (${result.latencyMs}ms)`) : message.error(result.message);
+    },
+    onError: (error: Error) => {
+      setFormTestResult(null);
+      message.error(error.message);
+    },
+  });
+
+  const prerequisiteMutation = useMutation({
+    mutationFn: checkCdcPrerequisites,
+    onSuccess: setPrerequisites,
+    onError: (error: Error) => message.error(error.message),
+  });
+
   const dbType = Form.useWatch("dbType", form);
 
   const openCreateModal = () => {
     setEditingId(null);
     setReadOnly(false);
     form.resetFields();
+    setFormTestResult(null);
     setModalOpen(true);
   };
 
@@ -109,6 +172,7 @@ export function ConnectionsPage() {
   const openEditModal = (record: ConnectionResponse) => {
     setEditingId(record.id);
     setReadOnly(false);
+    setFormTestResult(null);
     fillFormFrom(record);
     setModalOpen(true);
   };
@@ -116,6 +180,7 @@ export function ConnectionsPage() {
   const openDetailModal = (record: ConnectionResponse) => {
     setEditingId(record.id);
     setReadOnly(true);
+    setPrerequisites(null);
     fillFormFrom(record);
     setModalOpen(true);
   };
@@ -161,9 +226,29 @@ export function ConnectionsPage() {
               ),
             },
             {
+              title: "사용처",
+              render: (_, record) => {
+                const usage = usageById.get(record.id);
+                if (!usage || usage.references.length === 0) return <Tag>미사용</Tag>;
+                const detail = usage.references
+                  .map((reference) => `${reference.referenceType} · ${reference.name} (${reference.role})`)
+                  .join("\n");
+                return (
+                  <Tooltip title={<span style={{ whiteSpace: "pre-line" }}>{detail}</span>}>
+                    <Space size={4} wrap>
+                      {usage.cdcSourceCount + usage.cdcTargetCount > 0 && (
+                        <Tag color="blue">CDC {usage.cdcSourceCount + usage.cdcTargetCount}</Tag>
+                      )}
+                      {usage.etlJobCount > 0 && <Tag color="purple">ETL {usage.etlJobCount}</Tag>}
+                    </Space>
+                  </Tooltip>
+                );
+              },
+            },
+            {
               title: "관리",
               render: (_, record) => (
-                <Space>
+                <Space wrap>
                   <Button size="small" onClick={() => openDetailModal(record)}>
                     상세
                   </Button>
@@ -179,10 +264,20 @@ export function ConnectionsPage() {
                   </Button>
                   <Popconfirm
                     title="이 연결정보를 삭제할까요?"
-                    description="이 연결정보를 쓰는 파이프라인이 있으면 먼저 정리해야 합니다."
+                    description={
+                      usageById.get(record.id)?.deletable === false
+                        ? "CDC 파이프라인 또는 ETL 작업에서 사용 중이므로 삭제할 수 없습니다."
+                        : "삭제 후에는 복구할 수 없습니다."
+                    }
                     onConfirm={() => deleteMutation.mutate(record.id)}
+                    disabled={usageById.get(record.id)?.deletable === false}
                   >
-                    <Button danger size="small" loading={deleteMutation.isPending}>
+                    <Button
+                      danger
+                      size="small"
+                      disabled={usageById.get(record.id)?.deletable === false}
+                      loading={deleteMutation.isPending}
+                    >
                       삭제
                     </Button>
                   </Popconfirm>
@@ -197,9 +292,31 @@ export function ConnectionsPage() {
         title={editingId === null ? "연결정보 신규 등록" : readOnly ? "연결정보 상세" : "연결정보 수정"}
         open={modalOpen}
         onCancel={closeModal}
-        onOk={() => form.submit()}
-        confirmLoading={createMutation.isPending || updateMutation.isPending}
-        footer={readOnly ? <Button onClick={closeModal}>닫기</Button> : undefined}
+        footer={
+          readOnly ? (
+            <Button onClick={closeModal}>닫기</Button>
+          ) : (
+            <Space>
+              <Button onClick={closeModal}>취소</Button>
+              <Button
+                loading={validateMutation.isPending}
+                onClick={async () => validateMutation.mutate(await form.validateFields())}
+              >
+                연결 테스트
+              </Button>
+              <Tooltip title={!formTestResult?.success ? "연결 테스트에 성공해야 저장할 수 있습니다." : undefined}>
+                <Button
+                  type="primary"
+                  disabled={!formTestResult?.success}
+                  loading={createMutation.isPending || updateMutation.isPending}
+                  onClick={() => form.submit()}
+                >
+                  저장
+                </Button>
+              </Tooltip>
+            </Space>
+          )
+        }
         destroyOnHidden
       >
         {editingId !== null && !readOnly && (
@@ -226,6 +343,7 @@ export function ConnectionsPage() {
           layout="vertical"
           disabled={readOnly}
           initialValues={{ dbType: "ORACLE", port: 1521 }}
+          onValuesChange={() => setFormTestResult(null)}
           onFinish={(values) => {
             if (editingId === null) {
               createMutation.mutate(values);
@@ -238,6 +356,15 @@ export function ConnectionsPage() {
             }
           }}
         >
+          {!readOnly && formTestResult && (
+            <Alert
+              type={formTestResult.success ? "success" : "error"}
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={formTestResult.success ? `연결 성공 (${formTestResult.latencyMs}ms)` : "연결 실패"}
+              description={formTestResult.message}
+            />
+          )}
           <Form.Item name="name" label="연결명" rules={[{ required: true }]}>
             <Input placeholder="예: oracle-source-poc" />
           </Form.Item>
@@ -256,11 +383,11 @@ export function ConnectionsPage() {
             <InputNumber style={{ width: "100%" }} min={1} max={65535} />
           </Form.Item>
           {dbType === "ORACLE" ? (
-            <Form.Item name="serviceName" label="Service Name (PDB)">
+            <Form.Item name="serviceName" label="Service Name (PDB)" rules={[{ required: true }]}>
               <Input placeholder="예: XEPDB1" />
             </Form.Item>
           ) : (
-            <Form.Item name="databaseName" label="Database 명">
+            <Form.Item name="databaseName" label="Database 명" rules={[{ required: true }]}>
               <Input placeholder="예: tarantula" />
             </Form.Item>
           )}
@@ -295,6 +422,57 @@ export function ConnectionsPage() {
             />
           </Form.Item>
         </Form>
+        {readOnly && editingId !== null && (
+          <Card
+            size="small"
+            title="CDC 사전요건"
+            style={{ marginTop: 16 }}
+            extra={
+              <Button
+                size="small"
+                loading={prerequisiteMutation.isPending}
+                onClick={() => prerequisiteMutation.mutate(editingId)}
+              >
+                사전요건 점검
+              </Button>
+            }
+          >
+            {!prerequisites ? (
+              <Alert type="info" showIcon message="CDC 소스로 사용하기 전에 데이터베이스 설정과 권한을 점검하세요." />
+            ) : (
+              <>
+                <Descriptions size="small" column={2} style={{ marginBottom: 8 }}>
+                  <Descriptions.Item label="종합 결과">
+                    <Tag color={prerequisites.overallStatus === "PASS" ? "success" : prerequisites.overallStatus === "FAIL" ? "error" : "warning"}>
+                      {prerequisites.overallStatus}
+                    </Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="점검 시각">{prerequisites.checkedAt}</Descriptions.Item>
+                </Descriptions>
+                <List
+                  size="small"
+                  dataSource={prerequisites.checks}
+                  renderItem={(check) => (
+                    <List.Item>
+                      <List.Item.Meta
+                        title={
+                          <Space>
+                            <Tag color={check.status === "PASS" ? "success" : check.status === "FAIL" ? "error" : "warning"}>
+                              {check.status}
+                            </Tag>
+                            {check.label}
+                            {check.actualValue && <span style={{ color: "#777" }}>({check.actualValue})</span>}
+                          </Space>
+                        }
+                        description={check.status === "PASS" ? undefined : check.guidance}
+                      />
+                    </List.Item>
+                  )}
+                />
+              </>
+            )}
+          </Card>
+        )}
       </Modal>
     </div>
   );

@@ -102,4 +102,11 @@ class DebeziumOracleTemplateTest {
         assertThat(DebeziumOracleTemplate.isOracleCommonUser("appuser")).isFalse();
         assertThat(DebeziumOracleTemplate.isOracleCommonUser(null)).isFalse();
     }
+
+    @Test
+    void render_mapsNoDataSnapshotMode() {
+        SourceConnectorRequest request = new SourceConnectorRequest(
+                3L, DbType.ORACLE, "host", 1521, "c##u", "p", null, "XEPDB1", "APP", "T", "ora-cdc", "NO_DATA");
+        assertThat(template.render(request).config().get("snapshot.mode")).isEqualTo("no_data");
+    }
 }

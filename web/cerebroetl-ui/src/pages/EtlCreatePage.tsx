@@ -516,19 +516,23 @@ function TargetStep({
   loadMode,
   truncateSql,
   changeKeyColumn,
+  primaryKeys,
   showTruncateSql,
   onLoadModeChange,
   onTruncateSqlChange,
   onChangeKeyColumnChange,
+  onPrimaryKeysChange,
   onShowTruncateSqlChange,
 }: {
   loadMode: LoadMode;
   onLoadModeChange: (loadMode: LoadMode) => void;
   truncateSql: string;
   changeKeyColumn: string;
+  primaryKeys: string;
   showTruncateSql: boolean;
   onTruncateSqlChange: (truncateSql: string) => void;
   onChangeKeyColumnChange: (changeKeyColumn: string) => void;
+  onPrimaryKeysChange: (primaryKeys: string) => void;
   onShowTruncateSqlChange: (show: boolean) => void;
 }) {
   const showChangeKeyColumn = loadMode === "TRUNCATE" || loadMode === "UPSERT";
@@ -592,6 +596,18 @@ function TargetStep({
             value={changeKeyColumn}
             onChange={(event) => onChangeKeyColumnChange(event.target.value)}
             placeholder="예: UPDATED_AT"
+          />
+        </div>
+      ) : null}
+
+      {loadMode === "UPSERT" ? (
+        <div className="etl-change-key-column">
+          <label htmlFor="etl-primary-keys-input">Primary Keys</label>
+          <input
+            id="etl-primary-keys-input"
+            value={primaryKeys}
+            onChange={(event) => onPrimaryKeysChange(event.target.value)}
+            placeholder="예: ID 또는 ID,SEQ"
           />
         </div>
       ) : null}
@@ -707,6 +723,7 @@ export function EtlCreatePage() {
   const [showTruncateSql, setShowTruncateSql] = useState(false);
   const [truncateSql, setTruncateSql] = useState("");
   const [changeKeyColumn, setChangeKeyColumn] = useState("");
+  const [primaryKeys, setPrimaryKeys] = useState("");
 
   const moveStep = (stepId: WizardStepId) => {
     if (completed) {
@@ -742,6 +759,10 @@ export function EtlCreatePage() {
       message.warning("UPSERT 적재 방식은 변경기준 컬럼을 입력해야 합니다.");
       return;
     }
+    if (loadMode === "UPSERT" && !primaryKeys.trim()) {
+      message.warning("UPSERT 적재 방식은 Primary Keys를 입력해야 합니다.");
+      return;
+    }
 
     setIsCreating(true);
     try {
@@ -760,6 +781,7 @@ export function EtlCreatePage() {
         loadMode,
         truncateSql: loadMode === "TRUNCATE" ? truncateSql.trim() : undefined,
         changeKeyColumn: (loadMode === "TRUNCATE" || loadMode === "UPSERT") ? changeKeyColumn.trim() : undefined,
+        primaryKeys: loadMode === "UPSERT" ? primaryKeys.trim() : undefined,
       });
       const processGroupId = createdGroup.id;
       if (!processGroupId) {
@@ -801,6 +823,7 @@ export function EtlCreatePage() {
         loadMode={loadMode}
         truncateSql={truncateSql}
         changeKeyColumn={changeKeyColumn}
+        primaryKeys={primaryKeys}
         showTruncateSql={showTruncateSql}
         onLoadModeChange={(nextLoadMode) => {
           setLoadMode(nextLoadMode);
@@ -810,6 +833,7 @@ export function EtlCreatePage() {
         }}
         onTruncateSqlChange={setTruncateSql}
         onChangeKeyColumnChange={setChangeKeyColumn}
+        onPrimaryKeysChange={setPrimaryKeys}
         onShowTruncateSqlChange={setShowTruncateSql}
       />
     ),
@@ -858,7 +882,7 @@ export function EtlCreatePage() {
             <button
               type="button"
               className="etl-target-complete"
-              disabled={isCreating || (loadMode === "UPSERT" && !changeKeyColumn.trim())}
+              disabled={isCreating || (loadMode === "UPSERT" && (!changeKeyColumn.trim() || !primaryKeys.trim()))}
               onClick={completeWizard}
             >
               {isCreating ? "생성 중" : "완료"}

@@ -1,0 +1,117 @@
+package com.company.pipeline.airflowdashboard;
+
+import com.company.pipeline.airflowdashboard.AirflowDagRunClient.Dag;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+@Service
+public class AirflowDagCatalogSyncService {
+
+    private static final String UPSERT_SQL = """
+            INSERT INTO airflow_dag_catalog
+                (dag_id, business_group, business_folder, display_name, description, sort_order, enabled)
+            VALUES (?, ?, ?, ?, ?, 0, TRUE)
+            ON CONFLICT (dag_id) DO UPDATE SET
+                business_group = EXCLUDED.business_group,
+                business_folder = EXCLUDED.business_folder,
+                display_name = EXCLUDED.display_name,
+                description = EXCLUDED.description,
+                enabled = TRUE,
+                updated_at = now()
+            """;
+    private static final String ALL_IDS_SQL = "SELECT dag_id FROM airflow_dag_catalog";
+    private static final String ENABLED_IDS_SQL = """
+            SELECT dag_id FROM airflow_dag_catalog
+            WHERE enabled = TRUE AND business_group IN ('CDC', 'ETL')
+            """;
+    private static final String DISABLE_SQL = """
+            UPDATE airflow_dag_catalog SET enabled = FALSE, updated_at = now() WHERE dag_id = ?
+            """;
+
+    private final AirflowDagRunClient airflowClient;
+    private final JdbcTemplate jdbcTemplate;
+
+    public AirflowDagCatalogSyncService(AirflowDagRunClient airflowClient, JdbcTemplate jdbcTemplate) {
+        this.airflowClient = airflowClient;
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    public SyncResult synchronize() {
+        Map<String, Dag> discovered = new LinkedHashMap<>();
+        for (Dag dag : airflowClient.getDags()) {
+            if (dag.dagId() != null && !dag.dagId().isBlank() && !Boolean.TRUE.equals(dag.stale())) {
+                discovered.putIfAbsent(dag.dagId(), dag);
+            }
+        }
+
+        List<Candidate> candidates = discovered.values().stream()
+                .map(AirflowDagCatalogSyncService::candidate)
+                .filter(candidate -> candidate != null)
+                .toList();
+
+        var candidateIds = candidates.stream().map(Candidate::dagId).collect(java.util.stream.Collectors.toSet());
+        var existingIds = new HashSet<>(jdbcTemplate.queryForList(ALL_IDS_SQL, String.class));
+        List<String> disabledDagIds = jdbcTemplate.queryForList(ENABLED_IDS_SQL, String.class).stream()
+                .filter(dagId -> !candidateIds.contains(dagId))
+                .toList();
+
+        List<Object[]> upsertArgs = candidates.stream()
+                .map(candidate -> new Object[]{
+                        candidate.dagId(), candidate.businessGroup(), candidate.businessFolder(),
+                        candidate.displayName(), candidate.description()})
+                .toList();
+        if (!upsertArgs.isEmpty()) {
+            jdbcTemplate.batchUpdate(UPSERT_SQL, upsertArgs);
+        }
+        if (!disabledDagIds.isEmpty()) {
+            jdbcTemplate.batchUpdate(DISABLE_SQL,
+                    disabledDagIds.stream().map(dagId -> new Object[]{dagId}).toList());
+        }
+        List<String> createdDagIds = candidates.stream()
+                .map(Candidate::dagId)
+                .filter(dagId -> !existingIds.contains(dagId))
+                .toList();
+        return new SyncResult(
+                discovered.size(), candidates.size(), createdDagIds.size(), createdDagIds,
+                disabledDagIds.size(), disabledDagIds);
+    }
+
+    private static Candidate candidate(Dag dag) {
+        String group;
+        String folder;
+        if (dag.dagId().startsWith("nifi_pipeline_") && dag.dagId().endsWith("_control")) {
+            group = "ETL";
+            folder = "NiFi";
+        } else if (dag.dagId().startsWith("kafka_pipeline_") && dag.dagId().endsWith("_control")) {
+            group = "CDC";
+            folder = "Kafka";
+        } else {
+            return null;
+        }
+        String displayName = dag.displayName() == null || dag.displayName().isBlank()
+                ? dag.dagId()
+                : dag.displayName();
+        return new Candidate(dag.dagId(), group, folder, displayName, dag.description());
+    }
+
+    record Candidate(
+            String dagId,
+            String businessGroup,
+            String businessFolder,
+            String displayName,
+            String description) {
+    }
+
+    public record SyncResult(
+            int discoveredCount,
+            int eligibleCount,
+            int createdCount,
+            List<String> createdDagIds,
+            int disabledCount,
+            List<String> disabledDagIds) {
+    }
+}

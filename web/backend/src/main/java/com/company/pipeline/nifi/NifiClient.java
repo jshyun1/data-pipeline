@@ -50,7 +50,6 @@ public class NifiClient {
     private static final String POSTGRES_DRIVER_LOCATION = "/opt/nifi/nifi-current/drivers/postgresql-42.7.4.jar";
     private static final String ORACLE_DRIVER_CLASS = "oracle.jdbc.OracleDriver";
     private static final String ORACLE_DRIVER_LOCATION = "/opt/nifi/nifi-current/drivers/ojdbc11-23.26.2.0.0.jar";
-    private static final String FORMAT_TEMPLATE_GROUP_NAME = "FORMAT";
     private static final String INITIAL_TEMPLATE_GROUP_NAME = "Initial";
     private static final String TRUNCATE_TEMPLATE_GROUP_NAME = "truncate_initial";
     private static final String TEMPLATE_GROUP_NAME = "Template";
@@ -91,6 +90,10 @@ public class NifiClient {
     private static final List<String> PUT_STATEMENT_KEYS = List.of(
             "put-db-record-statement-type",
             "Statement Type"
+    );
+    private static final List<String> PUT_UPDATE_KEYS = List.of(
+            "put-db-record-update-keys",
+            "Update Keys"
     );
     private static final List<String> TRUNCATE_DBCP_KEYS = List.of(
             "JDBC Connection Pool",
@@ -155,6 +158,33 @@ public class NifiClient {
         }
     }
 
+    public void deleteRootProcessGroupByIdPrefix(String idPrefix) {
+        List<NifiFlowResponse.ProcessGroupEntity> matches = childProcessGroups(ROOT_GROUP_ID).stream()
+                .filter(candidate -> componentId(candidate).startsWith(idPrefix))
+                .toList();
+        if (matches.size() != 1) {
+            throw new NifiClientException(
+                    "NiFi 최상위 Processor Group 식별 결과가 1건이 아닙니다: "
+                            + idPrefix + " (" + matches.size() + "건)", null);
+        }
+        NifiFlowResponse.ProcessGroupEntity group = matches.getFirst();
+        long version = group.revision() == null || group.revision().version() == null
+                ? 0L
+                : group.revision().version();
+        try {
+            restClient.delete()
+                    .uri(uri -> uri.path("/nifi-api/process-groups/{id}")
+                            .queryParam("version", version)
+                            .build(componentId(group)))
+                    .header("Authorization", "Bearer " + getToken())
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientException ex) {
+            throw new NifiClientException(
+                    "NiFi Processor Group 삭제 실패(실행 중이면 먼저 중지해야 합니다): " + ex.getMessage(), ex);
+        }
+    }
+
     public NifiProcessGroupResponse createInitialDbToDbFlow(NifiInitialDbToDbCreateRequest request) {
         String loadMode = nullToBlank(request.loadMode()).trim().toUpperCase();
         if (!"INSERT".equals(loadMode) && !"TRUNCATE".equals(loadMode) && !"UPSERT".equals(loadMode)) {
@@ -162,6 +192,9 @@ public class NifiClient {
         }
         if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.changeKeyColumn())) {
             throw new NifiClientException("UPSERT 적재 방식은 변경기준 컬럼이 필요합니다.", null);
+        }
+        if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.primaryKeys())) {
+            throw new NifiClientException("UPSERT 적재 방식은 Primary Keys가 필요합니다.", null);
         }
 
         String token = getToken();
@@ -478,14 +511,7 @@ public class NifiClient {
     }
 
     private NifiFlowResponse.ProcessGroupEntity findChildProcessGroup(String parentGroupId, String childName) {
-        NifiFlowResponse flow = getFlow(parentGroupId);
-        List<NifiFlowResponse.ProcessGroupEntity> groups = flow == null
-                || flow.processGroupFlow() == null
-                || flow.processGroupFlow().flow() == null
-                || flow.processGroupFlow().flow().processGroups() == null
-                ? List.of()
-                : flow.processGroupFlow().flow().processGroups();
-        return groups.stream()
+        return childProcessGroups(parentGroupId).stream()
                 .filter(group -> group.component() != null)
                 .filter(group -> childName.equalsIgnoreCase(nullToBlank(group.component().name()).trim()))
                 .findFirst()
@@ -512,17 +538,20 @@ public class NifiClient {
     }
 
     private Set<String> childProcessGroupIds(String parentGroupId) {
+        return childProcessGroups(parentGroupId).stream()
+                .map(group -> componentId(group))
+                .filter(StringUtils::hasText)
+                .collect(Collectors.toSet());
+    }
+
+    private List<NifiFlowResponse.ProcessGroupEntity> childProcessGroups(String parentGroupId) {
         NifiFlowResponse flow = getFlow(parentGroupId);
-        List<NifiFlowResponse.ProcessGroupEntity> groups = flow == null
+        return flow == null
                 || flow.processGroupFlow() == null
                 || flow.processGroupFlow().flow() == null
                 || flow.processGroupFlow().flow().processGroups() == null
                 ? List.of()
                 : flow.processGroupFlow().flow().processGroups();
-        return groups.stream()
-                .map(group -> componentId(group))
-                .filter(StringUtils::hasText)
-                .collect(Collectors.toSet());
     }
 
     private String findNewChildProcessGroupId(String parentGroupId, Set<String> existingChildGroupIds) {
@@ -631,8 +660,8 @@ public class NifiClient {
     }
 
     private TemplateSelection templateSelection(String loadMode) {
+        NifiFlowResponse.ProcessGroupEntity templateGroup = findChildProcessGroup(ROOT_GROUP_ID, TEMPLATE_GROUP_NAME);
         if ("UPSERT".equals(loadMode)) {
-            NifiFlowResponse.ProcessGroupEntity templateGroup = findChildProcessGroup(ROOT_GROUP_ID, TEMPLATE_GROUP_NAME);
             NifiFlowResponse.ProcessGroupEntity incrementalGroup =
                     findChildProcessGroup(componentId(templateGroup), INCREMENTAL_TEMPLATE_GROUP_NAME);
             return new TemplateSelection(
@@ -642,14 +671,13 @@ public class NifiClient {
             );
         }
 
-        NifiFlowResponse.ProcessGroupEntity formatGroup = findChildProcessGroup(ROOT_GROUP_ID, FORMAT_TEMPLATE_GROUP_NAME);
         String templateGroupName = "TRUNCATE".equals(loadMode)
                 ? TRUNCATE_TEMPLATE_GROUP_NAME
                 : INITIAL_TEMPLATE_GROUP_NAME;
         NifiFlowResponse.ProcessGroupEntity initialGroup =
-                findChildProcessGroup(componentId(formatGroup), templateGroupName);
+                findChildProcessGroup(componentId(templateGroup), templateGroupName);
         return new TemplateSelection(
-                componentId(formatGroup),
+                componentId(templateGroup),
                 componentId(initialGroup),
                 revisionVersion(initialGroup.revision())
         );
@@ -717,6 +745,9 @@ public class NifiClient {
         putProperty(properties, PUT_DATABASE_TYPE_KEYS, request.targetDatabaseType().trim());
         putProperty(properties, PUT_SCHEMA_KEYS, request.targetSchema().trim());
         putProperty(properties, PUT_TABLE_KEYS, request.targetTable().trim());
+        if (StringUtils.hasText(request.primaryKeys())) {
+            putProperty(properties, PUT_UPDATE_KEYS, request.primaryKeys().trim());
+        }
         if (StringUtils.hasText(statementType)) {
             putProperty(properties, PUT_STATEMENT_KEYS, statementType);
         }

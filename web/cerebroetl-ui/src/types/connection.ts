@@ -44,3 +44,53 @@ export interface ConnectionUpdateRequest {
   username: string;
   password?: string;
 }
+
+export interface ConnectionTestRequest {
+  dbType: DbType;
+  host: string;
+  port: number;
+  databaseName?: string;
+  serviceName?: string;
+  username: string;
+  password: string;
+}
+
+export interface ConnectionTestResponse {
+  success: boolean;
+  testedAt: string;
+  latencyMs: number;
+  message: string;
+}
+
+export interface ConnectionReferenceResponse {
+  referenceType: "CDC" | "ETL";
+  referenceId: number;
+  name: string;
+  role: string;
+  status: string | null;
+}
+
+export interface ConnectionUsageResponse {
+  connectionId: number;
+  cdcSourceCount: number;
+  cdcTargetCount: number;
+  etlJobCount: number;
+  deletable: boolean;
+  references: ConnectionReferenceResponse[];
+}
+
+export interface CdcPrerequisiteCheckResponse {
+  code: string;
+  label: string;
+  status: "PASS" | "WARN" | "FAIL" | "UNKNOWN";
+  actualValue: string | null;
+  guidance: string;
+}
+
+export interface CdcPrerequisiteResponse {
+  connectionId: number;
+  dbType: DbType;
+  checkedAt: string;
+  overallStatus: "PASS" | "WARN" | "FAIL";
+  checks: CdcPrerequisiteCheckResponse[];
+}

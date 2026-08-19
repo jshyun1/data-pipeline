@@ -3,6 +3,7 @@ package com.company.pipeline.connection;
 import com.company.pipeline.common.BusinessException;
 import com.company.pipeline.common.ErrorCode;
 import com.company.pipeline.common.crypto.PasswordCryptoService;
+import com.company.pipeline.connection.dto.ColumnMetadataResponse;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
@@ -81,6 +82,34 @@ public class SchemaDiscoveryService {
         }
     }
 
+    public List<ColumnMetadataResponse> listColumns(Long connectionId, String schema, String table) {
+        PipelineConnection connection = findOrThrow(connectionId);
+        try (Connection jdbc = open(connection)) {
+            Set<String> primaryKeys = new java.util.HashSet<>();
+            try (ResultSet rs = jdbc.getMetaData().getPrimaryKeys(null, schema, table)) {
+                while (rs.next()) primaryKeys.add(rs.getString("COLUMN_NAME").toLowerCase());
+            }
+            List<ColumnMetadataResponse> columns = new ArrayList<>();
+            try (ResultSet rs = jdbc.getMetaData().getColumns(null, schema, table, "%")) {
+                while (rs.next()) {
+                    String name = rs.getString("COLUMN_NAME");
+                    int jdbcType = rs.getInt("DATA_TYPE");
+                    boolean maskable = switch (jdbcType) {
+                        case java.sql.Types.CHAR, java.sql.Types.VARCHAR, java.sql.Types.LONGVARCHAR,
+                                java.sql.Types.NCHAR, java.sql.Types.NVARCHAR, java.sql.Types.LONGNVARCHAR -> true;
+                        default -> false;
+                    };
+                    columns.add(new ColumnMetadataResponse(name, rs.getString("TYPE_NAME"),
+                            primaryKeys.contains(name.toLowerCase()), maskable));
+                }
+            }
+            return columns;
+        } catch (SQLException e) {
+            throw new BusinessException(ErrorCode.SCHEMA_DISCOVERY_ERROR,
+                    "컬럼 목록을 조회할 수 없습니다: " + e.getMessage());
+        }
+    }
+
     /** 실제로 접속 가능한지 확인만 한다(성공/실패). ConnectionService가 이 결과로 status를 갱신한다. */
     public boolean testConnection(Long connectionId) {
         PipelineConnection connection = findOrThrow(connectionId);
@@ -89,6 +118,11 @@ public class SchemaDiscoveryService {
         } catch (SQLException e) {
             return false;
         }
+    }
+
+    /** 저장된 암호를 복호화해 제한된 메타데이터/검증 작업용 JDBC 연결을 연다. 호출자가 닫아야 한다. */
+    public Connection openConnection(Long connectionId) throws SQLException {
+        return open(findOrThrow(connectionId));
     }
 
     private boolean isSystemSchema(DbType dbType, String schema) {
@@ -101,15 +135,19 @@ public class SchemaDiscoveryService {
         };
     }
 
-    private Connection open(PipelineConnection connection) throws SQLException {
+    Connection open(PipelineConnection connection) throws SQLException {
         String password = passwordCryptoService.decrypt(connection.getEncryptedPassword());
-        String url = switch (connection.getDbType()) {
-            case POSTGRESQL -> "jdbc:postgresql://%s:%d/%s".formatted(
-                    connection.getHost(), connection.getPort(), connection.getDatabaseName());
-            case ORACLE -> "jdbc:oracle:thin:@%s:%d/%s".formatted(
-                    connection.getHost(), connection.getPort(), connection.getServiceName());
+        return open(connection.getDbType(), connection.getHost(), connection.getPort(),
+                connection.getDatabaseName(), connection.getServiceName(), connection.getUsername(), password);
+    }
+
+    Connection open(DbType dbType, String host, Integer port, String databaseName,
+            String serviceName, String username, String password) throws SQLException {
+        String url = switch (dbType) {
+            case POSTGRESQL -> "jdbc:postgresql://%s:%d/%s".formatted(host, port, databaseName);
+            case ORACLE -> "jdbc:oracle:thin:@%s:%d/%s".formatted(host, port, serviceName);
         };
-        return DriverManager.getConnection(url, connection.getUsername(), password);
+        return DriverManager.getConnection(url, username, password);
     }
 
     private PipelineConnection findOrThrow(Long id) {

@@ -13,4 +13,6 @@ public interface EtlJobStepRepository extends JpaRepository<EtlJobStep, Long> {
     List<EtlJobStep> findByJobIdAndDeletedAtIsNull(Long jobId);
 
     List<EtlJobStep> findByJobIdAndDeletedAtIsNullOrderByStepNameAsc(Long jobId);
+
+    List<EtlJobStep> findByDbcpServiceIdAndDeletedAtIsNull(String dbcpServiceId);
 }

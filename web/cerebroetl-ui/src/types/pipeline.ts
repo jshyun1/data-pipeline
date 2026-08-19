@@ -39,11 +39,43 @@ export interface PipelineResponse {
   targetTable: string;
   topicName: string;
   status: PipelineStatus;
+  snapshotMode: "INITIAL" | "NO_DATA";
+  excludedColumns: string | null;
+  maskedColumns: string | null;
   deleteEnabled: boolean;
   description: string | null;
   connectors: PipelineConnectorSummary[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PipelineRuntimeStatusResponse {
+  pipelineId: number;
+  storedStatus: PipelineStatus;
+  runtimeStatus: "NOT_DEPLOYED" | "READY" | "RUNNING" | "PAUSED" | "STOPPED" | "FAILED" | "MISSING" | "UNKNOWN" | "DEGRADED";
+  sourceConnectorState: string | null;
+  sourceTaskStates: string[];
+  sinkConnectorState: string | null;
+  sinkTaskStates: string[];
+  runtimeCheckedAt: string | null;
+  statusMismatch: boolean;
+  runtimeStatusReason: string | null;
+  lastCommand: string | null;
+  lastCommandResult: string | null;
+  lastCommandMessage: string | null;
+  lastCommandAt: string | null;
+}
+
+export interface PipelineConsistencyCheckResponse {
+  id: number;
+  pipelineId: number;
+  checkMode: "STATISTICS_ESTIMATE";
+  sourceCount: number | null;
+  targetCount: number | null;
+  difference: number | null;
+  result: "MATCH" | "MISMATCH" | "UNKNOWN" | "UNSUPPORTED";
+  message: string | null;
+  checkedAt: string;
 }
 
 export interface PipelineCreateRequest {
@@ -55,6 +87,9 @@ export interface PipelineCreateRequest {
   targetSchema: string;
   targetTable: string;
   topicPrefix: string;
+  snapshotMode?: "INITIAL" | "NO_DATA";
+  excludedColumns?: string[];
+  maskedColumns?: string[];
   deleteEnabled?: boolean;
   description?: string;
 }
