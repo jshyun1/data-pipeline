@@ -383,13 +383,26 @@ button.airflow-tree-label:hover {
 
 .airflow-tree-dag {
   margin-left: 18px;
-  padding: 0 8px;
+  padding: 6px 8px;
   border: 0;
   border-radius: 5px;
   background: transparent;
   cursor: pointer;
   font-family: inherit;
   text-align: left;
+}
+
+.airflow-tree-dag span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.airflow-tree-dag .ant-tag {
+  margin: 0 0 0 auto;
+  padding-inline: 4px;
+  font-size: 10px;
 }
 
 .airflow-tree-dag:hover,
@@ -418,14 +431,18 @@ button.airflow-tree-label:hover {
   margin-bottom: 9px;
 }
 
-.airflow-jobs-heading span {
+.airflow-jobs-tab {
   margin-right: 24px;
   padding: 0 2px 10px;
+  border: 0;
+  background: transparent;
   color: #6b7280;
+  cursor: pointer;
+  font-family: inherit;
   font-size: 13px;
 }
 
-.airflow-jobs-heading span.active {
+.airflow-jobs-tab.active {
   color: #1677ff;
   border-bottom: 2px solid #1677ff;
 }
@@ -500,6 +517,15 @@ button.airflow-tree-label:hover {
   text-overflow: ellipsis;
 }
 
+.airflow-alert-reason {
+  max-width: 260px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .airflow-task-name {
   display: block;
 }
@@ -514,6 +540,15 @@ button.airflow-tree-label:hover {
   margin: 0 0 12px;
   overflow-wrap: anywhere;
   font-size: 20px;
+}
+
+.airflow-property-panel--inline {
+  margin: 14px;
+  border: 0;
+}
+
+.airflow-property-panel--inline .airflow-monitoring-form {
+  max-width: 460px;
 }
 
 .airflow-property-panel section {
@@ -547,9 +582,129 @@ button.airflow-tree-label:hover {
   text-overflow: ellipsis;
 }
 
+.airflow-property-panel section > .ant-btn-block {
+  margin-top: 12px;
+}
+
 .airflow-property-panel p {
   margin: 3px 0;
   font-size: 12px;
+}
+
+.airflow-monitoring-form,
+.airflow-alert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.airflow-monitoring-form label {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: #4b5563;
+  font-size: 12px;
+}
+
+.airflow-monitoring-form .ant-input-number-group-wrapper,
+.airflow-monitoring-form .ant-input-number {
+  width: 100%;
+}
+
+.airflow-monitoring-form .ant-switch {
+  justify-self: start;
+}
+
+.airflow-alert-list article {
+  position: relative;
+  padding: 8px;
+  border: 1px solid #edf0f4;
+  border-radius: 5px;
+  background: #fafbfc;
+}
+
+.airflow-alert-list article div {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.airflow-alert-list article p {
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+
+.airflow-alert-list article small {
+  color: #6b7280;
+}
+
+.airflow-alert-list article .ant-btn {
+  float: right;
+}
+
+.airflow-alert-history {
+  margin: 14px;
+  overflow: auto;
+}
+
+.airflow-alert-history > strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.airflow-schedule-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.airflow-schedule-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 8px 0;
+}
+
+.airflow-schedule-wizard .ant-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.airflow-schedule-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.airflow-schedule-row > span:first-child {
+  min-width: 100px;
+  color: #374151;
+  font-weight: 700;
+}
+
+.airflow-schedule-row .ant-select {
+  min-width: 110px;
+}
+
+.airflow-schedule-preview {
+  padding: 12px 16px;
+  border-radius: 6px;
+  background: #f4f7fb;
+  font-weight: 700;
+}
+
+.airflow-schedule-next {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-left: 16px;
+}
+
+.airflow-schedule-note {
+  color: #6b7280;
 }
 
 .airflow-resource-links {
@@ -593,6 +748,10 @@ button.airflow-tree-label:hover {
   min-height: 500px;
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: 12px;
+  color: #64748b;
+  font-size: 14px;
 }
 
 .etl-create-shell {
@@ -800,6 +959,67 @@ button.airflow-tree-label:hover {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.etl-truncate-sql {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+  width: min(520px, 100%);
+}
+
+.etl-truncate-sql-toggle {
+  justify-self: start;
+  min-height: 34px;
+  padding: 0 12px;
+  color: #1473e6;
+  background: #ffffff;
+  border: 1px solid #1473e6;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.etl-truncate-sql textarea {
+  min-height: 76px;
+  padding: 10px 12px;
+  border: 1px solid #b7c0cc;
+  border-radius: 5px;
+  color: #293442;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.etl-change-key-column {
+  width: min(520px, 100%);
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  align-items: stretch;
+  border: 1px solid #eceff3;
+  background: #ffffff;
+}
+
+.etl-change-key-column label {
+  min-height: 38px;
+  padding: 8px 10px;
+  color: #111827;
+  background: #f8fafc;
+  border-right: 1px solid #eceff3;
+  font-weight: 800;
+}
+
+.etl-change-key-column input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  color: #374151;
+  border: 0;
+  font: inherit;
 }
 
 .etl-preview-title {
@@ -2108,6 +2328,23 @@ button.airflow-tree-label:hover {
   overflow-wrap: anywhere;
   color: #111827;
   font-weight: 600;
+}
+
+.nifi-detail-properties > div {
+  grid-template-columns: 1fr;
+  row-gap: 2px;
+}
+
+.nifi-detail-properties dt {
+  color: #475569;
+  font-size: 12px;
+}
+
+.nifi-detail-properties dd {
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .nifi-detail-link {

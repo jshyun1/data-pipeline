@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
+import com.company.pipeline.pipeline.PipelineSnapshotMode;
 
 /**
  * kafka-connect/connectors/oracle-cdc-source.json.template과 동일한 필드 구성.
@@ -70,6 +71,19 @@ public class DebeziumOracleTemplate {
         config.put("topic.prefix", request.topicPrefix());
         config.put("schema.include.list", request.schema());
         config.put("table.include.list", tableIncludeList);
+        config.put("snapshot.mode", PipelineSnapshotMode.from(request.snapshotMode()).connectorValue());
+        if (request.excludedColumns() != null && !request.excludedColumns().isBlank()) {
+            config.put("column.exclude.list", java.util.Arrays.stream(request.excludedColumns().split(","))
+                    .map(String::trim).filter(value -> !value.isEmpty())
+                    .map(column -> tableIncludeList + "." + column)
+                    .collect(java.util.stream.Collectors.joining(",")));
+        }
+        if (request.maskedColumns() != null && !request.maskedColumns().isBlank()) {
+            config.put("column.mask.with.8.chars", java.util.Arrays.stream(request.maskedColumns().split(","))
+                    .map(String::trim).filter(value -> !value.isEmpty())
+                    .map(column -> tableIncludeList + "." + column)
+                    .collect(java.util.stream.Collectors.joining(",")));
+        }
         config.put("tombstones.on.delete", "false");
         config.put("decimal.handling.mode", "double");
         config.put("include.schema.changes", "true");

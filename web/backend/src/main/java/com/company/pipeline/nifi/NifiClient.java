@@ -50,8 +50,10 @@ public class NifiClient {
     private static final String POSTGRES_DRIVER_LOCATION = "/opt/nifi/nifi-current/drivers/postgresql-42.7.4.jar";
     private static final String ORACLE_DRIVER_CLASS = "oracle.jdbc.OracleDriver";
     private static final String ORACLE_DRIVER_LOCATION = "/opt/nifi/nifi-current/drivers/ojdbc11-23.26.2.0.0.jar";
-    private static final String FORMAT_TEMPLATE_GROUP_NAME = "FORMAT";
     private static final String INITIAL_TEMPLATE_GROUP_NAME = "Initial";
+    private static final String TRUNCATE_TEMPLATE_GROUP_NAME = "truncate_initial";
+    private static final String TEMPLATE_GROUP_NAME = "Template";
+    private static final String INCREMENTAL_TEMPLATE_GROUP_NAME = "Incremental";
     private static final List<String> QUERY_DBCP_KEYS = List.of(
             "Database Connection Pooling Service",
             "dbcp-service"
@@ -63,6 +65,11 @@ public class NifiClient {
     private static final List<String> QUERY_TABLE_KEYS = List.of(
             "Table Name",
             "table-name"
+    );
+    private static final List<String> QUERY_MAXIMUM_VALUE_KEYS = List.of(
+            "Maximum-value Columns",
+            "Maximum Value Columns",
+            "maximum-value-column-names"
     );
     private static final List<String> PUT_DBCP_KEYS = List.of(
             "put-db-record-dcbp-service",
@@ -83,6 +90,27 @@ public class NifiClient {
     private static final List<String> PUT_STATEMENT_KEYS = List.of(
             "put-db-record-statement-type",
             "Statement Type"
+    );
+    private static final List<String> PUT_UPDATE_KEYS = List.of(
+            "put-db-record-update-keys",
+            "Update Keys"
+    );
+    private static final List<String> TRUNCATE_DBCP_KEYS = List.of(
+            "JDBC Connection Pool",
+            "JDBC Connection Pooling Service"
+    );
+    private static final List<String> SELECT_DBCP_KEYS = List.of(
+            "Database Connection Pooling Service",
+            "dbcp-service"
+    );
+    private static final List<String> SELECT_SQL_KEYS = List.of(
+            "SQL select query",
+            "SQL Select Query",
+            "sql-select-query"
+    );
+    private static final List<String> REPLACE_TEXT_VALUE_KEYS = List.of(
+            "Replacement Value",
+            "replacement-value"
     );
 
     private final RestClient restClient;
@@ -130,17 +158,53 @@ public class NifiClient {
         }
     }
 
+    public void deleteRootProcessGroupByIdPrefix(String idPrefix) {
+        List<NifiFlowResponse.ProcessGroupEntity> matches = childProcessGroups(ROOT_GROUP_ID).stream()
+                .filter(candidate -> componentId(candidate).startsWith(idPrefix))
+                .toList();
+        if (matches.size() != 1) {
+            throw new NifiClientException(
+                    "NiFi 최상위 Processor Group 식별 결과가 1건이 아닙니다: "
+                            + idPrefix + " (" + matches.size() + "건)", null);
+        }
+        NifiFlowResponse.ProcessGroupEntity group = matches.getFirst();
+        long version = group.revision() == null || group.revision().version() == null
+                ? 0L
+                : group.revision().version();
+        try {
+            restClient.delete()
+                    .uri(uri -> uri.path("/nifi-api/process-groups/{id}")
+                            .queryParam("version", version)
+                            .build(componentId(group)))
+                    .header("Authorization", "Bearer " + getToken())
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientException ex) {
+            throw new NifiClientException(
+                    "NiFi Processor Group 삭제 실패(실행 중이면 먼저 중지해야 합니다): " + ex.getMessage(), ex);
+        }
+    }
+
     public NifiProcessGroupResponse createInitialDbToDbFlow(NifiInitialDbToDbCreateRequest request) {
-        if (!"INSERT".equals(request.loadMode())) {
-            throw new NifiClientException("Initial 템플릿은 현재 INSERT 적재 방식만 지원합니다.", null);
+        String loadMode = nullToBlank(request.loadMode()).trim().toUpperCase();
+        if (!"INSERT".equals(loadMode) && !"TRUNCATE".equals(loadMode) && !"UPSERT".equals(loadMode)) {
+            throw new NifiClientException("DB -> DB 템플릿은 INSERT, TRUNCATE, UPSERT 적재 방식만 지원합니다.", null);
+        }
+        if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.changeKeyColumn())) {
+            throw new NifiClientException("UPSERT 적재 방식은 변경기준 컬럼이 필요합니다.", null);
+        }
+        if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.primaryKeys())) {
+            throw new NifiClientException("UPSERT 적재 방식은 Primary Keys가 필요합니다.", null);
         }
 
         String token = getToken();
-        NifiFlowResponse.ProcessGroupEntity formatGroup = findChildProcessGroup(ROOT_GROUP_ID, FORMAT_TEMPLATE_GROUP_NAME);
-        NifiFlowResponse.ProcessGroupEntity initialGroup =
-                findChildProcessGroup(componentId(formatGroup), INITIAL_TEMPLATE_GROUP_NAME);
-        String snippetId = createProcessGroupSnippet(token, componentId(formatGroup), componentId(initialGroup),
-                revisionVersion(initialGroup.revision()));
+        TemplateSelection templateSelection = templateSelection(loadMode);
+        String snippetId = createProcessGroupSnippet(
+                token,
+                templateSelection.parentGroupId(),
+                templateSelection.templateGroupId(),
+                templateSelection.templateGroupVersion()
+        );
 
         try {
             Set<String> existingChildGroupIds = childProcessGroupIds(request.parentGroupId().trim());
@@ -155,7 +219,7 @@ public class NifiClient {
             NifiFlowResponse.ProcessGroupEntity createdGroup =
                     findChildProcessGroupById(request.parentGroupId().trim(), createdGroupId);
             updateProcessGroup(token, createdGroup, request.jobName().trim(), nullToBlank(request.comments()));
-            updateInitialDbToDbProcessors(token, createdGroupId, request);
+            updateInitialDbToDbProcessors(token, createdGroupId, request, loadMode);
             return new NifiProcessGroupResponse(
                     createdGroupId,
                     request.jobName().trim(),
@@ -447,14 +511,7 @@ public class NifiClient {
     }
 
     private NifiFlowResponse.ProcessGroupEntity findChildProcessGroup(String parentGroupId, String childName) {
-        NifiFlowResponse flow = getFlow(parentGroupId);
-        List<NifiFlowResponse.ProcessGroupEntity> groups = flow == null
-                || flow.processGroupFlow() == null
-                || flow.processGroupFlow().flow() == null
-                || flow.processGroupFlow().flow().processGroups() == null
-                ? List.of()
-                : flow.processGroupFlow().flow().processGroups();
-        return groups.stream()
+        return childProcessGroups(parentGroupId).stream()
                 .filter(group -> group.component() != null)
                 .filter(group -> childName.equalsIgnoreCase(nullToBlank(group.component().name()).trim()))
                 .findFirst()
@@ -481,17 +538,20 @@ public class NifiClient {
     }
 
     private Set<String> childProcessGroupIds(String parentGroupId) {
+        return childProcessGroups(parentGroupId).stream()
+                .map(group -> componentId(group))
+                .filter(StringUtils::hasText)
+                .collect(Collectors.toSet());
+    }
+
+    private List<NifiFlowResponse.ProcessGroupEntity> childProcessGroups(String parentGroupId) {
         NifiFlowResponse flow = getFlow(parentGroupId);
-        List<NifiFlowResponse.ProcessGroupEntity> groups = flow == null
+        return flow == null
                 || flow.processGroupFlow() == null
                 || flow.processGroupFlow().flow() == null
                 || flow.processGroupFlow().flow().processGroups() == null
                 ? List.of()
                 : flow.processGroupFlow().flow().processGroups();
-        return groups.stream()
-                .map(group -> componentId(group))
-                .filter(StringUtils::hasText)
-                .collect(Collectors.toSet());
     }
 
     private String findNewChildProcessGroupId(String parentGroupId, Set<String> existingChildGroupIds) {
@@ -599,8 +659,32 @@ public class NifiClient {
         }
     }
 
+    private TemplateSelection templateSelection(String loadMode) {
+        NifiFlowResponse.ProcessGroupEntity templateGroup = findChildProcessGroup(ROOT_GROUP_ID, TEMPLATE_GROUP_NAME);
+        if ("UPSERT".equals(loadMode)) {
+            NifiFlowResponse.ProcessGroupEntity incrementalGroup =
+                    findChildProcessGroup(componentId(templateGroup), INCREMENTAL_TEMPLATE_GROUP_NAME);
+            return new TemplateSelection(
+                    componentId(templateGroup),
+                    componentId(incrementalGroup),
+                    revisionVersion(incrementalGroup.revision())
+            );
+        }
+
+        String templateGroupName = "TRUNCATE".equals(loadMode)
+                ? TRUNCATE_TEMPLATE_GROUP_NAME
+                : INITIAL_TEMPLATE_GROUP_NAME;
+        NifiFlowResponse.ProcessGroupEntity initialGroup =
+                findChildProcessGroup(componentId(templateGroup), templateGroupName);
+        return new TemplateSelection(
+                componentId(templateGroup),
+                componentId(initialGroup),
+                revisionVersion(initialGroup.revision())
+        );
+    }
+
     private void updateInitialDbToDbProcessors(String token, String groupId,
-            NifiInitialDbToDbCreateRequest request) {
+            NifiInitialDbToDbCreateRequest request, String loadMode) {
         NifiFlowResponse flow = getFlow(groupId);
         List<NifiFlowResponse.ProcessorEntity> processors = flow == null
                 || flow.processGroupFlow() == null
@@ -608,6 +692,15 @@ public class NifiClient {
                 || flow.processGroupFlow().flow().processors() == null
                 ? List.of()
                 : flow.processGroupFlow().flow().processors();
+        if ("TRUNCATE".equals(loadMode)) {
+            updateTruncateDbToDbProcessors(token, processors, request);
+            return;
+        }
+        if ("UPSERT".equals(loadMode)) {
+            updateUpsertDbToDbProcessors(token, processors, request);
+            return;
+        }
+
         NifiFlowResponse.ProcessorEntity query = findProcessor(processors, "QueryDatabaseTableRecord");
         NifiFlowResponse.ProcessorEntity put = findProcessor(processors, "PutDatabaseRecord");
 
@@ -625,6 +718,71 @@ public class NifiClient {
         putProperty(putProperties, PUT_TABLE_KEYS, request.targetTable().trim());
         putProperty(putProperties, PUT_STATEMENT_KEYS, "INSERT");
         updateProcessorProperties(token, put, putProperties);
+    }
+
+    private void updateUpsertDbToDbProcessors(String token, List<NifiFlowResponse.ProcessorEntity> processors,
+            NifiInitialDbToDbCreateRequest request) {
+        NifiFlowResponse.ProcessorEntity source = findProcessorByName(processors, "incremental_sourceDB");
+        NifiFlowResponse.ProcessorEntity upsert = findProcessorByName(processors, "targetDB_UPSERT");
+        NifiFlowResponse.ProcessorEntity delete = findProcessorByName(processors, "targetDB_DELETE");
+
+        Map<String, String> sourceProperties = mergedProperties(source);
+        putProperty(sourceProperties, QUERY_DBCP_KEYS, request.sourceServiceId().trim());
+        putProperty(sourceProperties, QUERY_DATABASE_TYPE_KEYS, request.sourceDatabaseType().trim());
+        putProperty(sourceProperties, QUERY_TABLE_KEYS, "%s.%s".formatted(
+                request.sourceSchema().trim(), request.sourceTable().trim()));
+        putProperty(sourceProperties, QUERY_MAXIMUM_VALUE_KEYS, request.changeKeyColumn().trim());
+        updateProcessorProperties(token, source, sourceProperties);
+
+        updateTargetDbRecordProcessor(token, upsert, request, "UPSERT");
+        updateTargetDbRecordProcessor(token, delete, request, null);
+    }
+
+    private void updateTargetDbRecordProcessor(String token, NifiFlowResponse.ProcessorEntity processor,
+            NifiInitialDbToDbCreateRequest request, String statementType) {
+        Map<String, String> properties = mergedProperties(processor);
+        putProperty(properties, PUT_DBCP_KEYS, request.targetServiceId().trim());
+        putProperty(properties, PUT_DATABASE_TYPE_KEYS, request.targetDatabaseType().trim());
+        putProperty(properties, PUT_SCHEMA_KEYS, request.targetSchema().trim());
+        putProperty(properties, PUT_TABLE_KEYS, request.targetTable().trim());
+        if (StringUtils.hasText(request.primaryKeys())) {
+            putProperty(properties, PUT_UPDATE_KEYS, request.primaryKeys().trim());
+        }
+        if (StringUtils.hasText(statementType)) {
+            putProperty(properties, PUT_STATEMENT_KEYS, statementType);
+        }
+        updateProcessorProperties(token, processor, properties);
+    }
+
+    private void updateTruncateDbToDbProcessors(String token, List<NifiFlowResponse.ProcessorEntity> processors,
+            NifiInitialDbToDbCreateRequest request) {
+        NifiFlowResponse.ProcessorEntity replaceText = findProcessor(processors, "ReplaceText");
+        NifiFlowResponse.ProcessorEntity truncate = findProcessorByName(processors, "03_TRUNCATE_DZ");
+        NifiFlowResponse.ProcessorEntity select = findProcessorByName(processors, "04_SELECT");
+        NifiFlowResponse.ProcessorEntity insert = findProcessorByName(processors, "05_INSERT");
+
+        if (StringUtils.hasText(request.truncateSql())) {
+            Map<String, String> replaceProperties = mergedProperties(replaceText);
+            putProperty(replaceProperties, REPLACE_TEXT_VALUE_KEYS, request.truncateSql().trim());
+            updateProcessorProperties(token, replaceText, replaceProperties);
+        }
+
+        Map<String, String> truncateProperties = mergedProperties(truncate);
+        putProperty(truncateProperties, TRUNCATE_DBCP_KEYS, request.targetServiceId().trim());
+        updateProcessorProperties(token, truncate, truncateProperties);
+
+        Map<String, String> selectProperties = mergedProperties(select);
+        putProperty(selectProperties, SELECT_DBCP_KEYS, request.sourceServiceId().trim());
+        putProperty(selectProperties, SELECT_SQL_KEYS, "SELECT * FROM %s.%s".formatted(
+                request.sourceSchema().trim(), request.sourceTable().trim()));
+        updateProcessorProperties(token, select, selectProperties);
+
+        Map<String, String> insertProperties = mergedProperties(insert);
+        putProperty(insertProperties, PUT_DATABASE_TYPE_KEYS, request.targetDatabaseType().trim());
+        putProperty(insertProperties, PUT_DBCP_KEYS, request.targetServiceId().trim());
+        putProperty(insertProperties, PUT_SCHEMA_KEYS, request.targetSchema().trim());
+        putProperty(insertProperties, PUT_TABLE_KEYS, request.targetTable().trim());
+        updateProcessorProperties(token, insert, insertProperties);
     }
 
     private int directProcessorCount(String groupId) {
@@ -645,6 +803,17 @@ public class NifiClient {
                 .findFirst()
                 .orElseThrow(() -> new NifiClientException(
                         "복제된 Initial 그룹에서 %s 프로세서를 찾지 못했습니다.".formatted(shortType),
+                        null));
+    }
+
+    private NifiFlowResponse.ProcessorEntity findProcessorByName(List<NifiFlowResponse.ProcessorEntity> processors,
+            String name) {
+        return processors.stream()
+                .filter(processor -> processor.component() != null)
+                .filter(processor -> name.equalsIgnoreCase(nullToBlank(processor.component().name()).trim()))
+                .findFirst()
+                .orElseThrow(() -> new NifiClientException(
+                        "복제된 Initial 그룹에서 '%s' 프로세서를 찾지 못했습니다.".formatted(name),
                         null));
     }
 
@@ -756,6 +925,9 @@ public class NifiClient {
 
     private String nullToBlank(String value) {
         return value == null ? "" : value;
+    }
+
+    private record TemplateSelection(String parentGroupId, String templateGroupId, long templateGroupVersion) {
     }
 
     // NiFi가 Keycloak/OIDC를 제거하고 Single User 인증(공유 서비스계정)으로 전환됨에 따라,

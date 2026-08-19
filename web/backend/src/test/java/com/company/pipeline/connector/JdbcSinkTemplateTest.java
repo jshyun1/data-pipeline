@@ -31,6 +31,9 @@ class JdbcSinkTemplateTest {
         assertThat(config.get("schema.evolution")).isEqualTo("basic");
         assertThat(config.get("table.name.format")).isEqualTo("cdc_landing.customers");
         assertThat(config.get("delete.enabled")).isEqualTo("true");
+        assertThat(config.get("errors.deadletterqueue.topic.name")).isEqualTo("dlq.pipeline-12");
+        assertThat(config.get("errors.deadletterqueue.context.headers.enable")).isEqualTo("true");
+        assertThat(config.get("errors.log.include.messages")).isEqualTo("false");
     }
 
     // 실제 운영에서 발견된 버그 재현: pipeline_definition에 sourceTable이 소문자로

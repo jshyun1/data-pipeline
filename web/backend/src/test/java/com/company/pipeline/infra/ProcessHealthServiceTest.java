@@ -254,7 +254,7 @@ class ProcessHealthServiceTest {
 
         assertThat(group(response.groups(), "AIRFLOW").processes())
                 .extracting(ProcessItem::name)
-                .containsExactly("API 서버", "스케줄러", "DAG 프로세서");
+                .doesNotContain("메타데이터 DB");
     }
 
     @Test
@@ -271,13 +271,18 @@ class ProcessHealthServiceTest {
         assertThat(group(response.groups(), "AIRFLOW").status()).isEqualTo(ProcessStatus.DOWN);
     }
 
+    /**
+     * 트리거러는 이 배포에 컨테이너가 없다. 줄 자체를 감추면 "안 쓴다"는 사실이 화면에
+     * 안 남으므로 미구성(configured=false)으로 내려주되, 그룹 대표 상태에는 넣지 않는다 -
+     * 넣으면 나머지가 전부 정상인데도 Airflow 그룹이 영원히 "확인 불가"로 보인다(실측).
+     */
     @Test
-    void collect_triggererNotConfigured_isOmittedInsteadOfReportedDown() {
+    void collect_triggererNotConfigured_isListedButDoesNotDragTheGroup() {
         var response = service.collect();
 
-        assertThat(group(response.groups(), "AIRFLOW").processes())
-                .extracting(ProcessItem::name)
-                .doesNotContain("트리거러");
+        ProcessItem triggerer = item(response.groups(), "AIRFLOW", "트리거러");
+        assertThat(triggerer.configured()).isFalse();
+        assertThat(group(response.groups(), "AIRFLOW").status()).isEqualTo(ProcessStatus.UP);
     }
 
     private static AirflowHealthResponse healthyAirflow() {

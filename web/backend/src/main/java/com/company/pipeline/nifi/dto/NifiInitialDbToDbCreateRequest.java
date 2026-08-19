@@ -46,7 +46,16 @@ public record NifiInitialDbToDbCreateRequest(
         String targetTable,
 
         @NotBlank
-        @Pattern(regexp = "INSERT")
-        String loadMode
+        @Pattern(regexp = "INSERT|TRUNCATE|UPSERT")
+        String loadMode,
+
+        @Size(max = 4000)
+        String truncateSql,
+
+        @Size(max = 512)
+        String changeKeyColumn,
+
+        @Size(max = 512)
+        String primaryKeys
 ) {
 }

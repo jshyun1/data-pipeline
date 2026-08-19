@@ -9,6 +9,9 @@ public record NifiExecutionLogResponse(
         String processorName,
         String groupId,
         String groupName,
+        Long jobId,
+        String jobName,
+        String rootGroupName,
         LocalDateTime occurredAt,
         Long insertedCount,
         String status,
@@ -18,12 +21,19 @@ public record NifiExecutionLogResponse(
         String level
 ) {
     public static NifiExecutionLogResponse from(NifiExecutionLogEntry entity) {
+        return from(entity, null);
+    }
+
+    public static NifiExecutionLogResponse from(NifiExecutionLogEntry entity, String jobName) {
         return new NifiExecutionLogResponse(
                 entity.getId(),
                 entity.getProcessorId(),
                 entity.getProcessorName(),
                 entity.getGroupId(),
                 entity.getGroupName(),
+                entity.getJobId(),
+                jobName,
+                jobName,
                 entity.getOccurredAt(),
                 entity.getInsertedCount(),
                 entity.getStatus(),

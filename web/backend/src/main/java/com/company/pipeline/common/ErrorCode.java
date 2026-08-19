@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 public enum ErrorCode {
     VALIDATION_ERROR(HttpStatus.BAD_REQUEST, "요청 값이 올바르지 않습니다."),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "인증이 필요합니다."),
+    FORBIDDEN(HttpStatus.FORBIDDEN, "이 작업을 수행할 권한이 없습니다."),
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "아이디 또는 비밀번호가 올바르지 않습니다."),
     ACCOUNT_NOT_APPROVED(HttpStatus.FORBIDDEN, "승인 대기 중이거나 사용할 수 없는 계정입니다."),
     ACCOUNT_LOCKED(HttpStatus.LOCKED, "로그인 시도가 많아 계정이 잠겼습니다. 잠시 후 다시 시도하세요."),

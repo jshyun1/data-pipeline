@@ -74,6 +74,12 @@ public class AccountDataSourceConfig {
     }
 
     @Bean
+    @Primary
+    public JdbcTemplate jdbcTemplate(@Qualifier("dataSource") DataSource dataSource) {
+        return new JdbcTemplate(dataSource);
+    }
+
+    @Bean
     @Qualifier("accountJdbcTemplate")
     public JdbcTemplate accountJdbcTemplate(@Qualifier("accountDataSource") DataSource accountDataSource) {
         return new JdbcTemplate(accountDataSource);

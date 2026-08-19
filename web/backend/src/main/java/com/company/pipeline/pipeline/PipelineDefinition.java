@@ -73,6 +73,12 @@ public class PipelineDefinition extends BaseAuditEntity {
     @Column(name = "snapshot_mode", length = 50)
     private String snapshotMode;
 
+    @Column(name = "excluded_columns", columnDefinition = "TEXT")
+    private String excludedColumns;
+
+    @Column(name = "masked_columns", columnDefinition = "TEXT")
+    private String maskedColumns;
+
     @Column(name = "insert_enabled")
     private Boolean insertEnabled = true;
 

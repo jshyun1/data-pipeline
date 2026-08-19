@@ -8,8 +8,19 @@ public record ProcessHealthResponse(LocalDateTime collectedAt, List<ProcessGroup
 
     public record ProcessGroup(String key, String label, ProcessStatus status, List<ProcessItem> processes) {
 
+        /**
+         * 그룹 대표 상태는 <b>구성된(configured=true) 항목만</b>으로 정한다.
+         *
+         * <p>미구성 항목은 UNKNOWN 으로 내려가는데(이 설치에 트리거러가 없는 경우 등), 그걸
+         * 대표 상태에 넣으면 나머지가 전부 정상이어도 그룹이 영원히 "확인 불가"가 된다 -
+         * 실측: API 서버/스케줄러/DAG 프로세서가 모두 UP 인데 그룹이 UNKNOWN 으로 표시됐다.
+         * 아래 ProcessItem 주석이 말하는 "이상 카운트에서 뺀다"가 실제로 지켜지는 지점이다.
+         *
+         * <p>구성된 항목이 하나도 없으면 판단 근거가 없으므로 UP(=이상 없음)으로 둔다.
+         */
         public static ProcessGroup of(String key, String label, List<ProcessItem> processes) {
             ProcessStatus status = processes.stream()
+                    .filter(ProcessItem::configured)
                     .map(ProcessItem::status)
                     .reduce(ProcessStatus.UP, ProcessStatus::worst);
             return new ProcessGroup(key, label, status, processes);

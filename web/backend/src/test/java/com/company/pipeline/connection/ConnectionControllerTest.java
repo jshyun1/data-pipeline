@@ -43,6 +43,15 @@ class ConnectionControllerTest {
     @MockBean
     private SchemaDiscoveryService schemaDiscoveryService;
 
+    @MockBean
+    private ConnectionValidationService connectionValidationService;
+
+    @MockBean
+    private ConnectionUsageService connectionUsageService;
+
+    @MockBean
+    private CdcPrerequisiteService cdcPrerequisiteService;
+
     // Keycloak을 걷어내면서 SecurityConfig가 PipelineJwtAuthenticationFilter를 생성자로
     // 받게 됐는데, @WebMvcTest는 웹 계층 빈만 올리므로 그 필터도 그 안의 @Component들도
     // 만들어지지 않아 SecurityConfig를 import하는 시점에 컨텍스트가 통째로 실패한다.
