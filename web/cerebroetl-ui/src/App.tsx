@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useSearchParams } from "react-router-dom";
 import { AppLayout } from "./components/AppLayout";
 import { RequireAuth } from "./auth/RequireAuth";
 import { ConnectionsPage } from "./pages/ConnectionsPage";
@@ -16,6 +16,21 @@ import { EtlLogsPage } from "./pages/EtlLogsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PipelinesPage } from "./pages/PipelinesPage";
 
+function AirflowManagePage() {
+  const [searchParams] = useSearchParams();
+  const dagId = searchParams.get("dagId");
+  const src = dagId ? `/airflow/dags/${encodeURIComponent(dagId)}` : "/airflow/";
+
+  return (
+    <ConsoleFramePage
+      title="AirFlow 관리"
+      src={src}
+      healthcheckSrc="/airflow/"
+      waitMessage="AirFlow 관리 콘솔을 준비하는 중입니다"
+    />
+  );
+}
+
 export function App() {
   return (
     <Routes>
@@ -32,14 +47,7 @@ export function App() {
         <Route path="/airflow/dashboard" element={<AirflowDashboardPage />} />
         <Route
           path="/airflow/manage"
-          element={
-            <ConsoleFramePage
-              title="AirFlow 관리"
-              src="/airflow/"
-              healthcheckSrc="/airflow/"
-              waitMessage="AirFlow 관리 콘솔을 준비하는 중입니다"
-            />
-          }
+          element={<AirflowManagePage />}
         />
         <Route path="/etl" element={<Navigate to="/etl/create" replace />} />
         <Route path="/etl/create" element={<EtlCreatePage />} />

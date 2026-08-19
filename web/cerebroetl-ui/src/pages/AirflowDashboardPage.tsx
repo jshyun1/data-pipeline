@@ -11,12 +11,14 @@ import {
   FolderOpenOutlined,
   FolderOutlined,
   InfoCircleOutlined,
+  PlayCircleOutlined,
   ProfileOutlined,
   ReloadOutlined,
   RightOutlined,
   SyncOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
+import { Link } from "react-router-dom";
 import {
   getAirflowTaskLog,
   acknowledgeAirflowDagAlert,
@@ -76,6 +78,7 @@ const REFRESH_OPTIONS = [
 type DetailTab = "tasks" | "history";
 type ScheduleMode = "manual" | "recurring";
 type SchedulePreset = "hourly" | "daily" | "weekly";
+type ExecutionAction = "deploy" | "start" | "stop";
 
 function runAt(run?: AirflowDagRun) {
   return run?.start_date ?? run?.execution_date;
@@ -257,10 +260,10 @@ function StatusCard({
         <RightOutlined />
         <span>실행 중<strong>{active}</strong></span>
       </div>
-      <div className="airflow-business-metric airflow-business-metric--success">
+      {category === "ETL" && <div className="airflow-business-metric airflow-business-metric--success">
         <CheckCircleFilled />
         <span>오늘 성공<strong>{success}</strong></span>
-      </div>
+      </div>}
       <div className="airflow-business-metric airflow-business-metric--danger">
         <CloseCircleFilled />
         <span>실패<strong>{failed}</strong></span>
@@ -280,6 +283,7 @@ function BusinessTree({
   onSearch,
   onSelect,
   onDetail,
+  onExecution,
   onDelete,
 }: {
   dags: DashboardDag[];
@@ -289,6 +293,7 @@ function BusinessTree({
   onSearch: (value: string) => void;
   onSelect: (dagId: string) => void;
   onDetail: (dag: DashboardDag) => void;
+  onExecution: (dag: DashboardDag) => void;
   onDelete: (dag: DashboardDag) => void;
 }) {
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
@@ -335,9 +340,14 @@ function BusinessTree({
                         menu={{
                           items: [
                             { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
+                            { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
                             { key: "delete", icon: <DeleteOutlined />, label: "삭제", danger: true },
                           ],
-                          onClick: ({ key }) => key === "detail" ? onDetail(dag) : onDelete(dag),
+                          onClick: ({ key }) => {
+                            if (key === "detail") onDetail(dag);
+                            else if (key === "execution") onExecution(dag);
+                            else onDelete(dag);
+                          },
                         }}
                       >
                         <button
@@ -766,8 +776,7 @@ function PropertyPanel({
   dag,
   alerts = [],
   inline = false,
-  triggering = false,
-  onManualRun,
+  onOpenExecution,
   onOpenSchedule,
   onOpenMonitoring,
   onChanged,
@@ -775,8 +784,7 @@ function PropertyPanel({
   dag?: DashboardDag;
   alerts?: AirflowDagAlert[];
   inline?: boolean;
-  triggering?: boolean;
-  onManualRun?: () => void;
+  onOpenExecution?: () => void;
   onOpenSchedule?: () => void;
   onOpenMonitoring?: () => void;
   onChanged?: () => void;
@@ -808,7 +816,7 @@ function PropertyPanel({
       <section>
         <strong>스케줄 현황</strong>
         <dl><dt>상태</dt><dd>{scheduleStatus}</dd><dt>스케줄</dt><dd title={dag.timetable_summary}>{scheduleDescription(dag.timetable_summary)}</dd><dt>다음 실행</dt><dd>{nextRun ? dayjs(nextRun).format("YYYY-MM-DD HH:mm") : "-"}</dd><dt>시간대</dt><dd>Asia/Seoul</dd></dl>
-        {!inline && <div className="airflow-schedule-actions"><Button type="primary" loading={triggering} onClick={onManualRun}>수동 실행</Button><Button disabled={!dag.dag_id.startsWith("nifi_pipeline_")} onClick={onOpenSchedule}>스케줄 설정</Button></div>}
+        {!inline && <div className="airflow-schedule-actions"><Button type="primary" onClick={onOpenExecution}>실행 설정</Button><Button disabled={!dag.dag_id.startsWith("nifi_pipeline_")} onClick={onOpenSchedule}>스케줄 설정</Button></div>}
       </section>
       {!inline && <section>
         <strong>이상 감지 설정</strong>
@@ -828,8 +836,76 @@ function PropertyPanel({
           </article>
         ))}</div> : <p>현재 감지된 이상이 없습니다.</p>}
       </section>}
-      <section><strong>연결 리소스</strong><div className="airflow-resource-links"><a href={`/airflow/dags/${encodeURIComponent(dag.dag_id)}`} target="_blank" rel="noreferrer">DAG 보기</a>{category === "ETL" ? <a href="/etl/manage">NiFi 캔버스</a> : <a href="/cdc/pipelines">CDC 파이프라인</a>}</div></section>
+      <section><strong>연결 리소스</strong><div className="airflow-resource-links"><Link to={`/airflow/manage?dagId=${encodeURIComponent(dag.dag_id)}`}>DAG 보기</Link>{category === "ETL" ? <Link to="/etl/manage">NiFi 캔버스</Link> : <Link to="/cdc/pipelines">CDC 파이프라인</Link>}</div></section>
     </aside>
+  );
+}
+
+function ExecutionSettingsModal({
+  open,
+  dag,
+  onClose,
+  onExecuted,
+}: {
+  open: boolean;
+  dag?: DashboardDag;
+  onClose: () => void;
+  onExecuted: () => void;
+}) {
+  const [action, setAction] = useState<ExecutionAction>("start");
+  const [triggering, setTriggering] = useState(false);
+
+  useEffect(() => {
+    if (open) setAction("start");
+  }, [dag?.dag_id, open]);
+
+  const options = dag && categoryOf(dag) === "CDC"
+    ? [
+        { label: "배포 (Deploy)", value: "deploy" },
+        { label: "시작 (Start)", value: "start" },
+        { label: "중지 (Stop)", value: "stop" },
+      ]
+    : [
+        { label: "시작 (Start)", value: "start" },
+        { label: "중지 (Stop)", value: "stop" },
+      ];
+
+  const execute = async () => {
+    if (!dag) return;
+    setTriggering(true);
+    try {
+      await triggerAirflowDag(dag.dag_id, { action });
+      message.success(`${displayName(dag)} ${options.find((option) => option.value === action)?.label} 요청을 전송했습니다.`);
+      onClose();
+      onExecuted();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "DAG 실행 요청에 실패했습니다.");
+    } finally {
+      setTriggering(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`${dag ? displayName(dag) : "DAG"} 실행 설정`}
+      open={open}
+      onCancel={onClose}
+      onOk={() => void execute()}
+      okText="Airflow DAG 트리거"
+      cancelText="취소"
+      confirmLoading={triggering}
+      destroyOnHidden
+    >
+      <p>Airflow DAG에 전달할 실행 동작을 선택하세요.</p>
+      <Radio.Group
+        block
+        optionType="button"
+        buttonStyle="solid"
+        value={action}
+        options={options}
+        onChange={(event) => setAction(event.target.value as ExecutionAction)}
+      />
+    </Modal>
   );
 }
 
@@ -863,7 +939,7 @@ export function AirflowDashboardPage() {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [monitoringOpen, setMonitoringOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [triggering, setTriggering] = useState(false);
+  const [executionOpen, setExecutionOpen] = useState(false);
   const initialSyncQuery = useQuery({
     queryKey: ["airflow-dag-catalog-sync"],
     queryFn: syncAirflowDagCatalog,
@@ -915,19 +991,9 @@ export function AirflowDashboardPage() {
   const selectedAlertHistory = selectedDagId
     ? (dashboardQuery.data?.alertHistory ?? []).filter((alert) => alert.dagId === selectedDagId)
     : [];
-  const triggerSelectedDag = async () => {
-    if (!selectedDag) return;
-    setTriggering(true);
-    try {
-      await triggerAirflowDag(selectedDag.dag_id, selectedDag.dag_id.startsWith("nifi_pipeline_") ? { action: "start" } : {});
-      message.success(`${displayName(selectedDag)} 실행을 요청했습니다.`);
-      setActiveDetailTab("history");
-      await dashboardQuery.refetch();
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "DAG 실행 요청에 실패했습니다.");
-    } finally {
-      setTriggering(false);
-    }
+  const showExecutionSettings = (dag: DashboardDag) => {
+    setSelectedDagId(dag.dag_id);
+    setExecutionOpen(true);
   };
   const synchronizeDags = async () => {
     const result = await initialSyncQuery.refetch();
@@ -985,7 +1051,7 @@ export function AirflowDashboardPage() {
             ))}
           </div>
           <div className="airflow-dashboard-workspace">
-            <BusinessTree dags={filteredDags} selectedDagId={selectedDagId} search={search} alertsByDag={alertsByDag} onSearch={setSearch} onSelect={setSelectedDagId} onDetail={showDagDetail} onDelete={confirmDeleteDag} />
+            <BusinessTree dags={filteredDags} selectedDagId={selectedDagId} search={search} alertsByDag={alertsByDag} onSearch={setSearch} onSelect={setSelectedDagId} onDetail={showDagDetail} onExecution={showExecutionSettings} onDelete={confirmDeleteDag} />
             <main className="airflow-dashboard-panel airflow-jobs-panel">
               <div className="airflow-jobs-heading"><div><h3>{selectedDag ? displayName(selectedDag) : "선택 작업"}</h3><button type="button" className={`airflow-jobs-tab${activeDetailTab === "tasks" ? " active" : ""}`} onClick={() => setActiveDetailTab("tasks")}>DAG 내 하위 작업</button><button type="button" className={`airflow-jobs-tab${activeDetailTab === "history" ? " active" : ""}`} onClick={() => setActiveDetailTab("history")}>실행 이력</button></div>{actionCategory ? <Button size="small" onClick={() => setActionCategory(undefined)}>{actionCategory} 조치 필터 해제</Button> : null}</div>
               {activeDetailTab === "tasks"
@@ -993,10 +1059,11 @@ export function AirflowDashboardPage() {
                 : <><RunHistoryTable dag={selectedDag} runs={selectedRuns} refreshSeconds={refreshSeconds} /><AlertHistory alerts={selectedAlertHistory} /></>}
               <PropertyPanel dag={selectedDag} alerts={selectedAlerts} inline onChanged={() => void dashboardQuery.refetch()} />
             </main>
-            <PropertyPanel dag={selectedDag} alerts={selectedAlerts} triggering={triggering} onManualRun={triggerSelectedDag} onOpenSchedule={() => setScheduleOpen(true)} onOpenMonitoring={() => setMonitoringOpen(true)} onChanged={() => void dashboardQuery.refetch()} />
+            <PropertyPanel dag={selectedDag} alerts={selectedAlerts} onOpenExecution={() => setExecutionOpen(true)} onOpenSchedule={() => setScheduleOpen(true)} onOpenMonitoring={() => setMonitoringOpen(true)} onChanged={() => void dashboardQuery.refetch()} />
           </div>
           <InfrastructureBar groups={dashboardQuery.data?.processGroups ?? []} />
           <ScheduleWizard open={scheduleOpen} dag={selectedDag} onClose={() => setScheduleOpen(false)} onSaved={() => void dashboardQuery.refetch()} />
+          <ExecutionSettingsModal open={executionOpen} dag={selectedDag} onClose={() => setExecutionOpen(false)} onExecuted={() => { setActiveDetailTab("history"); void dashboardQuery.refetch(); }} />
           <MonitoringSettingsModal open={monitoringOpen} dag={selectedDag} onClose={() => setMonitoringOpen(false)} onSaved={() => void dashboardQuery.refetch()} />
           <Modal title="DAG 상세" open={detailOpen} footer={null} onCancel={() => setDetailOpen(false)}>
             {selectedDag && <Descriptions column={1} size="small" bordered>
