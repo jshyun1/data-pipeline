@@ -328,15 +328,12 @@ public class ProcessHealthService {
                 response.dagProcessor() == null ? null : response.dagProcessor().status(),
                 response.dagProcessor() == null ? null : response.dagProcessor().latestHeartbeat()));
 
-        // triggerer는 이 배포에 컨테이너가 없어 항상 status=null로 온다 - 죽은 게 아니라 안 쓰는 것이다.
-        // 예전에는 줄을 아예 만들지 않았는데, 그러면 "이 설치에서 트리거러를 안 쓴다"는 사실이
-        // 화면 어디에도 안 남는다. 원본 5-4 의 "미사용" 상태로 명시해서 내린다(이상 카운트 제외).
+        // 이 배포에 없는 triggerer는 Airflow가 status=null로 내려준다. 미구성 컴포넌트는
+        // 인프라 상태에 표시하지 않고, 실제로 구성되어 상태가 있을 때만 노출한다.
         String triggererStatus = response.triggerer() == null ? null : response.triggerer().status();
         if (StringUtils.hasText(triggererStatus)) {
             items.add(componentItem("트리거러", triggererStatus,
                     response.triggerer().latestHeartbeat()));
-        } else {
-            items.add(ProcessItem.unconfigured("트리거러", "이 설치에 구성되지 않음"));
         }
 
         return ProcessGroup.of("AIRFLOW", "Airflow", items);

@@ -1,8 +1,8 @@
-import { CheckOutlined } from "@ant-design/icons";
-import { message } from "antd";
+import { CheckCircleOutlined, CheckOutlined, LockOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, Collapse, message, Space, Tag } from "antd";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { listConnections, listConnectionTables } from "../api/connections";
+import { listConnections, listConnectionSchemas, listConnectionTables } from "../api/connections";
 import {
   createInitialDbToDbFlow,
   getNifiProcessGroupTree,
@@ -25,12 +25,12 @@ type WizardStepId = (typeof WIZARD_STEPS)[number]["id"];
 type LoadMode = "INSERT" | "TRUNCATE" | "UPSERT";
 type NifiDatabaseType = "Generic" | "Oracle 12+" | "PostgreSQL" | "MySQL" | "MS SQL 2012+";
 
-const ACTION_STEPS: Array<{ id: WizardStepId; label: string }> = [
-  { id: "type", label: "유형 선택" },
-  { id: "basic", label: "기본 정보" },
-  { id: "connection", label: "연결" },
-  { id: "target", label: "대상" },
-];
+const STEP_NUMBER: Record<WizardStepId, number> = {
+  type: 1,
+  basic: 2,
+  connection: 3,
+  target: 4,
+};
 
 const TYPE_OPTIONS = [
   {
@@ -163,16 +163,44 @@ async function tableExists(connection: ConnectionResponse, schemaName: string, t
   return tables.some((candidate) => normalizeName(candidate) === normalizeName(table));
 }
 
-function TypeStep() {
+function StepLabel({
+  step,
+  title,
+  completed,
+  unlocked,
+}: {
+  step: WizardStepId;
+  title: string;
+  completed: boolean;
+  unlocked: boolean;
+}) {
   return (
-    <div className="etl-wizard-type-grid">
-      {TYPE_OPTIONS.map((option, index) => (
-        <button key={option.title} type="button" className={index === 0 ? "etl-type-card selected" : "etl-type-card"}>
-          <strong>{option.title}</strong>
-          <span>{option.description}</span>
-        </button>
-      ))}
-    </div>
+    <Space>
+      <Tag color={completed ? "success" : unlocked ? "blue" : "default"}>{STEP_NUMBER[step]}</Tag>
+      <span>{title}</span>
+      {completed && <CheckCircleOutlined style={{ color: "#52c41a" }} />}
+      {!unlocked && <LockOutlined style={{ color: "#999" }} />}
+    </Space>
+  );
+}
+
+function TypeStep({ onComplete }: { onComplete: () => void }) {
+  return (
+    <>
+      <div className="etl-wizard-type-grid">
+        {TYPE_OPTIONS.map((option, index) => (
+          <button key={option.title} type="button" className={index === 0 ? "etl-type-card selected" : "etl-type-card"}>
+            <strong>{option.title}</strong>
+            <span>{option.description}</span>
+          </button>
+        ))}
+      </div>
+      <div className="etl-step-complete-actions">
+        <Button type="primary" onClick={onComplete}>
+          다음: 기본 정보
+        </Button>
+      </div>
+    </>
   );
 }
 
@@ -260,9 +288,9 @@ function BasicStep({
       </div>
 
       <div className="etl-step-complete-actions">
-        <button type="button" disabled={!canComplete} onClick={onComplete}>
-          완료
-        </button>
+        <Button type="primary" disabled={!canComplete} onClick={onComplete}>
+          다음: 연결
+        </Button>
       </div>
     </>
   );
@@ -271,15 +299,29 @@ function BasicStep({
 function ConnectionStep({
   value,
   onChange,
+  onVerifiedChange,
 }: {
   value: ConnectionInfo;
   onChange: (nextValue: Partial<ConnectionInfo>) => void;
+  onVerifiedChange: (verified: boolean) => void;
 }) {
   const [services, setServices] = useState<ControllerServiceOption[]>([]);
   const [connections, setConnections] = useState<ConnectionResponse[]>([]);
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [sourceSchemas, setSourceSchemas] = useState<string[]>([]);
+  const [sourceTables, setSourceTables] = useState<string[]>([]);
+  const [sourceSchemaLoading, setSourceSchemaLoading] = useState(false);
+  const [sourceTableLoading, setSourceTableLoading] = useState(false);
+  const [sourceSchemaError, setSourceSchemaError] = useState<string | null>(null);
+  const [sourceTableError, setSourceTableError] = useState<string | null>(null);
+  const [targetSchemas, setTargetSchemas] = useState<string[]>([]);
+  const [targetTables, setTargetTables] = useState<string[]>([]);
+  const [targetSchemaLoading, setTargetSchemaLoading] = useState(false);
+  const [targetTableLoading, setTargetTableLoading] = useState(false);
+  const [targetSchemaError, setTargetSchemaError] = useState<string | null>(null);
+  const [targetTableError, setTargetTableError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -370,9 +412,161 @@ function ConnectionStep({
     }) ?? null;
   };
 
+  const sourceConnection = connectionByServiceId(value.sourceServiceId);
+  const sourceConnectionReady = !!sourceConnection;
+  const targetConnection = connectionByServiceId(value.targetServiceId);
+  const targetConnectionReady = !!targetConnection;
+
+  useEffect(() => {
+    let cancelled = false;
+    setSourceSchemas([]);
+    setSourceTables([]);
+    setSourceSchemaError(null);
+    setSourceTableError(null);
+
+    if (!sourceConnection) {
+      setSourceSchemaLoading(false);
+      setSourceTableLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setSourceSchemaLoading(true);
+    listConnectionSchemas(sourceConnection.id)
+      .then((schemas) => {
+        if (!cancelled) {
+          setSourceSchemas(schemas);
+        }
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setSourceSchemaError(ex instanceof Error ? ex.message : "소스 스키마를 불러오지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSourceSchemaLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceConnection?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSourceTables([]);
+    setSourceTableError(null);
+
+    if (!sourceConnection || !value.sourceSchema.trim()) {
+      setSourceTableLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setSourceTableLoading(true);
+    listConnectionTables(sourceConnection.id, value.sourceSchema.trim())
+      .then((tables) => {
+        if (!cancelled) {
+          setSourceTables(tables);
+        }
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setSourceTableError(ex instanceof Error ? ex.message : "소스 테이블을 불러오지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSourceTableLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceConnection?.id, value.sourceSchema]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTargetSchemas([]);
+    setTargetTables([]);
+    setTargetSchemaError(null);
+    setTargetTableError(null);
+
+    if (!targetConnection) {
+      setTargetSchemaLoading(false);
+      setTargetTableLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setTargetSchemaLoading(true);
+    listConnectionSchemas(targetConnection.id)
+      .then((schemas) => {
+        if (!cancelled) {
+          setTargetSchemas(schemas);
+        }
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setTargetSchemaError(ex instanceof Error ? ex.message : "타깃 스키마를 불러오지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setTargetSchemaLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [targetConnection?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTargetTables([]);
+    setTargetTableError(null);
+
+    if (!targetConnection || !value.targetSchema.trim()) {
+      setTargetTableLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setTargetTableLoading(true);
+    listConnectionTables(targetConnection.id, value.targetSchema.trim())
+      .then((tables) => {
+        if (!cancelled) {
+          setTargetTables(tables);
+        }
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setTargetTableError(ex instanceof Error ? ex.message : "타깃 테이블을 불러오지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setTargetTableLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [targetConnection?.id, value.targetSchema]);
+
   const testTables = async () => {
     setIsTesting(true);
     setTestResult(null);
+    onVerifiedChange(false);
     try {
       const sourceConnection = connectionByServiceId(value.sourceServiceId);
       const targetConnection = connectionByServiceId(value.targetServiceId);
@@ -387,6 +581,7 @@ function ConnectionStep({
 
       if (sourceExists && targetExists) {
         setTestResult("소스와 타깃 테이블을 모두 확인했습니다.");
+        onVerifiedChange(true);
       } else {
         setTestResult(
           [
@@ -394,12 +589,20 @@ function ConnectionStep({
             targetExists ? null : "타깃 테이블 없음",
           ].filter(Boolean).join(" / "),
         );
+        onVerifiedChange(false);
       }
     } catch (ex) {
       setTestResult(ex instanceof Error ? ex.message : "연결 테스트에 실패했습니다.");
+      onVerifiedChange(false);
     } finally {
       setIsTesting(false);
     }
+  };
+
+  const updateValue = (nextValue: Partial<ConnectionInfo>) => {
+    setTestResult(null);
+    onVerifiedChange(false);
+    onChange(nextValue);
   };
 
   return (
@@ -409,7 +612,7 @@ function ConnectionStep({
         <select
           value={value.sourceServiceId}
           disabled={services.length === 0 || !!serviceError}
-          onChange={(event) => onChange({ sourceServiceId: event.target.value })}
+          onChange={(event) => updateValue({ sourceServiceId: event.target.value, sourceSchema: "", sourceTable: "" })}
         >
           <option value="" disabled>
             {servicePlaceholder}
@@ -424,7 +627,7 @@ function ConnectionStep({
         <select
           value={value.targetServiceId}
           disabled={services.length === 0 || !!serviceError}
-          onChange={(event) => onChange({ targetServiceId: event.target.value })}
+          onChange={(event) => updateValue({ targetServiceId: event.target.value, targetSchema: "", targetTable: "" })}
         >
           <option value="" disabled>
             {servicePlaceholder}
@@ -440,7 +643,7 @@ function ConnectionStep({
         <label>소스 데이터베이스</label>
         <select
           value={value.sourceDatabaseType}
-          onChange={(event) => onChange({ sourceDatabaseType: event.target.value as NifiDatabaseType })}
+          onChange={(event) => updateValue({ sourceDatabaseType: event.target.value as NifiDatabaseType })}
         >
           {DATABASE_TYPE_OPTIONS.map((databaseType) => (
             <option key={databaseType} value={databaseType}>
@@ -451,7 +654,7 @@ function ConnectionStep({
         <label>타깃 데이터베이스</label>
         <select
           value={value.targetDatabaseType}
-          onChange={(event) => onChange({ targetDatabaseType: event.target.value as NifiDatabaseType })}
+          onChange={(event) => updateValue({ targetDatabaseType: event.target.value as NifiDatabaseType })}
         >
           {DATABASE_TYPE_OPTIONS.map((databaseType) => (
             <option key={databaseType} value={databaseType}>
@@ -462,31 +665,99 @@ function ConnectionStep({
       </div>
       <div className="form-row two-column">
         <label>소스 스키마</label>
-        <input
+        <select
           value={value.sourceSchema}
-          onChange={(event) => onChange({ sourceSchema: event.target.value })}
-          placeholder="예: CSB"
-        />
+          disabled={!sourceConnectionReady || sourceSchemaLoading || !!sourceSchemaError || sourceSchemas.length === 0}
+          onChange={(event) => updateValue({ sourceSchema: event.target.value, sourceTable: "" })}
+        >
+          <option value="" disabled>
+            {!sourceConnectionReady
+              ? "소스 연결을 선택하세요"
+              : sourceSchemaLoading
+                ? "소스 스키마 조회 중"
+                : sourceSchemaError
+                  ? "소스 스키마 조회 실패"
+                  : sourceSchemas.length > 0
+                    ? "소스 스키마를 선택하세요"
+                    : "조회된 소스 스키마가 없습니다"}
+          </option>
+          {sourceSchemas.map((schema) => (
+            <option key={schema} value={schema}>
+              {schema}
+            </option>
+          ))}
+        </select>
         <label>타깃 스키마</label>
-        <input
+        <select
           value={value.targetSchema}
-          onChange={(event) => onChange({ targetSchema: event.target.value })}
-          placeholder="예: public"
-        />
+          disabled={!targetConnectionReady || targetSchemaLoading || !!targetSchemaError || targetSchemas.length === 0}
+          onChange={(event) => updateValue({ targetSchema: event.target.value, targetTable: "" })}
+        >
+          <option value="" disabled>
+            {!targetConnectionReady
+              ? "타깃 연결을 선택하세요"
+              : targetSchemaLoading
+                ? "타깃 스키마 조회 중"
+                : targetSchemaError
+                  ? "타깃 스키마 조회 실패"
+                  : targetSchemas.length > 0
+                    ? "타깃 스키마를 선택하세요"
+                    : "조회된 타깃 스키마가 없습니다"}
+          </option>
+          {targetSchemas.map((schema) => (
+            <option key={schema} value={schema}>
+              {schema}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="form-row two-column">
         <label>소스 테이블</label>
-        <input
+        <select
           value={value.sourceTable}
-          onChange={(event) => onChange({ sourceTable: event.target.value })}
-          placeholder="예: TB_COM001M"
-        />
+          disabled={!value.sourceSchema.trim() || sourceTableLoading || !!sourceTableError || sourceTables.length === 0}
+          onChange={(event) => updateValue({ sourceTable: event.target.value })}
+        >
+          <option value="" disabled>
+            {!value.sourceSchema.trim()
+              ? "소스 스키마를 먼저 선택하세요"
+              : sourceTableLoading
+                ? "소스 테이블 조회 중"
+                : sourceTableError
+                  ? "소스 테이블 조회 실패"
+                  : sourceTables.length > 0
+                    ? "소스 테이블을 선택하세요"
+                    : "조회된 소스 테이블이 없습니다"}
+          </option>
+          {sourceTables.map((table) => (
+            <option key={table} value={table}>
+              {table}
+            </option>
+          ))}
+        </select>
         <label>타깃 테이블</label>
-        <input
+        <select
           value={value.targetTable}
-          onChange={(event) => onChange({ targetTable: event.target.value })}
-          placeholder="예: dz_com001m"
-        />
+          disabled={!value.targetSchema.trim() || targetTableLoading || !!targetTableError || targetTables.length === 0}
+          onChange={(event) => updateValue({ targetTable: event.target.value })}
+        >
+          <option value="" disabled>
+            {!value.targetSchema.trim()
+              ? "타깃 스키마를 먼저 선택하세요"
+              : targetTableLoading
+                ? "타깃 테이블 조회 중"
+                : targetTableError
+                  ? "타깃 테이블 조회 실패"
+                  : targetTables.length > 0
+                    ? "타깃 테이블을 선택하세요"
+                    : "조회된 타깃 테이블이 없습니다"}
+          </option>
+          {targetTables.map((table) => (
+            <option key={table} value={table}>
+              {table}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="form-row action-row">
         <div className="etl-connection-test">
@@ -702,6 +973,8 @@ export function EtlCreatePage() {
   const [activeStep, setActiveStep] = useState<WizardStepId>("type");
   const [completed, setCompleted] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [completedSteps, setCompletedSteps] = useState<WizardStepId[]>([]);
+  const [connectionVerified, setConnectionVerified] = useState(false);
   const [completionSummary, setCompletionSummary] = useState<CompletionSummary | null>(null);
   const [basicInfo, setBasicInfo] = useState<BasicInfo>({
     jobName: "",
@@ -725,6 +998,11 @@ export function EtlCreatePage() {
   const [changeKeyColumn, setChangeKeyColumn] = useState("");
   const [primaryKeys, setPrimaryKeys] = useState("");
 
+  const isUnlocked = (stepId: WizardStepId) => {
+    const index = WIZARD_STEPS.findIndex((step) => step.id === stepId);
+    return index === 0 || completedSteps.includes(WIZARD_STEPS[index - 1].id);
+  };
+
   const moveStep = (stepId: WizardStepId) => {
     if (completed) {
       return;
@@ -733,8 +1011,14 @@ export function EtlCreatePage() {
     setActiveStep(stepId);
   };
 
-  const selectActionStep = (stepId: WizardStepId) => {
-    moveStep(stepId);
+  const completeAndOpen = (currentStep: WizardStepId, nextStep: WizardStepId) => {
+    setCompletedSteps((previous) => previous.includes(currentStep) ? previous : [...previous, currentStep]);
+    moveStep(nextStep);
+  };
+
+  const invalidateFrom = (stepId: WizardStepId) => {
+    const index = WIZARD_STEPS.findIndex((step) => step.id === stepId);
+    setCompletedSteps((previous) => previous.filter((step) => WIZARD_STEPS.findIndex((item) => item.id === step) < index));
   };
 
   const completeWizard = async () => {
@@ -794,6 +1078,7 @@ export function EtlCreatePage() {
         loadMode,
       });
       message.success("NiFi 템플릿 그룹을 복제하고 설정을 반영했습니다.");
+      setCompletedSteps((previous) => previous.includes("target") ? previous : [...previous, "target"]);
       setCompleted(true);
       setActiveStep("target");
     } catch {
@@ -804,18 +1089,26 @@ export function EtlCreatePage() {
   };
 
   const content = {
-    type: <TypeStep />,
+    type: <TypeStep onComplete={() => completeAndOpen("type", "basic")} />,
     basic: (
       <BasicStep
         value={basicInfo}
-        onChange={(nextValue) => setBasicInfo((current) => ({ ...current, ...nextValue }))}
-        onComplete={() => moveStep("connection")}
+        onChange={(nextValue) => {
+          setBasicInfo((current) => ({ ...current, ...nextValue }));
+          invalidateFrom("basic");
+        }}
+        onComplete={() => completeAndOpen("basic", "connection")}
       />
     ),
     connection: (
       <ConnectionStep
         value={connectionInfo}
-        onChange={(nextValue) => setConnectionInfo((current) => ({ ...current, ...nextValue }))}
+        onChange={(nextValue) => {
+          setConnectionInfo((current) => ({ ...current, ...nextValue }));
+          setConnectionVerified(false);
+          invalidateFrom("connection");
+        }}
+        onVerifiedChange={setConnectionVerified}
       />
     ),
     target: (
@@ -841,55 +1134,87 @@ export function EtlCreatePage() {
 
   return (
     <div className="etl-create-page">
-      <header className="etl-wizard-titlebar">
-        <h1>ETL 생성 마법사</h1>
-      </header>
+      <Card title="ETL 생성" style={{ marginBottom: 16 }}>
+        <Alert
+          type="info"
+          showIcon
+          message="각 단계를 완료해야 다음 단계가 열립니다."
+          description="연결 단계에서는 소스와 타깃 연결 테스트가 모두 성공해야 대상 테이블을 선택할 수 있습니다."
+        />
+      </Card>
 
-      <section className="etl-wizard-layout">
-        <div className="etl-wizard-main">
-          <nav className="etl-wizard-actions" aria-label="ETL 생성 단계">
-            {ACTION_STEPS.map((step) => {
-              const active = !completed && activeStep === step.id;
-              return (
-                <button
-                  key={step.id}
-                  type="button"
-                  className={active ? "etl-wizard-action active" : "etl-wizard-action"}
-                  disabled={completed}
-                  onClick={() => selectActionStep(step.id)}
-                >
-                  {step.label}
-                </button>
-              );
-            })}
-          </nav>
-
-          <div className="etl-wizard-content">
-            {completed && completionSummary ? (
-              <CompletionView
-                summary={completionSummary}
-                onOpenCanvas={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(completionSummary.processGroupId)}`)}
-                onOpenDag={() => navigate("/airflow/manage")}
-              />
-            ) : (
-              content[activeStep]
-            )}
-          </div>
-        </div>
-
-        {!completed && activeStep === "target" ? (
-          <div className="etl-target-actions">
-            <button
-              type="button"
-              className="etl-target-complete"
-              disabled={isCreating || (loadMode === "UPSERT" && (!changeKeyColumn.trim() || !primaryKeys.trim()))}
-              onClick={completeWizard}
-            >
-              {isCreating ? "생성 중" : "완료"}
-            </button>
-          </div>
-        ) : null}
-      </section>
+      {completed && completionSummary ? (
+        <CompletionView
+          summary={completionSummary}
+          onOpenCanvas={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(completionSummary.processGroupId)}`)}
+          onOpenDag={() => navigate("/airflow/manage")}
+        />
+      ) : (
+        <Collapse
+          accordion
+          activeKey={activeStep}
+          onChange={(key) => {
+            const requested = Array.isArray(key) ? key[0] : key;
+            if (requested && isUnlocked(requested as WizardStepId)) {
+              setActiveStep(requested as WizardStepId);
+            }
+          }}
+          items={[
+            {
+              key: "type",
+              label: <StepLabel step="type" title="유형선택" completed={completedSteps.includes("type")} unlocked />,
+              children: content.type,
+            },
+            {
+              key: "basic",
+              collapsible: isUnlocked("basic") ? undefined : "disabled",
+              label: <StepLabel step="basic" title="기본 정보" completed={completedSteps.includes("basic")} unlocked={isUnlocked("basic")} />,
+              children: content.basic,
+            },
+            {
+              key: "connection",
+              collapsible: isUnlocked("connection") ? undefined : "disabled",
+              label: <StepLabel step="connection" title="연결" completed={completedSteps.includes("connection")} unlocked={isUnlocked("connection")} />,
+              children: (
+                <>
+                  {content.connection}
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
+                    <Button onClick={() => setActiveStep("basic")}>이전</Button>
+                    <Button
+                      type="primary"
+                      disabled={!connectionVerified}
+                      onClick={() => completeAndOpen("connection", "target")}
+                    >
+                      다음: 대상
+                    </Button>
+                  </div>
+                </>
+              ),
+            },
+            {
+              key: "target",
+              collapsible: isUnlocked("target") ? undefined : "disabled",
+              label: <StepLabel step="target" title="대상" completed={completedSteps.includes("target")} unlocked={isUnlocked("target")} />,
+              children: (
+                <>
+                  {content.target}
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
+                    <Button onClick={() => setActiveStep("connection")}>이전</Button>
+                    <Button
+                      type="primary"
+                      loading={isCreating}
+                      disabled={loadMode === "UPSERT" && (!changeKeyColumn.trim() || !primaryKeys.trim())}
+                      onClick={completeWizard}
+                    >
+                      완료
+                    </Button>
+                  </div>
+                </>
+              ),
+            },
+          ]}
+        />
+      )}
     </div>
   );
 }
