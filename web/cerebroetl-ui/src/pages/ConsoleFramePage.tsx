@@ -20,6 +20,7 @@ import {
 const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
 const CANVAS_SELECTION_SYNC_ATTRIBUTE = "data-cerebro-canvas-selection-sync";
 const KOREAN_TOOLTIP_PATCH_ATTRIBUTE = "data-cerebro-korean-tooltip-patch";
+const NIFI_STATUS_HIDDEN_ATTRIBUTE = "data-cerebro-status-hidden";
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
 // 보이게 한다. 번들 분석으로 실제 렌더링되는 요소를 확인한 선택자:
 // - NiFi: 두 곳에 있었다.
@@ -47,6 +48,7 @@ const HIDE_TOOL_CHROME_CSS = `
   :has(> svg[viewBox="0 0 35 35"]) { display: none !important; }
   :has(> img[alt="NiFi Logo"]) { display: none !important; }
   .current-user, .current-user ~ a { display: none !important; }
+  [${NIFI_STATUS_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
 `;
 
 const NIFI_TOOLTIP_TEXT: Record<string, string> = {
@@ -58,8 +60,56 @@ const NIFI_TOOLTIP_TEXT: Record<string, string> = {
   Funnel: "퍼널",
   Label: "라벨",
   Template: "템플릿",
+  "Import from Registry": "레지스트리에서 가져오기",
+  "Active Threads": "활성 스레드",
+  "Total queued data": "총 대기 데이터",
+  "Running Components": "실행 중 컴포넌트",
+  "Stopped Components": "중지된 컴포넌트",
+  "Invalid Components": "유효하지 않은 컴포넌트",
+  "Last refresh": "마지막 새로고침",
+  "Connected nodes / Total number of nodes in the cluster": "연결된 노드 / 클러스터 전체 노드",
+  "Transmitting Remote Process Groups": "전송 중인 원격 프로세스 그룹",
+  "Not Transmitting Remote Process Groups": "전송 중이 아닌 원격 프로세스 그룹",
+  "Disabled Components": "비활성 컴포넌트",
+  "Up to date Versioned Process Groups": "최신 버전 프로세스 그룹",
+  "Locally modified Versioned Process Groups": "로컬 수정된 버전 프로세스 그룹",
+  "Stale Versioned Process Groups": "오래된 버전 프로세스 그룹",
+  "Locally modified and stale Versioned Process Groups": "로컬 수정 및 오래된 버전 프로세스 그룹",
+  "Sync failure Versioned Process Groups": "동기화 실패 버전 프로세스 그룹",
 };
-const NIFI_TOOLTIP_ATTRIBUTES = ["title", "aria-label", "data-tooltip", "matTooltip", "mattooltip"];
+const NIFI_TOOLTIP_ATTRIBUTES = ["title", "aria-label", "data-tooltip", "matTooltip", "mattooltip", "tooltip"];
+const HIDDEN_NIFI_STATUS_TITLES = new Set([
+  "Connected nodes / Total number of nodes in the cluster",
+  "연결된 노드 / 클러스터 전체 노드",
+  "Transmitting Remote Process Groups",
+  "전송 중인 원격 프로세스 그룹",
+  "Not Transmitting Remote Process Groups",
+  "전송 중이 아닌 원격 프로세스 그룹",
+  "Disabled Components",
+  "비활성 컴포넌트",
+  "Up to date Versioned Process Groups",
+  "최신 버전 프로세스 그룹",
+  "Locally modified Versioned Process Groups",
+  "로컬 수정된 버전 프로세스 그룹",
+  "Stale Versioned Process Groups",
+  "오래된 버전 프로세스 그룹",
+  "Locally modified and stale Versioned Process Groups",
+  "로컬 수정 및 오래된 버전 프로세스 그룹",
+  "Sync failure Versioned Process Groups",
+  "동기화 실패 버전 프로세스 그룹",
+]);
+
+function translateNifiTooltip(value: string) {
+  const trimmed = value.trim();
+  const exact = NIFI_TOOLTIP_TEXT[trimmed];
+  if (exact) {
+    return exact;
+  }
+  if (trimmed.startsWith("Active Threads")) {
+    return trimmed.replace("Active Threads", NIFI_TOOLTIP_TEXT["Active Threads"]);
+  }
+  return undefined;
+}
 
 function iframeDocument(frame: HTMLIFrameElement) {
   try {
@@ -98,25 +148,54 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
       return;
     }
     const value = element.textContent?.trim();
-    const translated = value ? NIFI_TOOLTIP_TEXT[value] : undefined;
+    const translated = value ? translateNifiTooltip(value) : undefined;
     if (translated) {
       element.textContent = translated;
+    }
+  };
+
+  const patchExactTextElement = (element: Element) => {
+    if (element.children.length > 0) {
+      return;
+    }
+    const value = element.textContent?.trim();
+    const translated = value ? translateNifiTooltip(value) : undefined;
+    if (translated) {
+      element.textContent = translated;
+    }
+  };
+
+  const patchStatusVisibility = (element: Element, value: string | null) => {
+    if (!value) {
+      return;
+    }
+    if (HIDDEN_NIFI_STATUS_TITLES.has(value.trim())) {
+      element.setAttribute(NIFI_STATUS_HIDDEN_ATTRIBUTE, "true");
     }
   };
 
   const patchElement = (element: Element) => {
     NIFI_TOOLTIP_ATTRIBUTES.forEach((attributeName) => {
       const value = element.getAttribute(attributeName);
-      const translated = value ? NIFI_TOOLTIP_TEXT[value.trim()] : undefined;
+      if (attributeName === "title") {
+        patchStatusVisibility(element, value);
+      }
+      const translated = value ? translateNifiTooltip(value) : undefined;
       if (translated) {
         element.setAttribute(attributeName, translated);
+        if (attributeName === "title") {
+          patchStatusVisibility(element, translated);
+        }
       }
     });
     patchTitleElement(element);
+    patchExactTextElement(element);
   };
 
   const patchDocument = () => {
-    doc.querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], title").forEach(patchElement);
+    doc
+      .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], title")
+      .forEach(patchElement);
   };
 
   patchDocument();
@@ -134,13 +213,21 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
       }
       if (mutation.type === "characterData" && mutation.target.parentElement) {
         patchTitleElement(mutation.target.parentElement);
+        patchExactTextElement(mutation.target.parentElement);
       }
       mutation.addedNodes.forEach((node) => {
+        if (node.nodeType === 3 && node.parentElement) {
+          patchExactTextElement(node.parentElement);
+          return;
+        }
         if (!(node instanceof Element)) {
           return;
         }
         patchElement(node);
-        node.querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], title").forEach(patchElement);
+        node
+          .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], title")
+          .forEach(patchElement);
+        node.querySelectorAll("*").forEach(patchExactTextElement);
       });
     }
   });
@@ -532,6 +619,39 @@ function uniqueValues(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => !!value)));
 }
 
+function directProcessorCount(node: NifiProcessGroupTreeNode | null) {
+  if (!node) {
+    return 0;
+  }
+  const childProcessorCount = node.children.reduce((sum, child) => sum + child.processorCount, 0);
+  return Math.max(node.processorCount - childProcessorCount, 0);
+}
+
+function firstStartStepSchedule(detail: EtlJobDetailResponse | null, node: NifiProcessGroupTreeNode | null) {
+  if (!detail || directProcessorCount(node) === 0) {
+    return "-";
+  }
+
+  const destinationIds = new Set(
+    detail.links.map((link) => link.toComponentId).filter((id): id is string => !!id),
+  );
+  const startSteps = detail.steps.filter((step) => !destinationIds.has(step.nifiProcessorId));
+  const candidates = startSteps.length > 0 ? startSteps : detail.steps;
+  const firstStep = [...candidates].sort((a, b) => {
+    const xDiff = (a.xPos ?? Number.MAX_SAFE_INTEGER) - (b.xPos ?? Number.MAX_SAFE_INTEGER);
+    if (xDiff !== 0) {
+      return xDiff;
+    }
+    const yDiff = (a.yPos ?? Number.MAX_SAFE_INTEGER) - (b.yPos ?? Number.MAX_SAFE_INTEGER);
+    if (yDiff !== 0) {
+      return yDiff;
+    }
+    return a.stepName.localeCompare(b.stepName);
+  })[0];
+
+  return firstStep?.schedulingPeriod || "-";
+}
+
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -854,6 +974,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const latestRun = runs[0] ?? null;
   const targetTables = uniqueValues(detail?.steps.map((step) => step.targetTable) ?? []);
   const operationTypes = uniqueValues(detail?.steps.map((step) => step.statementType ?? step.stepType) ?? []);
+  const schedule = firstStartStepSchedule(detail, selected?.node ?? null);
   const isLoading = jobsLoading || detailLoading;
 
   useEffect(() => {
@@ -969,7 +1090,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
         <dl>
           <div>
             <dt>스케줄</dt>
-            <dd>{detail?.steps[0]?.schedulingPeriod ?? "-"}</dd>
+            <dd>{schedule}</dd>
           </div>
           <div>
             <dt>선행 의존</dt>
