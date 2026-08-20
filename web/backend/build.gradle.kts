@@ -22,6 +22,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-security")
+    // @RequirePermission 인가 강제 애스펙트(authz)용. 강제는 authz.enforcement.enabled 플래그로 켠다.
+    implementation("org.springframework.boot:spring-boot-starter-aop")
     // 알림 EMAIL 릴레이(JavaMailSender). spring.mail.host 가 있을 때만 자동설정되며,
     // 미설정(고객사 SMTP 없음) 환경에서는 빈이 없어 NO_RELAY 로 폴백한다.
     implementation("org.springframework.boot:spring-boot-starter-mail")

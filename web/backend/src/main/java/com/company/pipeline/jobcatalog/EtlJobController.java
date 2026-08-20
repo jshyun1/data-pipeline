@@ -1,5 +1,7 @@
 package com.company.pipeline.jobcatalog;
 
+import com.company.pipeline.authz.RequirePermission;
+import com.company.pipeline.authz.SystemCode;
 import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.common.BusinessException;
 import com.company.pipeline.common.ErrorCode;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/etl/jobs")
+@RequirePermission(system = SystemCode.NIFI)
 public class EtlJobController {
 
     private final EtlJobRepository jobRepository;

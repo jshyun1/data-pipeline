@@ -84,6 +84,11 @@ public class AppUser {
     @Column(name = "use_end_dttm", nullable = false)
     private LocalDateTime useEndDttm;
 
+    /** 신규 계정 생성용 공개 생성자(관리 화면에서 userId 지정 후 나머지는 setter 로 채운다). */
+    public AppUser(String userId) {
+        this.userId = userId;
+    }
+
     @PrePersist
     void applyDefaults() {
         LocalDateTime now = LocalDateTime.now();

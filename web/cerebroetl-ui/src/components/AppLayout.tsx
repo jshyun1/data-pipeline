@@ -15,14 +15,24 @@ import {
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { useAuth } from "../auth/AuthContext";
+import type { AccessAction, SystemCode } from "../api/authz";
 
 const { Header, Sider, Content } = Layout;
+
+interface NavLeaf {
+  path: string;
+  label: string;
+  system?: SystemCode;
+  action?: AccessAction;
+}
 
 interface NavItem {
   path: string;
   label: string;
   icon: ReactNode;
-  children?: Array<{ path: string; label: string }>;
+  system?: SystemCode;
+  action?: AccessAction;
+  children?: NavLeaf[];
 }
 
 /**
@@ -53,15 +63,17 @@ function AlertBell() {
   );
 }
 
+// 각 메뉴에 시스템/요구권한을 붙여 역할에 따라 보이거나 감춘다(설계서 §4.5). 그룹은 노출
+// 가능한 자식이 하나라도 있으면 보인다. 권한 로드 전(fail-open)에는 전부 보여준다.
 const NAV_ITEMS: NavItem[] = [
-  { path: "/dashboard", label: "대시보드", icon: <DashboardOutlined /> },
+  { path: "/dashboard", label: "대시보드", icon: <DashboardOutlined />, system: "COMMON", action: "READ" },
   {
     path: "/airflow",
     label: "AirFlow",
     icon: <DeploymentUnitOutlined />,
     children: [
-      { path: "/airflow/manage", label: "생성/관리" },
-      { path: "/airflow/dashboard", label: "대시보드" },
+      { path: "/airflow/manage", label: "생성/관리", system: "AIRFLOW", action: "READ" },
+      { path: "/airflow/dashboard", label: "대시보드", system: "AIRFLOW", action: "READ" },
     ],
   },
   {
@@ -69,9 +81,9 @@ const NAV_ITEMS: NavItem[] = [
     label: "ETL",
     icon: <ApartmentOutlined />,
     children: [
-      { path: "/etl/create", label: "생성" },
-      { path: "/etl/manage", label: "관리" },
-      { path: "/etl/logs", label: "로그" },
+      { path: "/etl/create", label: "생성", system: "NIFI", action: "WRITE" },
+      { path: "/etl/manage", label: "관리", system: "NIFI", action: "READ" },
+      { path: "/etl/logs", label: "로그", system: "NIFI", action: "READ" },
     ],
   },
   {
@@ -79,10 +91,10 @@ const NAV_ITEMS: NavItem[] = [
     label: "CDC",
     icon: <NodeIndexOutlined />,
     children: [
-      { path: "/cdc/create", label: "생성" },
-      { path: "/cdc/pipelines", label: "파이프라인" },
-      { path: "/cdc/connections", label: "연결정보" },
-      { path: "/cdc/logs", label: "처리 로그" },
+      { path: "/cdc/create", label: "생성", system: "KAFKA", action: "WRITE" },
+      { path: "/cdc/pipelines", label: "파이프라인", system: "KAFKA", action: "READ" },
+      { path: "/cdc/connections", label: "연결정보", system: "KAFKA", action: "READ" },
+      { path: "/cdc/logs", label: "처리 로그", system: "KAFKA", action: "READ" },
     ],
   },
   {
@@ -90,22 +102,38 @@ const NAV_ITEMS: NavItem[] = [
     label: "설정",
     icon: <SettingOutlined />,
     children: [
-      { path: "/settings", label: "알림/발송 관리" },
-      { path: "/users", label: "사용자 관리" },
-      { path: "/permissions", label: "권한 관리" },
+      { path: "/settings", label: "알림/발송 관리", system: "COMMON", action: "READ" },
+      { path: "/admin/users", label: "계정 관리", system: "ADMIN", action: "READ" },
+      { path: "/admin/roles", label: "역할 및 권한", system: "ADMIN", action: "READ" },
+      { path: "/admin/assign", label: "사용자 역할 배정", system: "ADMIN", action: "READ" },
+      { path: "/admin/audit", label: "감사 로그", system: "ADMIN", action: "READ" },
     ],
   },
 ];
 
 export function AppLayout() {
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const { user, logout, permissions, permissionsLoaded, can } = useAuth();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const toggleGroup = (path: string) => {
     setOpenGroups((previous) => ({ ...previous, [path]: !previous[path] }));
   };
+
+  // 권한이 아직 안 실렸으면(fail-open) 전부 보여준다. 실린 뒤엔 시스템 권한으로 게이팅.
+  const leafVisible = (leaf: NavLeaf) =>
+    !permissionsLoaded || !leaf.system || can(leaf.system, leaf.action ?? "READ");
+  const itemChildren = (item: NavItem) => (item.children ?? []).filter(leafVisible);
+  const itemVisible = (item: NavItem) => {
+    if (item.children) {
+      return itemChildren(item).length > 0;
+    }
+    return !permissionsLoaded || !item.system || can(item.system, item.action ?? "READ");
+  };
+
+  const visibleItems = NAV_ITEMS.filter(itemVisible);
 
   return (
     <Layout className="app-shell">
@@ -132,6 +160,14 @@ export function AppLayout() {
               {user.admin ? " (관리자)" : ""}
             </span>
           )}
+          <Button
+            type={permissions?.pwMustChange ? "primary" : "text"}
+            size="small"
+            danger={permissions?.pwMustChange}
+            onClick={() => navigate("/change-password")}
+          >
+            {permissions?.pwMustChange ? "비밀번호 변경 필요" : "비밀번호 변경"}
+          </Button>
           <Button type="text" size="small" icon={<LogoutOutlined />} onClick={logout}>
             로그아웃
           </Button>
@@ -149,15 +185,15 @@ export function AppLayout() {
           className="app-sidebar"
         >
           <nav className="sidebar-nav" aria-label="주요 메뉴">
-            {NAV_ITEMS.map((item) => {
+            {visibleItems.map((item) => {
               const groupPrefix = `/${item.path.split("/")[1]}`;
+              const children = itemChildren(item);
               const active =
                 location.pathname === item.path ||
                 location.pathname.startsWith(`${groupPrefix}/`) ||
-                (item.children?.some(
+                children.some(
                   (c) => location.pathname === c.path || location.pathname.startsWith(`${c.path}/`),
-                ) ??
-                  false);
+                );
               const expanded = item.children ? Boolean(openGroups[item.path]) || active : false;
               return (
                 <div key={item.path} className="sidebar-group">
@@ -179,7 +215,7 @@ export function AppLayout() {
                   )}
                   {item.children && expanded ? (
                     <div className="sidebar-subnav">
-                      {item.children.map((child) => (
+                      {children.map((child) => (
                         <NavLink
                           key={child.path}
                           to={child.path}

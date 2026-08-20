@@ -1,5 +1,7 @@
 package com.company.pipeline.connection;
 
+import com.company.pipeline.authz.RequirePermission;
+import com.company.pipeline.authz.SystemCode;
 import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.connection.dto.ConnectionCreateRequest;
 import com.company.pipeline.connection.dto.ConnectionResponse;
@@ -23,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/connections")
+@RequirePermission(system = SystemCode.KAFKA)
 public class ConnectionController {
 
     private final ConnectionService connectionService;

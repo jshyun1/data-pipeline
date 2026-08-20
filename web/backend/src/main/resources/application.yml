@@ -65,6 +65,17 @@ pipeline:
 # (기존엔 account-db.host 기본값이 없어 ST_USER 없는 고객사는 부팅조차 못 하던 판매 차단 버그).
 authz:
   provider: ${AUTHZ_PROVIDER:LOCAL}
+  # API 인가 강제(@RequirePermission). 기본 off - 켜면 조회자가 write API 호출 시 403.
+  # MSA 서버의 공유 pipeline-api 를 포털이 무인증으로 프록시하므로, 그쪽 배포에서는 app02
+  # 토큰 부착이 준비되기 전까지 반드시 off 로 둔다(off 면 permitAll 과 동일).
+  enforcement:
+    enabled: ${AUTHZ_ENFORCEMENT_ENABLED:false}
+  # 비-사람 호출자(Airflow DAG 등)가 인가를 통과하기 위한 고정 서비스 토큰(설계서 §7.6).
+  # 헤더 X-Service-Token 으로 제시하면 전 권한으로 통과. 비어 있으면 우회 없음.
+  service-token: ${PIPELINE_SERVICE_TOKEN:}
+  # 감사 로그 보존 일수(설계서 §7.8). 초과 행은 매일 정리한다. 0 이하면 무제한 보존.
+  audit:
+    retention-days: ${AUTHZ_AUDIT_RETENTION_DAYS:90}
 
 # 통합 계정 테이블(ST_USER) - 여러 시스템이 공유하는 실 사용자 디렉터리(MySQL).
 # 로그인 검증(SELECT)에만 쓰고 절대 쓰기하지 않는다. authz.provider=EXTERNAL 일 때만 쓴다.

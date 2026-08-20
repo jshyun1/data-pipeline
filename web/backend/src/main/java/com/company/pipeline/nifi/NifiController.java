@@ -1,5 +1,7 @@
 package com.company.pipeline.nifi;
 
+import com.company.pipeline.authz.RequirePermission;
+import com.company.pipeline.authz.SystemCode;
 import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.jobcatalog.EtlJob;
 import com.company.pipeline.jobcatalog.EtlJobRepository;
@@ -33,6 +35,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/nifi")
+@RequirePermission(system = SystemCode.NIFI)
 public class NifiController {
 
     private final NifiClient nifiClient;

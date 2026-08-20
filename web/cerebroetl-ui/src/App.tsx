@@ -8,8 +8,12 @@ import { AirflowDashboardPage } from "./pages/AirflowDashboardPage";
 import { ConsoleFramePage } from "./pages/ConsoleFramePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { UsersPage } from "./pages/UsersPage";
-import { PermissionsPage } from "./pages/PermissionsPage";
+import { AccountManagementPage } from "./pages/admin/AccountManagementPage";
+import { RolePermissionPage } from "./pages/admin/RolePermissionPage";
+import { UserRoleAssignPage } from "./pages/admin/UserRoleAssignPage";
+import { AuditLogPage } from "./pages/admin/AuditLogPage";
+import { ChangePasswordPage } from "./pages/ChangePasswordPage";
+import { RequirePermissionRoute } from "./auth/RequirePermissionRoute";
 import { SelfCheckPage } from "./pages/SelfCheckPage";
 import { EtlCreatePage } from "./pages/EtlCreatePage";
 import { EtlLogsPage } from "./pages/EtlLogsPage";
@@ -25,8 +29,15 @@ export function App() {
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/users" element={<UsersPage />} />
-        <Route path="/permissions" element={<PermissionsPage />} />
+        <Route path="/users" element={<Navigate to="/admin/users" replace />} />
+        <Route path="/permissions" element={<Navigate to="/admin/roles" replace />} />
+        <Route path="/change-password" element={<ChangePasswordPage />} />
+        <Route element={<RequirePermissionRoute system="ADMIN" action="READ" />}>
+          <Route path="/admin/users" element={<AccountManagementPage />} />
+          <Route path="/admin/roles" element={<RolePermissionPage />} />
+          <Route path="/admin/assign" element={<UserRoleAssignPage />} />
+          <Route path="/admin/audit" element={<AuditLogPage />} />
+        </Route>
         <Route path="/self-check" element={<SelfCheckPage />} />
         <Route path="/airflow" element={<Navigate to="/airflow/dashboard" replace />} />
         <Route path="/airflow/dashboard" element={<AirflowDashboardPage />} />

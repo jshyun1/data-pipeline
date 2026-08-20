@@ -1,5 +1,7 @@
 package com.company.pipeline.pipeline;
 
+import com.company.pipeline.authz.RequirePermission;
+import com.company.pipeline.authz.SystemCode;
 import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.logpipeline.dto.LogPipelineCreateRequest;
 import com.company.pipeline.monitoring.PipelineMetricSnapshotService;
@@ -23,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/pipelines")
+@RequirePermission(system = SystemCode.KAFKA)
 public class PipelineController {
 
     private final PipelineService pipelineService;
