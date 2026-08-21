@@ -2,26 +2,82 @@ package com.company.pipeline.nifi;
 
 import com.company.pipeline.nifi.dto.NifiFlowResponse;
 import com.company.pipeline.nifi.dto.NifiProcessGroupTreeResponse;
+import java.util.ArrayDeque;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 public class NifiProcessGroupTreeService {
 
+    private static final Logger log = LoggerFactory.getLogger(NifiProcessGroupTreeService.class);
+
     private static final String ROOT_GROUP_ID = "root";
+    private static final long CACHE_TTL_MS = 30_000L;
+    private static final long CACHE_WARMUP_DELAY_MS = 5_000L;
 
     private final NifiClient nifiClient;
+    private final AtomicReference<CachedTree> cache = new AtomicReference<>();
+    private final ReentrantLock refreshLock = new ReentrantLock();
 
     public NifiProcessGroupTreeService(NifiClient nifiClient) {
         this.nifiClient = nifiClient;
     }
 
     public NifiProcessGroupTreeResponse getTree() {
-        return toNode(ROOT_GROUP_ID, "NiFi Flow", new HashSet<>());
+        CachedTree cached = cache.get();
+        if (cached != null) {
+            return cached.tree();
+        }
+
+        refreshLock.lock();
+        try {
+            cached = cache.get();
+            if (cached != null) {
+                return cached.tree();
+            }
+            return refreshCache().tree();
+        } finally {
+            refreshLock.unlock();
+        }
+    }
+
+    @Scheduled(fixedDelay = CACHE_TTL_MS, initialDelay = CACHE_WARMUP_DELAY_MS)
+    public void warmTreeCache() {
+        CachedTree cached = cache.get();
+        if (cached != null && cached.isFresh()) {
+            return;
+        }
+        if (!refreshLock.tryLock()) {
+            return;
+        }
+        try {
+            refreshCache();
+        } catch (RuntimeException ex) {
+            log.debug("NiFi 프로세스 그룹 트리 캐시 예열 실패: {}", ex.getMessage());
+        } finally {
+            refreshLock.unlock();
+        }
+    }
+
+    private CachedTree refreshCache() {
+        CachedTree refreshed = new CachedTree(buildTree(), System.currentTimeMillis());
+        cache.set(refreshed);
+        return refreshed;
+    }
+
+    private NifiProcessGroupTreeResponse buildTree() {
+        return toNode(ROOT_GROUP_ID, "ETL Root", new HashSet<>());
     }
 
     private NifiProcessGroupTreeResponse toNode(String groupId, String fallbackName, Set<String> visited) {
@@ -54,23 +110,23 @@ public class NifiProcessGroupTreeService {
                         .sorted(Comparator.comparing(NifiProcessGroupTreeResponse::name, String.CASE_INSENSITIVE_ORDER))
                         .toList();
 
-        int directProcessorCount = contents == null || contents.processors() == null ? 0 : contents.processors().size();
-        int totalProcessorCount = directProcessorCount + children.stream()
+        JobCounts directCounts = JobCounts.from(contents == null ? null : contents.processors(),
+                contents == null ? null : contents.connections());
+        JobCounts totalCounts = children.stream()
+                .map(JobCounts::from)
+                .reduce(directCounts, JobCounts::plus);
+        int totalJobCount = directCounts.total() + children.stream()
                 .mapToInt(NifiProcessGroupTreeResponse::processorCount)
                 .sum();
-        GroupCounts directCounts = GroupCounts.from(contents == null ? null : contents.processors());
-        GroupCounts totalCounts = children.stream()
-                .map(GroupCounts::from)
-                .reduce(directCounts, GroupCounts::plus);
 
         return new NifiProcessGroupTreeResponse(
                 nodeId,
                 displayName(fallbackName, nodeId),
-                totalProcessorCount,
+                totalJobCount,
                 totalCounts.running(),
                 totalCounts.stopped(),
-                totalCounts.invalid(),
-                totalCounts.disabled(),
+                totalCounts.failed(),
+                0,
                 children
         );
     }
@@ -79,58 +135,138 @@ public class NifiProcessGroupTreeService {
         return StringUtils.hasText(name) ? name : fallback;
     }
 
-    private record GroupCounts(int running, int stopped, int invalid, int disabled) {
+    private record CachedTree(NifiProcessGroupTreeResponse tree, long refreshedAtMillis) {
 
-        private static GroupCounts empty() {
-            return new GroupCounts(0, 0, 0, 0);
+        private boolean isFresh() {
+            return System.currentTimeMillis() - refreshedAtMillis < CACHE_TTL_MS;
+        }
+    }
+
+    private record JobCounts(int total, int running, int completed, int failed, int stopped) {
+
+        private static JobCounts empty() {
+            return new JobCounts(0, 0, 0, 0, 0);
         }
 
-        private static GroupCounts from(List<NifiFlowResponse.ProcessorEntity> processors) {
-            if (processors == null) {
+        private static JobCounts from(List<NifiFlowResponse.ProcessorEntity> processors,
+                                      List<NifiFlowResponse.ConnectionEntity> connections) {
+            if (processors == null || processors.isEmpty()) {
                 return empty();
             }
-            return processors.stream()
-                    .map(processor -> processor == null ? null : processor.component())
-                    .map(GroupCounts::from)
-                    .reduce(empty(), GroupCounts::plus);
+
+            Map<String, ProcessorStatus> processorStatuses = new HashMap<>();
+            Map<String, Set<String>> adjacency = new HashMap<>();
+            for (NifiFlowResponse.ProcessorEntity entity : processors) {
+                var component = entity == null ? null : entity.component();
+                if (component == null) {
+                    continue;
+                }
+                String processorId = StringUtils.hasText(component.id()) ? component.id() : entity.id();
+                if (!StringUtils.hasText(processorId)) {
+                    continue;
+                }
+                processorStatuses.put(processorId, ProcessorStatus.from(component));
+                adjacency.put(processorId, new HashSet<>());
+            }
+
+            if (connections != null) {
+                for (NifiFlowResponse.ConnectionEntity connection : connections) {
+                    var component = connection == null ? null : connection.component();
+                    if (component == null || component.source() == null || component.destination() == null) {
+                        continue;
+                    }
+                    String sourceId = component.source().id();
+                    String destinationId = component.destination().id();
+                    if (processorStatuses.containsKey(sourceId) && processorStatuses.containsKey(destinationId)) {
+                        adjacency.get(sourceId).add(destinationId);
+                        adjacency.get(destinationId).add(sourceId);
+                    }
+                }
+            }
+
+            JobCounts result = empty();
+            Set<String> visited = new HashSet<>();
+            for (String processorId : processorStatuses.keySet()) {
+                if (visited.contains(processorId)) {
+                    continue;
+                }
+                result = result.plus(countConnectedJob(processorId, processorStatuses, adjacency, visited));
+            }
+            return result;
         }
 
-        private static GroupCounts from(NifiFlowResponse.ProcessorComponent processor) {
-            if (processor == null) {
-                return empty();
+        private static JobCounts countConnectedJob(String firstProcessorId,
+                                                   Map<String, ProcessorStatus> processorStatuses,
+                                                   Map<String, Set<String>> adjacency,
+                                                   Set<String> visited) {
+            ArrayDeque<String> queue = new ArrayDeque<>();
+            queue.add(firstProcessorId);
+            boolean failed = false;
+            boolean running = false;
+            boolean allStopped = true;
+
+            while (!queue.isEmpty()) {
+                String processorId = queue.removeFirst();
+                if (!visited.add(processorId)) {
+                    continue;
+                }
+                ProcessorStatus status = processorStatuses.get(processorId);
+                if (status != null) {
+                    failed = failed || status.failed();
+                    running = running || status.running();
+                    allStopped = allStopped && status.stopped();
+                }
+                for (String next : adjacency.getOrDefault(processorId, Set.of())) {
+                    if (!visited.contains(next)) {
+                        queue.add(next);
+                    }
+                }
             }
-            String state = normalized(processor.state());
-            String validationStatus = normalized(processor.validationStatus());
-            boolean invalid = "INVALID".equals(state) || "INVALID".equals(validationStatus);
-            if (invalid) {
-                return new GroupCounts(0, 0, 1, 0);
+
+            if (failed) {
+                return new JobCounts(1, 0, 0, 1, 0);
             }
-            if ("RUNNING".equals(state)) {
-                return new GroupCounts(1, 0, 0, 0);
+            if (running) {
+                return new JobCounts(1, 1, 0, 0, 0);
             }
-            if ("DISABLED".equals(state)) {
-                return new GroupCounts(0, 1, 0, 1);
+            if (allStopped) {
+                return new JobCounts(1, 0, 0, 0, 1);
             }
-            if ("STOPPED".equals(state)) {
-                return new GroupCounts(0, 1, 0, 0);
-            }
-            return empty();
+            return new JobCounts(1, 0, 1, 0, 0);
         }
 
-        private static GroupCounts from(NifiProcessGroupTreeResponse node) {
+        private static JobCounts from(NifiProcessGroupTreeResponse node) {
             if (node == null) {
                 return empty();
             }
-            return new GroupCounts(node.runningCount(), node.stoppedCount(), node.invalidCount(), node.disabledCount());
+            int total = node.processorCount();
+            int running = node.runningCount();
+            int failed = node.invalidCount();
+            int stopped = node.stoppedCount();
+            int completed = Math.max(total - running - failed - stopped, 0);
+            return new JobCounts(total, running, completed, failed, stopped);
         }
 
-        private GroupCounts plus(GroupCounts other) {
-            return new GroupCounts(
+        private JobCounts plus(JobCounts other) {
+            return new JobCounts(
+                    total + other.total(),
                     running + other.running(),
-                    stopped + other.stopped(),
-                    invalid + other.invalid(),
-                    disabled + other.disabled()
+                    completed + other.completed(),
+                    failed + other.failed(),
+                    stopped + other.stopped()
             );
+        }
+    }
+
+    private record ProcessorStatus(boolean running, boolean stopped, boolean failed) {
+
+        private static ProcessorStatus from(NifiFlowResponse.ProcessorComponent processor) {
+            String state = normalized(processor.state());
+            String validationStatus = normalized(processor.validationStatus());
+            boolean invalid = "INVALID".equals(state) || "INVALID".equals(validationStatus);
+            boolean running = "RUNNING".equals(state);
+            boolean stopped = "STOPPED".equals(state) || "DISABLED".equals(state);
+            return new ProcessorStatus(running, stopped, invalid);
         }
 
         private static String normalized(String value) {
