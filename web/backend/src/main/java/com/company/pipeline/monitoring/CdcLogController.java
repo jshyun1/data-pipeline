@@ -24,6 +24,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 @RestController
 @RequestMapping("/api/cdc/logs")
+@com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.KAFKA)
 public class CdcLogController {
 
     private final CdcLogService cdcLogService;

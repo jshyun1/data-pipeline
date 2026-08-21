@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/dashboard/queue")
+@com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.COMMON)
 public class AlertQueueController {
 
     private final JdbcTemplate jdbc;

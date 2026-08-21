@@ -32,6 +32,8 @@ public class AuthzAdminService {
     private final PermissionAuditLogRepository auditLogRepository;
     private final PermissionService permissionService;
     private final PermissionAuditService auditService;
+    private final com.company.pipeline.authz.provisioning.NifiTenantSyncService nifiTenantSyncService;
+    private final com.company.pipeline.authz.provisioning.AirflowUserSyncService airflowUserSyncService;
 
     public AuthzAdminService(AppRoleRepository roleRepository,
                              AppRoleSystemPermissionRepository systemPermissionRepository,
@@ -41,7 +43,9 @@ public class AuthzAdminService {
                              AppUserRepository userRepository,
                              PermissionAuditLogRepository auditLogRepository,
                              PermissionService permissionService,
-                             PermissionAuditService auditService) {
+                             PermissionAuditService auditService,
+                             com.company.pipeline.authz.provisioning.NifiTenantSyncService nifiTenantSyncService,
+                             com.company.pipeline.authz.provisioning.AirflowUserSyncService airflowUserSyncService) {
         this.roleRepository = roleRepository;
         this.systemPermissionRepository = systemPermissionRepository;
         this.userRoleRepository = userRoleRepository;
@@ -51,6 +55,8 @@ public class AuthzAdminService {
         this.auditLogRepository = auditLogRepository;
         this.permissionService = permissionService;
         this.auditService = auditService;
+        this.nifiTenantSyncService = nifiTenantSyncService;
+        this.airflowUserSyncService = airflowUserSyncService;
     }
 
     // ----- view records ---------------------------------------------------
@@ -194,7 +200,7 @@ public class AuthzAdminService {
 
     @Transactional
     public void setUserRoles(String userId, List<String> roleIds, String actor) {
-        userRepository.findById(userId).orElseThrow(() ->
+        AppUser targetUser = userRepository.findById(userId).orElseThrow(() ->
                 new BusinessException(ErrorCode.VALIDATION_ERROR, "사용자를 찾을 수 없습니다: " + userId));
         List<String> before = userRoleRepository.findByUserId(userId).stream()
                 .map(AppUserRole::getRoleId).toList();
@@ -208,6 +214,9 @@ public class AuthzAdminService {
             }
         }
         permissionService.invalidate(userId);
+        // 역할이 바뀌면 NiFi/Airflow 개인계정도 맞춘다(P5b, 기본 off·best-effort).
+        nifiTenantSyncService.syncUser(userId);
+        airflowUserSyncService.syncUser(userId, targetUser.getUserNm(), targetUser.getEmail());
         auditService.record(actor, "ASSIGN_ROLE", "USER", userId,
                 String.join(",", before), roleIds == null ? "" : String.join(",", roleIds), null, null);
     }

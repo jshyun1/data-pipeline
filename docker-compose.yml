@@ -349,6 +349,13 @@ services:
       ACCOUNT_DB_NAME: ${ACCOUNT_DB_NAME}
       ACCOUNT_DB_USER: ${ACCOUNT_DB_USER}
       ACCOUNT_DB_PASSWORD: ${ACCOUNT_DB_PASSWORD}
+      # P5b 개인계정 프록시/동기화 플래그(기본 off). compose는 명시한 것만 컨테이너로 전달한다.
+      AUTHZ_PROXY_ENABLED: ${AUTHZ_PROXY_ENABLED:-false}
+      AUTHZ_IDENTITY_SYNC_ENABLED: ${AUTHZ_IDENTITY_SYNC_ENABLED:-false}
+      AUTHZ_ENFORCEMENT_ENABLED: ${AUTHZ_ENFORCEMENT_ENABLED:-false}
+      PIPELINE_SERVICE_TOKEN: ${PIPELINE_SERVICE_TOKEN:-}
+      AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
       KAFKA_CONNECT_URL: http://kafka-connect:8083
       # Oracle CDC가 온라인 redo 대신 아카이브 로그만 읽게 할지(기본 false=온라인 redo).
       # 켜면 지연이 redo 스위치 주기만큼 늘어난다 - 운영 DB가 redo 접근을 막을 때만 켤 것.
@@ -427,6 +434,11 @@ services:
       NIFI_HOST_HEADER: localhost:8443
       AIRFLOW_USERNAME: ${AIRFLOW_ADMIN_USERNAME}
       AIRFLOW_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+    volumes:
+      # P5b: NiFi 대행인증용 mTLS 클라이언트 인증서(nginx가 NiFi로 제시). 없으면 nginx 기동
+      # 실패하므로, per-user 프록시를 쓸 때만 이 파일들이 있어야 한다.
+      - ./deploy/p5b-certs/cerebro-proxy.crt:/etc/nginx/certs/cerebro-proxy.crt:ro
+      - ./deploy/p5b-certs/cerebro-proxy.key:/etc/nginx/certs/cerebro-proxy.key:ro
     ports:
       - "${CEREBROETL_UI_PORT}:80"
     healthcheck:
@@ -516,6 +528,8 @@ services:
       #
       # DB에 저장되는 값 자체는 어느 쪽이든 항상 UTC다 - 해석과 표시만 바뀐다.
       TZ: Asia/Seoul
+      # P4 인가 강제 시 DAG가 pipeline-api를 호출하려면 서비스 토큰이 필요하다(설계서 §7.6).
+      PIPELINE_SERVICE_TOKEN: ${PIPELINE_SERVICE_TOKEN:-}
       AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Seoul
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       # 호스트 메모리가 빠듯해 LocalExecutor의 태스크당 fork+exec(Task SDK 재import)

@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 발송 설정 화면이 이 API 를 쓴다. 시크릿(비밀번호)은 응답에 절대 안 내리고 secretSet 불리언만.
  */
 @RestController
+@com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.ADMIN)
 public class NotificationAdminController {
 
     private final JdbcTemplate jdbc;

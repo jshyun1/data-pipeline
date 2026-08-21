@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/connect")
+@com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.KAFKA)
 public class MonitoringController {
 
     private final KafkaConnectClient kafkaConnectClient;

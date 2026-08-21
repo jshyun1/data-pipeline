@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/airflow/alerts")
+@com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.AIRFLOW)
 public class AirflowDagAlertController {
 
     private final AirflowDagMonitoringService monitoringService;

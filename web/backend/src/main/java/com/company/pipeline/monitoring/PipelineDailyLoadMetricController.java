@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/metrics/daily-load")
+@com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.COMMON)
 public class PipelineDailyLoadMetricController {
 
     private final PipelineDailyLoadMetricService service;

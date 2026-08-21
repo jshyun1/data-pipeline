@@ -31,12 +31,18 @@ public class AdminAccountController {
     private final AppUserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final PermissionAuditService auditService;
+    private final com.company.pipeline.authz.provisioning.NifiTenantSyncService nifiSync;
+    private final com.company.pipeline.authz.provisioning.AirflowUserSyncService airflowSync;
 
     public AdminAccountController(AppUserRepository userRepository, PasswordEncoder passwordEncoder,
-                                  PermissionAuditService auditService) {
+                                  PermissionAuditService auditService,
+                                  com.company.pipeline.authz.provisioning.NifiTenantSyncService nifiSync,
+                                  com.company.pipeline.authz.provisioning.AirflowUserSyncService airflowSync) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.auditService = auditService;
+        this.nifiSync = nifiSync;
+        this.airflowSync = airflowSync;
     }
 
     public record AccountView(String userId, String userNm, String email, String telNo, boolean admin,
@@ -120,6 +126,9 @@ public class AdminAccountController {
         user.setUseYn("N");
         userRepository.save(user);
         auditService.record(actorId(act), "DISABLE_USER", "USER", userId, null);
+        // 비활성 → NiFi/Airflow 개인계정 권한 회수(P5b, 기본 off·best-effort).
+        nifiSync.syncUser(userId);
+        airflowSync.syncUser(userId, user.getUserNm(), user.getEmail());
         return ApiResponse.success(null);
     }
 
@@ -129,6 +138,9 @@ public class AdminAccountController {
         user.setUseYn("Y");
         userRepository.save(user);
         auditService.record(actorId(act), "ENABLE_USER", "USER", userId, null);
+        // 재활성 → NiFi/Airflow 개인계정 권한 복원(P5b, 기본 off·best-effort).
+        nifiSync.syncUser(userId);
+        airflowSync.syncUser(userId, user.getUserNm(), user.getEmail());
         return ApiResponse.success(null);
     }
 

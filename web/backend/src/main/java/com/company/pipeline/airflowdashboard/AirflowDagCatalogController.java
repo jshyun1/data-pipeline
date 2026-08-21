@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/airflow/dag-catalog")
+@com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.AIRFLOW)
 public class AirflowDagCatalogController {
 
     private final AirflowDagCatalogRepository repository;

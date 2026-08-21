@@ -933,6 +933,162 @@ public class NifiClient {
     // NiFi가 Keycloak/OIDC를 제거하고 Single User 인증(공유 서비스계정)으로 전환됨에 따라,
     // /nifi-api/access/token에 username/password를 보내 JWT를 직접 발급받는다.
     // 이 엔드포인트는 응답 본문이 JSON이 아니라 JWT 문자열 그대로임에 주의.
+    // ---- P5b: 개인계정(테넌트) + 정책 동기화 (스파이크 P5a에서 검증한 API 시퀀스) ----
+
+    /** 루트 프로세스 그룹 UUID(정책 리소스 "/process-groups/{id}"에 필요). 실패 시 "root". */
+    @SuppressWarnings("unchecked")
+    public String getRootProcessGroupId() {
+        String token = getToken();
+        try {
+            Map<String, Object> resp = restClient.get()
+                    .uri("/nifi-api/flow/process-groups/root")
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve().body(Map.class);
+            Map<String, Object> pgf = resp == null ? null : (Map<String, Object>) resp.get("processGroupFlow");
+            String id = pgf == null ? null : (String) pgf.get("id");
+            return StringUtils.hasText(id) ? id : "root";
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 루트 그룹 조회 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    /** NiFi 사용자(테넌트) 보장: 있으면 id, 없으면 생성 후 id. 관리 호출이라 서비스계정 Bearer 사용. */
+    @SuppressWarnings("unchecked")
+    public String ensureNifiUser(String identity) {
+        String token = getToken();
+        try {
+            Map<String, Object> resp = restClient.get()
+                    .uri("/nifi-api/tenants/users")
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve().body(Map.class);
+            java.util.List<Map<String, Object>> users = resp == null ? java.util.List.of()
+                    : (java.util.List<Map<String, Object>>) resp.getOrDefault("users", java.util.List.of());
+            for (Map<String, Object> u : users) {
+                Map<String, Object> comp = (Map<String, Object>) u.get("component");
+                if (comp != null && identity.equals(comp.get("identity"))) {
+                    return (String) u.get("id");
+                }
+            }
+            Map<String, Object> body = Map.of("revision", Map.of("version", 0),
+                    "component", Map.of("identity", identity));
+            Map<String, Object> created = restClient.post()
+                    .uri("/nifi-api/tenants/users")
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body).retrieve().body(Map.class);
+            return created == null ? null : (String) created.get("id");
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 사용자 동기화 실패(" + identity + "): " + ex.getMessage(), ex);
+        }
+    }
+
+    /**
+     * 사용자에게 리소스/액션 정책 부여(없으면 생성, 있으면 사용자 추가). 정책 조회는 %2F 인코딩
+     * 슬래시를 Jetty 가 거부하므로 비인코딩 경로를 쓴다(P5a 스파이크에서 확인).
+     */
+    @SuppressWarnings("unchecked")
+    public void ensureNifiUserPolicy(String resource, String action, String userId) {
+        String token = getToken();
+        Map<String, Object> body = Map.of("revision", Map.of("version", 0),
+                "component", Map.of("resource", resource, "action", action,
+                        "users", java.util.List.of(Map.of("id", userId))));
+        try {
+            restClient.post().uri("/nifi-api/policies")
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body).retrieve().toBodilessEntity();
+            return;   // 새로 생성됨
+        } catch (RestClientException ignore) {
+            // 이미 존재 → 조회 후 PUT 로 사용자 추가
+        }
+        String resPath = resource.startsWith("/") ? resource.substring(1) : resource;
+        try {
+            Map<String, Object> existing = restClient.get()
+                    .uri("/nifi-api/policies/" + action + "/" + resPath)
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve().body(Map.class);
+            if (existing == null) {
+                return;
+            }
+            Map<String, Object> comp = (Map<String, Object>) existing.get("component");
+            java.util.List<Map<String, Object>> users = comp.get("users") == null
+                    ? new java.util.ArrayList<>()
+                    : new java.util.ArrayList<>((java.util.List<Map<String, Object>>) comp.get("users"));
+            if (users.stream().anyMatch(u -> userId.equals(u.get("id")))) {
+                return;
+            }
+            users.add(Map.of("id", userId));
+            Map<String, Object> putBody = Map.of("revision", existing.get("revision"),
+                    "component", Map.of("id", comp.get("id"), "resource", resource, "action", action, "users", users));
+            restClient.put().uri("/nifi-api/policies/" + existing.get("id"))
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(putBody).retrieve().toBodilessEntity();
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 정책 부여 실패(" + resource + " " + action + "): " + ex.getMessage(), ex);
+        }
+    }
+
+    /** identity 로 NiFi 사용자 id 를 찾는다(없으면 null, 생성하지 않음). 회수 경로용. */
+    @SuppressWarnings("unchecked")
+    public String findNifiUserId(String identity) {
+        String token = getToken();
+        try {
+            Map<String, Object> resp = restClient.get()
+                    .uri("/nifi-api/tenants/users")
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve().body(Map.class);
+            java.util.List<Map<String, Object>> users = resp == null ? java.util.List.of()
+                    : (java.util.List<Map<String, Object>>) resp.getOrDefault("users", java.util.List.of());
+            for (Map<String, Object> u : users) {
+                Map<String, Object> comp = (Map<String, Object>) u.get("component");
+                if (comp != null && identity.equals(comp.get("identity"))) {
+                    return (String) u.get("id");
+                }
+            }
+        } catch (RestClientException ignore) {
+            // 조회 실패 → null
+        }
+        return null;
+    }
+
+    /** 사용자를 정책에서 제거(정책이 없거나 사용자가 없으면 무동작). 강등/비활성 시 권한 회수용. */
+    @SuppressWarnings("unchecked")
+    public void removeNifiUserPolicy(String resource, String action, String userId) {
+        String token = getToken();
+        String resPath = resource.startsWith("/") ? resource.substring(1) : resource;
+        try {
+            Map<String, Object> existing = restClient.get()
+                    .uri("/nifi-api/policies/" + action + "/" + resPath)
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve().body(Map.class);
+            if (existing == null) {
+                return;
+            }
+            Map<String, Object> comp = (Map<String, Object>) existing.get("component");
+            java.util.List<Map<String, Object>> users = comp.get("users") == null
+                    ? new java.util.ArrayList<>()
+                    : new java.util.ArrayList<>((java.util.List<Map<String, Object>>) comp.get("users"));
+            java.util.List<Map<String, Object>> filtered = new java.util.ArrayList<>();
+            for (Map<String, Object> u : users) {
+                if (!userId.equals(u.get("id"))) {
+                    filtered.add(Map.of("id", u.get("id")));
+                }
+            }
+            if (filtered.size() == users.size()) {
+                return;   // 사용자가 정책에 없었음
+            }
+            Map<String, Object> putBody = Map.of("revision", existing.get("revision"),
+                    "component", Map.of("id", comp.get("id"), "resource", resource, "action", action, "users", filtered));
+            restClient.put().uri("/nifi-api/policies/" + existing.get("id"))
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(putBody).retrieve().toBodilessEntity();
+        } catch (RestClientException ex) {
+            // 정책 없음(404/400) 등 → 회수할 것 없음
+        }
+    }
+
     private String getToken() {
         if (!StringUtils.hasText(properties.username()) || !StringUtils.hasText(properties.password())) {
             throw new NifiClientException("NiFi 서비스 계정 정보가 설정되지 않았습니다.", null);

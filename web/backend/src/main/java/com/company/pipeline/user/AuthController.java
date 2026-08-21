@@ -9,7 +9,9 @@ import com.company.pipeline.user.dto.LoginResponse;
 import com.company.pipeline.user.dto.UserResponse;
 import com.company.pipeline.user.security.PipelineJwtService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.time.OffsetDateTime;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.util.StringUtils;
@@ -35,6 +37,16 @@ public class AuthController {
     private final PasswordEncoder passwordEncoder;
     private final PermissionAuditService auditService;
 
+    // NiFi/Airflow 콘솔 per-user 프록시(P5b)용 세션쿠키. 기본 off면 쿠키를 안 심어 동작 변화 없음.
+    @Value("${authz.proxy.enabled:false}")
+    private boolean proxyEnabled;
+    @Value("${authz.proxy.session-cookie:cetl_session}")
+    private String sessionCookie;
+    @Value("${authz.proxy.same-site:Lax}")
+    private String sameSite;
+    @Value("${authz.proxy.cookie-max-age-seconds:2592000}")
+    private long cookieMaxAgeSeconds;
+
     public AuthController(
             UserService userService,
             CredentialAuthenticator authenticator,
@@ -54,7 +66,8 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ApiResponse<LoginResponse> login(@RequestBody LoginRequest request, HttpServletRequest http) {
+    public ApiResponse<LoginResponse> login(@RequestBody LoginRequest request, HttpServletRequest http,
+                                            HttpServletResponse httpResponse) {
         String clientIp = clientIp(http);
         CredentialAuthenticator.AuthenticatedAccount account;
         try {
@@ -67,8 +80,25 @@ public class AuthController {
 
         UserResponse profile = userService.provisionAndGet(account.userId(), account.userNm(), account.email());
         String token = jwtService.issue(account.userId(), account.userNm(), account.email());
+        // NiFi/Airflow 콘솔(iframe)은 Authorization 헤더를 못 실으므로, per-user 프록시(P5b)가
+        // 켜져 있으면 같은 JWT를 세션쿠키로도 내려 nginx auth_request 가 사용자를 식별하게 한다.
+        if (proxyEnabled) {
+            setSessionCookie(httpResponse, token);
+        }
         safeAudit(account.userId(), "LOGIN_SUCCESS", null, clientIp);
         return ApiResponse.success(new LoginResponse(token, profile));
+    }
+
+    private void setSessionCookie(HttpServletResponse response, String token) {
+        StringBuilder cookie = new StringBuilder();
+        cookie.append(sessionCookie).append('=').append(token)
+                .append("; Path=/; HttpOnly; Max-Age=").append(cookieMaxAgeSeconds)
+                .append("; SameSite=").append(sameSite);
+        // 교차 사이트 iframe(SameSite=None)은 Secure 가 필수다(§7.7 쿠키 주의).
+        if ("None".equalsIgnoreCase(sameSite)) {
+            cookie.append("; Secure");
+        }
+        response.addHeader("Set-Cookie", cookie.toString());
     }
 
     @GetMapping("/me")

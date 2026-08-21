@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 /** 대시보드 인프라 구역(서버 리소스 / 주요 프로세스 현황) 전용 읽기 API. */
 @RestController
 @RequestMapping("/api/infra")
+@com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.COMMON)
 public class InfraController {
 
     private final HostResourceService hostResourceService;

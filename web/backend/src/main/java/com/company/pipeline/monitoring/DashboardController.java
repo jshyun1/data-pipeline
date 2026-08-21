@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 /** 읽기 전용 대시보드 요약. docs/kafka-webservice-design.md §9.1/§8.3. */
 @RestController
 @RequestMapping("/api/dashboard")
+@com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.COMMON)
 public class DashboardController {
 
     private final PipelineDefinitionRepository pipelineDefinitionRepository;

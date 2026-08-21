@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 규칙 관리 화면(U21)·확인/스누즈 UI(U18)가 이 API 를 쓴다.
  */
 @RestController
+@com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.ADMIN)
 public class AlertAdminController {
 
     private final JdbcTemplate jdbc;

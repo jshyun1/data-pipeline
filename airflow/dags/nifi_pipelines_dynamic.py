@@ -72,6 +72,8 @@ import time
 from datetime import datetime
 
 import requests
+
+import _pipeline_svc_auth  # noqa: F401  # import 만으로 pipeline-api 서비스 토큰 자동주입(P4 §7.6)
 import urllib3
 from airflow import DAG
 from airflow.models import Variable

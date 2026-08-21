@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/infra/resources")
+@com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.COMMON)
 public class ResourceTimeseriesController {
 
     /** 스파크라인 1개당 상한. 1분 간격이므로 60분이면 60점이다. */
