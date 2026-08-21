@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Checkbox, Space, Table, Tag, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { listAssignments, listRoles, setUserRoles, type AssignmentView } from "../../api/authz";
+import { listAssignments, listRoles, setUserRoles, syncAllIdentities, type AssignmentView } from "../../api/authz";
 
 export function UserRoleAssignPage() {
   const queryClient = useQueryClient();
@@ -28,6 +28,13 @@ export function UserRoleAssignPage() {
     onError: (e: Error) => message.error(e.message),
   });
 
+  const syncMut = useMutation({
+    mutationFn: syncAllIdentities,
+    onSuccess: (r) =>
+      message.success(`전체 동기화 완료 — 대상 ${r.total}명 · NiFi ${r.nifiSynced} · Airflow ${r.airflowSynced}`),
+    onError: (e: Error) => message.error(e.message),
+  });
+
   const columns: ColumnsType<AssignmentView> = [
     { title: "계정", dataIndex: "userId", key: "userId" },
     { title: "이름", dataIndex: "userNm", key: "userNm" },
@@ -43,7 +50,16 @@ export function UserRoleAssignPage() {
 
   return (
     <div style={{ padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>사용자 역할 배정</h2>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h2 style={{ marginTop: 0 }}>사용자 역할 배정</h2>
+        <Button
+          loading={syncMut.isPending}
+          onClick={() => syncMut.mutate()}
+          title="P5b 도입 전 배정된 기존 사용자를 포함해 전체를 NiFi/Airflow 개인계정으로 일괄 재조정합니다."
+        >
+          NiFi/Airflow 전체 동기화
+        </Button>
+      </div>
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         <Card title="사용자" style={{ flex: "1 1 560px" }}>
           <Table<AssignmentView>

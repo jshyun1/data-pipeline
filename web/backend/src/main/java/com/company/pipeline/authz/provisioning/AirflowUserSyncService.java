@@ -1,6 +1,7 @@
 package com.company.pipeline.authz.provisioning;
 
 import com.company.pipeline.authz.AccessBits;
+import com.company.pipeline.authz.PermissionAuditService;
 import com.company.pipeline.authz.PermissionService;
 import com.company.pipeline.authz.SystemCode;
 import java.net.URLEncoder;
@@ -43,6 +44,7 @@ public class AirflowUserSyncService {
 
     private final RestClient restClient;
     private final PermissionService permissionService;
+    private final PermissionAuditService auditService;
     private final String adminUsername;
     private final String adminPassword;
     private final String passwordSecret;
@@ -57,11 +59,13 @@ public class AirflowUserSyncService {
 
     public AirflowUserSyncService(
             PermissionService permissionService,
+            PermissionAuditService auditService,
             @Value("${airflow.base-url:http://airflow-apiserver:8080}") String baseUrl,
             @Value("${airflow.admin-username:}") String adminUsername,
             @Value("${airflow.admin-password:}") String adminPassword,
             @Value("${authz.proxy.airflow-secret:cerebro-airflow-p5b-secret}") String passwordSecret) {
         this.permissionService = permissionService;
+        this.auditService = auditService;
         this.adminUsername = adminUsername;
         this.adminPassword = adminPassword;
         this.passwordSecret = passwordSecret;
@@ -77,10 +81,15 @@ public class AirflowUserSyncService {
 
     // ----- FAB 사용자 동기화 -----------------------------------------------
 
-    public void syncUser(String userId, String userNm, String email) {
+    /**
+     * @return 동기화가 실제로 시도되어 성공했으면 true, 기능 off·잘못된 입력·실패면 false(일괄동기화 집계용).
+     */
+    public boolean syncUser(String userId, String userNm, String email) {
         if (!enabled || userId == null || userId.isBlank()) {
-            return;
+            return false;
         }
+        // 역할/상태가 바뀌면 캐시된 세션을 버린다 - 안 그러면 강등돼도 최대 TTL 동안 옛 세션이 재사용된다.
+        sessionCache.remove(userId);
         try {
             boolean active = permissionService.check(userId, SystemCode.AIRFLOW, AccessBits.READ);
             if (!active) {
@@ -88,7 +97,8 @@ public class AirflowUserSyncService {
                 if (userExists(userId)) {
                     setRole(userId, "Public");
                 }
-                return;
+                auditService.record("system", "SYNC_AIRFLOW_USER", "USER", userId, "권한없음/비활성 → 역할 강등(Public)");
+                return true;
             }
             String role = permissionService.check(userId, SystemCode.AIRFLOW, AccessBits.WRITE) ? "Admin" : "Viewer";
             if (userExists(userId)) {
@@ -97,8 +107,12 @@ public class AirflowUserSyncService {
                 createUser(userId, userNm, email, role);
             }
             log.info("Airflow 개인계정 동기화 완료 - {} ({})", userId, role);
+            auditService.record("system", "SYNC_AIRFLOW_USER", "USER", userId, "역할 " + role + " 보장");
+            return true;
         } catch (RuntimeException ex) {
             log.warn("Airflow 개인계정 동기화 실패(무시하고 진행) - {}: {}", userId, ex.getMessage());
+            auditService.record("system", "SYNC_AIRFLOW_USER", "USER", userId, "실패: " + ex.getMessage());
+            return false;
         }
     }
 

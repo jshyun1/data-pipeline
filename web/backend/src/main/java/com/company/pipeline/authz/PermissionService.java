@@ -75,7 +75,19 @@ public class PermissionService {
 
     private UserPermissions load(String userId) {
         AppUser user = appUserRepository.findById(userId).orElse(null);
-        boolean admin = user != null && user.isAdmin();
+
+        // 비활성/삭제 계정(use_yn!='Y')은 역할이 남아 있어도 권한 0 으로 취급한다. 이렇게 해야
+        // ① 인가 강제(@RequirePermission)가 비활성 계정의 잔존 토큰을 거부하고 ② NiFi/Airflow
+        // 개인계정 동기화가 일관되게 회수/강등된다(예전엔 Airflow 만 use_yn 을 안 봐서 새던 지점).
+        boolean active = user != null && "Y".equalsIgnoreCase(user.getUseYn());
+        if (!active) {
+            Map<SystemCode, Integer> zero = new EnumMap<>(SystemCode.class);
+            for (SystemCode sc : SystemCode.values()) {
+                zero.put(sc, 0);
+            }
+            return new UserPermissions(userId, false, Set.of(), zero, List.of());
+        }
+        boolean admin = user.isAdmin();
 
         Set<String> roleIds = new LinkedHashSet<>();
         for (AppUserRole ur : appUserRoleRepository.findByUserId(userId)) {

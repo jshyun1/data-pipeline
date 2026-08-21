@@ -1,6 +1,7 @@
 package com.company.pipeline.authz.provisioning;
 
 import com.company.pipeline.authz.AccessBits;
+import com.company.pipeline.authz.PermissionAuditService;
 import com.company.pipeline.authz.PermissionService;
 import com.company.pipeline.authz.SystemCode;
 import com.company.pipeline.nifi.NifiClient;
@@ -31,21 +32,27 @@ public class NifiTenantSyncService {
     private final NifiClient nifiClient;
     private final PermissionService permissionService;
     private final AppUserRepository userRepository;
+    private final PermissionAuditService auditService;
 
     @Value("${authz.identity-sync.enabled:false}")
     private boolean enabled;
 
     public NifiTenantSyncService(NifiClient nifiClient, PermissionService permissionService,
-                                 AppUserRepository userRepository) {
+                                 AppUserRepository userRepository, PermissionAuditService auditService) {
         this.nifiClient = nifiClient;
         this.permissionService = permissionService;
         this.userRepository = userRepository;
+        this.auditService = auditService;
     }
 
-    /** 계정/역할/상태 변경 시 호출. NiFi 사용자·정책을 현재 권한에 맞춘다(추가+회수). 실패는 삼킨다. */
-    public void syncUser(String userId) {
+    /**
+     * 계정/역할/상태 변경 시 호출. NiFi 사용자·정책을 현재 권한에 맞춘다(추가+회수). 실패는 삼킨다.
+     *
+     * @return 동기화가 실제로 시도되어 성공했으면 true, 기능 off·잘못된 입력·실패면 false(일괄동기화 집계용).
+     */
+    public boolean syncUser(String userId) {
         if (!enabled || userId == null || userId.isBlank()) {
-            return;
+            return false;
         }
         try {
             AppUser user = userRepository.findById(userId).orElse(null);
@@ -71,13 +78,15 @@ public class NifiTenantSyncService {
                     }
                     log.info("NiFi 개인계정 권한 회수 - {}", userId);
                 }
-                return;
+                auditService.record("system", "SYNC_NIFI_USER", "USER", userId, "권한없음/비활성 → 정책 회수");
+                return true;
             }
 
             String nid = nifiClient.ensureNifiUser(userId);
             if (nid == null) {
                 log.warn("NiFi 사용자 동기화: id 확보 실패 - {}", userId);
-                return;
+                auditService.record("system", "SYNC_NIFI_USER", "USER", userId, "실패: NiFi 사용자 id 확보 실패");
+                return false;
             }
             for (String[] p : viewPolicies) {
                 nifiClient.ensureNifiUserPolicy(p[0], p[1], nid);
@@ -93,8 +102,13 @@ public class NifiTenantSyncService {
                 }
             }
             log.info("NiFi 개인계정 동기화 완료 - {} (modify={})", userId, canModify);
+            auditService.record("system", "SYNC_NIFI_USER", "USER", userId,
+                    canModify ? "보기+수정/실행 정책 보장" : "보기 정책 보장 · 수정/실행 회수");
+            return true;
         } catch (RuntimeException ex) {
             log.warn("NiFi 개인계정 동기화 실패(무시하고 진행) - {}: {}", userId, ex.getMessage());
+            auditService.record("system", "SYNC_NIFI_USER", "USER", userId, "실패: " + ex.getMessage());
+            return false;
         }
     }
 }

@@ -31,16 +31,19 @@ public class AdminAccountController {
     private final AppUserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final PermissionAuditService auditService;
+    private final PermissionService permissionService;
     private final com.company.pipeline.authz.provisioning.NifiTenantSyncService nifiSync;
     private final com.company.pipeline.authz.provisioning.AirflowUserSyncService airflowSync;
 
     public AdminAccountController(AppUserRepository userRepository, PasswordEncoder passwordEncoder,
                                   PermissionAuditService auditService,
+                                  PermissionService permissionService,
                                   com.company.pipeline.authz.provisioning.NifiTenantSyncService nifiSync,
                                   com.company.pipeline.authz.provisioning.AirflowUserSyncService airflowSync) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.auditService = auditService;
+        this.permissionService = permissionService;
         this.nifiSync = nifiSync;
         this.airflowSync = airflowSync;
     }
@@ -125,6 +128,9 @@ public class AdminAccountController {
         AppUser user = find(userId);
         user.setUseYn("N");
         userRepository.save(user);
+        // use_yn 변경은 권한(전 시스템)에 영향 → 캐시 즉시 무효화. 안 하면 최대 5분간 잔존 토큰이
+        // 통과하고 아래 Airflow 동기화도 캐시된 옛 권한을 봐 강등이 안 된다.
+        permissionService.invalidate(userId);
         auditService.record(actorId(act), "DISABLE_USER", "USER", userId, null);
         // 비활성 → NiFi/Airflow 개인계정 권한 회수(P5b, 기본 off·best-effort).
         nifiSync.syncUser(userId);
@@ -137,6 +143,7 @@ public class AdminAccountController {
         AppUser user = find(userId);
         user.setUseYn("Y");
         userRepository.save(user);
+        permissionService.invalidate(userId);   // use_yn 복원 즉시 반영
         auditService.record(actorId(act), "ENABLE_USER", "USER", userId, null);
         // 재활성 → NiFi/Airflow 개인계정 권한 복원(P5b, 기본 off·best-effort).
         nifiSync.syncUser(userId);

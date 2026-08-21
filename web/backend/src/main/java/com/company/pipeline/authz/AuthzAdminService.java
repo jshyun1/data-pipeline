@@ -221,6 +221,35 @@ public class AuthzAdminService {
                 String.join(",", before), roleIds == null ? "" : String.join(",", roleIds), null, null);
     }
 
+    /**
+     * 전체 사용자를 NiFi/Airflow 개인계정으로 일괄 재조정한다(P5b 갭 해결). P5b 도입 전에 이미 역할을
+     * 배정받아 재배정 계기가 없던 기존 사용자도 이 호출로 개인계정·정책을 받는다. 각 동기화는 best-effort
+     * (실패해도 다음 사용자 진행)이며 개별 결과는 SYNC_* 감사에 남는다. identity-sync off면 성공수 0.
+     *
+     * <p>외부 HTTP 호출을 포함하므로 DB 트랜잭션을 길게 잡지 않는다(감사 기록은 각자 트랜잭션).
+     */
+    public Map<String, Integer> syncAllIdentities(String actor) {
+        int total = 0;
+        int nifiOk = 0;
+        int airflowOk = 0;
+        for (AppUser u : userRepository.findAll()) {
+            total++;
+            if (nifiTenantSyncService.syncUser(u.getUserId())) {
+                nifiOk++;
+            }
+            if (airflowUserSyncService.syncUser(u.getUserId(), u.getUserNm(), u.getEmail())) {
+                airflowOk++;
+            }
+        }
+        auditService.record(actor, "SYNC_ALL_IDENTITIES", "SYSTEM", "ALL",
+                "대상 " + total + "명 · NiFi 성공 " + nifiOk + " · Airflow 성공 " + airflowOk);
+        Map<String, Integer> out = new LinkedHashMap<>();
+        out.put("total", total);
+        out.put("nifiSynced", nifiOk);
+        out.put("airflowSynced", airflowOk);
+        return out;
+    }
+
     // ----- menus / audit --------------------------------------------------
 
     @Transactional(readOnly = true)

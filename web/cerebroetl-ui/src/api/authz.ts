@@ -179,6 +179,18 @@ export async function setUserRoles(userId: string, roleIds: string[]): Promise<v
   unwrap((await apiClient.put<ApiResponse<void>>(`/admin/assignments/${encodeURIComponent(userId)}`, { roleIds })).data);
 }
 
+export interface SyncIdentitiesResult {
+  total: number;
+  nifiSynced: number;
+  airflowSynced: number;
+}
+
+/** 전체 사용자를 NiFi/Airflow 개인계정으로 일괄 재조정(P5b 이전 배정 사용자 catch-up). */
+export async function syncAllIdentities(): Promise<SyncIdentitiesResult> {
+  const res = await apiClient.post<ApiResponse<SyncIdentitiesResult>>("/admin/assignments/sync-identities");
+  return unwrap(res.data);
+}
+
 // ----- 계정 -------------------------------------------------------------
 
 export async function listAccounts(): Promise<AccountView[]> {
