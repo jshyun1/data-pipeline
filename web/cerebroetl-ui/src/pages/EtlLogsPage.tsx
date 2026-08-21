@@ -105,7 +105,7 @@ function formatDuration(seconds?: number | null) {
 //    때"만 보이므로 실패를 표현할 방법이 원래 없었고, 그래서 DB 인증 실패나 OOM처럼 실제로
 //    파이프라인이 죽은 날에도 이 화면엔 아무것도 안 남았다.
 export function EtlLogsPage() {
-  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(6, "day"), dayjs()]);
+  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs(), dayjs()]);
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
   const [keyword, setKeyword] = useState("");
   const [groupFilter, setGroupFilter] = useState<string[]>([]);
@@ -202,8 +202,19 @@ export function EtlLogsPage() {
 
   const errorCount = eventRows.filter((row) => row.status === "FAILED" && row.level !== "WARNING").length;
 
+  const applyDatePreset = (offsetDays: 0 | 1) => {
+    const target = dayjs().subtract(offsetDays, "day");
+    const range: [Dayjs, Dayjs] = [target, target];
+    setDateRange(range);
+    setAppliedRange(range);
+  };
+
   const filters = (
     <Space style={{ marginBottom: 16 }} wrap>
+      <Space.Compact>
+        <Button onClick={() => applyDatePreset(1)}>전일자</Button>
+        <Button onClick={() => applyDatePreset(0)}>당일</Button>
+      </Space.Compact>
       <RangePicker
         value={dateRange}
         onChange={(value) => {

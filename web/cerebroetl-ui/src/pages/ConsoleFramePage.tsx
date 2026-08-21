@@ -21,6 +21,8 @@ const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
 const CANVAS_SELECTION_SYNC_ATTRIBUTE = "data-cerebro-canvas-selection-sync";
 const KOREAN_TOOLTIP_PATCH_ATTRIBUTE = "data-cerebro-korean-tooltip-patch";
 const NIFI_STATUS_HIDDEN_ATTRIBUTE = "data-cerebro-status-hidden";
+const NIFI_PANEL_LAYOUT_ATTRIBUTE = "data-cerebro-nifi-panel-layout";
+const NIFI_PANEL_ATTRIBUTE = "data-cerebro-nifi-panel";
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
 // 보이게 한다. 번들 분석으로 실제 렌더링되는 요소를 확인한 선택자:
 // - NiFi: 두 곳에 있었다.
@@ -49,6 +51,34 @@ const HIDE_TOOL_CHROME_CSS = `
   :has(> img[alt="NiFi Logo"]) { display: none !important; }
   .current-user, .current-user ~ a { display: none !important; }
   [${NIFI_STATUS_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
+  [${NIFI_PANEL_ATTRIBUTE}="navigation"], [${NIFI_PANEL_ATTRIBUTE}="operation"] {
+    position: fixed !important;
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px !important;
+    min-height: 38px !important;
+    max-width: 38px !important;
+    max-height: 38px !important;
+    overflow: hidden !important;
+    z-index: 9000 !important;
+    box-shadow: 0 2px 8px rgb(15 23 42 / 18%) !important;
+  }
+  [${NIFI_PANEL_ATTRIBUTE}="navigation"] {
+    right: 18px !important;
+    bottom: 18px !important;
+    left: auto !important;
+    top: auto !important;
+  }
+  [${NIFI_PANEL_ATTRIBUTE}="operation"] {
+    left: 0 !important;
+    top: 126px !important;
+    right: auto !important;
+    bottom: auto !important;
+  }
+  [${NIFI_PANEL_ATTRIBUTE}="navigation"] > :not(:first-child),
+  [${NIFI_PANEL_ATTRIBUTE}="operation"] > :not(:first-child) {
+    display: none !important;
+  }
 `;
 
 const NIFI_TOOLTIP_TEXT: Record<string, string> = {
@@ -236,6 +266,73 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     attributeFilter: NIFI_TOOLTIP_ATTRIBUTES,
     attributes: true,
     characterData: true,
+    childList: true,
+    subtree: true,
+  });
+}
+
+function installNifiPanelLayout(frame: HTMLIFrameElement) {
+  const doc = iframeDocument(frame);
+  if (!doc) {
+    return;
+  }
+
+  const markPanel = (panelName: "navigation" | "operation") => {
+    const label = panelName === "navigation" ? "Navigation" : "Operation";
+    const panelRoot = (element: Element) => {
+      let current = element;
+      while (current.parentElement && current.parentElement !== doc.body) {
+        const parent = current.parentElement;
+        const parentRect = parent.getBoundingClientRect();
+        const parentText = parent.textContent ?? "";
+        if (!parentText.includes(label) || parentRect.width > 420 || parentRect.height > 520) {
+          break;
+        }
+        current = parent;
+      }
+      return current;
+    };
+
+    const candidates = Array.from(new Set(Array.from(doc.querySelectorAll("aside, section, div"))
+      .filter((element) => {
+        const className = elementClassName(element).toLowerCase();
+        const text = element.textContent ?? "";
+        return className.includes(panelName) || text.includes(label);
+      })
+      .map(panelRoot)))
+      .map((element) => ({
+        element,
+        rect: element.getBoundingClientRect(),
+      }))
+      .filter((candidate) =>
+        candidate.rect.width >= 30
+        && candidate.rect.height >= 30
+        && candidate.rect.width <= 420
+        && candidate.rect.height <= 520,
+      )
+      .sort((a, b) => (b.rect.width * b.rect.height) - (a.rect.width * a.rect.height));
+
+    const panel = candidates[0]?.element;
+    if (panel) {
+      panel.setAttribute(NIFI_PANEL_ATTRIBUTE, panelName);
+    }
+  };
+
+  const applyLayout = () => {
+    markPanel("navigation");
+    markPanel("operation");
+  };
+
+  applyLayout();
+
+  if (doc.documentElement.getAttribute(NIFI_PANEL_LAYOUT_ATTRIBUTE) === "true") {
+    return;
+  }
+  doc.documentElement.setAttribute(NIFI_PANEL_LAYOUT_ATTRIBUTE, "true");
+
+  const DocumentMutationObserver = doc.defaultView?.MutationObserver ?? MutationObserver;
+  const observer = new DocumentMutationObserver(() => applyLayout());
+  observer.observe(doc.documentElement, {
     childList: true,
     subtree: true,
   });
@@ -462,7 +559,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
     });
   };
 
-  const processorSummary = (() => {
+  const jobSummary = (() => {
     const total = tree?.processorCount ?? 0;
     const running = tree?.runningCount ?? 0;
     const failed = tree?.invalidCount ?? 0;
@@ -530,12 +627,12 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
   return (
     <aside className="nifi-tree-panel" aria-label="NiFi 프로세스 그룹 트리">
       <div className="nifi-tree-section-title">상태</div>
-      <div className="nifi-job-summary" aria-label="NiFi processor 상태 요약">
-        <span>전체 ({processorSummary.total})</span>
-        <span>실행중 ({processorSummary.running})</span>
-        <span>완료 ({processorSummary.completed})</span>
-        <span>실패 ({processorSummary.failed})</span>
-        <span>중지 ({processorSummary.stopped})</span>
+      <div className="nifi-job-summary" aria-label="NiFi job 상태 요약">
+        <span>전체 ({jobSummary.total})</span>
+        <span>실행중 ({jobSummary.running})</span>
+        <span>완료 ({jobSummary.completed})</span>
+        <span>실패 ({jobSummary.failed})</span>
+        <span>중지 ({jobSummary.stopped})</span>
       </div>
       <label className="nifi-tree-section-title" htmlFor="nifi-tree-search">
         트리 검색
@@ -1242,6 +1339,7 @@ export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage, show
     hideToolChrome(frame);
     patchKoreanTooltips(frame);
     if (showProcessGroupTree) {
+      installNifiPanelLayout(frame);
       installCanvasSelectionSync(frame, selectCanvasItem);
     }
   };
