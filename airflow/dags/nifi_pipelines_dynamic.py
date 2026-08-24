@@ -605,7 +605,7 @@ def build_dag(
     with DAG(
         dag_id=dag_id,
         dag_display_name=f"ETL_{sanitize(pg_name)}",
-        description=f'NiFi 프로세스 그룹 "{pg_name}"({pg_id}) 시작/중지 제어'
+        description=f'ETL 프로세스 그룹 "{pg_name}"({pg_id}) 시작/중지 제어'
         + (
             " / 연결된 하류 그룹 함께 제어: "
             + ", ".join(group_names.get(g, g[:8]) for g in downstream)

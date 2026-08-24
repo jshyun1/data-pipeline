@@ -39,6 +39,7 @@ import {
   type AirflowDagRun,
 } from "../api/platform";
 import { getProcessHealth, type ProcessGroup, type ProcessStatus } from "../api/infra";
+import { getEtlJob, listEtlJobs } from "../api/etlJobs";
 import { categorizeDag, type DagCategory } from "../utils/dagHistory";
 
 type BusinessCategory = Exclude<DagCategory, "기타">;
@@ -58,6 +59,8 @@ interface DashboardDag extends AirflowDag {
   stale_days_threshold?: number;
   duration_multiplier?: number;
   sla_minutes?: number | null;
+  etl_job_id?: number;
+  nifi_process_group_id?: string;
 }
 
 interface DashboardData {
@@ -176,14 +179,20 @@ function alertColor(severity: AirflowDagAlert["severity"]) {
 }
 
 async function loadDashboard(): Promise<DashboardData> {
-  const [airflowDags, catalog, runs, alerts, alertHistory, processHealth] = await Promise.all([
+  const [airflowDags, catalog, runs, alerts, alertHistory, processHealth, etlJobs] = await Promise.all([
     listAirflowDags(),
     listAirflowDagCatalog(),
     listAllAirflowDagRuns({ maxRuns: 2000 }),
     listAirflowDagAlerts(),
     listAirflowDagAlertHistory(),
     getProcessHealth().catch(() => ({ collectedAt: "", groups: [] })),
+    listEtlJobs().catch(() => []),
   ]);
+  const etlJobsByDagId = new Map(etlJobs.flatMap((job) => job.airflowDagId ? [[job.airflowDagId, job] as const] : []));
+  const withEtlJob = (dag: DashboardDag): DashboardDag => {
+    const job = etlJobsByDagId.get(dag.dag_id);
+    return job ? { ...dag, etl_job_id: job.id, nifi_process_group_id: job.nifiPgId } : dag;
+  };
   const catalogDagIds = new Set(catalog.map((entry) => entry.dagId));
   const catalogDags = catalog.map((entry) => {
       const airflowDag = airflowDags.find((dag) => dag.dag_id === entry.dagId);
@@ -202,10 +211,11 @@ async function loadDashboard(): Promise<DashboardData> {
         duration_multiplier: entry.durationMultiplier,
         sla_minutes: entry.slaMinutes,
       };
-    });
+    }).map(withEtlJob);
   const discoveredDags = airflowDags
     .filter((dag) => !catalogDagIds.has(dag.dag_id))
-    .map((dag) => ({ ...dag, business_category: categorizeDag(dag.dag_id), business_folder: "NiFi" } as DashboardDag));
+    .map((dag) => ({ ...dag, business_category: categorizeDag(dag.dag_id), business_folder: "ETL" } as DashboardDag))
+    .map(withEtlJob);
   return {
     dags: [...catalogDags, ...discoveredDags],
     runs,
@@ -382,16 +392,24 @@ function TaskRows({
   dag,
   run,
   refreshSeconds,
+  configured = false,
 }: {
   dag: DashboardDag;
   run?: AirflowDagRun;
   refreshSeconds: number;
+  configured?: boolean;
 }) {
   const [retryingTaskId, setRetryingTaskId] = useState<string>();
   const tasksQuery = useQuery({
     queryKey: ["airflow-dashboard-tasks", dag.dag_id, run?.dag_run_id],
     queryFn: () => listAirflowTaskInstances(dag.dag_id, run!.dag_run_id),
-    enabled: Boolean(run),
+    enabled: Boolean(run) && !configured,
+    refetchInterval: refreshSeconds * 1000,
+  });
+  const etlJobQuery = useQuery({
+    queryKey: ["airflow-dashboard-etl-job", dag.etl_job_id],
+    queryFn: () => getEtlJob(dag.etl_job_id!),
+    enabled: configured && Boolean(dag.etl_job_id),
     refetchInterval: refreshSeconds * 1000,
   });
   const completedTasks = (tasksQuery.data ?? []).filter((task) => task.state === "success" || task.state === "failed");
@@ -401,7 +419,7 @@ function TaskRows({
       task.task_id,
       await getAirflowTaskLog(dag.dag_id, run!.dag_run_id, task.task_id, task.try_number || 1).catch(() => ""),
     ]))),
-    enabled: Boolean(run && completedTasks.length),
+    enabled: Boolean(run && completedTasks.length) && !configured,
     staleTime: Infinity,
   });
 
@@ -431,6 +449,28 @@ function TaskRows({
     }
   };
 
+  if (configured && etlJobQuery.isLoading) {
+    return <tr className="airflow-task-loading"><td colSpan={8}><Spin size="small" /> ETL 실행 단계를 불러오는 중입니다.</td></tr>;
+  }
+  if (configured) {
+    const steps = etlJobQuery.data?.steps ?? [];
+    if (!steps.length) {
+      return <tr className="airflow-task-loading"><td colSpan={8}>등록된 ETL 실행 단계가 없습니다.</td></tr>;
+    }
+    return steps.map((step, index) => {
+      const status = step.runStatus?.toUpperCase();
+      return <tr key={step.id} className="airflow-task-row">
+        <td><span className="airflow-task-name">{String(index + 1).padStart(2, "0")} {step.stepName}</span></td>
+        <td><ProfileOutlined /> {step.stepType ?? "ETL"}</td>
+        <td>-</td>
+        <td><Tag color={status === "RUNNING" ? "processing" : status === "INVALID" ? "error" : "default"}>{status === "RUNNING" ? "실행 중" : status === "INVALID" ? "오류" : "중지"}</Tag></td>
+        <td>{step.targetTable ?? step.validationStatus ?? "-"}</td>
+        <td>-</td>
+        <td>{step.schedulingPeriod ?? "-"}</td>
+        <td>-</td>
+      </tr>;
+    });
+  }
   if (tasksQuery.isLoading) {
     return <tr className="airflow-task-loading"><td colSpan={8}><Spin size="small" /> 실행 단계를 불러오는 중입니다.</td></tr>;
   }
@@ -510,7 +550,7 @@ function JobsTable({
                     <td>{dag.next_dagrun ?? dag.next_dagrun_run_after ? dayjs(dag.next_dagrun ?? dag.next_dagrun_run_after).format("YYYY-MM-DD HH:mm") : "-"}</td>
                     <td>{selected ? <DownOutlined /> : "-"}</td>
                   </tr>,
-                  ...(selected ? [<TaskRows key={`${dag.dag_id}-tasks`} dag={dag} run={latest} refreshSeconds={refreshSeconds} />] : []),
+                  ...(selected ? [<TaskRows key={`${dag.dag_id}-tasks`} dag={dag} run={latest} refreshSeconds={refreshSeconds} configured />] : []),
                 ];
               }),
             ];
@@ -841,7 +881,7 @@ function PropertyPanel({
           </article>
         ))}</div> : <p>현재 감지된 이상이 없습니다.</p>}
       </section>}
-      <section><strong>연결 리소스</strong><div className="airflow-resource-links"><Link to={`/airflow/manage?dagId=${encodeURIComponent(dag.dag_id)}`}>DAG 보기</Link>{category === "ETL" ? <Link to="/etl/manage">NiFi 캔버스</Link> : <Link to="/cdc/pipelines">CDC 파이프라인</Link>}</div></section>
+      <section><strong>연결 리소스</strong><div className="airflow-resource-links"><Link to={`/airflow/manage?dagId=${encodeURIComponent(dag.dag_id)}`}>DAG 보기</Link>{category === "ETL" ? <Link to={dag.nifi_process_group_id ? `/etl/manage?processGroupId=${encodeURIComponent(dag.nifi_process_group_id)}` : "/etl/manage"}>ETL 캔버스</Link> : <Link to="/cdc/pipelines">CDC 파이프라인</Link>}</div></section>
     </aside>
   );
 }
@@ -895,10 +935,10 @@ function ExecutionSettingsModal({
       title={`${dag ? displayName(dag) : "DAG"} 실행 설정`}
       open={open}
       onCancel={onClose}
-      onOk={() => void execute()}
-      okText="Airflow DAG 트리거"
-      cancelText="취소"
-      confirmLoading={triggering}
+      footer={<>
+        <Button type="primary" loading={triggering} onClick={() => void execute()}>실행</Button>
+        <Button disabled={triggering} onClick={onClose}>취소</Button>
+      </>}
       destroyOnHidden
     >
       <p>Airflow DAG에 전달할 실행 동작을 선택하세요.</p>
@@ -1043,7 +1083,7 @@ export function AirflowDashboardPage() {
   return (
     <div className="airflow-dashboard-page">
       <header className="airflow-dashboard-heading">
-        <div><h1>AirFlow 대시보드</h1><p>작업 상태와 실행 이력을 한 화면에서 확인하고 조치합니다.</p></div>
+        <div><h1>배치 실행 현황</h1><p>작업 상태와 실행 이력을 한 화면에서 확인하고 조치합니다.</p></div>
         <div className="airflow-refresh-controls"><Button icon={<SyncOutlined />} loading={synchronizing || initialSyncQuery.isFetching} onClick={() => void synchronizeDags()}>동기화</Button><span>갱신 주기</span><Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} /><span>마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}</span></div>
       </header>
 
