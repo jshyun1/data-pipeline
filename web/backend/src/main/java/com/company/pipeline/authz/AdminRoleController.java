@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/admin/roles")
-@RequirePermission(system = SystemCode.ADMIN, bits = AccessBits.WRITE)
+@RequirePermission(system = SystemCode.ADMIN, bits = AccessBits.WRITE, audit = false)
 public class AdminRoleController {
 
     private final AuthzAdminService adminService;

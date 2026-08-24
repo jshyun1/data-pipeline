@@ -17,7 +17,7 @@
 | **보안 H(우회)** | 3 | `/api/admin/users` 무방비(관리자 생성) · DLQ 재주입 자기승인 · Airflow 컨트롤러 무방비 |
 | **H2 오염** | 10 | 마스킹 대소문자/rename 조용한 해제 · Filebeat 봉투 계약 · 삭제 실패 slot 고아 · 동시 start+delete · 미러 유령잡 · 타입 불일치 2건 |
 | **M1 중복** | 6 | 분산락 부재(2대 이중발송) · renotify 무력 · 억제 후발송 · 로그 재적재 중복 · 건수 이중출처 · V24 이력손상 |
-| **M2 정지** | 11 | 채널 토글↔발송 단절 · 스케줄러 collect- 집중 · verify 오탐/조용한 skip · Variable 오타 배치소실 · 포털 401 · 죽은 DDL |
+| **M2 정지** | 13 | **Airflow 대시보드·콘솔 화면 전면 불능(per-user 세션 429 스톰)** · **백엔드 Airflow 동기화·알림(nginx 401, 조치완료)** · 채널 토글↔발송 단절 · 스케줄러 collect- 집중 · verify 오탐/조용한 skip · Variable 오타 배치소실 · 포털 401 · 죽은 DDL |
 | **L 지연·기타** | 9 | 시각 필드 · 고아 누적 · min_severity 모순 · 메뉴트리 미사용 등 |
 
 ### 가장 위험한 5건 (즉시 판단 필요)
@@ -90,6 +90,8 @@
 
 | # | 항목 | 축 | 근거 (file:line) | 실패 시나리오 | 심각도 | 수정 제안 |
 |---|---|---|---|---|---|---|
+| **M2-0** | **Airflow 대시보드 DAG 동기화·알림이 nginx 401로 전면 불능 (라이브 재현·조치 완료)** | A2/A8 | `AirflowDagRunClient.java:22`(base URL 기본값 `http://cerebroetl-ui/airflow` = 브라우저 nginx 프록시), `:26-29`(인증 헤더 없음). 그 경로 `nginx.conf:95-115`는 P5b에서 `auth_request /internal/authz-airflow`(`:112`)로 **브라우저 사용자 세션 쿠키**를 요구하도록 바뀜(`:47-57`). 백엔드 서버-투-서버 호출은 세션 쿠키가 없어 auth_request 단계에서 막힘 → Airflow 도달 전 nginx가 401. **라이브 확인**: `GET /airflow/api/v2/dags`(쿠키없음)→401, pipeline-api 로그 `AirflowDagAlertScheduler … 401 Unauthorized … nginx/1.31.4` 매 주기 반복 | 같은 `AirflowDagRunClient`를 쓰는 두 기능이 동시에 죽음: ① `AirflowDagCatalogSyncService.java:45` 대시보드 DAG 동기화 실패 → 미러 DB(마지막 갱신 8/20)만 조회 → 새로 만든/삭제한 DAG가 화면에 반영 안 됨 ② `AirflowDagAlertScheduler`(V42) 매 주기 401 → **Airflow Job 실패/연속실패/미실행 알림이 전면 미동작**(관측 사각지대) | **M2** (알림 전면 불능이라 실질 상향) | 백엔드는 브라우저 per-user 프록시 대신 `airflow-apiserver:8080` 직접 호출 + 서비스 admin Bearer JWT(`/airflow/auth/token`, `AirflowUserSyncService.adminToken()`와 동일 방식) 부착. **본 검증에서 조치 적용함(§7)** |
+| **M2-0b** | **Airflow 대시보드·콘솔 화면이 per-user 세션 429 스톰으로 전면 불능 (라이브 재현, 미조치)** | A2/A10 | **경로가 M2-0과 다름**: 대시보드 `listAirflowDags()`/`listAllAirflowDagRuns()`는 `/airflow/api/v2/*`를 **브라우저가 직접**(백엔드 아님) 호출(`platform.ts:342-348`). nginx `/airflow/`는 **요청마다** `auth_request`(`nginx.conf:112`) → `ProxyCredentialController`(`:66`) → `AirflowUserSyncService.userSessionToken`(`:163`) → **FAB 폼로그인 GET+POST /auth/login/**(`:185-199`). `userSessionToken`에 **single-flight 없음**(`sessionCache`만, lock 부재 `:52,168-175`). Airflow FAB 로그인 제한 기본 **5 per 40s**(compose 미오버라이드). 세션 실패 시 `ProxyCredentialController.java:70` **502** | 콘솔 iframe(생성/관리) 또는 대시보드를 열면 `/airflow/*` 요청 수십 개가 동시 발생 → 각자 폼로그인 → 429 → 토큰 캐시 안 됨 → **영구 429 스톰** → 502 → nginx auth_request 실패 → 콘솔 "준비 중"·대시보드 "불러올 수 없습니다". **라이브 확인**: 로그 `userSessionToken … 429 Too Many Requests: 5 per 40 second` 폭주. 2차: (a) `admin`의 Airflow 비번은 airflow-init `AIRFLOW_ADMIN_PASSWORD`인데 `userSessionToken`은 **파생비번**(`:173`)으로 로그인 → 불일치 가능, (b) REST API v2는 Bearer JWT 요구인데 브라우저는 `_token` 쿠키로 `/api/v2` 호출 → 세션 살아도 실패 가능 | **M2** (화면 전면 불능이라 실질 상향) | ① 대시보드 Airflow 조회를 **백엔드 경유**(M2-0으로 고친 `AirflowDagRunClient`, Bearer)로 라우팅 ② `userSessionToken`에 per-user single-flight + 실패 음성캐시 ③ admin 파생비번/REST v2 쿠키 인증 검증. **미조치(사용자 지시로 진단만)** |
 | M2-1 | **채널 활성 토글(DB)이 실제 발송 게이트(앱 프로퍼티)와 단절** | A11 | `NotificationAdminController.java:46-58`(PUT `/channels/{type}`이 DB `enabled` 갱신) vs `NotificationService.java:161,163`(dispatch가 EMAIL/SMS 발송을 오직 `@Value emailEnabled/smsEnabled`(기본 false)로만 판정, DB `enabled` 안 읽음) | 운영자가 화면에서 EMAIL을 «활성»으로 켬 → DB·`GET /channels`는 활성 표시, 그러나 dispatch는 정적 프로퍼티만 봐서 모든 EMAIL 발송이 DEAD → **CRITICAL 메일이 «채널 켜짐»에도 아무에게도 안 감**, 연결 테스트도 항상 DEAD | **M2** | dispatch 게이트를 `notification_channel_config.enabled` 조회로, 최소한 「앱 프로퍼티 미설정 시 발송 불가」 화면 노출 |
 | M2-2 | **스케줄러 미지정 12개가 `collect-` 4스레드에 집중 → 복구·관제 지연** | B | `PlatformSchedulerConfig.java:15` 주석은 "8개"라 하나 실측 12개(§부록 목록), 폴백은 `taskScheduler`=collect-(poolSize 4, `:30-38`) | 느린 작업(`NifiJobMirrorService:384` 일 1회 전량 재동기화, `DiskBreakdownService:75` 5분 디스크 walk, 캔버스 오버레이)이 4스레드를 점유하면 같은 풀의 **`KafkaPipelineStateSynchronizer:75`(FAILED 파이프라인 복구 주체)와 지표 수집이 지연** → 장애 복구/관제 갱신이 밀림 | **M2** | 주석 현행화(12), `KafkaPipelineStateSynchronizer`를 별도 풀로 분리 또는 collect- poolSize 상향 |
 | M2-3 | **Hikari `maximum-pool-size` 미지정(기본 10) + `connection-timeout:3000`** | B | `application.yml:10-14`(pool-size 없음, socketTimeout 10s) | 스케줄러 10스레드(collect4+ctrl3+batch2+watchdog1)==풀 10, HTTP 요청과 공유 → batch 느린 쿼리가 커넥션을 최대 10초 쥔 사이 collect 버스트 겹치면 풀 고갈 → 관제 API가 3초 만에 500 | **M2/L** | `maximum-pool-size`를 스케줄러 총합+HTTP 여유분(예 20)으로 명시 또는 스케줄러 전용 데이터소스 분리 |
@@ -169,3 +171,23 @@
 - V25 = 개번(`V25__add_pipeline_masking_policy.sql`→`V46`, `8740c4f`).
 - V34·V35·V37·V38·V39 = 예약 대역 내 미사용 슬롯(어떤 커밋에도 파일로 존재한 적 없음, 스쿼시/롤백 흔적 없음 — **추정**).
 - V24 = 위 M1-6(중복, 개번으로 해소).
+
+---
+
+## 7. 조치(remediation) 적용 이력
+
+검토 후 사용자 지시로 **M2-0(Airflow 동기화·알림 nginx 401)**을 실제 수정·검증했다. 나머지 41건은 미조치(검토만).
+
+### 7.1 M2-0 — Airflow 백엔드 연동 인증 수정 (완료)
+- **변경 파일**: `web/backend/.../airflowdashboard/AirflowDagRunClient.java` (1개 파일, 미커밋 작업트리 수정)
+- **변경 내용**:
+  1. base URL을 브라우저용 nginx 프록시(`http://cerebroetl-ui/airflow`, per-user 세션 auth_request)에서 **`airflow-apiserver:8080` 직접 호출**(`airflow.base-url`)로 전환 → 세션쿠키 요구 경로를 우회.
+  2. 모든 호출에 **서비스 admin Bearer JWT** 부착 — `/airflow/auth/token`을 `airflow.admin-username/password`(pipeline-api에 이미 주입됨: `AIRFLOW_ADMIN_USERNAME=admin`)로 받아 20분 캐시, 401 시 1회 재발급 재시도. `AirflowUserSyncService.adminToken()`과 동일한 검증된 방식.
+  3. Airflow(uvicorn)가 JDK 기본 HTTP/2를 거부하므로 **HTTP/1.1 고정**.
+- **검증**:
+  - 컨테이너 내부에서 내 코드와 동일 경로 재현: 토큰 발급 성공 → `GET /airflow/api/v2/dags` → **HTTP 200**, DAG 9개 정상 조회.
+  - 재기동 후 `AirflowDagAlertScheduler` 로그 **401 카운트 0**(수정 전 매 주기 401 폭주 → 해소).
+  - pipeline-api 재빌드·재기동 정상(healthy), 기존 기능 무영향.
+- **주의**: 이 수정은 **작업트리 수정만**(커밋 안 함). 또한 이 환경은 `AUTHZ_ENFORCEMENT_ENABLED=true`로 인가 강제가 켜져 있어, 백엔드 `/api/airflow/dag-catalog/sync`는 로그인 JWT가 있어야 호출된다(정상).
+- **⚠️ 조치 범위 정정**: M2-0 수정이 고친 것은 **백엔드가 Airflow를 호출하는 경로**뿐이다 — `AirflowDagCatalogSyncService`(대시보드 접속 시 백엔드가 도는 카탈로그 동기화)와 `AirflowDagAlertScheduler`(V42 알림). 이 둘은 이제 서비스 Bearer JWT로 정상 동작(401 해소, 알림 재가동). **그러나 `AirflowDashboardPage` 화면 자체와 콘솔(생성/관리) iframe은 브라우저가 `/airflow/*`를 직접 치는 별개 경로**라 M2-0 수정과 무관하며, **여전히 실패**한다 — 그 원인은 별건 **M2-0b(per-user 세션 429 스톰)**. 즉 화면상의 "불러올 수 없습니다"는 M2-0b이며 미조치.
+- **후속(미조치)**: M2-0b(대시보드·콘솔 화면), S-1/S-2/S-3(무방비 컨트롤러), 포털 401(M2-9).

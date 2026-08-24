@@ -79,17 +79,31 @@ public class AlertQueueController {
             @RequestParam(required = false) String severity,
             @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "7") int days,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
         int window = Math.max(1, Math.min(days, 90));
         int size = Math.max(1, Math.min(pageSize, 100));
         int offset = Math.max(0, page) * size;
 
+        // 기간 조건: from~to(달력 날짜 범위, ISO)가 오면 그 범위로, 없으면 기존처럼 최근 days일.
+        boolean rangeMode = from != null && !from.isBlank() && to != null && !to.isBlank();
+        String windowClause = rangeMode
+                ? "COALESCE(started_at, condition_since, created_at) >= ?::timestamptz"
+                        + " AND COALESCE(started_at, condition_since, created_at) < ?::timestamptz"
+                : "COALESCE(started_at, condition_since, created_at) >= now() - make_interval(days => ?)";
+        List<Object> windowArgs = new ArrayList<>();
+        if (rangeMode) {
+            windowArgs.add(from);
+            windowArgs.add(to);
+        } else {
+            windowArgs.add(window);
+        }
+
         // 조회조건을 WHERE 로 조립(ETL/CDC 로그 화면처럼 심각도·검색어·확인여부·기간).
-        StringBuilder where = new StringBuilder(
-                "WHERE COALESCE(started_at, condition_since, created_at) >= now() - make_interval(days => ?)");
-        List<Object> args = new ArrayList<>();
-        args.add(window);
+        StringBuilder where = new StringBuilder("WHERE ").append(windowClause);
+        List<Object> args = new ArrayList<>(windowArgs);
         if ("unacked".equals(filter)) {
             where.append(" AND ack_at IS NULL");
         } else if ("acked".equals(filter)) {
@@ -127,13 +141,12 @@ public class AlertQueueController {
                 """, itemArgs.toArray());
 
         // 필터 배지용 집계는 기간 전체 기준(심각도·검색어와 무관하게 개수를 보여준다).
-        Map<String, Object> counts = jdbc.queryForMap("""
-                SELECT count(*) AS total,
-                       count(*) FILTER (WHERE ack_at IS NULL) AS unacked,
-                       count(*) FILTER (WHERE ack_at IS NOT NULL) AS acked
-                FROM alert_instance
-                WHERE COALESCE(started_at, condition_since, created_at) >= now() - make_interval(days => ?)
-                """, window);
+        Map<String, Object> counts = jdbc.queryForMap(
+                "SELECT count(*) AS total,"
+                        + " count(*) FILTER (WHERE ack_at IS NULL) AS unacked,"
+                        + " count(*) FILTER (WHERE ack_at IS NOT NULL) AS acked"
+                        + " FROM alert_instance WHERE " + windowClause,
+                windowArgs.toArray());
 
         Map<String, Object> body = new java.util.HashMap<>();
         body.put("filter", filter);

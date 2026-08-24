@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Input, Segmented, Select, Space, Spin, Table, Tag, Timeline } from "antd";
+import { Button, DatePicker, Input, Segmented, Select, Space, Spin, Table, Tag, Timeline } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import dayjs from "dayjs";
+import dayjs, { type Dayjs } from "dayjs";
+
+const { RangePicker } = DatePicker;
 import {
   getAlertEvents,
   getAlertHistory,
@@ -99,15 +101,28 @@ export function AlertHistoryTab() {
   const [filter, setFilter] = useState<HistoryFilter>("all");
   const [severity, setSeverity] = useState<SeverityFilter>("ALL");
   const [q, setQ] = useState("");
-  const [days, setDays] = useState(7);
+  const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>([
+    dayjs().startOf("day"),
+    dayjs().endOf("day"),
+  ]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(10);
 
+  const from = appliedRange[0].toISOString();
+  const to = appliedRange[1].toISOString();
+
   const { data, isLoading } = useQuery({
-    queryKey: ["alert-history", filter, severity, q, days, page, pageSize],
-    queryFn: () => getAlertHistory({ filter, severity, q, days, page, pageSize }),
+    queryKey: ["alert-history", filter, severity, q, from, to, page, pageSize],
+    queryFn: () => getAlertHistory({ filter, severity, q, from, to, page, pageSize }),
     placeholderData: (prev) => prev,
   });
+
+  // 전일자/당일 프리셋: 해당 날짜 하루로 조회기간을 즉시 맞추고 1페이지로.
+  const applyDayPreset = (offsetDays: 0 | 1) => {
+    const day = dayjs().subtract(offsetDays, "day");
+    setAppliedRange([day.startOf("day"), day.endOf("day")]);
+    setPage(0);
+  };
 
   const items = data?.items ?? [];
   const counts = data?.counts;
@@ -167,21 +182,21 @@ export function AlertHistoryTab() {
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="middle">
       <Space wrap size="middle">
-        <span>
-          기간{" "}
-          <Select
-            size="small"
-            value={days}
-            style={{ width: 90 }}
-            onChange={resetTo(setDays)}
-            options={[
-              { label: "1일", value: 1 },
-              { label: "7일", value: 7 },
-              { label: "30일", value: 30 },
-              { label: "90일", value: 90 },
-            ]}
-          />
-        </span>
+        <Space.Compact>
+          <Button size="small" onClick={() => applyDayPreset(1)}>전일자</Button>
+          <Button size="small" onClick={() => applyDayPreset(0)}>당일</Button>
+        </Space.Compact>
+        <RangePicker
+          size="small"
+          allowClear={false}
+          value={appliedRange}
+          onChange={(value) => {
+            if (value && value[0] && value[1]) {
+              setAppliedRange([value[0], value[1]]);
+              setPage(0);
+            }
+          }}
+        />
         <span>
           심각도{" "}
           <Select

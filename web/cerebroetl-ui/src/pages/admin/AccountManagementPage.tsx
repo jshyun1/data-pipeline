@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -7,7 +7,11 @@ import {
   disableAccount,
   enableAccount,
   listAccounts,
+  listAssignments,
+  listRoles,
   resetAccountPassword,
+  setUserRoles,
+  syncAllIdentities,
   unlockAccount,
   updateAccount,
   type AccountView,
@@ -16,15 +20,34 @@ import {
 export function AccountManagementPage() {
   const queryClient = useQueryClient();
   const { data: accounts = [], isLoading } = useQuery({ queryKey: ["admin-accounts"], queryFn: listAccounts });
+  const { data: assignments = [] } = useQuery({ queryKey: ["admin-assignments"], queryFn: listAssignments });
+  const { data: roles = [] } = useQuery({ queryKey: ["admin-roles"], queryFn: listRoles });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AccountView | null>(null);
   const [pwTarget, setPwTarget] = useState<AccountView | null>(null);
+  const [roleTarget, setRoleTarget] = useState<AccountView | null>(null);
+  const [checkedRoles, setCheckedRoles] = useState<string[]>([]);
   const [createForm] = Form.useForm();
   const [editForm] = Form.useForm();
   const [pwForm] = Form.useForm();
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ["admin-accounts"] });
+  // userId → 배정된 역할 정보. 계정 목록 옆에 역할을 함께 보여주기 위해 배정 조회와 합친다.
+  const rolesByUser = useMemo(() => {
+    const map = new Map<string, { roleIds: string[]; roleNames: string[] }>();
+    for (const a of assignments) map.set(a.userId, { roleIds: a.roleIds, roleNames: a.roleNames });
+    return map;
+  }, [assignments]);
+
+  // 역할 배정 모달을 열면 현재 배정을 체크 상태로 복원한다.
+  useEffect(() => {
+    setCheckedRoles(roleTarget ? rolesByUser.get(roleTarget.userId)?.roleIds ?? [] : []);
+  }, [roleTarget, rolesByUser]);
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["admin-accounts"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-assignments"] });
+  };
 
   const createMut = useMutation({
     mutationFn: createAccount,
@@ -77,6 +100,23 @@ export function AccountManagementPage() {
     onError: (e: Error) => message.error(e.message),
   });
 
+  const roleMut = useMutation({
+    mutationFn: (v: { userId: string; roleIds: string[] }) => setUserRoles(v.userId, v.roleIds),
+    onSuccess: () => {
+      message.success("역할을 저장했습니다.");
+      setRoleTarget(null);
+      refresh();
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  const syncMut = useMutation({
+    mutationFn: syncAllIdentities,
+    onSuccess: (r) =>
+      message.success(`전체 동기화 완료 — 대상 ${r.total}명 · ETL ${r.nifiSynced} · Airflow ${r.airflowSynced}`),
+    onError: (e: Error) => message.error(e.message),
+  });
+
   const columns: ColumnsType<AccountView> = [
     { title: "계정", dataIndex: "userId", key: "userId" },
     { title: "이름", dataIndex: "userNm", key: "userNm" },
@@ -86,6 +126,18 @@ export function AccountManagementPage() {
       dataIndex: "admin",
       key: "admin",
       render: (admin: boolean) => (admin ? <Tag color="gold">관리자</Tag> : <Tag>일반</Tag>),
+    },
+    {
+      title: "역할",
+      key: "roles",
+      render: (_, row) => {
+        const names = rolesByUser.get(row.userId)?.roleNames ?? [];
+        return names.length ? (
+          names.map((n) => <Tag key={n} color="blue">{n}</Tag>)
+        ) : (
+          <span style={{ color: "#bbb" }}>(없음)</span>
+        );
+      },
     },
     {
       title: "상태",
@@ -110,9 +162,12 @@ export function AccountManagementPage() {
     {
       title: "작업",
       key: "action",
-      width: 320,
+      width: 400,
       render: (_, row) => (
         <Space size="small" wrap>
+          <Button size="small" onClick={() => setRoleTarget(row)}>
+            역할 배정
+          </Button>
           <Button size="small" onClick={() => { setEditTarget(row); editForm.setFieldsValue(row); }}>
             수정
           </Button>
@@ -148,9 +203,18 @@ export function AccountManagementPage() {
       <h2 style={{ marginTop: 0 }}>계정 관리</h2>
       <Card
         extra={
-          <Button type="primary" onClick={() => setCreateOpen(true)}>
-            계정 추가
-          </Button>
+          <Space>
+            <Button
+              loading={syncMut.isPending}
+              onClick={() => syncMut.mutate()}
+              title="배정된 역할 기준으로 전체 사용자를 ETL/Airflow 개인계정으로 일괄 재조정합니다."
+            >
+              ETL/Airflow 전체 동기화
+            </Button>
+            <Button type="primary" onClick={() => setCreateOpen(true)}>
+              계정 추가
+            </Button>
+          </Space>
         }
       >
         <Table<AccountView>
@@ -197,6 +261,28 @@ export function AccountManagementPage() {
             <Checkbox>관리자 권한 부여(admin_yn=Y)</Checkbox>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 역할 배정 */}
+      <Modal
+        title={roleTarget ? `역할 배정 — ${roleTarget.userNm}(${roleTarget.userId})` : "역할 배정"}
+        open={roleTarget !== null}
+        onCancel={() => setRoleTarget(null)}
+        onOk={() => roleTarget && roleMut.mutate({ userId: roleTarget.userId, roleIds: checkedRoles })}
+        confirmLoading={roleMut.isPending}
+        okText="저장"
+        cancelText="취소"
+      >
+        <Checkbox.Group
+          style={{ display: "flex", flexDirection: "column", gap: 8 }}
+          value={checkedRoles}
+          onChange={(v) => setCheckedRoles(v as string[])}
+          options={roles.map((r) => ({ label: `${r.roleNm} (${r.roleId})`, value: r.roleId }))}
+        />
+        <p style={{ color: "#888", marginTop: 12, marginBottom: 0 }}>
+          ⓘ 역할이 하나도 없는 사용자는 로그인은 되지만 메뉴가 보이지 않습니다(권한 없음이 기본값).
+          역할을 바꾸면 ETL/Airflow 개인계정 권한도 함께 조정됩니다.
+        </p>
       </Modal>
 
       {/* 계정 수정 */}

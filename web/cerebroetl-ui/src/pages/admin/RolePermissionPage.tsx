@@ -98,6 +98,13 @@ export function RolePermissionPage() {
     });
 
   const roleColumns: ColumnsType<RoleView> = [
+    {
+      title: "역할 ID",
+      dataIndex: "roleId",
+      key: "roleId",
+      width: 190,
+      render: (v: string) => <span style={{ fontFamily: "monospace", color: "#555" }}>{v}</span>,
+    },
     { title: "역할명", dataIndex: "roleNm", key: "roleNm", render: (v, r) => (
       <span>{v} {r.builtIn && <Tag>기본</Tag>}</span>
     ) },

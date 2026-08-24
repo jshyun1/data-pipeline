@@ -148,7 +148,10 @@ public class AuthzAdminService {
 
     @Transactional
     public void setRolePermissions(String roleId, Map<String, Integer> systemBits, String actor) {
-        AppRole role = roleRepository.findById(roleId).orElseThrow(this::roleNotFound);
+        if (systemBits == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "시스템 권한 값이 필요합니다.");
+        }
+        roleRepository.findById(roleId).orElseThrow(this::roleNotFound);
         String before = bitsOf(roleId).toString();
         systemPermissionRepository.deleteAll(systemPermissionRepository.findByRoleId(roleId));
         List<AppRoleSystemPermission> rows = new ArrayList<>();
@@ -265,11 +268,26 @@ public class AuthzAdminService {
         int size = Math.max(1, Math.min(limit, 1000));
         return auditLogRepository.findAll(PageRequest.of(0, size, Sort.by(Sort.Direction.DESC, "occurredAt")))
                 .getContent().stream()
-                .map(a -> new AuditView(a.getId(),
-                        a.getOccurredAt() == null ? null : a.getOccurredAt().toString(),
-                        a.getActorId(), a.getAction(), a.getTargetType(), a.getTargetId(),
-                        a.getBeforeValue(), a.getAfterValue(), a.getDetail(), a.getClientIp()))
+                .map(this::toAuditView)
                 .toList();
+    }
+
+    /** 기간 필터 조회(감사 로그 화면의 날짜 범위). 동작/검색어 필터·페이징은 프런트에서 처리한다. */
+    @Transactional(readOnly = true)
+    public List<AuditView> listAudit(java.time.LocalDateTime from, java.time.LocalDateTime to, int limit) {
+        int size = Math.max(1, Math.min(limit, 5000));
+        return auditLogRepository
+                .findByOccurredAtBetweenOrderByOccurredAtDesc(from, to, PageRequest.of(0, size))
+                .stream()
+                .map(this::toAuditView)
+                .toList();
+    }
+
+    private AuditView toAuditView(PermissionAuditLog a) {
+        return new AuditView(a.getId(),
+                a.getOccurredAt() == null ? null : a.getOccurredAt().toString(),
+                a.getActorId(), a.getAction(), a.getTargetType(), a.getTargetId(),
+                a.getBeforeValue(), a.getAfterValue(), a.getDetail(), a.getClientIp());
     }
 
     // ----- helpers --------------------------------------------------------

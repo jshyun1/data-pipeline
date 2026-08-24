@@ -10,7 +10,6 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { AccountManagementPage } from "./pages/admin/AccountManagementPage";
 import { RolePermissionPage } from "./pages/admin/RolePermissionPage";
-import { UserRoleAssignPage } from "./pages/admin/UserRoleAssignPage";
 import { AuditLogPage } from "./pages/admin/AuditLogPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { RequirePermissionRoute } from "./auth/RequirePermissionRoute";
@@ -50,7 +49,7 @@ export function App() {
         <Route element={<RequirePermissionRoute system="ADMIN" action="READ" />}>
           <Route path="/admin/users" element={<AccountManagementPage />} />
           <Route path="/admin/roles" element={<RolePermissionPage />} />
-          <Route path="/admin/assign" element={<UserRoleAssignPage />} />
+          <Route path="/admin/assign" element={<Navigate to="/admin/users" replace />} />
           <Route path="/admin/audit" element={<AuditLogPage />} />
         </Route>
         <Route path="/self-check" element={<SelfCheckPage />} />
@@ -78,9 +77,10 @@ export function App() {
         <Route path="/cdc" element={<Navigate to="/cdc/pipelines" replace />} />
         <Route path="/cdc/create" element={<CdcCreatePage />} />
         <Route path="/cdc/pipelines" element={<PipelinesPage />} />
-        <Route path="/cdc/connections" element={<ConnectionsPage />} />
+        <Route path="/settings/connections" element={<ConnectionsPage />} />
+        <Route path="/cdc/connections" element={<Navigate to="/settings/connections" replace />} />
         <Route path="/cdc/logs" element={<CdcLogsPage />} />
-        <Route path="/connections" element={<Navigate to="/cdc/connections" replace />} />
+        <Route path="/connections" element={<Navigate to="/settings/connections" replace />} />
         <Route path="/pipelines" element={<Navigate to="/cdc/pipelines" replace />} />
         </Route>
       </Route>

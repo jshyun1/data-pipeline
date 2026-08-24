@@ -20,4 +20,11 @@ public @interface RequirePermission {
 
     /** 요구 비트. 2단계에서는 READ(1) 또는 WRITE(7). */
     int bits() default AccessBits.READ;
+
+    /**
+     * 성공한 변경요청(POST/PUT/PATCH/DELETE)을 {@link PermissionAspect} 가 자동으로 감사 로그에
+     * 남길지 여부. 기본 true. 계정/역할처럼 이미 의미있는 액션으로 자체 감사하는 컨트롤러는
+     * {@code false} 로 꺼서 중복 기록을 막는다.
+     */
+    boolean audit() default true;
 }

@@ -80,7 +80,10 @@ export interface HistoryQuery {
   filter: HistoryFilter;
   severity?: SeverityFilter;
   q?: string;
-  days: number;
+  /** 기간: from/to(ISO)가 있으면 그 범위, 없으면 최근 days일. */
+  days?: number;
+  from?: string;
+  to?: string;
   page: number;
   pageSize: number;
 }
@@ -103,7 +106,7 @@ export async function getAlertHistory(query: HistoryQuery): Promise<HistoryRespo
       filter: query.filter,
       severity: query.severity ?? "ALL",
       q: query.q ?? "",
-      days: query.days,
+      ...(query.from && query.to ? { from: query.from, to: query.to } : { days: query.days ?? 7 }),
       page: query.page,
       pageSize: query.pageSize,
     },

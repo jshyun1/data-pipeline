@@ -324,7 +324,7 @@ export function ConnectionsPage() {
             type="warning"
             showIcon
             style={{ marginBottom: 16 }}
-            message="수정해도 이미 배포된 Kafka Connect 커넥터에는 즉시 반영되지 않습니다"
+            message="수정해도 이미 배포된 CDC 커넥터에는 즉시 반영되지 않습니다"
             description={
               referencingPipelines.length > 0 ? (
                 <>

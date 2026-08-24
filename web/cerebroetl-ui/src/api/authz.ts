@@ -6,9 +6,9 @@ export type AccessAction = "READ" | "WRITE";
 
 export const SYSTEM_LABELS: Record<SystemCode, string> = {
   COMMON: "공통/대시보드",
-  NIFI: "NiFi (ETL)",
+  NIFI: "ETL",
   AIRFLOW: "Airflow",
-  KAFKA: "Kafka (CDC)",
+  KAFKA: "CDC",
   ADMIN: "계정/권한",
 };
 
@@ -231,7 +231,14 @@ export async function unlockAccount(userId: string): Promise<void> {
 
 // ----- 감사 로그 --------------------------------------------------------
 
-export async function listAudit(limit = 200): Promise<AuditView[]> {
-  const res = await apiClient.get<ApiResponse<AuditView[]>>(`/admin/audit?limit=${limit}`);
+export interface AuditQuery {
+  /** ISO local datetime (YYYY-MM-DDTHH:mm:ss). 미지정 시 서버가 최근 7일. */
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
+export async function listAudit(query: AuditQuery = {}): Promise<AuditView[]> {
+  const res = await apiClient.get<ApiResponse<AuditView[]>>(`/admin/audit`, { params: query });
   return unwrap(res.data);
 }

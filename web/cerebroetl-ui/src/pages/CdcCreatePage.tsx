@@ -308,7 +308,7 @@ function CdcCreateWizard() {
               children: (
                 <>
                   {connections?.length === 0 && (
-                    <Alert type="warning" showIcon message="등록된 연결정보가 없습니다" action={<Button onClick={() => navigate("/cdc/connections")}>연결정보 등록</Button>} />
+                    <Alert type="warning" showIcon message="등록된 연결정보가 없습니다" action={<Button onClick={() => navigate("/settings/connections")}>연결정보 등록</Button>} />
                   )}
                   <Space align="start" size="large" wrap style={{ width: "100%" }}>
                     <div style={{ flex: 1, minWidth: 360 }}>
@@ -613,11 +613,11 @@ function CdcCreateWizard() {
                       type="warning"
                       showIcon
                       message="마스킹 정책 최종 확인"
-                      description="선택한 컬럼의 원본 값은 Kafka와 타깃 DB에 전달되지 않으며 복원할 수 없습니다. 원본 조회가 필요한 컬럼인지 생성 전에 다시 확인하세요."
+                      description="선택한 컬럼의 원본 값은 CDC와 타깃 DB에 전달되지 않으며 복원할 수 없습니다. 원본 조회가 필요한 컬럼인지 생성 전에 다시 확인하세요."
                       style={{ marginTop: 12 }}
                     />
                   )}
-                  <Alert type="warning" showIcon style={{ marginTop: 16 }} message="생성 시 Kafka Connect 커넥터까지 준비됩니다" description="완료 후 실행은 AirFlow에서 진행합니다." />
+                  <Alert type="warning" showIcon style={{ marginTop: 16 }} message="생성 시 CDC 커넥터까지 준비됩니다" description="완료 후 실행은 AirFlow에서 진행합니다." />
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
                     <Button onClick={() => setActiveStep("options")}>이전</Button>
                     <Button type="primary" loading={createMutation.isPending} onClick={async () => {
@@ -745,12 +745,12 @@ function LogCreateWizard() {
         </> },
         { key: "options", collapsible: unlocked("options") ? undefined : "disabled", label: label("options", "수집 옵션"), children: <>
           <Space align="start" size="large" wrap style={{ width: "100%" }}><Form.Item name="readFrom" label="읽기 시작 위치" style={{ minWidth: 300, flex: 1 }}><Select options={[{ value: "END", label: "END (신규 라인부터)" }, { value: "BEGINNING", label: "BEGINNING (파일 처음부터)" }]} /></Form.Item><Form.Item name="encoding" label="인코딩" style={{ minWidth: 300, flex: 1 }}><Input /></Form.Item></Space>
-          <Form.Item name="topicName" label="Kafka Topic" tooltip="비우면 log-{파이프라인 ID}로 자동 생성됩니다"><Input placeholder="비워두면 자동 생성" /></Form.Item>
+          <Form.Item name="topicName" label="CDC Topic" tooltip="비우면 log-{파이프라인 ID}로 자동 생성됩니다"><Input placeholder="비워두면 자동 생성" /></Form.Item>
           <Form.Item name="agentHost" label="Agent Host" tooltip="메타데이터용 식별 필드 (선택)"><Input placeholder="예: filebeat" /></Form.Item>
           <div style={{ display: "flex", justifyContent: "space-between" }}><Button onClick={() => setActiveStep("target")}>이전</Button><Button type="primary" onClick={() => advance("options", "review")}>다음: 검토</Button></div>
         </> },
         { key: "review", collapsible: unlocked("review") ? undefined : "disabled", label: label("review", "검토 및 생성"), children: <>
-          <Descriptions bordered column={1} size="small"><Descriptions.Item label="파이프라인명">{values?.name ?? "—"}</Descriptions.Item><Descriptions.Item label="로그 파일">{values?.filePath ?? "—"}</Descriptions.Item><Descriptions.Item label="타깃 연결">{targetConnection ? connectionLabel(targetConnection) : "—"}</Descriptions.Item><Descriptions.Item label="적재 대상">{values?.targetSchema}.{values?.targetTable}</Descriptions.Item><Descriptions.Item label="읽기 시작">{values?.readFrom}</Descriptions.Item><Descriptions.Item label="Kafka Topic">{values?.topicName || "자동 생성"}</Descriptions.Item></Descriptions>
+          <Descriptions bordered column={1} size="small"><Descriptions.Item label="파이프라인명">{values?.name ?? "—"}</Descriptions.Item><Descriptions.Item label="로그 파일">{values?.filePath ?? "—"}</Descriptions.Item><Descriptions.Item label="타깃 연결">{targetConnection ? connectionLabel(targetConnection) : "—"}</Descriptions.Item><Descriptions.Item label="적재 대상">{values?.targetSchema}.{values?.targetTable}</Descriptions.Item><Descriptions.Item label="읽기 시작">{values?.readFrom}</Descriptions.Item><Descriptions.Item label="CDC Topic">{values?.topicName || "자동 생성"}</Descriptions.Item></Descriptions>
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}><Button onClick={() => setActiveStep("options")}>이전</Button><Button type="primary" loading={createMutation.isPending} onClick={async () => { const request = await form.validateFields(); if (testedConnectionId !== targetConnectionId) { message.error("타깃 연결을 다시 테스트하세요."); setActiveStep("connection"); return; } createMutation.mutate(request); }}>로그파일 파이프라인 생성</Button></div>
         </> },
       ]} />

@@ -99,7 +99,7 @@ function ConnectorStateTitle({ label, description }: { label: string; descriptio
 export function CdcLogsPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(24, "hour"), dayjs()]);
+  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().startOf("day"), dayjs().endOf("day")]);
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
   const [keyword, setKeyword] = useState("");
   const [activeTab, setActiveTab] = useState("processing");
@@ -208,8 +208,20 @@ export function CdcLogsPage() {
     setAppliedRange(range);
   };
 
+  // 전일자/당일 프리셋: 해당 날짜 하루로 조회기간을 즉시 맞춘다.
+  const applyDayPreset = (offsetDays: 0 | 1) => {
+    const day = dayjs().subtract(offsetDays, "day");
+    const range: [Dayjs, Dayjs] = [day.startOf("day"), day.endOf("day")];
+    setDateRange(range);
+    setAppliedRange(range);
+  };
+
   const filters = (
     <Space style={{ marginBottom: 16 }} wrap>
+      <Space.Compact>
+        <Button onClick={() => applyDayPreset(1)}>전일자</Button>
+        <Button onClick={() => applyDayPreset(0)}>당일</Button>
+      </Space.Compact>
       <Space.Compact>
         <Button onClick={() => applyPreset(1, "hour")}>1시간</Button>
         <Button onClick={() => applyPreset(6, "hour")}>6시간</Button>
@@ -267,7 +279,7 @@ export function CdcLogsPage() {
         placement="right"
         title={
           <>
-            <div>처리 건수는 Kafka Sink의 committed offset 증가량을 기준으로 한 추정치입니다.</div>
+            <div>처리 건수는 CDC Sink의 committed offset 증가량을 기준으로 한 추정치입니다.</div>
             <div style={{ marginTop: 6 }}>
               일 누적 처리는 파이프라인별로 한국 시간 자정부터 해당 시각까지의 처리 건수를 합산합니다.
             </div>
@@ -292,7 +304,7 @@ export function CdcLogsPage() {
       <Card title="CDC 처리 로그">
         {filters}
         <Card size="small" title="Sink 소비 Lag 추이" style={{ marginBottom: 16 }}>
-          <Typography.Text type="secondary">Kafka Sink consumer의 미처리 offset 추정치이며 타깃 DB의 E2E 지연 시간은 아닙니다.</Typography.Text>
+          <Typography.Text type="secondary">CDC Sink consumer의 미처리 offset 추정치이며 타깃 DB의 E2E 지연 시간은 아닙니다.</Typography.Text>
           {lagTrend.length > 0 ? (
             <Line
               data={lagTrend}

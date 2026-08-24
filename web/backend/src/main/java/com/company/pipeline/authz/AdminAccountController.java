@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/admin/accounts")
-@RequirePermission(system = SystemCode.ADMIN, bits = AccessBits.WRITE)
+@RequirePermission(system = SystemCode.ADMIN, bits = AccessBits.WRITE, audit = false)
 public class AdminAccountController {
 
     private final AppUserRepository userRepository;

@@ -5,6 +5,7 @@ import com.company.pipeline.common.ErrorCode;
 import com.company.pipeline.user.AppUser;
 import jakarta.servlet.http.HttpServletRequest;
 import org.aspectj.lang.JoinPoint;
+import org.aspectj.lang.annotation.AfterReturning;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Before;
 import org.slf4j.Logger;
@@ -101,6 +102,62 @@ public class PermissionAspect {
             }
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
+    }
+
+    // ----- 성공한 변경요청 자동 감사 (설계서 §7.8 확장) ------------------------
+    // 인가를 통과해 정상 반환된 POST/PUT/PATCH/DELETE 를 감사 로그에 남긴다. ETL/CDC/Airflow 등
+    // 운영 컨트롤러의 생성·수정·삭제가 별도 코드 없이 전부 기록된다("그 외 모든 작업"). 계정/역할처럼
+    // 자체 상세 감사를 하는 컨트롤러는 @RequirePermission(audit=false) 로 제외한다.
+
+    @AfterReturning("@annotation(require)")
+    public void auditMethod(JoinPoint joinPoint, RequirePermission require) {
+        autoAudit(joinPoint, require);
+    }
+
+    @AfterReturning("@within(require) && !@annotation(com.company.pipeline.authz.RequirePermission)")
+    public void auditClass(JoinPoint joinPoint, RequirePermission require) {
+        autoAudit(joinPoint, require);
+    }
+
+    private void autoAudit(JoinPoint joinPoint, RequirePermission require) {
+        if (!enforcementEnabled || !require.audit()) {
+            return;
+        }
+        HttpServletRequest request = currentRequest();
+        if (request == null) {
+            return;
+        }
+        String verb = mutationVerb(request.getMethod());
+        if (verb == null) {
+            return;   // 조회(GET/HEAD/OPTIONS)는 감사하지 않는다
+        }
+        // 서비스 토큰(비-사람 자동 호출: DAG 등)은 감사 소음이라 제외한다.
+        if (StringUtils.hasText(serviceToken) && serviceToken.equals(request.getHeader("X-Service-Token"))) {
+            return;
+        }
+        AppUser principal = currentPrincipal();
+        String actor = principal == null ? "unknown" : principal.getUserId();
+        String action = require.system().name() + "_" + verb;   // 예: NIFI_CREATE, KAFKA_DELETE, AIRFLOW_UPDATE
+        try {
+            auditService.record(actor, action, "API", request.getRequestURI(),
+                    null, null, joinPoint.getSignature().toShortString(), clientIp(request));
+        } catch (RuntimeException ex) {
+            log.debug("자동 감사 기록 실패: {}", ex.getMessage());
+        }
+    }
+
+    /** 변경 동사(감사 액션 접미사). 조회면 null. */
+    private String mutationVerb(String method) {
+        if ("POST".equalsIgnoreCase(method)) {
+            return "CREATE";
+        }
+        if ("PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method)) {
+            return "UPDATE";
+        }
+        if ("DELETE".equalsIgnoreCase(method)) {
+            return "DELETE";
+        }
+        return null;
     }
 
     private boolean isMutating(HttpServletRequest request) {

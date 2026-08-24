@@ -15,7 +15,7 @@ type OperationState = "NORMAL" | "DELAYED" | "FAILED" | "PAUSED" | "READY" | "ST
 interface OperationRow {
   key: string;
   name: string;
-  engine: "KAFKA" | "NIFI";
+  engine: "CDC" | "ETL";
   type: string;
   path: string;
   state: OperationState;
@@ -144,9 +144,9 @@ function buildRows(
     return {
       key: `kafka-${pipeline.id}`,
       name: pipeline.name,
-      engine: "KAFKA",
+      engine: "CDC",
       type: pipeline.pipelineType === "LOG_FILE" ? "로그 실시간 적재" : "CDC 실시간 적재",
-      path: `${source} → Kafka → ${target}`,
+      path: `${source} → CDC → ${target}`,
       state: kafkaState(pipeline, metric, kafkaConnectors),
       throughput: metric?.collectionStatus === "COLLECTED" ? metric.throughputPerSecond : null,
       backlog: metric?.consumerLag ?? null,
@@ -170,9 +170,9 @@ function buildRows(
     return {
       key: `nifi-${job.id}`,
       name: job.name,
-      engine: "NIFI",
-      type: "NiFi ETL",
-      path: "파일·HTTP·배치 → NiFi → Target DB",
+      engine: "ETL",
+      type: "ETL",
+      path: "파일·HTTP·배치 → ETL → Target DB",
       state: nifiState(job),
       throughput,
       backlog: job.flowFilesQueued,
@@ -219,8 +219,8 @@ export function OperationsOverview({
   // 이미지 속 "최근 10분 CPU 사용률" 자리 - 다만 분 단위 실시간 대신, 화면 상단
   // 날짜 필터로 조회한 기간의 일별 처리 건수를 엔진별로 겹쳐 그린다.
   const dailyTrendChart = [
-    ...nifiDaily.map((point) => ({ date: point.date, count: point.count, engine: "NIFI" })),
-    ...kafkaDaily.map((point) => ({ date: point.date, count: point.count, engine: "KAFKA" })),
+    ...nifiDaily.map((point) => ({ date: point.date, count: point.count, engine: "ETL" })),
+    ...kafkaDaily.map((point) => ({ date: point.date, count: point.count, engine: "CDC" })),
   ];
 
   const backlogTop5 = [...rows]
@@ -244,8 +244,8 @@ export function OperationsOverview({
   // 이미지 속 "테이블 입력 건수" 자리 - 화면 상단 날짜 필터로 조회한 기간의
   // 파이프라인별 적재 건수 Top5 (NiFi/Kafka 통합).
   const loadTop5 = [
-    ...nifiTop.map((point) => ({ name: point.label, value: point.count, engine: "NIFI" })),
-    ...kafkaTop.map((point) => ({ name: point.label, value: point.count, engine: "KAFKA" })),
+    ...nifiTop.map((point) => ({ name: point.label, value: point.count, engine: "ETL" })),
+    ...kafkaTop.map((point) => ({ name: point.label, value: point.count, engine: "CDC" })),
   ]
     .sort((a, b) => b.value - a.value)
     .slice(0, 5);

@@ -335,7 +335,7 @@ export function PipelinesPage() {
   const deleteMutation = useMutation({
     mutationFn: deletePipeline,
     onSuccess: () => {
-      message.success("파이프라인을 삭제했습니다 (Kafka Connect 커넥터도 함께 정리됨).");
+      message.success("파이프라인을 삭제했습니다 (CDC 커넥터도 함께 정리됨).");
       invalidatePipelines();
     },
     onError: (error: Error) => message.error(error.message),
@@ -379,7 +379,7 @@ export function PipelinesPage() {
             closable
             onClose={() => dismissDriftMutation.mutate(Number(pipelineId))}
             style={{ marginBottom: 12 }}
-            message="파이프라인 커넥터가 Kafka Connect에서 사라졌습니다"
+            message="파이프라인 커넥터가 CDC에서 사라졌습니다"
             description={
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span>
@@ -548,7 +548,7 @@ export function PipelinesPage() {
                 </Button>
                 <Popconfirm
                   title="이 파이프라인을 삭제할까요?"
-                  description="배포된 Kafka Connect 커넥터도 함께 삭제됩니다."
+                  description="배포된 CDC 커넥터도 함께 삭제됩니다."
                   onConfirm={() => deleteMutation.mutate(record.id)}
                 >
                   <Button danger size="small">
@@ -621,7 +621,7 @@ export function PipelinesPage() {
                         <Alert
                           type="warning"
                           showIcon
-                          message="저장 상태와 Kafka Connect 실측 상태가 다릅니다"
+                          message="저장 상태와 CDC 실측 상태가 다릅니다"
                           description={runtime.runtimeStatusReason}
                           style={{ marginBottom: 16 }}
                         />

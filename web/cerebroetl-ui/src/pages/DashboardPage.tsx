@@ -309,8 +309,16 @@ const HOUR_BUCKET_LEGEND = {
 };
 
 export function DashboardPage() {
-  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(6, "day"), dayjs()]);
+  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().startOf("day"), dayjs().endOf("day")]);
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
+
+  // 전일자/당일 프리셋: 해당 날짜 하루(00:00~23:59)로 조회기간을 즉시 맞춘다.
+  const applyDayPreset = (offsetDays: 0 | 1) => {
+    const day = dayjs().subtract(offsetDays, "day");
+    const range: [Dayjs, Dayjs] = [day.startOf("day"), day.endOf("day")];
+    setDateRange(range);
+    setAppliedRange(range);
+  };
   const navigate = useNavigate();
   const [airflowActiveTile, setAirflowActiveTile] = useState<AirflowTileKind | null>(null);
   const [nifiFailedOpen, setNifiFailedOpen] = useState(false);
@@ -462,7 +470,7 @@ export function DashboardPage() {
         .filter((entry) => entry.status === "FAILED")
         .map((entry) => ({
           id: `log-${entry.id}`,
-          basicContent: `${entry.processorName}: ${entry.message ?? "NiFi 처리 오류"}`,
+          basicContent: `${entry.processorName}: ${entry.message ?? "ETL 처리 오류"}`,
           category: "ETL" as DagCategory,
           datetime: entry.occurredAt,
           fetchLog: async () => entry.message ?? "오류 메시지를 찾을 수 없습니다.",
@@ -573,6 +581,10 @@ export function DashboardPage() {
           </p>
         </div>
         <Space className="dashboard-date-filter" wrap>
+          <Space.Compact>
+            <Button onClick={() => applyDayPreset(1)}>전일자</Button>
+            <Button onClick={() => applyDayPreset(0)}>당일</Button>
+          </Space.Compact>
           <RangePicker
             value={dateRange}
             onChange={(value) => {
@@ -614,7 +626,7 @@ export function DashboardPage() {
             label="미처리"
             value={formatCompactCount(kafkaBacklog)}
             warn={kafkaBacklog > 0}
-            hint="Kafka consumer lag 합계 — 아직 타깃에 반영되지 않은 건수"
+            hint="CDC consumer lag 합계 — 아직 타깃에 반영되지 않은 건수"
           />
           <MetricRow label="해소 예상" value={cdcRecovery.text} warn={cdcRecovery.warn} />
           <MetricRow label="처리율" value={`${kafkaThroughput.toFixed(1)} rows/s`} />
@@ -655,7 +667,7 @@ export function DashboardPage() {
           <MetricRow
             label="실행 중 작업"
             value={String(nifiActiveThreads)}
-            hint="NiFi 활성 스레드 수 — 지금 실제로 돌고 있는 작업"
+            hint="ETL 활성 스레드 수 — 지금 실제로 돌고 있는 작업"
           />
           <MetricRow
             label="대기 데이터"
@@ -813,14 +825,14 @@ export function DashboardPage() {
       <HistoryModal
         open={nifiFailedOpen}
         onClose={() => setNifiFailedOpen(false)}
-        title={`NiFi 오류 상세 · ${selectedPeriodLabel}`}
+        title={`ETL 오류 상세 · ${selectedPeriodLabel}`}
         loading={nifiJobsQuery.isLoading && !nifiJobsQuery.data}
         rows={nifiFailedRows}
       />
       <HistoryModal
         open={kafkaFailedOpen}
         onClose={() => setKafkaFailedOpen(false)}
-        title="Kafka 실패 Connector 상세"
+        title="CDC 실패 Connector 상세"
         loading={kafkaConnectorsQuery.isLoading && !kafkaConnectorsQuery.data}
         rows={kafkaFailedRows}
       />

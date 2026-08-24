@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/admin/assignments")
-@RequirePermission(system = SystemCode.ADMIN, bits = AccessBits.WRITE)
+@RequirePermission(system = SystemCode.ADMIN, bits = AccessBits.WRITE, audit = false)
 public class AdminAssignmentController {
 
     private final AuthzAdminService adminService;

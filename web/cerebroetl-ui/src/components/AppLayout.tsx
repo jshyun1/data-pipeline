@@ -93,7 +93,6 @@ const NAV_ITEMS: NavItem[] = [
     children: [
       { path: "/cdc/create", label: "생성", system: "KAFKA", action: "WRITE" },
       { path: "/cdc/pipelines", label: "파이프라인", system: "KAFKA", action: "READ" },
-      { path: "/cdc/connections", label: "연결정보", system: "KAFKA", action: "READ" },
       { path: "/cdc/logs", label: "처리 로그", system: "KAFKA", action: "READ" },
     ],
   },
@@ -103,9 +102,9 @@ const NAV_ITEMS: NavItem[] = [
     icon: <SettingOutlined />,
     children: [
       { path: "/settings", label: "알림/발송 관리", system: "COMMON", action: "READ" },
+      { path: "/settings/connections", label: "연결정보", system: "KAFKA", action: "READ" },
       { path: "/admin/users", label: "계정 관리", system: "ADMIN", action: "READ" },
       { path: "/admin/roles", label: "역할 및 권한", system: "ADMIN", action: "READ" },
-      { path: "/admin/assign", label: "사용자 역할 배정", system: "ADMIN", action: "READ" },
       { path: "/admin/audit", label: "감사 로그", system: "ADMIN", action: "READ" },
     ],
   },
