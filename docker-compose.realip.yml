@@ -48,7 +48,22 @@ services:
     network_mode: host
     # 이미지 자체 엔트리포인트(NiFi/Airflow 자격증명 갱신 crond)는 여기서 불필요하므로
     # nginx:alpine 원래 엔트리포인트로 되돌린다(templates 의 ${...} 를 envsubst 가 치환).
-    entrypoint: ["/docker-entrypoint.sh"]
+    #
+    # 앞의 test 는 안전장치다. 마운트할 템플릿이 서버에 없으면 도커가 그 자리에 빈
+    # 디렉터리를 만들어 버리는데(데몬 기본 동작, create_host_path:false 로도 못 막는다),
+    # 그러면 nginx 가 이미지에 구워진 UI 설정으로 떠서 공개 포트는 안 열리고 호스트의
+    # 80/8080 만 점유하는 조용한 사고가 난다. 차라리 시끄럽게 죽는 편이 낫다.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        test -f /etc/nginx/templates/default.conf.template || {
+          echo "front-proxy: deploy/front-proxy/default.conf.template 이 서버에 없습니다." >&2
+          echo "             리포지토리 파일을 배포한 뒤 다시 기동하세요." >&2
+          exit 1
+        }
+        exec /docker-entrypoint.sh "$@"
+      - sh
     command: ["nginx", "-g", "daemon off;"]
     environment:
       TZ: Asia/Seoul

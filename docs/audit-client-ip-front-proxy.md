@@ -81,6 +81,13 @@ docker rm -f front-proxy && docker compose up -d
   로컬은 기존과 완전히 똑같이 동작한다.
 - 스케줄러에서 나는 감사(NiFi 캔버스 폴러, 신원 동기화 등)는 HTTP 요청 컨텍스트가 없어
   `client_ip` 가 비어 있다. 이건 설계상 정상이며 네트워크 구성과 무관하다.
+- `deploy/front-proxy/default.conf.template` 은 이미지에 굽지 않고 **마운트**해서 읽는다.
+  서버에 그 파일이 없으면 도커가 그 자리에 빈 디렉터리를 만들어 버리는데
+  (데몬 기본 동작이라 `create_host_path: false` 로도 못 막는다 - 실측), 그대로 두면 nginx 가
+  이미지에 구워진 UI 설정으로 떠서 공개 포트는 안 열리고 호스트의 80/8080 만 점유하는
+  조용한 사고가 난다. 그래서 엔트리포인트에서 파일 존재를 먼저 확인하고 없으면 메시지를
+  남기고 죽는다(포트를 잡지 않는다). `docker compose ps` 에 Restarting 으로 보이고
+  `docker logs front-proxy` 에 원인이 찍힌다.
 
 ## 6. 검증 기록 (2026-08-24, 로컬)
 
