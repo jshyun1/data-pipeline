@@ -2135,15 +2135,82 @@ button.airflow-tree-label:hover {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 7px 10px;
-  padding: 0 14px 12px;
-  border-bottom: 1px solid #eef2f7;
+  padding: 0 14px 10px;
   color: #475569;
   font-size: 13px;
   line-height: 1.25;
 }
 
-.nifi-job-summary span:last-child {
+.nifi-job-summary button {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nifi-job-summary button:hover,
+.nifi-job-summary button.active {
+  color: #d40000;
+  font-weight: 750;
+}
+
+.nifi-job-summary button:last-child {
   grid-column: 1 / span 2;
+}
+
+.nifi-status-job-list {
+  max-height: 170px;
+  margin: 0 10px 10px;
+  padding: 4px;
+  overflow: auto;
+  border: 1px solid #e5eaf1;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+
+.nifi-status-job-list button {
+  width: 100%;
+  min-height: 43px;
+  padding: 6px 7px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #1f2937;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nifi-status-job-list button:hover {
+  background: #fff1f1;
+  color: #d40000;
+}
+
+.nifi-status-job-list span,
+.nifi-status-job-list small {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nifi-status-job-list span {
+  font-size: 12.5px;
+  font-weight: 750;
+}
+
+.nifi-status-job-list small {
+  color: #64748b;
+  font-size: 11px;
 }
 
 .nifi-tree-search-input {
@@ -2236,7 +2303,7 @@ button.airflow-tree-label:hover {
   flex: 0 1 285px;
   width: clamp(235px, 18vw, 285px);
   min-width: 235px;
-  height: fit-content;
+  height: calc(100vh - 128px);
   max-height: calc(100vh - 128px);
   align-self: flex-start;
   overflow: auto;
@@ -2297,6 +2364,15 @@ button.airflow-tree-label:hover {
 
 .nifi-detail-message.error {
   color: #b42318;
+}
+
+.nifi-edit-lock-alert {
+  margin: 10px 14px;
+  font-size: 13px;
+}
+
+.nifi-edit-lock-alert .ant-alert-message {
+  font-weight: 700;
 }
 
 .nifi-detail-section {
@@ -2392,23 +2468,6 @@ button.airflow-tree-label:hover {
 .nifi-detail-empty {
   color: #111827;
   font-weight: 600;
-}
-
-.nifi-detail-advanced {
-  width: 100%;
-  min-height: 46px;
-  padding: 9px 18px;
-  border: 0;
-  background: #f8fafc;
-  color: #111827;
-  cursor: pointer;
-  font: inherit;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.nifi-detail-advanced:hover {
-  background: #eef2f7;
 }
 
 @media (max-width: 1180px) {

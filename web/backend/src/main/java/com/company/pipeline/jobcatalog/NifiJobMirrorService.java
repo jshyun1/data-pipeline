@@ -208,7 +208,9 @@ public class NifiJobMirrorService {
 
             EtlJobStep step = existing.remove(processorId);
             if (step == null) {
-                step = new EtlJobStep(job.getId(), processorId, component.name(), component.shortType());
+                step = stepRepository.findByNifiProcessorId(processorId)
+                        .orElseGet(() -> new EtlJobStep(job.getId(), processorId,
+                                component.name(), component.shortType()));
             }
             step.applySnapshot(
                     job.getId(),
@@ -250,8 +252,9 @@ public class NifiJobMirrorService {
             String connectionId = component.id() != null ? component.id() : entity.id();
             EtlJobLink link = existing.remove(connectionId);
             if (link == null) {
-                link = new EtlJobLink(job.getId(), connectionId,
-                        component.source().id(), component.destination().id());
+                link = linkRepository.findByNifiConnectionId(connectionId)
+                        .orElseGet(() -> new EtlJobLink(job.getId(), connectionId,
+                                component.source().id(), component.destination().id()));
             }
             link.applySnapshot(job.getId(),
                     component.source().id(), component.source().name(),
