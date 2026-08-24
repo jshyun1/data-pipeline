@@ -29,7 +29,7 @@ NIFI_LINE=$(existing_credential_line nifi_shared_bearer)
 AIRFLOW_LINE=$(existing_credential_line airflow_shared_cookie)
 
 # --- NiFi: /nifi-api/access/token (username/password -> JWT 원문) ---
-NIFI_TOKEN=$(curl -sk -X POST "https://nifi:8443/nifi-api/access/token" \
+NIFI_TOKEN=$(curl -sk --connect-timeout 3 --max-time 8 -X POST "https://nifi:8443/nifi-api/access/token" \
   -H "Host: ${NIFI_HOST_HEADER:-localhost:8443}" \
   --data-urlencode "username=${NIFI_USERNAME}" \
   --data-urlencode "password=${NIFI_PASSWORD}") || true
@@ -42,13 +42,13 @@ fi
 
 # --- Airflow: CSRF 토큰 확보 -> Referer 포함 로그인 -> _token 쿠키 추출 ---
 rm -f "$COOKIE_JAR"
-LOGIN_PAGE=$(curl -sk -c "$COOKIE_JAR" "http://airflow-apiserver:8080/airflow/auth/login/" || true)
+LOGIN_PAGE=$(curl -sk --connect-timeout 3 --max-time 8 -c "$COOKIE_JAR" "http://airflow-apiserver:8080/airflow/auth/login/" || true)
 CSRF=$(echo "$LOGIN_PAGE" | grep -oE 'name="csrf_token" type="hidden" value="[^"]+"' | sed -E 's/.*value="([^"]+)"/\1/')
 
 if [ -z "$CSRF" ]; then
   log "ERROR: Airflow CSRF 토큰 추출 실패, 기존 Airflow 자격증명 유지"
 else
-  curl -sk -o /dev/null -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+  curl -sk --connect-timeout 3 --max-time 8 -o /dev/null -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
     -H "Referer: http://airflow-apiserver:8080/airflow/auth/login/" \
     --data-urlencode "csrf_token=$CSRF" \
     --data-urlencode "username=${AIRFLOW_USERNAME}" \

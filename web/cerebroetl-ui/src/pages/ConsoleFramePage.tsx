@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
-import { Button, Result, Spin } from "antd";
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import { Alert, Button, Result, Spin } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -13,16 +13,25 @@ import {
 import {
   getNifiProcessor,
   getNifiProcessGroupTree,
+  acquireNifiProcessorEditLock,
+  heartbeatNifiProcessorEditLock,
+  releaseNifiProcessorEditLock,
+  type NifiProcessorEditLockResponse,
   type NifiProcessorDetailResponse,
   type NifiProcessGroupTreeNode,
 } from "../api/platform";
 
 const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
 const CANVAS_SELECTION_SYNC_ATTRIBUTE = "data-cerebro-canvas-selection-sync";
+const CANVAS_ROUTE_SYNC_ATTRIBUTE = "data-cerebro-canvas-route-sync";
 const KOREAN_TOOLTIP_PATCH_ATTRIBUTE = "data-cerebro-korean-tooltip-patch";
+const KOREAN_TOOLTIP_INTERVAL_ATTRIBUTE = "data-cerebro-korean-tooltip-interval";
 const NIFI_STATUS_HIDDEN_ATTRIBUTE = "data-cerebro-status-hidden";
 const NIFI_PANEL_LAYOUT_ATTRIBUTE = "data-cerebro-nifi-panel-layout";
 const NIFI_PANEL_ATTRIBUTE = "data-cerebro-nifi-panel";
+const NIFI_PANEL_EXPANDED_ATTRIBUTE = "data-cerebro-nifi-panel-expanded";
+const NIFI_PANEL_BOUND_ATTRIBUTE = "data-cerebro-nifi-panel-bound";
+const NIFI_PROCESSOR_LOCK_HEARTBEAT_MS = 20_000;
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
 // 보이게 한다. 번들 분석으로 실제 렌더링되는 요소를 확인한 선택자:
 // - NiFi: 두 곳에 있었다.
@@ -51,8 +60,40 @@ const HIDE_TOOL_CHROME_CSS = `
   :has(> img[alt="NiFi Logo"]) { display: none !important; }
   .current-user, .current-user ~ a { display: none !important; }
   [${NIFI_STATUS_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
+  [title="Connected nodes / Total number of nodes in the cluster"],
+  [title="연결된 노드 / 클러스터 전체 노드"],
+  [title="Total queued data"],
+  [title="총 대기 데이터"],
+  [title="Transmitting Remote Process Groups"],
+  [title="전송 중인 원격 프로세스 그룹"],
+  [title="Not Transmitting Remote Process Groups"],
+  [title="전송 중이 아닌 원격 프로세스 그룹"],
+  [title="Locally modified Versioned Process Groups"],
+  [title="로컬 수정된 버전 프로세스 그룹"],
+  [title="Stale Versioned Process Groups"],
+  [title="오래된 버전 프로세스 그룹"],
+  [title="Locally modified and stale Versioned Process Groups"],
+  [title="로컬 수정 및 오래된 버전 프로세스 그룹"],
+  [title="Sync failure Versioned Process Groups"],
+  [title="동기화 실패 버전 프로세스 그룹"],
+  .flex.items-center.gap-x-2:has(.icon-threads),
+  .flex.items-center.gap-x-2:has(.fa-list),
+  .flex.items-center.gap-x-2:has(.fa-bullseye),
+  .flex.items-center.gap-x-2:has(.icon-transmit-false),
+  .flex.items-center.gap-x-2:has(.fa-asterisk),
+  .flex.items-center.gap-x-2:has(.fa-arrow-circle-up),
+  .flex.items-center.gap-x-2:has(.fa-exclamation-circle),
+  .flex.items-center.gap-x-2:has(.fa-question) {
+    display: none !important;
+  }
   [${NIFI_PANEL_ATTRIBUTE}="navigation"], [${NIFI_PANEL_ATTRIBUTE}="operation"] {
     position: fixed !important;
+    z-index: 9000 !important;
+    box-shadow: 0 2px 8px rgb(15 23 42 / 18%) !important;
+    cursor: pointer !important;
+  }
+  [${NIFI_PANEL_ATTRIBUTE}="navigation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]),
+  [${NIFI_PANEL_ATTRIBUTE}="operation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) {
     width: 38px !important;
     height: 38px !important;
     min-width: 38px !important;
@@ -60,23 +101,44 @@ const HIDE_TOOL_CHROME_CSS = `
     max-width: 38px !important;
     max-height: 38px !important;
     overflow: hidden !important;
-    z-index: 9000 !important;
-    box-shadow: 0 2px 8px rgb(15 23 42 / 18%) !important;
   }
-  [${NIFI_PANEL_ATTRIBUTE}="navigation"] {
-    right: 18px !important;
-    bottom: 18px !important;
-    left: auto !important;
-    top: auto !important;
+  [${NIFI_PANEL_ATTRIBUTE}="navigation"][${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"],
+  [${NIFI_PANEL_ATTRIBUTE}="operation"][${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"] {
+    width: 270px !important;
+    height: auto !important;
+    min-width: 240px !important;
+    min-height: 38px !important;
+    max-width: 320px !important;
+    max-height: 360px !important;
+    overflow: auto !important;
+    cursor: move !important;
   }
-  [${NIFI_PANEL_ATTRIBUTE}="operation"] {
+  [${NIFI_PANEL_ATTRIBUTE}="navigation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) {
     left: 0 !important;
     top: 126px !important;
     right: auto !important;
     bottom: auto !important;
   }
-  [${NIFI_PANEL_ATTRIBUTE}="navigation"] > :not(:first-child),
-  [${NIFI_PANEL_ATTRIBUTE}="operation"] > :not(:first-child) {
+  [${NIFI_PANEL_ATTRIBUTE}="operation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) {
+    left: 0 !important;
+    top: 168px !important;
+    right: auto !important;
+    bottom: auto !important;
+  }
+  [${NIFI_PANEL_ATTRIBUTE}="navigation"][${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"] {
+    top: 126px !important;
+    right: auto !important;
+    bottom: auto !important;
+    left: 0 !important;
+  }
+  [${NIFI_PANEL_ATTRIBUTE}="operation"][${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"] {
+    left: 0 !important;
+    top: 380px !important;
+    right: auto !important;
+    bottom: auto !important;
+  }
+  [${NIFI_PANEL_ATTRIBUTE}="navigation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) > :not(:first-child),
+  [${NIFI_PANEL_ATTRIBUTE}="operation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) > :not(:first-child) {
     display: none !important;
   }
 `;
@@ -96,29 +158,53 @@ const NIFI_TOOLTIP_TEXT: Record<string, string> = {
   "Running Components": "실행 중 컴포넌트",
   "Stopped Components": "중지된 컴포넌트",
   "Invalid Components": "유효하지 않은 컴포넌트",
+  "Disabled Components": "비활성 컴포넌트",
+  "Valid Components": "유효한 컴포넌트",
   "Last refresh": "마지막 새로고침",
+  "Last Refresh": "마지막 새로고침",
   "Connected nodes / Total number of nodes in the cluster": "연결된 노드 / 클러스터 전체 노드",
   "Transmitting Remote Process Groups": "전송 중인 원격 프로세스 그룹",
   "Not Transmitting Remote Process Groups": "전송 중이 아닌 원격 프로세스 그룹",
-  "Disabled Components": "비활성 컴포넌트",
-  "Up to date Versioned Process Groups": "최신 버전 프로세스 그룹",
+  "Up to date Versioned Process Groups": "유효한 컴포넌트",
   "Locally modified Versioned Process Groups": "로컬 수정된 버전 프로세스 그룹",
   "Stale Versioned Process Groups": "오래된 버전 프로세스 그룹",
   "Locally modified and stale Versioned Process Groups": "로컬 수정 및 오래된 버전 프로세스 그룹",
   "Sync failure Versioned Process Groups": "동기화 실패 버전 프로세스 그룹",
+  Canvas: "캔버스",
+  Summary: "요약",
+  Counter: "카운터",
+  "Bulletin Board": "공지 게시판",
+  "Data Provenance": "데이터 계보",
+  "Controller Settings": "컨트롤러 설정",
+  "Parameter Contexts": "파라미터 컨텍스트",
+  "Flow Configuration History": "플로우 구성 이력",
+  "Node Status History": "노드 상태 이력",
+  "System Diagnostics": "시스템 진단",
+  Users: "사용자",
+  Policies: "정책",
+  Help: "도움말",
+  About: "정보",
+  Appearance: "화면 표시",
+  Animations: "애니메이션",
 };
 const NIFI_TOOLTIP_ATTRIBUTES = ["title", "aria-label", "data-tooltip", "matTooltip", "mattooltip", "tooltip"];
+const NIFI_STATUS_TOOLTIP_ICON_TEXT: Array<[string, string]> = [
+  ["fa-play", "실행 중 컴포넌트"],
+  ["fa-stop", "중지된 컴포넌트"],
+  ["fa-warning", "유효하지 않은 컴포넌트"],
+  ["icon-enable-false", "비활성 컴포넌트"],
+  ["fa-check", "유효한 컴포넌트"],
+  ["fa-refresh", "마지막 새로고침"],
+];
 const HIDDEN_NIFI_STATUS_TITLES = new Set([
+  "Total queued data",
+  "총 대기 데이터",
   "Connected nodes / Total number of nodes in the cluster",
   "연결된 노드 / 클러스터 전체 노드",
   "Transmitting Remote Process Groups",
   "전송 중인 원격 프로세스 그룹",
   "Not Transmitting Remote Process Groups",
   "전송 중이 아닌 원격 프로세스 그룹",
-  "Disabled Components",
-  "비활성 컴포넌트",
-  "Up to date Versioned Process Groups",
-  "최신 버전 프로세스 그룹",
   "Locally modified Versioned Process Groups",
   "로컬 수정된 버전 프로세스 그룹",
   "Stale Versioned Process Groups",
@@ -128,6 +214,16 @@ const HIDDEN_NIFI_STATUS_TITLES = new Set([
   "Sync failure Versioned Process Groups",
   "동기화 실패 버전 프로세스 그룹",
 ]);
+const HIDDEN_NIFI_STATUS_ICON_CLASSES = [
+  "icon-threads",
+  "fa-list",
+  "fa-bullseye",
+  "icon-transmit-false",
+  "fa-asterisk",
+  "fa-arrow-circle-up",
+  "fa-exclamation-circle",
+  "fa-question",
+];
 
 function translateNifiTooltip(value: string) {
   const trimmed = value.trim();
@@ -153,15 +249,20 @@ function iframeDocument(frame: HTMLIFrameElement) {
 
 function hideToolChrome(frame: HTMLIFrameElement) {
   const doc = iframeDocument(frame);
-  if (!doc || doc.getElementById(HIDE_TOOL_CHROME_STYLE_ID)) {
+  if (!doc) {
     return;
   }
 
   try {
-    const style = doc.createElement("style");
-    style.id = HIDE_TOOL_CHROME_STYLE_ID;
-    style.textContent = HIDE_TOOL_CHROME_CSS;
-    doc.head.appendChild(style);
+    let style = doc.getElementById(HIDE_TOOL_CHROME_STYLE_ID);
+    if (!style) {
+      style = doc.createElement("style");
+      style.id = HIDE_TOOL_CHROME_STYLE_ID;
+      doc.head.appendChild(style);
+    }
+    if (style.textContent !== HIDE_TOOL_CHROME_CSS) {
+      style.textContent = HIDE_TOOL_CHROME_CSS;
+    }
   } catch {
     // 문서가 아직 교체 중이면 다음 iframe load에서 다시 시도한다.
   }
@@ -185,13 +286,41 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
   };
 
   const patchExactTextElement = (element: Element) => {
-    if (element.children.length > 0) {
+    const value = element.textContent?.trim();
+    if (!value || value.length > 80 || value.includes("\n")) {
       return;
     }
-    const value = element.textContent?.trim();
     const translated = value ? translateNifiTooltip(value) : undefined;
     if (translated) {
       element.textContent = translated;
+    }
+  };
+
+  const patchTextNode = (node: Text) => {
+    const value = node.nodeValue ?? "";
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.length > 80 || trimmed.includes("\n")) {
+      return;
+    }
+    const translated = translateNifiTooltip(trimmed);
+    if (!translated) {
+      return;
+    }
+    node.nodeValue = value.replace(trimmed, translated);
+  };
+
+  const patchTextNodes = (root: Document | Element) => {
+    const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => {
+        const parent = node.parentElement;
+        const tagName = parent?.tagName.toLowerCase();
+        return tagName === "script" || tagName === "style" ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    let current = walker.nextNode();
+    while (current) {
+      patchTextNode(current as Text);
+      current = walker.nextNode();
     }
   };
 
@@ -199,8 +328,58 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     if (!value) {
       return;
     }
-    if (HIDDEN_NIFI_STATUS_TITLES.has(value.trim())) {
+    const trimmed = value.trim();
+    if (
+      HIDDEN_NIFI_STATUS_TITLES.has(trimmed) ||
+      trimmed.startsWith("Active Threads") ||
+      trimmed.startsWith(NIFI_TOOLTIP_TEXT["Active Threads"])
+    ) {
       element.setAttribute(NIFI_STATUS_HIDDEN_ATTRIBUTE, "true");
+    }
+  };
+
+  const patchStatusIconVisibility = (element: Element) => {
+    const className = elementClassName(element);
+    const shouldHide = HIDDEN_NIFI_STATUS_ICON_CLASSES.some((iconClass) =>
+      className.split(/\s+/).includes(iconClass),
+    );
+    if (!shouldHide) {
+      return;
+    }
+
+    let current: Element = element;
+    for (let depth = 0; depth < 4 && current.parentElement; depth += 1) {
+      const currentClassName = elementClassName(current);
+      if (current.hasAttribute("title") || (currentClassName.includes("flex") && currentClassName.includes("gap-x-2"))) {
+        current.setAttribute(NIFI_STATUS_HIDDEN_ATTRIBUTE, "true");
+        return;
+      }
+      current = current.parentElement;
+    }
+  };
+
+  const closestStatusItem = (element: Element) => {
+    let current: Element = element;
+    for (let depth = 0; depth < 4 && current.parentElement; depth += 1) {
+      const className = elementClassName(current);
+      if (current.hasAttribute("title") || (className.includes("flex") && className.includes("gap-x-2"))) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  };
+
+  const patchStatusTooltipText = (element: Element) => {
+    const classNames = elementClassName(element).split(/\s+/);
+    const translated = NIFI_STATUS_TOOLTIP_ICON_TEXT.find(([iconClass]) => classNames.includes(iconClass))?.[1];
+    if (!translated) {
+      return;
+    }
+    const statusItem = closestStatusItem(element);
+    if (statusItem) {
+      statusItem.setAttribute("title", translated);
+      statusItem.setAttribute("aria-label", translated);
     }
   };
 
@@ -220,12 +399,21 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     });
     patchTitleElement(element);
     patchExactTextElement(element);
+    patchStatusIconVisibility(element);
+    patchStatusTooltipText(element);
   };
 
   const patchDocument = () => {
     doc
       .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], title")
       .forEach(patchElement);
+    patchTextNodes(doc);
+    HIDDEN_NIFI_STATUS_ICON_CLASSES.forEach((iconClass) => {
+      doc.querySelectorAll(`.${iconClass}`).forEach(patchStatusIconVisibility);
+    });
+    NIFI_STATUS_TOOLTIP_ICON_TEXT.forEach(([iconClass]) => {
+      doc.querySelectorAll(`.${iconClass}`).forEach(patchStatusTooltipText);
+    });
   };
 
   patchDocument();
@@ -242,22 +430,33 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
         patchElement(mutation.target);
       }
       if (mutation.type === "characterData" && mutation.target.parentElement) {
+        patchTextNode(mutation.target as Text);
         patchTitleElement(mutation.target.parentElement);
         patchExactTextElement(mutation.target.parentElement);
       }
       mutation.addedNodes.forEach((node) => {
-        if (node.nodeType === 3 && node.parentElement) {
-          patchExactTextElement(node.parentElement);
+        if (node.nodeType === 3) {
+          patchTextNode(node as Text);
+          if (node.parentElement) {
+            patchExactTextElement(node.parentElement);
+          }
           return;
         }
         if (!(node instanceof Element)) {
           return;
         }
         patchElement(node);
+        patchTextNodes(node);
         node
           .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], title")
           .forEach(patchElement);
         node.querySelectorAll("*").forEach(patchExactTextElement);
+        HIDDEN_NIFI_STATUS_ICON_CLASSES.forEach((iconClass) => {
+          node.querySelectorAll(`.${iconClass}`).forEach(patchStatusIconVisibility);
+        });
+        NIFI_STATUS_TOOLTIP_ICON_TEXT.forEach(([iconClass]) => {
+          node.querySelectorAll(`.${iconClass}`).forEach(patchStatusTooltipText);
+        });
       });
     }
   });
@@ -269,6 +468,16 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     childList: true,
     subtree: true,
   });
+
+  if (doc.documentElement.getAttribute(KOREAN_TOOLTIP_INTERVAL_ATTRIBUTE) !== "true") {
+    doc.documentElement.setAttribute(KOREAN_TOOLTIP_INTERVAL_ATTRIBUTE, "true");
+    const intervalId = doc.defaultView?.setInterval(() => patchDocument(), 1000);
+    doc.defaultView?.addEventListener("beforeunload", () => {
+      if (intervalId) {
+        doc.defaultView?.clearInterval(intervalId);
+      }
+    }, { once: true });
+  }
 }
 
 function installNifiPanelLayout(frame: HTMLIFrameElement) {
@@ -276,6 +485,79 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
   if (!doc) {
     return;
   }
+
+  const bindPanelBehavior = (panel: HTMLElement) => {
+    if (panel.getAttribute(NIFI_PANEL_BOUND_ATTRIBUTE) === "true") {
+      return;
+    }
+    panel.setAttribute(NIFI_PANEL_BOUND_ATTRIBUTE, "true");
+    panel.setAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE, "false");
+    panel.setAttribute("title", "클릭하면 펼치고, 펼친 뒤 빈 영역을 드래그하면 이동합니다.");
+
+    let drag:
+      | {
+          startX: number;
+          startY: number;
+          left: number;
+          top: number;
+          moved: boolean;
+        }
+      | null = null;
+
+    const move = (event: MouseEvent) => {
+      if (!drag) {
+        return;
+      }
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      drag.moved = drag.moved || Math.abs(dx) > 4 || Math.abs(dy) > 4;
+      const rect = panel.getBoundingClientRect();
+      const maxLeft = Math.max(0, doc.documentElement.clientWidth - rect.width);
+      const maxTop = Math.max(0, doc.documentElement.clientHeight - rect.height);
+      panel.style.left = `${Math.min(Math.max(drag.left + dx, 0), maxLeft)}px`;
+      panel.style.top = `${Math.min(Math.max(drag.top + dy, 0), maxTop)}px`;
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+    };
+
+    const stop = () => {
+      if (!drag) {
+        return;
+      }
+      const wasMoved = drag.moved;
+      drag = null;
+      doc.removeEventListener("mousemove", move, true);
+      doc.removeEventListener("mouseup", stop, true);
+      if (!wasMoved) {
+        const panels = Array.from(doc.querySelectorAll(`[${NIFI_PANEL_ATTRIBUTE}]`));
+        const shouldExpand = !panels.some((item) => item.getAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE) === "true");
+        panels.forEach((item) => item.setAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE, shouldExpand ? "true" : "false"));
+      }
+    };
+
+    panel.addEventListener("mousedown", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      const expanded = panel.getAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE) === "true";
+      if (expanded && target?.closest("button, a, input, select, textarea, [role='button']")) {
+        return;
+      }
+      const rect = panel.getBoundingClientRect();
+      drag = {
+        startX: event.clientX,
+        startY: event.clientY,
+        left: rect.left,
+        top: rect.top,
+        moved: false,
+      };
+      doc.addEventListener("mousemove", move, true);
+      doc.addEventListener("mouseup", stop, true);
+      event.preventDefault();
+      event.stopPropagation();
+    }, true);
+  };
 
   const markPanel = (panelName: "navigation" | "operation") => {
     const label = panelName === "navigation" ? "Navigation" : "Operation";
@@ -313,8 +595,9 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
       .sort((a, b) => (b.rect.width * b.rect.height) - (a.rect.width * a.rect.height));
 
     const panel = candidates[0]?.element;
-    if (panel) {
+    if (panel instanceof HTMLElement) {
       panel.setAttribute(NIFI_PANEL_ATTRIBUTE, panelName);
+      bindPanelBehavior(panel);
     }
   };
 
@@ -448,7 +731,11 @@ function readSelectionFromOperationPanel(doc: Document): CanvasSelection | null 
   return groupId ? { type: "processGroup", id: groupId } : null;
 }
 
-function installCanvasSelectionSync(frame: HTMLIFrameElement, onSelectionChange: (selection: CanvasSelection) => void) {
+function installCanvasSelectionSync(
+  frame: HTMLIFrameElement,
+  onSelectionChange: (selection: CanvasSelection) => void,
+  resolveProcessGroupSelection?: (target: Element | null) => string | null,
+) {
   const doc = iframeDocument(frame);
   if (!doc || doc.documentElement.getAttribute(CANVAS_SELECTION_SYNC_ATTRIBUTE) === "true") {
     return;
@@ -468,16 +755,64 @@ function installCanvasSelectionSync(frame: HTMLIFrameElement, onSelectionChange:
       return;
     }
 
+    const resolvedGroupId = resolveProcessGroupSelection?.(target);
+    if (resolvedGroupId) {
+      onSelectionChange({ type: "processGroup", id: resolvedGroupId });
+      return;
+    }
+
     window.setTimeout(() => {
       const selected = readSelectionFromOperationPanel(doc);
       if (selected) {
         onSelectionChange(selected);
+        return;
+      }
+      const delayedGroupId = resolveProcessGroupSelection?.(target);
+      if (delayedGroupId) {
+        onSelectionChange({ type: "processGroup", id: delayedGroupId });
       }
     }, 80);
   };
 
   doc.addEventListener("click", (event) => notifyFromDocument(event.target as Element | null), true);
   doc.addEventListener("dblclick", (event) => notifyFromDocument(event.target as Element | null), true);
+}
+
+function readProcessGroupIdFromFrameRoute(frame: HTMLIFrameElement) {
+  const hash = frame.contentWindow?.location.hash ?? "";
+  const matched = hash.match(/\/process-groups\/([^/?#]+)/);
+  if (!matched?.[1]) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(matched[1]);
+  } catch {
+    return matched[1];
+  }
+}
+
+function installCanvasRouteSync(frame: HTMLIFrameElement, onProcessGroupChange: (groupId: string | null) => void) {
+  const doc = iframeDocument(frame);
+  const frameWindow = frame.contentWindow;
+  if (!doc || !frameWindow || doc.documentElement.getAttribute(CANVAS_ROUTE_SYNC_ATTRIBUTE) === "true") {
+    return;
+  }
+  doc.documentElement.setAttribute(CANVAS_ROUTE_SYNC_ATTRIBUTE, "true");
+
+  let lastGroupId: string | null | undefined;
+  const notify = () => {
+    const nextGroupId = readProcessGroupIdFromFrameRoute(frame);
+    if (nextGroupId === lastGroupId) {
+      return;
+    }
+    lastGroupId = nextGroupId;
+    onProcessGroupChange(nextGroupId);
+  };
+
+  notify();
+  frameWindow.addEventListener("hashchange", notify);
+  const timerId = frameWindow.setInterval(notify, 500);
+  frameWindow.addEventListener("beforeunload", () => frameWindow.clearInterval(timerId), { once: true });
 }
 
 interface ConsoleFramePageProps {
@@ -504,6 +839,8 @@ interface ProcessGroupTreePanelProps {
   onTreeChange?: (tree: NifiProcessGroupTreeNode | null) => void;
 }
 
+type NifiTreeStatusFilter = "ALL" | "RUNNING" | "DONE" | "FAILED" | "STOPPED";
+
 function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTreePanelProps) {
   const navigate = useNavigate();
   const [tree, setTree] = useState<NifiProcessGroupTreeNode | null>(null);
@@ -511,6 +848,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeStatusFilter, setActiveStatusFilter] = useState<NifiTreeStatusFilter | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -543,6 +881,18 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
     };
   }, [onTreeChange]);
 
+  useEffect(() => {
+    const selected = findTreeNode(tree, activeGroupId);
+    if (!selected) {
+      return;
+    }
+    setExpandedIds((previous) => {
+      const next = new Set(previous);
+      selected.path.forEach((node) => next.add(node.id));
+      return next;
+    });
+  }, [activeGroupId, tree]);
+
   const openGroup = (groupId: string) => {
     navigate(`/etl/manage?processGroupId=${encodeURIComponent(groupId)}`);
   };
@@ -573,6 +923,46 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
       stopped,
     };
   })();
+
+  const processGroupJobs = useMemo(() => flattenTree(tree).filter((node) => node.id !== "root" && node.processorCount > 0), [tree]);
+
+  const statusCounts = (node: NifiProcessGroupTreeNode) => {
+    const running = node.runningCount ?? 0;
+    const failed = node.invalidCount ?? 0;
+    const stopped = node.stoppedCount ?? 0;
+    const completed = Math.max((node.processorCount ?? 0) - running - failed - stopped, 0);
+    return { running, completed, failed, stopped };
+  };
+
+  const statusJobs = useMemo(() => {
+    if (!activeStatusFilter) {
+      return [];
+    }
+    return processGroupJobs.filter((node) => {
+      const { running, completed, failed, stopped } = statusCounts(node);
+      switch (activeStatusFilter) {
+        case "RUNNING":
+          return running > 0;
+        case "DONE":
+          return completed > 0;
+        case "FAILED":
+          return failed > 0;
+        case "STOPPED":
+          return stopped > 0;
+        case "ALL":
+        default:
+          return true;
+      }
+    });
+  }, [activeStatusFilter, processGroupJobs]);
+
+  const statusButtons: Array<{ key: NifiTreeStatusFilter; label: string; count: number }> = [
+    { key: "ALL", label: "전체", count: jobSummary.total },
+    { key: "RUNNING", label: "실행중", count: jobSummary.running },
+    { key: "DONE", label: "완료", count: jobSummary.completed },
+    { key: "FAILED", label: "실패", count: jobSummary.failed },
+    { key: "STOPPED", label: "중지", count: jobSummary.stopped },
+  ];
 
   const matchesSearch = (node: NifiProcessGroupTreeNode, normalizedQuery: string): boolean =>
     node.name.toLowerCase().includes(normalizedQuery);
@@ -628,12 +1018,36 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
     <aside className="nifi-tree-panel" aria-label="NiFi 프로세스 그룹 트리">
       <div className="nifi-tree-section-title">상태</div>
       <div className="nifi-job-summary" aria-label="NiFi job 상태 요약">
-        <span>전체 ({jobSummary.total})</span>
-        <span>실행중 ({jobSummary.running})</span>
-        <span>완료 ({jobSummary.completed})</span>
-        <span>실패 ({jobSummary.failed})</span>
-        <span>중지 ({jobSummary.stopped})</span>
+        {statusButtons.map((status) => (
+          <button
+            key={status.key}
+            type="button"
+            className={activeStatusFilter === status.key ? "active" : ""}
+            onClick={() => setActiveStatusFilter((current) => (current === status.key ? null : status.key))}
+          >
+            {status.label} ({status.count})
+          </button>
+        ))}
       </div>
+      {activeStatusFilter ? (
+        <div className="nifi-status-job-list" aria-label="상태별 NiFi job 목록">
+          {statusJobs.length > 0 ? (
+            statusJobs.map((node) => {
+              const counts = statusCounts(node);
+              return (
+                <button key={node.id} type="button" title={node.name} onClick={() => openGroup(node.id)}>
+                  <span>{node.name}</span>
+                  <small>
+                    실행 {counts.running} · 완료 {counts.completed} · 실패 {counts.failed} · 중지 {counts.stopped}
+                  </small>
+                </button>
+              );
+            })
+          ) : (
+            <div className="nifi-tree-message">해당 Job 없음</div>
+          )}
+        </div>
+      ) : null}
       <label className="nifi-tree-section-title" htmlFor="nifi-tree-search">
         트리 검색
       </label>
@@ -676,6 +1090,65 @@ function findTreeNode(
   return null;
 }
 
+function normalizeProcessGroupName(value: string | null | undefined) {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function flattenTree(node: NifiProcessGroupTreeNode | null): NifiProcessGroupTreeNode[] {
+  if (!node) {
+    return [];
+  }
+  return [node, ...node.children.flatMap((child) => flattenTree(child))];
+}
+
+function processGroupTextCandidates(element: Element | null) {
+  const values: string[] = [];
+  let current = element;
+  for (let depth = 0; current && depth < 8; depth += 1) {
+    const rect = current.getBoundingClientRect();
+    const cardSized = rect.width >= 60 && rect.width <= 620 && rect.height >= 25 && rect.height <= 240;
+    [
+      current.getAttribute("title"),
+      current.getAttribute("aria-label"),
+      current.getAttribute("data-name"),
+      current.getAttribute("data-label"),
+    ].forEach((value) => {
+      if (value?.trim()) {
+        values.push(value);
+      }
+    });
+    if (cardSized && current.textContent?.trim()) {
+      values.push(current.textContent);
+    }
+    current = current.parentElement;
+  }
+  return values.map(normalizeProcessGroupName).filter(Boolean);
+}
+
+function resolveProcessGroupIdByCanvasText(
+  target: Element | null,
+  currentGroupId: string | null,
+  tree: NifiProcessGroupTreeNode | null,
+) {
+  const candidates = processGroupTextCandidates(target);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const currentNode = findTreeNode(tree, currentGroupId)?.node ?? tree;
+  const orderedNodes = [
+    ...(currentNode?.children ?? []),
+    ...flattenTree(tree).filter((node) => !(currentNode?.children ?? []).some((child) => child.id === node.id)),
+  ];
+
+  const match = orderedNodes.find((node) => {
+    const name = normalizeProcessGroupName(node.name);
+    return candidates.some((candidate) => candidate === name || candidate.startsWith(`${name} `));
+  });
+
+  return match?.id ?? null;
+}
+
 function formatDateTime(value?: string | null) {
   if (!value) {
     return "-";
@@ -716,37 +1189,24 @@ function uniqueValues(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => !!value)));
 }
 
-function directProcessorCount(node: NifiProcessGroupTreeNode | null) {
+function collectTreeIds(node: NifiProcessGroupTreeNode | null, ids = new Set<string>()) {
   if (!node) {
-    return 0;
+    return ids;
   }
-  const childProcessorCount = node.children.reduce((sum, child) => sum + child.processorCount, 0);
-  return Math.max(node.processorCount - childProcessorCount, 0);
+  ids.add(node.id);
+  node.children.forEach((child) => collectTreeIds(child, ids));
+  return ids;
 }
 
-function firstStartStepSchedule(detail: EtlJobDetailResponse | null, node: NifiProcessGroupTreeNode | null) {
-  if (!detail || directProcessorCount(node) === 0) {
+function compactCountLabel(count: number, unit: string) {
+  return count > 0 ? `${count}${unit}` : "-";
+}
+
+function firstOrCountLabel(values: string[], suffix = "") {
+  if (values.length === 0) {
     return "-";
   }
-
-  const destinationIds = new Set(
-    detail.links.map((link) => link.toComponentId).filter((id): id is string => !!id),
-  );
-  const startSteps = detail.steps.filter((step) => !destinationIds.has(step.nifiProcessorId));
-  const candidates = startSteps.length > 0 ? startSteps : detail.steps;
-  const firstStep = [...candidates].sort((a, b) => {
-    const xDiff = (a.xPos ?? Number.MAX_SAFE_INTEGER) - (b.xPos ?? Number.MAX_SAFE_INTEGER);
-    if (xDiff !== 0) {
-      return xDiff;
-    }
-    const yDiff = (a.yPos ?? Number.MAX_SAFE_INTEGER) - (b.yPos ?? Number.MAX_SAFE_INTEGER);
-    if (yDiff !== 0) {
-      return yDiff;
-    }
-    return a.stepName.localeCompare(b.stepName);
-  })[0];
-
-  return firstStep?.schedulingPeriod || "-";
+  return values.length === 1 ? values[0] : `${values.length}${suffix}`;
 }
 
 function displayValue(value: unknown) {
@@ -820,6 +1280,13 @@ function propertyRows(processor: NifiProcessorDetailResponse | null) {
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
+function newLockOwnerToken() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 interface ProcessorDetailPanelProps {
   processorId: string;
   onParentGroupFound?: (groupId: string) => void;
@@ -829,6 +1296,10 @@ function ProcessorDetailPanel({ processorId, onParentGroupFound }: ProcessorDeta
   const [processor, setProcessor] = useState<NifiProcessorDetailResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editLock, setEditLock] = useState<NifiProcessorEditLockResponse | null>(null);
+  const [lockError, setLockError] = useState<string | null>(null);
+  const ownerTokenRef = useRef(newLockOwnerToken());
+  const processorNameRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -862,6 +1333,60 @@ function ProcessorDetailPanel({ processorId, onParentGroupFound }: ProcessorDeta
     };
   }, [onParentGroupFound, processorId]);
 
+  useEffect(() => {
+    processorNameRef.current = processor?.component?.name ?? null;
+  }, [processor?.component?.name]);
+
+  useEffect(() => {
+    ownerTokenRef.current = newLockOwnerToken();
+    processorNameRef.current = null;
+    setEditLock(null);
+    setLockError(null);
+
+    let cancelled = false;
+    let intervalId: number | undefined;
+    const ownerToken = ownerTokenRef.current;
+    const request = () => ({
+      ownerToken,
+      processorName: processorNameRef.current,
+    });
+
+    acquireNifiProcessorEditLock(processorId, request())
+      .then((result) => {
+        if (!cancelled) {
+          setEditLock(result);
+        }
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setLockError(ex instanceof Error ? ex.message : "편집 잠금을 확인하지 못했습니다.");
+        }
+      });
+
+    intervalId = window.setInterval(() => {
+      heartbeatNifiProcessorEditLock(processorId, request())
+        .then((result) => {
+          if (!cancelled) {
+            setEditLock(result);
+            setLockError(null);
+          }
+        })
+        .catch((ex) => {
+          if (!cancelled) {
+            setLockError(ex instanceof Error ? ex.message : "편집 잠금 갱신에 실패했습니다.");
+          }
+        });
+    }, NIFI_PROCESSOR_LOCK_HEARTBEAT_MS);
+
+    return () => {
+      cancelled = true;
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
+      void releaseNifiProcessorEditLock(processorId, { ownerToken });
+    };
+  }, [processorId]);
+
   const component = processor?.component;
   const config = component?.config;
   const bundle = component?.bundle;
@@ -870,6 +1395,7 @@ function ProcessorDetailPanel({ processorId, onParentGroupFound }: ProcessorDeta
   const relationships = component?.relationships ?? [];
   const autoTerminated = component?.autoTerminatedRelationships ?? config?.autoTerminatedRelationships ?? [];
   const activeThreadCount = processor?.status?.aggregateSnapshot?.activeThreadCount ?? processor?.status?.activeThreadCount;
+  const isReadOnlyByLock = Boolean(editLock && !editLock.heldByMe);
 
   return (
     <aside className="nifi-detail-panel" aria-label="선택한 프로세서 상세">
@@ -886,6 +1412,28 @@ function ProcessorDetailPanel({ processorId, onParentGroupFound }: ProcessorDeta
 
       {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
       {!isLoading && error ? <div className="nifi-detail-message error">조회 실패</div> : null}
+      {editLock ? (
+        <Alert
+          className="nifi-edit-lock-alert"
+          type={isReadOnlyByLock ? "warning" : "success"}
+          showIcon
+          message={isReadOnlyByLock ? "읽기 전용" : "편집 가능"}
+          description={
+            isReadOnlyByLock
+              ? `${editLock.lockedByUserNm}(${editLock.lockedByUserId}) 사용자가 이 Processor 편집 잠금을 보유 중입니다.`
+              : "이 브라우저가 Processor 편집 잠금을 보유 중입니다."
+          }
+        />
+      ) : null}
+      {lockError ? (
+        <Alert
+          className="nifi-edit-lock-alert"
+          type="error"
+          showIcon
+          message="편집 잠금 확인 실패"
+          description={lockError}
+        />
+      ) : null}
 
       <section className="nifi-detail-section">
         <h3>기본 정보</h3>
@@ -1059,7 +1607,7 @@ interface ProcessGroupDetailPanelProps {
 function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPanelProps) {
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<EtlJobResponse[]>([]);
-  const [detail, setDetail] = useState<EtlJobDetailResponse | null>(null);
+  const [details, setDetails] = useState<EtlJobDetailResponse[]>([]);
   const [runs, setRuns] = useState<EtlJobRunResponse[]>([]);
   const [jobsLoading, setJobsLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -1068,10 +1616,24 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const selected = useMemo(() => findTreeNode(tree, activeGroupId), [activeGroupId, tree]);
   const selectedGroupId = activeGroupId ?? "root";
   const job = jobs.find((entry) => entry.nifiPgId === selectedGroupId) ?? null;
+  const selectedGroupIds = useMemo(() => {
+    const ids = collectTreeIds(selected?.node ?? null);
+    if (activeGroupId) {
+      ids.add(activeGroupId);
+    }
+    return ids;
+  }, [activeGroupId, selected?.node]);
+  const groupJobs = jobs.filter((entry) => selectedGroupIds.has(entry.nifiPgId));
+  const groupJobIdsKey = groupJobs.map((entry) => entry.id).join(",");
+  const primaryJob = job ?? groupJobs[0] ?? null;
   const latestRun = runs[0] ?? null;
-  const targetTables = uniqueValues(detail?.steps.map((step) => step.targetTable) ?? []);
-  const operationTypes = uniqueValues(detail?.steps.map((step) => step.statementType ?? step.stepType) ?? []);
-  const schedule = firstStartStepSchedule(detail, selected?.node ?? null);
+  const allSteps = details.flatMap((entry) => entry.steps);
+  const allLinks = details.flatMap((entry) => entry.links);
+  const targetTables = uniqueValues(allSteps.map((step) => step.targetTable));
+  const operationTypes = uniqueValues(allSteps.map((step) => step.statementType ?? step.stepType));
+  const sourceValues = uniqueValues(groupJobs.map((entry) => entry.comments || entry.engine));
+  const targetValues = uniqueValues(groupJobs.map((entry) => entry.parameterContextName));
+  const airflowDags = uniqueValues(groupJobs.map((entry) => entry.airflowDagId));
   const isLoading = jobsLoading || detailLoading;
 
   useEffect(() => {
@@ -1104,11 +1666,11 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
 
   useEffect(() => {
     let cancelled = false;
-    setDetail(null);
+    setDetails([]);
     setRuns([]);
     setError(null);
 
-    if (!job) {
+    if (groupJobs.length === 0) {
       setDetailLoading(false);
       return () => {
         cancelled = true;
@@ -1116,12 +1678,15 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
     }
 
     setDetailLoading(true);
-    Promise.all([getEtlJob(job.id), getEtlJobRuns(job.id)])
-      .then(([jobDetail, jobRuns]) => {
+    Promise.all([
+      Promise.all(groupJobs.map((entry) => getEtlJob(entry.id))),
+      primaryJob ? getEtlJobRuns(primaryJob.id) : Promise.resolve([] as EtlJobRunResponse[]),
+    ])
+      .then(([jobDetails, jobRuns]) => {
         if (cancelled) {
           return;
         }
-        setDetail(jobDetail);
+        setDetails(jobDetails);
         setRuns(jobRuns);
       })
       .catch((ex) => {
@@ -1138,11 +1703,13 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
     return () => {
       cancelled = true;
     };
-  }, [job?.id]);
+  }, [groupJobIdsKey, primaryJob?.id]);
 
-  const displayJob = detail?.job ?? job;
+  const displayJob = details.find((entry) => entry.job.nifiPgId === selectedGroupId)?.job ?? job;
+  const relatedJob = displayJob ?? primaryJob;
   const displayNode = selected?.node ?? null;
   const pathText = selected?.path.map((entry) => entry.name).join(" / ") ?? "-";
+  const stepCount = job?.stepCount ?? displayNode?.processorCount ?? groupJobs.reduce((sum, entry) => sum + entry.stepCount, 0);
 
   return (
     <aside className="nifi-detail-panel" aria-label="선택한 프로세스 그룹 상세">
@@ -1153,7 +1720,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
         <div className={`nifi-detail-status ${statusClass(displayJob, displayNode)}`}>
           <span className="nifi-detail-dot" aria-hidden="true" />
           <span>{statusText(displayJob, displayNode)}</span>
-          <span>{formatDateTime(latestRun?.startedAt ?? displayJob?.lastSyncedAt)}</span>
+          <span>{formatDateTime(latestRun?.startedAt ?? relatedJob?.lastSyncedAt)}</span>
         </div>
       </div>
 
@@ -1169,15 +1736,11 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
           </div>
           <div>
             <dt>운영 / 적재</dt>
-            <dd>{displayJob?.engine ?? "NIFI"} / {operationTypes[0] ?? "적재"}</dd>
-          </div>
-          <div>
-            <dt>분류</dt>
-            <dd>{displayJob?.parameterContextName ?? "-"}</dd>
+            <dd>{relatedJob?.engine ?? "NIFI"} / {operationTypes[0] ?? "적재"}</dd>
           </div>
           <div>
             <dt>스텝 수</dt>
-            <dd>{displayJob?.stepCount ?? displayNode?.processorCount ?? 0}</dd>
+            <dd>{stepCount}</dd>
           </div>
         </dl>
       </section>
@@ -1186,19 +1749,15 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
         <h3>실행</h3>
         <dl>
           <div>
-            <dt>스케줄</dt>
-            <dd>{schedule}</dd>
-          </div>
-          <div>
             <dt>선행 의존</dt>
-            <dd>{detail?.links.length ? `${detail.links.length}개 연결` : "-"}</dd>
+            <dd>{compactCountLabel(allLinks.length, "개 연결")}</dd>
           </div>
           <div>
             <dt>연결 DAG</dt>
             <dd>
-              {displayJob?.airflowDagId ? (
+              {airflowDags.length > 0 ? (
                 <>
-                  {displayJob.airflowDagId}{" "}
+                  {firstOrCountLabel(airflowDags, "개")}{" "}
                   <button type="button" className="nifi-detail-link" onClick={() => navigate("/airflow/manage")}>
                     [열기]
                   </button>
@@ -1216,11 +1775,11 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
         <dl>
           <div>
             <dt>소스</dt>
-            <dd>{displayJob?.comments || displayJob?.engine || "-"}</dd>
+            <dd>{firstOrCountLabel(sourceValues, "종")}</dd>
           </div>
           <div>
             <dt>타깃</dt>
-            <dd>{displayJob?.parameterContextName ?? "-"}</dd>
+            <dd>{firstOrCountLabel(targetValues, "종")}</dd>
           </div>
           <div>
             <dt>테이블</dt>
@@ -1240,26 +1799,6 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
           </div>
         </dl>
       </section>
-
-      <section className="nifi-detail-section">
-        <h3>변수</h3>
-        {detail?.params.length ? (
-          <dl>
-            {detail.params.slice(0, 4).map((param) => (
-              <div key={param.paramName}>
-                <dt>{param.paramName}</dt>
-                <dd>{param.sensitive ? "********" : param.paramValue || "-"}</dd>
-              </div>
-            ))}
-          </dl>
-        ) : (
-          <div className="nifi-detail-empty">-</div>
-        )}
-      </section>
-
-      <button type="button" className="nifi-detail-advanced">
-        [고급 설정]
-      </button>
     </aside>
   );
 }
@@ -1274,7 +1813,11 @@ export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage, show
   const [selectedCanvasItem, setSelectedCanvasItem] = useState<CanvasSelection | null>(
     processGroupId ? { type: "processGroup", id: processGroupId } : null,
   );
+  const processGroupTreeRef = useRef<NifiProcessGroupTreeNode | null>(null);
+  const processGroupIdRef = useRef<string | null>(null);
   const frameSrc = processGroupId ? withProcessGroupId(src, processGroupId) : src;
+  processGroupTreeRef.current = processGroupTree;
+  processGroupIdRef.current = processGroupId;
 
   useEffect(() => {
     setSelectedProcessGroupId(processGroupId);
@@ -1334,13 +1877,24 @@ export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage, show
     }
   };
 
+  const selectCanvasProcessGroupRoute = (groupId: string | null) => {
+    const normalizedGroupId = groupId === "root" ? null : groupId;
+    setSelectedProcessGroupId(normalizedGroupId);
+    setSelectedCanvasItem(normalizedGroupId ? { type: "processGroup", id: normalizedGroupId } : null);
+  };
+
   const handleFrameLoad = (event: SyntheticEvent<HTMLIFrameElement>) => {
     const frame = event.currentTarget;
     hideToolChrome(frame);
     patchKoreanTooltips(frame);
+    installNifiPanelLayout(frame);
     if (showProcessGroupTree) {
-      installNifiPanelLayout(frame);
-      installCanvasSelectionSync(frame, selectCanvasItem);
+      installCanvasRouteSync(frame, selectCanvasProcessGroupRoute);
+      installCanvasSelectionSync(
+        frame,
+        selectCanvasItem,
+        (target) => resolveProcessGroupIdByCanvasText(target, processGroupIdRef.current, processGroupTreeRef.current),
+      );
     }
   };
 

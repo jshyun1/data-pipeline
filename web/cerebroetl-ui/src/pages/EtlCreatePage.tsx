@@ -1081,8 +1081,8 @@ export function EtlCreatePage() {
       setCompletedSteps((previous) => previous.includes("target") ? previous : [...previous, "target"]);
       setCompleted(true);
       setActiveStep("target");
-    } catch {
-      message.error("오류가 발생하였습니다. 관리자에게 문의 하십시오.");
+    } catch (ex) {
+      message.error(ex instanceof Error ? ex.message : "오류가 발생하였습니다. 관리자에게 문의 하십시오.");
     } finally {
       setIsCreating(false);
     }

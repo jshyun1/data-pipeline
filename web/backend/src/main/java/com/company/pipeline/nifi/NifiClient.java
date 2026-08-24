@@ -724,7 +724,7 @@ public class NifiClient {
             NifiInitialDbToDbCreateRequest request) {
         NifiFlowResponse.ProcessorEntity source = findProcessorByName(processors, "incremental_sourceDB");
         NifiFlowResponse.ProcessorEntity upsert = findProcessorByName(processors, "targetDB_UPSERT");
-        NifiFlowResponse.ProcessorEntity delete = findProcessorByName(processors, "targetDB_DELETE");
+        NifiFlowResponse.ProcessorEntity delete = findOptionalProcessorByName(processors, "targetDB_DELETE");
 
         Map<String, String> sourceProperties = mergedProperties(source);
         putProperty(sourceProperties, QUERY_DBCP_KEYS, request.sourceServiceId().trim());
@@ -735,7 +735,9 @@ public class NifiClient {
         updateProcessorProperties(token, source, sourceProperties);
 
         updateTargetDbRecordProcessor(token, upsert, request, "UPSERT");
-        updateTargetDbRecordProcessor(token, delete, request, null);
+        if (delete != null) {
+            updateTargetDbRecordProcessor(token, delete, request, null);
+        }
     }
 
     private void updateTargetDbRecordProcessor(String token, NifiFlowResponse.ProcessorEntity processor,
@@ -815,6 +817,15 @@ public class NifiClient {
                 .orElseThrow(() -> new NifiClientException(
                         "복제된 Initial 그룹에서 '%s' 프로세서를 찾지 못했습니다.".formatted(name),
                         null));
+    }
+
+    private NifiFlowResponse.ProcessorEntity findOptionalProcessorByName(
+            List<NifiFlowResponse.ProcessorEntity> processors, String name) {
+        return processors.stream()
+                .filter(processor -> processor.component() != null)
+                .filter(processor -> name.equalsIgnoreCase(nullToBlank(processor.component().name()).trim()))
+                .findFirst()
+                .orElse(null);
     }
 
     private Map<String, String> mergedProperties(NifiFlowResponse.ProcessorEntity processor) {

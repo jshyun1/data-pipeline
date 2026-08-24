@@ -270,6 +270,17 @@ export interface NifiProcessorDetailResponse {
   }>;
 }
 
+export interface NifiProcessorEditLockResponse {
+  processorId: string;
+  processorName?: string | null;
+  editable: boolean;
+  heldByMe: boolean;
+  lockedByUserId: string;
+  lockedByUserNm: string;
+  acquiredAt: string;
+  expiresAt: string;
+}
+
 interface NifiProcessorPropertyDescriptor {
   name?: string;
   displayName?: string;
@@ -543,6 +554,44 @@ export async function getNifiProcessor(processorId: string): Promise<NifiProcess
     `/nifi/processors/${encodeURIComponent(processorId)}`,
   );
   return unwrap<NifiProcessorDetailResponse>(res.data);
+}
+
+interface NifiProcessorEditLockRequest {
+  ownerToken: string;
+  processorName?: string | null;
+}
+
+export async function acquireNifiProcessorEditLock(
+  processorId: string,
+  request: NifiProcessorEditLockRequest,
+): Promise<NifiProcessorEditLockResponse> {
+  const res = await apiClient.post<ApiResponse<NifiProcessorEditLockResponse>>(
+    `/nifi/processors/${encodeURIComponent(processorId)}/edit-lock`,
+    request,
+  );
+  return unwrap<NifiProcessorEditLockResponse>(res.data);
+}
+
+export async function heartbeatNifiProcessorEditLock(
+  processorId: string,
+  request: NifiProcessorEditLockRequest,
+): Promise<NifiProcessorEditLockResponse> {
+  const res = await apiClient.post<ApiResponse<NifiProcessorEditLockResponse>>(
+    `/nifi/processors/${encodeURIComponent(processorId)}/edit-lock/heartbeat`,
+    request,
+  );
+  return unwrap<NifiProcessorEditLockResponse>(res.data);
+}
+
+export async function releaseNifiProcessorEditLock(
+  processorId: string,
+  request: NifiProcessorEditLockRequest,
+): Promise<void> {
+  const res = await apiClient.delete<ApiResponse<void>>(
+    `/nifi/processors/${encodeURIComponent(processorId)}/edit-lock`,
+    { data: request },
+  );
+  unwrap<void>(res.data);
 }
 
 async function saveAirflowVariable(key: string, value: string): Promise<void> {
