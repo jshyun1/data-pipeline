@@ -65,4 +65,19 @@ class JdbcSinkTemplateTest {
                 .isEqualTo("jdbc:oracle:thin:@oracle-db:1521/XEPDB1");
         assertThat(rendered.config().get("table.name.format")).isEqualTo("APPUSER.CUSTOMERS_FROM_PG");
     }
+
+    @Test
+    void render_mysqlTarget_buildsMysqlConnectionUrl() {
+        SinkConnectorRequest request = new SinkConnectorRequest(
+                6L, DbType.MYSQL, "mysql-db", 3306, "appuser", "pw",
+                "warehouse", null, "cdc_landing", "customers_from_pg",
+                DbType.POSTGRESQL, "public", "customers", "postgres-cdc", true);
+
+        RenderedConnectorConfig rendered = template.render(request);
+
+        assertThat(rendered.connectorName()).isEqualTo("sink-6-mysql-cdc_landing-customers_from_pg");
+        assertThat(rendered.config().get("connection.url"))
+                .isEqualTo("jdbc:mysql://mysql-db:3306/warehouse");
+        assertThat(rendered.config().get("table.name.format")).isEqualTo("cdc_landing.customers_from_pg");
+    }
 }

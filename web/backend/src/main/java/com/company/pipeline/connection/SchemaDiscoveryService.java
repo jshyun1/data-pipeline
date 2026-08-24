@@ -34,6 +34,9 @@ public class SchemaDiscoveryService {
     private static final Set<String> POSTGRES_SYSTEM_SCHEMAS = Set.of(
             "pg_catalog", "information_schema", "pg_toast");
 
+    private static final Set<String> MYSQL_SYSTEM_SCHEMAS = Set.of(
+            "information_schema", "mysql", "performance_schema", "sys");
+
     private final ConnectionRepository connectionRepository;
     private final PasswordCryptoService passwordCryptoService;
 
@@ -48,11 +51,22 @@ public class SchemaDiscoveryService {
         try (Connection jdbc = open(connection)) {
             List<String> schemas = new ArrayList<>();
             DatabaseMetaData meta = jdbc.getMetaData();
-            try (ResultSet rs = meta.getSchemas()) {
-                while (rs.next()) {
-                    String schema = rs.getString("TABLE_SCHEM");
-                    if (!isSystemSchema(connection.getDbType(), schema)) {
-                        schemas.add(schema);
+            if (connection.getDbType() == DbType.MYSQL) {
+                try (ResultSet rs = meta.getCatalogs()) {
+                    while (rs.next()) {
+                        String schema = rs.getString("TABLE_CAT");
+                        if (!isSystemSchema(connection.getDbType(), schema)) {
+                            schemas.add(schema);
+                        }
+                    }
+                }
+            } else {
+                try (ResultSet rs = meta.getSchemas()) {
+                    while (rs.next()) {
+                        String schema = rs.getString("TABLE_SCHEM");
+                        if (!isSystemSchema(connection.getDbType(), schema)) {
+                            schemas.add(schema);
+                        }
                     }
                 }
             }
@@ -69,7 +83,9 @@ public class SchemaDiscoveryService {
         try (Connection jdbc = open(connection)) {
             List<String> tables = new ArrayList<>();
             DatabaseMetaData meta = jdbc.getMetaData();
-            try (ResultSet rs = meta.getTables(null, schema, "%", new String[] {"TABLE"})) {
+            String catalog = connection.getDbType() == DbType.MYSQL ? schema : null;
+            String tableSchema = connection.getDbType() == DbType.MYSQL ? null : schema;
+            try (ResultSet rs = meta.getTables(catalog, tableSchema, "%", new String[] {"TABLE"})) {
                 while (rs.next()) {
                     tables.add(rs.getString("TABLE_NAME"));
                 }
@@ -85,12 +101,14 @@ public class SchemaDiscoveryService {
     public List<ColumnMetadataResponse> listColumns(Long connectionId, String schema, String table) {
         PipelineConnection connection = findOrThrow(connectionId);
         try (Connection jdbc = open(connection)) {
+            String catalog = connection.getDbType() == DbType.MYSQL ? schema : null;
+            String tableSchema = connection.getDbType() == DbType.MYSQL ? null : schema;
             Set<String> primaryKeys = new java.util.HashSet<>();
-            try (ResultSet rs = jdbc.getMetaData().getPrimaryKeys(null, schema, table)) {
+            try (ResultSet rs = jdbc.getMetaData().getPrimaryKeys(catalog, tableSchema, table)) {
                 while (rs.next()) primaryKeys.add(rs.getString("COLUMN_NAME").toLowerCase());
             }
             List<ColumnMetadataResponse> columns = new ArrayList<>();
-            try (ResultSet rs = jdbc.getMetaData().getColumns(null, schema, table, "%")) {
+            try (ResultSet rs = jdbc.getMetaData().getColumns(catalog, tableSchema, table, "%")) {
                 while (rs.next()) {
                     String name = rs.getString("COLUMN_NAME");
                     int jdbcType = rs.getInt("DATA_TYPE");
@@ -132,6 +150,7 @@ public class SchemaDiscoveryService {
         return switch (dbType) {
             case ORACLE -> ORACLE_SYSTEM_SCHEMAS.contains(schema.toUpperCase());
             case POSTGRESQL -> POSTGRES_SYSTEM_SCHEMAS.contains(schema.toLowerCase());
+            case MYSQL -> MYSQL_SYSTEM_SCHEMAS.contains(schema.toLowerCase());
         };
     }
 
@@ -146,6 +165,7 @@ public class SchemaDiscoveryService {
         String url = switch (dbType) {
             case POSTGRESQL -> "jdbc:postgresql://%s:%d/%s".formatted(host, port, databaseName);
             case ORACLE -> "jdbc:oracle:thin:@%s:%d/%s".formatted(host, port, serviceName);
+            case MYSQL -> "jdbc:mysql://%s:%d/%s".formatted(host, port, databaseName);
         };
         return DriverManager.getConnection(url, username, password);
     }

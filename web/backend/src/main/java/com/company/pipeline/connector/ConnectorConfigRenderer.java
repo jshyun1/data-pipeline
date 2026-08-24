@@ -15,13 +15,16 @@ public class ConnectorConfigRenderer {
 
     private final DebeziumOracleTemplate oracleSourceTemplate;
     private final DebeziumPostgresTemplate postgresSourceTemplate;
+    private final DebeziumMysqlTemplate mysqlSourceTemplate;
     private final JdbcSinkTemplate jdbcSinkTemplate;
 
     public ConnectorConfigRenderer(DebeziumOracleTemplate oracleSourceTemplate,
             DebeziumPostgresTemplate postgresSourceTemplate,
+            DebeziumMysqlTemplate mysqlSourceTemplate,
             JdbcSinkTemplate jdbcSinkTemplate) {
         this.oracleSourceTemplate = oracleSourceTemplate;
         this.postgresSourceTemplate = postgresSourceTemplate;
+        this.mysqlSourceTemplate = mysqlSourceTemplate;
         this.jdbcSinkTemplate = jdbcSinkTemplate;
     }
 
@@ -31,6 +34,9 @@ public class ConnectorConfigRenderer {
         }
         if (request.sourceDbType() == DbType.POSTGRESQL) {
             return postgresSourceTemplate.render(request);
+        }
+        if (request.sourceDbType() == DbType.MYSQL) {
+            return mysqlSourceTemplate.render(request);
         }
         throw new BusinessException(ErrorCode.VALIDATION_ERROR,
                 "지원하지 않는 소스 DB 유형입니다: " + request.sourceDbType());

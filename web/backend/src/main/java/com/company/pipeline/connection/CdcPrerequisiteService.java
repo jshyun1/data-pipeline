@@ -27,7 +27,11 @@ public class CdcPrerequisiteService {
                 .orElseThrow(() -> new ConnectionNotFoundException(connectionId));
         List<CdcPrerequisiteCheckResponse> checks;
         try (Connection jdbc = schemaDiscoveryService.open(saved)) {
-            checks = saved.getDbType() == DbType.ORACLE ? checkOracle(jdbc, saved) : checkPostgres(jdbc);
+            checks = switch (saved.getDbType()) {
+                case ORACLE -> checkOracle(jdbc, saved);
+                case POSTGRESQL -> checkPostgres(jdbc);
+                case MYSQL -> checkMysql(jdbc);
+            };
         } catch (SQLException ex) {
             checks = List.of(new CdcPrerequisiteCheckResponse(
                     "CONNECTION", "데이터베이스 연결", "FAIL", null,
@@ -57,6 +61,23 @@ public class CdcPrerequisiteService {
         checks.add(new CdcPrerequisiteCheckResponse(
                 "ORACLE_TABLE_SUPPLEMENTAL", "테이블별 보충 로깅", "WARN", "대상 선택 전",
                 "테이블별 ALL COLUMNS 보충 로깅은 생성 마법사에서 선택한 테이블 기준으로 다시 점검합니다."));
+        return checks;
+    }
+
+    private List<CdcPrerequisiteCheckResponse> checkMysql(Connection jdbc) {
+        List<CdcPrerequisiteCheckResponse> checks = new ArrayList<>();
+        checks.add(variableEqualsCheck(jdbc, "MYSQL_BINLOG_FORMAT", "binlog_format",
+                "binlog_format", "ROW",
+                "MySQL CDC는 binlog_format=ROW가 필요합니다."));
+        checks.add(variableEqualsCheck(jdbc, "MYSQL_BINLOG_ROW_IMAGE", "binlog_row_image",
+                "binlog_row_image", "FULL",
+                "MySQL CDC는 변경 전/후 컬럼 캡처를 위해 binlog_row_image=FULL을 권장합니다."));
+        checks.add(mysqlServerIdCheck(jdbc));
+        checks.add(countCheck(jdbc, "MYSQL_REPLICATION_PRIVILEGES", "복제 권한",
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.USER_PRIVILEGES "
+                        + "WHERE REPLACE(GRANTEE, '''', '') = CURRENT_USER() "
+                        + "AND PRIVILEGE_TYPE IN ('REPLICATION SLAVE', 'REPLICATION CLIENT')",
+                2, "CDC 계정에 REPLICATION SLAVE/REPLICA, REPLICATION CLIENT 권한을 부여하세요."));
         return checks;
     }
 
@@ -94,6 +115,17 @@ public class CdcPrerequisiteService {
         }
     }
 
+    private CdcPrerequisiteCheckResponse variableEqualsCheck(Connection jdbc, String code, String label,
+            String variableName, String expected, String guidance) {
+        try {
+            String actual = variableValue(jdbc, variableName);
+            boolean pass = expected.equalsIgnoreCase(actual);
+            return new CdcPrerequisiteCheckResponse(code, label, pass ? "PASS" : "FAIL", actual, guidance);
+        } catch (SQLException ex) {
+            return unknown(code, label, ex, guidance);
+        }
+    }
+
     private CdcPrerequisiteCheckResponse slotCapacityCheck(Connection jdbc) {
         String sql = "SELECT current_setting('max_replication_slots')::int, "
                 + "(SELECT count(*) FROM pg_replication_slots)";
@@ -110,10 +142,31 @@ public class CdcPrerequisiteService {
         }
     }
 
+    private CdcPrerequisiteCheckResponse mysqlServerIdCheck(Connection jdbc) {
+        try {
+            String actual = variableValue(jdbc, "server_id");
+            boolean pass = actual != null && !"0".equals(actual);
+            return new CdcPrerequisiteCheckResponse("MYSQL_SERVER_ID", "server_id",
+                    pass ? "PASS" : "FAIL", actual,
+                    "MySQL 인스턴스의 server_id를 0이 아닌 고유값으로 설정하세요.");
+        } catch (SQLException ex) {
+            return unknown("MYSQL_SERVER_ID", "server_id", ex,
+                    "SHOW VARIABLES LIKE 'server_id' 조회 권한을 확인하세요.");
+        }
+    }
+
     private String scalar(Connection jdbc, String sql) throws SQLException {
         try (Statement statement = jdbc.createStatement(); ResultSet rs = statement.executeQuery(sql)) {
             if (!rs.next()) throw new SQLException("점검 결과가 없습니다.");
             return rs.getString(1);
+        }
+    }
+
+    private String variableValue(Connection jdbc, String name) throws SQLException {
+        try (Statement statement = jdbc.createStatement();
+                ResultSet rs = statement.executeQuery("SHOW VARIABLES LIKE '" + name + "'")) {
+            if (!rs.next()) throw new SQLException("변수 조회 결과가 없습니다: " + name);
+            return rs.getString(2);
         }
     }
 

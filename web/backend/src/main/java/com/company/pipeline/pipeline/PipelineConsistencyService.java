@@ -49,9 +49,13 @@ public class PipelineConsistencyService {
     }
 
     private Long estimate(Long connectionId, DbType dbType, String schema, String table) {
-        String sql = dbType == DbType.POSTGRESQL
-                ? "SELECT CAST(c.reltuples AS BIGINT) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=? AND c.relname=?"
-                : "SELECT num_rows FROM all_tables WHERE owner=? AND table_name=?";
+        String sql = switch (dbType) {
+            case POSTGRESQL -> "SELECT CAST(c.reltuples AS BIGINT) FROM pg_class c "
+                    + "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=? AND c.relname=?";
+            case ORACLE -> "SELECT num_rows FROM all_tables WHERE owner=? AND table_name=?";
+            case MYSQL -> "SELECT table_rows FROM information_schema.tables "
+                    + "WHERE table_schema=? AND table_name=?";
+        };
         try (Connection connection = schemaDiscoveryService.openConnection(connectionId);
                 PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setQueryTimeout(5);

@@ -11,8 +11,8 @@ import java.util.Map;
 import org.springframework.stereotype.Component;
 
 /**
- * docs/kafka-webservice-design.md §11.3, §11.4. Debezium JDBC Sink는 Postgres/Oracle
- * 드라이버가 둘 다 플러그인 디렉터리에 번들돼 있어(kafka-connect/Dockerfile 참고 - 두
+ * docs/kafka-webservice-design.md §11.3, §11.4. Debezium JDBC Sink는 Postgres/Oracle/MySQL
+ * 드라이버가 플러그인 디렉터리에 번들돼 있어(kafka-connect/Dockerfile 참고 - 각
  * 드라이버 모두 debezium-debezium-connector-jdbc 디렉터리에 명시적으로 추가해야 함,
  * Kafka Connect의 플러그인별 클래스로더 격리 때문에 다른 플러그인 디렉터리의 jar는
  * 안 보임) 타겟 DB 종류와 무관하게 이 템플릿 하나로 처리한다 - connection.url만 방언별로 다르다.
@@ -101,6 +101,9 @@ public class JdbcSinkTemplate {
         }
         if (targetDbType == DbType.ORACLE) {
             return "jdbc:oracle:thin:@%s:%d/%s".formatted(hostname, port, serviceName);
+        }
+        if (targetDbType == DbType.MYSQL) {
+            return "jdbc:mysql://%s:%d/%s".formatted(hostname, port, databaseName);
         }
         throw new BusinessException(ErrorCode.VALIDATION_ERROR,
                 "지원하지 않는 타겟 DB 유형입니다: " + targetDbType);

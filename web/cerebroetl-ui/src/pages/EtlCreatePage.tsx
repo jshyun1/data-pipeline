@@ -149,6 +149,9 @@ function connectionJdbcUrl(connection: ConnectionResponse) {
   if (connection.dbType === "ORACLE" && connection.serviceName) {
     return `jdbc:oracle:thin:@${connection.host}:${connection.port}/${connection.serviceName}`;
   }
+  if (connection.dbType === "MYSQL" && connection.databaseName) {
+    return `jdbc:mysql://${connection.host}:${connection.port}/${connection.databaseName}`;
+  }
   return null;
 }
 

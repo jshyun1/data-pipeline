@@ -50,6 +50,8 @@ public class NifiClient {
     private static final String POSTGRES_DRIVER_LOCATION = "/opt/nifi/nifi-current/drivers/postgresql-42.7.4.jar";
     private static final String ORACLE_DRIVER_CLASS = "oracle.jdbc.OracleDriver";
     private static final String ORACLE_DRIVER_LOCATION = "/opt/nifi/nifi-current/drivers/ojdbc11-23.26.2.0.0.jar";
+    private static final String MYSQL_DRIVER_CLASS = "com.mysql.cj.jdbc.Driver";
+    private static final String MYSQL_DRIVER_LOCATION = "/opt/nifi/nifi-current/drivers/mysql-connector-j-8.4.0.jar";
     private static final String INITIAL_TEMPLATE_GROUP_NAME = "Initial";
     private static final String TRUNCATE_TEMPLATE_GROUP_NAME = "truncate_initial";
     private static final String TEMPLATE_GROUP_NAME = "Template";
@@ -268,6 +270,27 @@ public class NifiClient {
                 jdbcUrl,
                 ORACLE_DRIVER_CLASS,
                 ORACLE_DRIVER_LOCATION,
+                username,
+                password
+        );
+    }
+
+    public NifiControllerServiceEntity createMysqlDbcpControllerService(
+            Long connectionId,
+            String connectionName,
+            String host,
+            Integer port,
+            String databaseName,
+            String username,
+            String password
+    ) {
+        String jdbcUrl = "jdbc:mysql://%s:%d/%s".formatted(host, port, databaseName);
+        return createDbcpControllerService(
+                connectionId,
+                connectionName,
+                jdbcUrl,
+                MYSQL_DRIVER_CLASS,
+                MYSQL_DRIVER_LOCATION,
                 username,
                 password
         );
