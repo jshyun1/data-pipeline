@@ -5,11 +5,18 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 @Service
 public class AirflowDagCatalogSyncService {
+
+    private static final Logger log = LoggerFactory.getLogger(AirflowDagCatalogSyncService.class);
+    private static final Pattern FOLDER_TAG = Pattern.compile("^(?:folder|business|업무)[:=](.+)$", Pattern.CASE_INSENSITIVE);
 
     private static final String UPSERT_SQL = """
             INSERT INTO airflow_dag_catalog
@@ -38,6 +45,17 @@ public class AirflowDagCatalogSyncService {
     public AirflowDagCatalogSyncService(AirflowDagRunClient airflowClient, JdbcTemplate jdbcTemplate) {
         this.airflowClient = airflowClient;
         this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Scheduled(
+            fixedDelayString = "${airflow.catalog-sync.interval-millis:30000}",
+            initialDelayString = "${airflow.catalog-sync.initial-delay-millis:30000}")
+    public void scheduledSync() {
+        try {
+            synchronize();
+        } catch (RuntimeException ex) {
+            log.warn("Airflow DAG 카탈로그 동기화 실패(다음 주기에 재시도): {}", ex.getMessage());
+        }
     }
 
     public SyncResult synchronize() {
@@ -85,10 +103,10 @@ public class AirflowDagCatalogSyncService {
         String folder;
         if (dag.dagId().startsWith("nifi_pipeline_") && dag.dagId().endsWith("_control")) {
             group = "ETL";
-            folder = "NiFi";
+            folder = folder(dag, "ETL");
         } else if (dag.dagId().startsWith("kafka_pipeline_") && dag.dagId().endsWith("_control")) {
             group = "CDC";
-            folder = "Kafka";
+            folder = folder(dag, "Kafka");
         } else {
             return null;
         }
@@ -96,6 +114,18 @@ public class AirflowDagCatalogSyncService {
                 ? dag.dagId()
                 : dag.displayName();
         return new Candidate(dag.dagId(), group, folder, displayName, dag.description());
+    }
+
+    private static String folder(Dag dag, String fallback) {
+        if (dag.tags() != null) {
+            for (var tag : dag.tags()) {
+                var matcher = FOLDER_TAG.matcher(tag.name() == null ? "" : tag.name().trim());
+                if (matcher.matches() && !matcher.group(1).isBlank()) {
+                    return matcher.group(1).trim();
+                }
+            }
+        }
+        return fallback;
     }
 
     record Candidate(

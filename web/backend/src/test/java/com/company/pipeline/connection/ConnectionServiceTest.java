@@ -12,17 +12,9 @@ import com.company.pipeline.common.crypto.PasswordCryptoService;
 import com.company.pipeline.connection.dto.ConnectionCreateRequest;
 import com.company.pipeline.connection.dto.ConnectionResponse;
 import com.company.pipeline.connection.dto.ConnectionUpdateRequest;
-<<<<<<< HEAD
-import com.company.pipeline.nifi.NifiClient;
-import com.company.pipeline.nifi.dto.NifiControllerServiceEntity;
-import com.company.pipeline.pipeline.PipelineDefinition;
-import com.company.pipeline.pipeline.PipelineDefinitionRepository;
-import com.company.pipeline.pipeline.PipelineStatus;
-=======
 import com.company.pipeline.connection.dto.ConnectionUsageResponse;
 import com.company.pipeline.nifi.NifiClient;
 import com.company.pipeline.nifi.dto.NifiControllerServiceEntity;
->>>>>>> 694dbde (Add CDC connection safety checks)
 import java.lang.reflect.Field;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,29 +35,18 @@ class ConnectionServiceTest {
     private SchemaDiscoveryService schemaDiscoveryService;
 
     @Mock
-<<<<<<< HEAD
-    private PipelineDefinitionRepository pipelineDefinitionRepository;
-    @Mock
-    private NifiClient nifiClient;
-=======
     private NifiClient nifiClient;
 
     @Mock
     private ConnectionUsageService connectionUsageService;
->>>>>>> 694dbde (Add CDC connection safety checks)
 
     private ConnectionService connectionService;
 
     @BeforeEach
     void setUp() {
         connectionService = new ConnectionService(
-<<<<<<< HEAD
-                connectionRepository, passwordCryptoService, schemaDiscoveryService, pipelineDefinitionRepository,
-                nifiClient);
-=======
                 connectionRepository, passwordCryptoService, schemaDiscoveryService,
                 nifiClient, connectionUsageService);
->>>>>>> 694dbde (Add CDC connection safety checks)
     }
 
     @Test
@@ -77,20 +58,33 @@ class ConnectionServiceTest {
         when(connectionRepository.save(any(PipelineConnection.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(nifiClient.createOracleDbcpControllerService(any(), any(), any(), any(), any(), any(), any()))
-<<<<<<< HEAD
-                .thenReturn(new NifiControllerServiceEntity("svc-1", null,
-                        new NifiControllerServiceEntity.Component("svc-1", "oracle-source-poc-dbcp",
-                                "DBCPConnectionPool", "ENABLED")));
-=======
                 .thenReturn(new NifiControllerServiceEntity("service-id", null,
                         new NifiControllerServiceEntity.Component("service-id", "service-name", null, null)));
->>>>>>> 694dbde (Add CDC connection safety checks)
 
         ConnectionResponse response = connectionService.create(request);
 
         assertThat(response.name()).isEqualTo("oracle-source-poc");
         verify(passwordCryptoService).encrypt("plaintext-pw");
         verify(connectionRepository).save(any(PipelineConnection.class));
+    }
+
+    @Test
+    void create_mysqlConnection_createsMysqlDbcpControllerService() {
+        ConnectionCreateRequest request = new ConnectionCreateRequest(
+                "mysql-source-poc", DbType.MYSQL, "mysql-db", 3306,
+                "appdb", null, null, "dbzuser", "plaintext-pw");
+        when(passwordCryptoService.encrypt("plaintext-pw")).thenReturn("cipher-text");
+        when(connectionRepository.save(any(PipelineConnection.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(nifiClient.createMysqlDbcpControllerService(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new NifiControllerServiceEntity("mysql-service-id", null,
+                        new NifiControllerServiceEntity.Component("mysql-service-id", "mysql-service-name", null, null)));
+
+        ConnectionResponse response = connectionService.create(request);
+
+        assertThat(response.dbType()).isEqualTo(DbType.MYSQL);
+        verify(nifiClient).createMysqlDbcpControllerService(
+                null, "mysql-source-poc", "mysql-db", 3306, "appdb", "dbzuser", "plaintext-pw");
     }
 
     @Test

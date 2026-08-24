@@ -66,6 +66,18 @@ public class ConnectionService {
             );
             saved.setNifiControllerServiceId(service.component().id());
             saved.setNifiControllerServiceName(service.component().name());
+        } else if (request.dbType() == DbType.MYSQL) {
+            NifiControllerServiceEntity service = nifiClient.createMysqlDbcpControllerService(
+                    saved.getId(),
+                    saved.getName(),
+                    saved.getHost(),
+                    saved.getPort(),
+                    saved.getDatabaseName(),
+                    saved.getUsername(),
+                    request.password()
+            );
+            saved.setNifiControllerServiceId(service.component().id());
+            saved.setNifiControllerServiceName(service.component().name());
         } else if (request.dbType() == DbType.ORACLE) {
             NifiControllerServiceEntity service = nifiClient.createOracleDbcpControllerService(
                     saved.getId(),
@@ -86,6 +98,9 @@ public class ConnectionService {
     private void validateForNifiControllerService(ConnectionCreateRequest request) {
         if (request.dbType() == DbType.POSTGRESQL && !StringUtils.hasText(request.databaseName())) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "PostgreSQL 연결은 databaseName이 필요합니다.");
+        }
+        if (request.dbType() == DbType.MYSQL && !StringUtils.hasText(request.databaseName())) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "MySQL 연결은 databaseName이 필요합니다.");
         }
         if (request.dbType() == DbType.ORACLE && !StringUtils.hasText(request.serviceName())) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "Oracle 연결은 serviceName이 필요합니다.");

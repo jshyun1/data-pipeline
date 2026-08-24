@@ -1,5 +1,5 @@
 // web/backend의 com.company.pipeline.connection.dto.* 와 1:1로 맞춘 타입.
-export type DbType = "ORACLE" | "POSTGRESQL";
+export type DbType = "ORACLE" | "POSTGRESQL" | "MYSQL";
 export type ConnectionStatus = "UNKNOWN" | "TESTING" | "SUCCESS" | "FAILED";
 
 export interface ConnectionResponse {

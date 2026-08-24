@@ -370,9 +370,14 @@ export function ConnectionsPage() {
           </Form.Item>
           <Form.Item name="dbType" label="DB 유형" rules={[{ required: true }]}>
             <Select
+              onChange={(value: DbType) => {
+                if (editingId !== null) return;
+                form.setFieldValue("port", value === "ORACLE" ? 1521 : value === "MYSQL" ? 3306 : 5432);
+              }}
               options={[
                 { value: "ORACLE", label: "ORACLE" },
                 { value: "POSTGRESQL", label: "POSTGRESQL" },
+                { value: "MYSQL", label: "MYSQL" },
               ]}
             />
           </Form.Item>
@@ -388,7 +393,7 @@ export function ConnectionsPage() {
             </Form.Item>
           ) : (
             <Form.Item name="databaseName" label="Database 명" rules={[{ required: true }]}>
-              <Input placeholder="예: tarantula" />
+              <Input placeholder={dbType === "MYSQL" ? "예: appdb" : "예: tarantula"} />
             </Form.Item>
           )}
           <Form.Item

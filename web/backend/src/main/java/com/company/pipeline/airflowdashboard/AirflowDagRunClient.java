@@ -196,7 +196,15 @@ public class AirflowDagRunClient {
             @JsonProperty("dag_id") String dagId,
             @JsonProperty("dag_display_name") String displayName,
             String description,
-            @JsonProperty("is_stale") Boolean stale) {
+            @JsonProperty("is_stale") Boolean stale,
+            List<DagTag> tags) {
+
+        public Dag(String dagId, String displayName, String description, Boolean stale) {
+            this(dagId, displayName, description, stale, List.of());
+        }
+    }
+
+    public record DagTag(String name) {
     }
 
     record DagRunCollection(@JsonProperty("dag_runs") List<DagRun> dagRuns) {

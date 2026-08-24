@@ -1,6 +1,7 @@
 package com.company.pipeline.airflowdashboard;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.company.pipeline.airflowdashboard.AirflowDagRunClient.Dag;
+import com.company.pipeline.airflowdashboard.AirflowDagRunClient.DagTag;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,9 +31,11 @@ class AirflowDagCatalogSyncServiceTest {
     @Test
     void reconcilesNewAndRemovedBusinessDags() {
         when(airflowClient.getDags()).thenReturn(List.of(
-                new Dag("nifi_pipeline_abcd1234_control", "ETL 주문", "주문 적재", false),
+                new Dag("nifi_pipeline_abcd1234_control", "ETL 주문", "주문 적재", false,
+                        List.of(new DagTag("folder:ETL_TEST_1"))),
                 new Dag("nifi_pipeline_abcd1234_control", "중복", null, false),
-                new Dag("kafka_pipeline_7_control", "CDC 고객", "고객 CDC", false),
+                new Dag("kafka_pipeline_7_control", "CDC 고객", "고객 CDC", false,
+                        List.of(new DagTag("folder:CDC_TEST_1"))),
                 new Dag("test_hello", "테스트", null, false),
                 new Dag("nifi_pipeline_stale000_control", "오래된 DAG", null, true)));
         when(jdbcTemplate.queryForList(anyString(), eq(String.class)))
@@ -54,9 +58,18 @@ class AirflowDagCatalogSyncServiceTest {
         verify(jdbcTemplate, times(2)).batchUpdate(anyString(), argsCaptor.capture());
         assertThat(argsCaptor.getAllValues().get(0)).hasSize(2);
         assertThat(argsCaptor.getAllValues().get(0).get(0)).containsExactly(
-                "nifi_pipeline_abcd1234_control", "ETL", "NiFi", "ETL 주문", "주문 적재");
+                "nifi_pipeline_abcd1234_control", "ETL", "ETL_TEST_1", "ETL 주문", "주문 적재");
         assertThat(argsCaptor.getAllValues().get(0).get(1)).containsExactly(
-                "kafka_pipeline_7_control", "CDC", "Kafka", "CDC 고객", "고객 CDC");
+                "kafka_pipeline_7_control", "CDC", "CDC_TEST_1", "CDC 고객", "고객 CDC");
         assertThat(argsCaptor.getAllValues().get(1).get(0)).containsExactly("kafka_pipeline_9_control");
+    }
+
+    @Test
+    void scheduledSyncRetriesLaterWhenAirflowIsUnavailable() {
+        when(airflowClient.getDags()).thenThrow(new RuntimeException("Airflow unavailable"));
+
+        var service = new AirflowDagCatalogSyncService(airflowClient, jdbcTemplate);
+
+        assertThatCode(service::scheduledSync).doesNotThrowAnyException();
     }
 }

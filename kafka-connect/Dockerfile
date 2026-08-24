@@ -4,6 +4,7 @@ FROM confluentinc/cp-kafka-connect:${CONNECT_IMAGE_TAG}
 ARG DEBEZIUM_VERSION=3.6.0
 ARG OJDBC_VERSION=23.26.2.0.0
 ARG POSTGRES_JDBC_VERSION=42.7.4
+ARG MYSQL_JDBC_VERSION=8.4.0
 
 USER root
 
@@ -51,6 +52,10 @@ RUN curl -fsSL -o /usr/share/confluent-hub-components/debezium-debezium-connecto
 RUN curl -fsSL -o /usr/share/confluent-hub-components/debezium-debezium-connector-jdbc/ojdbc11-${OJDBC_VERSION}.jar \
     "https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc11/${OJDBC_VERSION}/ojdbc11-${OJDBC_VERSION}.jar"
 
+# MySQL을 타겟(싱크)으로 쓰는 파이프라인용 MySQL JDBC 드라이버 추가.
+RUN curl -fsSL -o /usr/share/confluent-hub-components/debezium-debezium-connector-jdbc/mysql-connector-j-${MYSQL_JDBC_VERSION}.jar \
+    "https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/${MYSQL_JDBC_VERSION}/mysql-connector-j-${MYSQL_JDBC_VERSION}.jar"
+
 # Debezium PostgreSQL(pgoutput) 소스 커넥터 설치 - Postgres를 CDC 소스로 쓰는 파이프라인용.
 # Confluent Hub 미등록이라 Oracle/JDBC Sink와 동일하게 Maven Central plugin tar.gz를 직접 받는다.
 # 별도 DB측 플러그인 설치 없이 Postgres 내장 pgoutput 로지컬 디코딩 플러그인을 사용한다
@@ -61,3 +66,12 @@ RUN mkdir -p /usr/share/confluent-hub-components/debezium-debezium-connector-pos
     tar -xzf /tmp/debezium-connector-postgres.tar.gz --strip-components=1 \
       -C /usr/share/confluent-hub-components/debezium-debezium-connector-postgres && \
     rm /tmp/debezium-connector-postgres.tar.gz
+
+# Debezium MySQL(binlog) 소스 커넥터 설치 - MySQL을 CDC 소스로 쓰는 파이프라인용.
+# 소스 DB는 binlog_format=ROW, binlog_row_image=FULL, 고유 server_id, 복제 권한이 필요하다.
+RUN mkdir -p /usr/share/confluent-hub-components/debezium-debezium-connector-mysql && \
+    curl -fsSL -o /tmp/debezium-connector-mysql.tar.gz \
+      "https://repo1.maven.org/maven2/io/debezium/debezium-connector-mysql/${DEBEZIUM_VERSION}.Final/debezium-connector-mysql-${DEBEZIUM_VERSION}.Final-plugin.tar.gz" && \
+    tar -xzf /tmp/debezium-connector-mysql.tar.gz --strip-components=1 \
+      -C /usr/share/confluent-hub-components/debezium-debezium-connector-mysql && \
+    rm /tmp/debezium-connector-mysql.tar.gz
