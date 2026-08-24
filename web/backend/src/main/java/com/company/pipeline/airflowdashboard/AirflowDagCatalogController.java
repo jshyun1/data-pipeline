@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,16 +26,19 @@ public class AirflowDagCatalogController {
     private final AirflowDagMonitoringService monitoringService;
     private final AirflowDagCatalogSyncService syncService;
     private final AirflowDagCatalogDeletionService deletionService;
+    private final AirflowDagRunClient dagRunClient;
 
     public AirflowDagCatalogController(
             AirflowDagCatalogRepository repository,
             AirflowDagMonitoringService monitoringService,
             AirflowDagCatalogSyncService syncService,
-            AirflowDagCatalogDeletionService deletionService) {
+            AirflowDagCatalogDeletionService deletionService,
+            AirflowDagRunClient dagRunClient) {
         this.repository = repository;
         this.monitoringService = monitoringService;
         this.syncService = syncService;
         this.deletionService = deletionService;
+        this.dagRunClient = dagRunClient;
     }
 
     @GetMapping
@@ -62,6 +66,41 @@ public class AirflowDagCatalogController {
     public ApiResponse<Void> delete(@PathVariable String dagId) {
         deletionService.delete(dagId);
         return ApiResponse.success(null);
+    }
+
+    /**
+     * DAG 수동 실행. 브라우저가 Airflow 에 직접 쏘던 것을 pipeline-api 경유로 바꿔서, "누가 어떤 DAG 를
+     * 실행했는지"가 감사 로그(AIRFLOW_CREATE + 대상 URI + 수행자)에 자동으로 남게 한다.
+     */
+    @PostMapping("/{dagId}/run")
+    public ApiResponse<AirflowDagRunClient.DagRun> run(
+            @PathVariable String dagId,
+            @RequestBody(required = false) java.util.Map<String, Object> conf) {
+        return ApiResponse.success(dagRunClient.triggerDag(dagId, conf));
+    }
+
+    /**
+     * DAG 스케줄 저장(NiFi 생성 DAG 한정). schedule Variable 을 설정/삭제하고 auto_stop 을 켠다.
+     * pipeline-api 경유라 "누가 스케줄을 바꿨는지"가 감사 로그(AIRFLOW_UPDATE)에 남는다.
+     */
+    @PutMapping("/{dagId}/schedule")
+    public ApiResponse<Void> saveSchedule(@PathVariable String dagId, @RequestBody ScheduleRequest request) {
+        if (!dagId.matches("(?i)nifi_pipeline_[a-z0-9]{8}_control")) {
+            throw new com.company.pipeline.common.BusinessException(
+                    com.company.pipeline.common.ErrorCode.VALIDATION_ERROR,
+                    "NiFi에서 생성된 DAG만 스케줄을 변경할 수 있습니다.");
+        }
+        String scheduleKey = dagId + "__schedule";
+        if (request != null && request.cron() != null && !request.cron().isBlank()) {
+            dagRunClient.upsertVariable(scheduleKey, request.cron().trim());
+        } else {
+            dagRunClient.deleteVariable(scheduleKey);
+        }
+        dagRunClient.upsertVariable(dagId + "__auto_stop_after_run", "true");
+        return ApiResponse.success(null);
+    }
+
+    public record ScheduleRequest(String cron) {
     }
 
     @GetMapping("/{dagId}/monitoring")

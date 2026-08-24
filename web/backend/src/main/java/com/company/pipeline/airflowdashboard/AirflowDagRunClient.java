@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
@@ -121,6 +122,55 @@ public class AirflowDagRunClient {
             int total = response == null || response.totalEntries() == null ? dags.size() : response.totalEntries();
             if (page.size() < limit || dags.size() >= total) {
                 return List.copyOf(dags);
+            }
+        }
+    }
+
+    /** DAG 를 즉시 실행(수동 트리거)한다. 감사·인가는 이 호출을 감싸는 pipeline-api 엔드포인트가 담당한다. */
+    public DagRun triggerDag(String dagId, Map<String, Object> conf) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("logical_date", null);
+        body.put("conf", conf == null ? Map.of() : conf);
+        return withAuth(token -> restClient.post()
+                .uri("/dags/{dagId}/dagRuns", dagId)
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(DagRun.class));
+    }
+
+    /** Airflow Variable upsert(없으면 POST, 있으면 409 → PATCH). 스케줄 저장에 쓴다. */
+    public void upsertVariable(String key, String value) {
+        try {
+            withAuth(token -> restClient.post()
+                    .uri("/variables")
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("key", key, "value", value))
+                    .retrieve().toBodilessEntity());
+        } catch (RestClientResponseException ex) {
+            if (ex.getStatusCode().value() != 409) {
+                throw ex;
+            }
+            withAuth(token -> restClient.patch()
+                    .uri("/variables/{key}", key)
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("key", key, "value", value))
+                    .retrieve().toBodilessEntity());
+        }
+    }
+
+    public void deleteVariable(String key) {
+        try {
+            withAuth(token -> restClient.delete()
+                    .uri("/variables/{key}", key)
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve().toBodilessEntity());
+        } catch (RestClientResponseException ex) {
+            if (ex.getStatusCode().value() != 404) {
+                throw ex;
             }
         }
     }

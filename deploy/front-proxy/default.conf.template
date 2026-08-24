@@ -1,0 +1,82 @@
+# ---------------------------------------------------------------------
+# front-proxy: 공개 포트를 받는 최전방 리버스 프록시.
+#
+# 왜 있나 - docker의 포트 매핑(docker-proxy)을 거치면 컨테이너 안에서는 원 클라이언트
+# 주소가 브리지 게이트웨이(172.x.0.1)로 SNAT 되어 보인다. 그래서 감사 로그
+# (permission_audit_log.client_ip)에 작업 PC IP 대신 172.x.0.1 이 남았다.
+# 이 컨테이너만 network_mode: host 로 띄워 호스트 네트워크 스택에서 직접 받으면
+# $remote_addr 에 실제 클라이언트 IP 가 들어오고, 그 값을 X-Forwarded-For 로
+# 내려보내 백엔드가 그대로 기록한다(PermissionAuditService.currentRequestIp).
+#
+# 대안이었던 "docker daemon 의 userland-proxy=false" 는 호스트 전역 설정이라 같은
+# 호스트의 다른 솔루션 컨테이너까지 영향을 받고 docker 재시작이 필요해서 채택하지 않았다.
+# cerebroetl-ui 자체를 host 네트워크로 올리는 방안은 nginx.conf 가 docker 내장 DNS
+# (resolver 127.0.0.11)와 서비스명 upstream 에 의존하고 kafka-connect 는 호스트 포트가
+# 아예 없어서 성립하지 않는다.
+#
+# 이미지는 cerebroetl-ui 와 같은 것(data-pipeline-cerebroetl-ui)을 재사용한다 -
+# 폐쇄망 반입 이미지 목록(offline/image-manifest.json)이 그대로다.
+#
+# ${...} 는 nginx:alpine 기본 엔트리포인트의 envsubst 가 기동 시 치환한다(환경변수만
+# 치환하므로 $host / $remote_addr 같은 nginx 변수는 건드리지 않는다).
+# ---------------------------------------------------------------------
+
+# NiFi 캔버스가 쓰는 websocket 업그레이드를 그대로 통과시키기 위한 매핑.
+map $http_upgrade $fp_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen ${FRONT_PROXY_UI_PORT};
+    server_name _;
+
+    # NiFi 템플릿/플로우 업로드 등 큰 본문이 기본 1m 제한에 걸리지 않게 넉넉히 둔다.
+    client_max_body_size 1024m;
+
+    # front-proxy 자체 생존 확인용(뒤쪽 UI 가 죽어도 200). SPA 라우트와 겹치지 않는 이름.
+    location = /__fp_health {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:${UI_INTERNAL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $fp_connection_upgrade;
+
+        # Host 를 원본 그대로 넘겨야 뒤쪽 nginx 의 "return 308 http://$http_host/nifi/"
+        # 같은 절대 리다이렉트가 공개 주소로 만들어진다.
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        # 여기가 진짜 경계선이라 클라이언트가 보낸 XFF 는 이어붙이지 않고 덮어쓴다
+        # (append 하면 위조한 헤더가 체인 맨 앞에 남아 감사 IP 를 속일 수 있다).
+        proxy_set_header X-Forwarded-For $remote_addr;
+
+        proxy_connect_timeout 120s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+}
+
+server {
+    listen ${FRONT_PROXY_API_PORT};
+    server_name _;
+    client_max_body_size 64m;
+
+    # pipeline-api 직접 호출 경로(MSA 포털/스크립트/curl). UI 를 안 거치므로 여기서도
+    # 같은 처리를 해줘야 그 경로의 작업도 감사 로그에 실제 IP 가 남는다.
+    location / {
+        proxy_pass http://127.0.0.1:${API_INTERNAL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_connect_timeout 120s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+}

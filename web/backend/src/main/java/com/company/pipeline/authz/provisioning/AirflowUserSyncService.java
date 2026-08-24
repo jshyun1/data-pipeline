@@ -41,6 +41,8 @@ public class AirflowUserSyncService {
 
     private static final Logger log = LoggerFactory.getLogger(AirflowUserSyncService.class);
     private static final long SESSION_TTL_MS = 20 * 60 * 1000L;
+    // 로그인 실패 시 잠깐 음성 캐시 - Airflow FAB 로그인은 5회/40초 제한이라 실패를 난사하면 429 스톰이 된다.
+    private static final long NEG_TTL_MS = 15 * 1000L;
 
     private final RestClient restClient;
     private final PermissionService permissionService;
@@ -50,6 +52,8 @@ public class AirflowUserSyncService {
     private final String passwordSecret;
 
     private final Map<String, Cached> sessionCache = new ConcurrentHashMap<>();
+    // 사용자별 single-flight 락: 같은 사용자의 동시 요청이 폼로그인을 딱 한 번만 하도록.
+    private final Map<String, Object> sessionLocks = new ConcurrentHashMap<>();
 
     private record Cached(String token, long expiresAt) {
     }
@@ -159,26 +163,44 @@ public class AirflowUserSyncService {
 
     // ----- 콘솔 대행용 사용자별 _token 세션 --------------------------------
 
-    /** nginx auth_request 가 쓸 사용자별 Airflow 세션토큰(_token 쿠키값). 실패 시 null. 20분 캐시. */
+    /** nginx auth_request 가 쓸 사용자별 Airflow 세션토큰(_token 쿠키값). 실패 시 null. 성공 20분 캐시. */
     public String userSessionToken(String userId) {
         if (!enabled || userId == null) {
             return null;
         }
-        long now = System.currentTimeMillis();
-        Cached c = sessionCache.get(userId);
-        if (c != null && c.expiresAt() > now) {
-            return c.token();
+        Cached cached = sessionCache.get(userId);
+        if (cached != null && cached.expiresAt() > System.currentTimeMillis()) {
+            return cached.token();
         }
-        try {
-            String token = loginAndExtractToken(userId, derivePassword(userId));
-            if (token != null) {
-                sessionCache.put(userId, new Cached(token, now + SESSION_TTL_MS));
+        // 콘솔 iframe/대시보드는 /airflow/* 요청을 한꺼번에 수십 개 보낸다. single-flight 없이 각자
+        // 폼로그인하면 Airflow FAB 5회/40초 제한에 걸려 영구 429 스톰이 된다. 같은 사용자는 한 번만.
+        Object lock = sessionLocks.computeIfAbsent(userId, k -> new Object());
+        synchronized (lock) {
+            try {
+                long now = System.currentTimeMillis();
+                cached = sessionCache.get(userId);
+                if (cached != null && cached.expiresAt() > now) {
+                    return cached.token();   // 대기 중 다른 스레드가 이미 발급/음성캐시함
+                }
+                String token = loginAndExtractToken(userId, passwordFor(userId));
+                sessionCache.put(userId, new Cached(token, now + (token != null ? SESSION_TTL_MS : NEG_TTL_MS)));
+                return token;
+            } catch (RuntimeException ex) {
+                log.warn("Airflow 사용자 세션 발급 실패 - {}: {}", userId, ex.getMessage());
+                sessionCache.put(userId, new Cached(null, System.currentTimeMillis() + NEG_TTL_MS));
+                return null;
+            } finally {
+                sessionLocks.remove(userId, lock);
             }
-            return token;
-        } catch (RuntimeException ex) {
-            log.warn("Airflow 사용자 세션 발급 실패 - {}: {}", userId, ex.getMessage());
-            return null;
         }
+    }
+
+    /**
+     * 콘솔 대행 로그인에 쓸 비밀번호. admin(외부에서 관리되는 AIRFLOW_ADMIN_PASSWORD)만 실제 관리자
+     * 비번을 쓰고, 나머지 사용자는 {@link #syncUser}가 생성할 때 넣은 파생 비번을 쓴다.
+     */
+    private String passwordFor(String userId) {
+        return userId.equals(adminUsername) ? adminPassword : derivePassword(userId);
     }
 
     /** CSRF 확보 → 폼 로그인 → Set-Cookie 의 _token 값을 뽑는다(refresh-credentials.sh 와 동일 방식). */

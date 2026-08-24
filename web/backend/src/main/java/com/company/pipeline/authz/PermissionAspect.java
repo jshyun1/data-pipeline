@@ -39,6 +39,16 @@ public class PermissionAspect {
 
     private static final Logger log = LoggerFactory.getLogger(PermissionAspect.class);
 
+    // URL 끝 세그먼트가 이 동작 동사면 액션명에 그대로 쓴다(세분화). 예: .../{id}/deploy → KAFKA_DEPLOY.
+    private static final java.util.Set<String> ACTION_SEGMENTS = java.util.Set.of(
+            "deploy", "start", "stop", "pause", "restart", "resume", "run", "trigger",
+            "schedule", "sync", "approve", "reject", "unlock", "enable", "disable",
+            "retry", "replay", "cancel", "rollback", "dismiss-drift", "sync-identities");
+
+    // 고빈도·무의미 엔드포인트(편집잠금 heartbeat, 수동 스냅샷 등)는 감사 소음이라 제외한다.
+    private static final java.util.Set<String> SKIP_SEGMENTS = java.util.Set.of(
+            "heartbeat", "snapshot");
+
     private final PermissionService permissionService;
     private final PermissionAuditService auditService;
 
@@ -135,15 +145,41 @@ public class PermissionAspect {
         if (StringUtils.hasText(serviceToken) && serviceToken.equals(request.getHeader("X-Service-Token"))) {
             return;
         }
+        String lastSegment = lastSegment(request.getRequestURI());
+        if (SKIP_SEGMENTS.contains(lastSegment)) {
+            return;   // heartbeat 등 고빈도·무의미 엔드포인트는 감사 소음이라 제외
+        }
         AppUser principal = currentPrincipal();
         String actor = principal == null ? "unknown" : principal.getUserId();
-        String action = require.system().name() + "_" + verb;   // 예: NIFI_CREATE, KAFKA_DELETE, AIRFLOW_UPDATE
+        // 세분화 액션명: URL 끝이 동작 동사면 그걸 액션으로(KAFKA_DEPLOY·AIRFLOW_RUN·AIRFLOW_SCHEDULE …),
+        // 아니면 HTTP 동사 기반(KAFKA_CREATE·NIFI_DELETE …).
+        String suffix = ACTION_SEGMENTS.contains(lastSegment)
+                ? lastSegment.toUpperCase().replace('-', '_')
+                : verb;
+        String action = require.system().name() + "_" + suffix;
         try {
             auditService.record(actor, action, "API", request.getRequestURI(),
                     null, null, joinPoint.getSignature().toShortString(), clientIp(request));
         } catch (RuntimeException ex) {
             log.debug("자동 감사 기록 실패: {}", ex.getMessage());
         }
+    }
+
+    /** URI 의 마지막 경로 세그먼트(소문자). 쿼리스트링은 무시. */
+    private String lastSegment(String uri) {
+        if (uri == null || uri.isBlank()) {
+            return "";
+        }
+        String path = uri;
+        int q = path.indexOf('?');
+        if (q >= 0) {
+            path = path.substring(0, q);
+        }
+        while (path.endsWith("/") && path.length() > 1) {
+            path = path.substring(0, path.length() - 1);
+        }
+        int slash = path.lastIndexOf('/');
+        return (slash >= 0 ? path.substring(slash + 1) : path).toLowerCase();
     }
 
     /** 변경 동사(감사 액션 접미사). 조회면 null. */

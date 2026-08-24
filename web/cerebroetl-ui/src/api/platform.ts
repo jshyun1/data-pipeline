@@ -417,15 +417,15 @@ export async function listAllAirflowDagRuns(
   return runs;
 }
 
+// DAG 수동 실행. Airflow에 직접 쏘지 않고 pipeline-api를 경유해 "누가 실행했는지"가 감사 로그에 남게 한다.
 export async function triggerAirflowDag(
   dagId: string,
   conf: Record<string, unknown> = {},
-): Promise<AirflowDagRun> {
-  const res = await axios.post<AirflowDagRun>(
-    `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/dagRuns`,
-    { logical_date: null, conf },
+): Promise<void> {
+  await apiClient.post<ApiResponse<unknown>>(
+    `/airflow/dag-catalog/${encodeURIComponent(dagId)}/run`,
+    conf,
   );
-  return res.data;
 }
 
 export async function listAirflowTaskInstances(dagId: string, dagRunId: string): Promise<AirflowTaskInstance[]> {
@@ -594,43 +594,18 @@ export async function releaseNifiProcessorEditLock(
   unwrap<void>(res.data);
 }
 
-async function saveAirflowVariable(key: string, value: string): Promise<void> {
-  try {
-    await axios.post(`${AIRFLOW_API_BASE}/variables`, { key, value });
-  } catch (error) {
-    // 신규 그룹의 Variable은 POST로 만들되, 네트워크 오류 뒤 재시도처럼 이미 만들어진
-    // 경우에는 같은 값을 PATCH해서 저장 작업을 멱등하게 만든다.
-    if (axios.isAxiosError(error) && error.response?.status === 409) {
-      await axios.patch(`${AIRFLOW_API_BASE}/variables/${encodeURIComponent(key)}`, { key, value });
-      return;
-    }
-    throw error;
-  }
-}
-
-async function deleteAirflowVariable(key: string): Promise<void> {
-  try {
-    await axios.delete(`${AIRFLOW_API_BASE}/variables/${encodeURIComponent(key)}`);
-  } catch (error) {
-    if (axios.isAxiosError(error) && error.response?.status === 404) {
-      return;
-    }
-    throw error;
-  }
-}
-
-/** NiFi 동적 DAG의 실행 주기를 저장한다. 빈 값은 수동 실행 전용으로 되돌린다. */
+/**
+ * NiFi 동적 DAG의 실행 주기를 저장한다. 빈 값은 수동 실행 전용으로 되돌린다.
+ * Airflow Variable에 직접 쏘지 않고 pipeline-api를 경유해 "누가 스케줄을 바꿨는지"가 감사 로그에 남게 한다.
+ */
 export async function saveAirflowDagSchedule(dagId: string, cron?: string): Promise<void> {
   if (!/^nifi_pipeline_[a-z0-9]{8}_control$/i.test(dagId)) {
     throw new Error("NiFi에서 생성된 DAG만 화면에서 스케줄을 변경할 수 있습니다.");
   }
-  const scheduleKey = `${dagId}__schedule`;
-  if (cron?.trim()) {
-    await saveAirflowVariable(scheduleKey, cron.trim());
-  } else {
-    await deleteAirflowVariable(scheduleKey);
-  }
-  await saveAirflowVariable(`${dagId}__auto_stop_after_run`, "true");
+  await apiClient.put<ApiResponse<void>>(
+    `/airflow/dag-catalog/${encodeURIComponent(dagId)}/schedule`,
+    { cron: cron?.trim() ?? null },
+  );
 }
 
 /** NiFi 동적 DAG가 읽는 스케줄과 배치 실행 후 자동 정지 설정을 함께 저장한다. */

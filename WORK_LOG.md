@@ -1085,3 +1085,38 @@ PDF 5-1~5-7 요구사항과 병합본(내 작업 + 다른 PC pull) 대조 → �
 - 검증: JOB_FAILURE 스코프=EXCLUDE test(job1) → test 실패는 알림 없음, DW 실패는 알림 발생.
   CDC(파이프라인)는 동일 코드 경로 + 대상 API 동작 확인(로컬에 pipeline_definition 데이터가 없어
   실발화 테스트는 생략, JOB 스코프와 대칭).
+
+## 28. 감사 로그 실제 클라이언트 IP 기록 (front-proxy)
+사용자 요청. 감사 로그 `client_ip`에 작업 PC IP 대신 `172.18.0.1`(브리지 게이트웨이)이 남는 문제.
+원인은 앱이 아니라 docker 포트 매핑(docker-proxy)의 SNAT — 컨테이너가 보는 `$remote_addr`
+자체가 이미 게이트웨이라 헤더로 복원 불가.
+
+**선택** — front-proxy 컨테이너(`network_mode: host`)를 공개 포트 앞단에 둔다.
+- 버린 안①: docker daemon `userland-proxy: false` → 호스트 전역 설정이라 같은 호스트의 다른
+  솔루션 컨테이너까지 영향 + docker 재시작(전 컨테이너 재시작) 필요.
+- 버린 안②: cerebroetl-ui 자체를 host 네트워크로 → nginx.conf가 도커 내장 DNS
+  (`resolver 127.0.0.11`)와 서비스명 upstream에 의존, kafka-connect는 호스트 포트가 없음,
+  NiFi mTLS의 Host/SNI 전제도 깨짐 → 성립 불가.
+
+**구현**
+- `deploy/front-proxy/default.conf.template` 신설. 공개 UI 포트(13001)와 pipeline-api 직접
+  포트(18086) 두 개를 받아 각각 루프백의 13101/18186으로 넘긴다. 경계선이므로
+  `X-Forwarded-For $remote_addr`로 **덮어쓴다**(append하면 위조 헤더가 체인 맨 앞에 남음).
+  websocket 업그레이드·`client_max_body_size 1024m`(NiFi 업로드)·`Host $http_host` 보존
+  (뒤쪽 `return 308 http://$http_host/nifi/`가 공개 주소로 나오게).
+- 이미지는 `data-pipeline-cerebroetl-ui` **재사용** + 엔트리포인트만 nginx:alpine 원래 것으로
+  되돌림(envsubst가 템플릿 치환) → `offline/image-manifest.json` 반입 목록 불변.
+- UI/API 컨테이너는 `127.0.0.1`에만 바인딩 → 공개 포트 우회로 XFF 위조하는 경로 차단.
+- 켜고 끄기는 `docker-compose.realip.yml` 오버라이드 한 장으로 끝난다. 서버 `.env`에
+  `COMPOSE_FILE=docker-compose.yml:docker-compose.realip.yml` 한 줄만 넣고 평소처럼
+  `docker compose up -d`. 그 파일이 front-proxy 추가 + UI/API 포트를 루프백으로 비키는
+  것(`ports: !override`)을 한꺼번에 한다. 기본(한 줄 없음)은 기존과 완전히 동일.
+  공개 포트 번호(13001/18086)는 그대로라 문서·MSA 포털 설정 변경 불필요.
+  Docker Desktop(WSL)은 host 네트워크 포트를 호스트로 노출하지 않으므로 리눅스 서버 전용.
+
+**검증** — ✅ 브리지 컨테이너(172.18.0.13)에서 호출:
+front-proxy 액세스로그 `172.18.0.13`(수정 전 `172.18.0.1`), cerebroetl-ui가 받은 XFF
+`172.18.0.13`, `permission_audit_log.client_ip=172.18.0.13` (UI 경유 :13001·API 직접 :18086
+양쪽 모두). 오버라이드로 단순화한 뒤 재검증(`__iptest2_*`), 오버라이드 해제 후 로컬 기본
+동작(13001/18086, NiFi·Airflow 프록시) 회귀 없음 확인.
+문서: `docs/audit-client-ip-front-proxy.md`.

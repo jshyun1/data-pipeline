@@ -35,6 +35,7 @@ public class PipelineService {
     private final FilebeatInputFileService filebeatInputFileService;
     private final PostgresReplicationCleanupService postgresReplicationCleanupService;
     private final KafkaTopicCleanupService kafkaTopicCleanupService;
+    private final PipelineMetadataArchiveRepository metadataArchiveRepository;
 
     public PipelineService(PipelineDefinitionRepository pipelineDefinitionRepository,
             PipelineConnectorRepository pipelineConnectorRepository,
@@ -43,7 +44,8 @@ public class PipelineService {
             LogPipelineSourceRepository logPipelineSourceRepository,
             FilebeatInputFileService filebeatInputFileService,
             PostgresReplicationCleanupService postgresReplicationCleanupService,
-            KafkaTopicCleanupService kafkaTopicCleanupService) {
+            KafkaTopicCleanupService kafkaTopicCleanupService,
+            PipelineMetadataArchiveRepository metadataArchiveRepository) {
         this.pipelineDefinitionRepository = pipelineDefinitionRepository;
         this.pipelineConnectorRepository = pipelineConnectorRepository;
         this.connectionRepository = connectionRepository;
@@ -52,6 +54,7 @@ public class PipelineService {
         this.filebeatInputFileService = filebeatInputFileService;
         this.postgresReplicationCleanupService = postgresReplicationCleanupService;
         this.kafkaTopicCleanupService = kafkaTopicCleanupService;
+        this.metadataArchiveRepository = metadataArchiveRepository;
     }
 
     @Transactional
@@ -219,7 +222,23 @@ public class PipelineService {
             filebeatInputFileService.delete(id);
             logPipelineSourceRepository.findByPipelineId(id).ifPresent(logPipelineSourceRepository::delete);
         }
+        // 삭제 후에도 CDC 처리로그가 스냅샷 보존정리(30일) 전까지 이름·경로를 표시할 수 있도록 메타 보존.
+        metadataArchiveRepository.save(new PipelineMetadataArchive(
+                entity.getId(), entity.getName(), entity.getPipelineType(),
+                sourcePathOf(entity), targetPathOf(entity)));
         pipelineDefinitionRepository.delete(entity);
+    }
+
+    // CdcLogService 의 표시 형식과 동일하게 소스/타겟 경로를 만든다(삭제 후 표시용).
+    private String sourcePathOf(PipelineDefinition p) {
+        if ("LOG_FILE".equalsIgnoreCase(p.getPipelineType())) {
+            return "Filebeat";
+        }
+        return p.getSourceDbType() + " · " + p.getSourceSchema() + "." + p.getSourceTable();
+    }
+
+    private String targetPathOf(PipelineDefinition p) {
+        return p.getTargetDbType() + " · " + p.getTargetSchema() + "." + p.getTargetTable();
     }
 
     private PipelineDefinition findOrThrow(Long id) {

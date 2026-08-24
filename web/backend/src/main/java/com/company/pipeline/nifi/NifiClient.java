@@ -366,6 +366,62 @@ public class NifiClient {
         }
     }
 
+    /** 서비스(대행) 계정 사용자명. 캔버스 감사에서 "자동 오버레이 쓰기"를 걸러내는 데 쓴다. */
+    public String getServiceUsername() {
+        return properties.username();
+    }
+
+    /** NiFi Flow Configuration History 중 action id 가 {@code afterActionId} 초과인 것을 id 오름차순으로. */
+    public java.util.List<FlowAction> getFlowHistory(int afterActionId) {
+        String token = getToken();
+        try {
+            HistoryResponse resp = restClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/nifi-api/flow/history")
+                            .queryParam("offset", 0)
+                            .queryParam("count", 200)
+                            .queryParam("sortColumn", "timestamp")
+                            .queryParam("sortOrder", "desc")
+                            .build())
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .body(HistoryResponse.class);
+            if (resp == null || resp.history() == null || resp.history().actions() == null) {
+                return java.util.List.of();
+            }
+            return resp.history().actions().stream()
+                    .map(HistoryActionEntry::action)
+                    .filter(a -> a != null && a.id() > afterActionId)
+                    .map(a -> new FlowAction(a.id(), a.userIdentity(), a.timestamp(),
+                            a.sourceName(), a.sourceType(), a.operation()))
+                    .sorted(java.util.Comparator.comparingInt(FlowAction::id))
+                    .toList();
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 이력 조회 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    public record FlowAction(int id, String userIdentity, String timestamp,
+                             String sourceName, String sourceType, String operation) {
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private record HistoryResponse(History history) {
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private record History(java.util.List<HistoryActionEntry> actions) {
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private record HistoryActionEntry(HistoryAction action) {
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private record HistoryAction(int id, String userIdentity, String timestamp,
+                                 String sourceName, String sourceType, String operation) {
+    }
+
     /**
      * 잡 카탈로그 동기화용 - 그룹 한 단계의 "구성"(하위 그룹/프로세서/연결선).
      *

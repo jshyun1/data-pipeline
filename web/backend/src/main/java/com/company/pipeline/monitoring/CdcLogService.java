@@ -7,8 +7,11 @@ import com.company.pipeline.monitoring.dto.CdcProcessingLogResponse;
 import com.company.pipeline.pipeline.PipelineCommandHistoryRepository;
 import com.company.pipeline.pipeline.PipelineDefinition;
 import com.company.pipeline.pipeline.PipelineDefinitionRepository;
+import com.company.pipeline.pipeline.PipelineMetadataArchive;
+import com.company.pipeline.pipeline.PipelineMetadataArchiveRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -34,26 +37,30 @@ public class CdcLogService {
     private final PipelineDefinitionRepository pipelineRepository;
     private final PipelineMetricSnapshotRepository snapshotRepository;
     private final PipelineCommandHistoryRepository commandHistoryRepository;
+    private final PipelineMetadataArchiveRepository metadataArchiveRepository;
 
     public CdcLogService(
             PipelineDefinitionRepository pipelineRepository,
             PipelineMetricSnapshotRepository snapshotRepository,
-            PipelineCommandHistoryRepository commandHistoryRepository) {
+            PipelineCommandHistoryRepository commandHistoryRepository,
+            PipelineMetadataArchiveRepository metadataArchiveRepository) {
         this.pipelineRepository = pipelineRepository;
         this.snapshotRepository = snapshotRepository;
         this.commandHistoryRepository = commandHistoryRepository;
+        this.metadataArchiveRepository = metadataArchiveRepository;
+    }
+
+    /** 화면 렌더에 필요한 파이프라인 표시값(현존/삭제 공통). 삭제분은 아카이브에서 온다. */
+    private record PipelineLogMeta(long id, String name, boolean logFile, String sourcePath, String targetPath) {
     }
 
     public List<CdcProcessingLogResponse> processingLogs(LocalDate from, LocalDate to) {
         DateRange range = validateRange(from, to);
-        List<PipelineDefinition> pipelines = monitoredPipelines();
-        if (pipelines.isEmpty()) {
+        Map<Long, PipelineLogMeta> metaById = logMetaByPipelineId();
+        if (metaById.isEmpty()) {
             return List.of();
         }
-
-        Map<Long, PipelineDefinition> pipelineById = new HashMap<>();
-        pipelines.forEach(pipeline -> pipelineById.put(pipeline.getId(), pipeline));
-        List<Long> pipelineIds = pipelines.stream().map(PipelineDefinition::getId).toList();
+        List<Long> pipelineIds = new ArrayList<>(metaById.keySet());
         List<PipelineMetricSnapshot> snapshots =
                 snapshotRepository.findByPipelineIdInAndCollectedAtBetweenOrderByCollectedAtAsc(
                         pipelineIds, range.from(), range.to());
@@ -70,12 +77,15 @@ public class CdcLogService {
         for (Map.Entry<Long, LinkedHashMap<LocalDateTime, PipelineMetricSnapshot>> pipelineEntry
                 : minuteBuckets.entrySet()) {
             Long pipelineId = pipelineEntry.getKey();
-            PipelineDefinition pipeline = pipelineById.get(pipelineId);
+            PipelineLogMeta meta = metaById.get(pipelineId);
+            if (meta == null) {
+                continue;   // 메타 없는 고아 스냅샷(보존창 밖 삭제분)은 건너뛴다
+            }
             PipelineMetricSnapshot baseline = snapshotRepository
                     .findTopByPipelineIdAndCollectedAtBeforeOrderByCollectedAtDesc(pipelineId, range.from())
                     .orElse(null);
             Long previousCommitted = baseline != null ? baseline.getCommittedOffset() : null;
-            String previousSourceState = baseline != null ? sourceState(pipeline, baseline) : null;
+            String previousSourceState = baseline != null ? sourceState(meta.logFile(), baseline) : null;
             String previousSinkState = baseline != null ? sinkState(baseline) : null;
             LocalDate cumulativeDate = null;
             long dailyProcessedCount = 0L;
@@ -95,7 +105,7 @@ public class CdcLogService {
                         ? 0L : Math.max(0L, committed - previousCommitted);
                 dailyProcessedCount += processed;
                 long lag = valueOrZero(snapshot.getConsumerLag());
-                String sourceState = sourceState(pipeline, snapshot);
+                String sourceState = sourceState(meta.logFile(), snapshot);
                 String sinkState = sinkState(snapshot);
                 boolean stateChanged = !Objects.equals(previousSourceState, sourceState)
                         || !Objects.equals(previousSinkState, sinkState);
@@ -105,7 +115,7 @@ public class CdcLogService {
                 // 변화 없는 정상 heartbeat를 전부 노출하면 로그가 지나치게 커진다.
                 if (processed > 0L || lag > 0L || stateChanged || !"SUCCESS".equals(status) || latestBucket) {
                     result.add(toProcessingResponse(
-                            pipeline, bucket.getKey(), snapshot, processed, dailyProcessedCount,
+                            meta, bucket.getKey(), snapshot, processed, dailyProcessedCount,
                             lag, sourceState, sinkState, status));
                 }
                 previousCommitted = committed;
@@ -119,15 +129,17 @@ public class CdcLogService {
 
     public List<CdcEventLogResponse> eventLogs(LocalDate from, LocalDate to) {
         DateRange range = validateRange(from, to);
-        List<PipelineDefinition> pipelines = monitoredPipelines();
-        if (pipelines.isEmpty()) {
+        Map<Long, String> names = new HashMap<>();
+        pipelineRepository.findAll().forEach(p -> names.put(p.getId(), p.getName()));
+        OffsetDateTime cutoff = OffsetDateTime.now().minusDays(MAX_RANGE_DAYS + 1);
+        metadataArchiveRepository.findByArchivedAtAfter(cutoff)
+                .forEach(a -> names.putIfAbsent(a.getPipelineId(), a.getName() + " (삭제됨)"));
+        if (names.isEmpty()) {
             return List.of();
         }
-        Map<Long, String> names = new HashMap<>();
-        pipelines.forEach(pipeline -> names.put(pipeline.getId(), pipeline.getName()));
         return commandHistoryRepository
                 .findByPipelineIdInAndRequestedAtBetweenOrderByRequestedAtDesc(
-                        pipelines.stream().map(PipelineDefinition::getId).toList(), range.from(), range.to())
+                        new ArrayList<>(names.keySet()), range.from(), range.to())
                 .stream()
                 .map(history -> new CdcEventLogResponse(
                         history.getId(),
@@ -143,22 +155,40 @@ public class CdcLogService {
     }
 
     /**
-     * 이 화면이 다루는 파이프라인 전체.
-     *
-     * <p>예전에는 TABLE_CDC만 골랐다 - 로그 파이프라인이 나중에 같은 테이블/같은 화면을
-     * 쓰게 됐는데 필터가 남아서, 처리 이력과 오류·상태 이력 양쪽에서 통째로 빠져 있었다.
-     * 두 탭 모두 이 메서드를 쓰므로 여기 한 곳만 고치면 된다.
+     * 이 화면이 다루는 파이프라인 표시 메타. 현존 파이프라인 + 최근 삭제(스냅샷 보존창 내)를 합친다.
+     * 삭제분은 pipeline_metadata_archive 에서 오므로, 삭제해도 보존정리 전까지 로그가 보인다.
      */
-    private List<PipelineDefinition> monitoredPipelines() {
-        return pipelineRepository.findAll();
+    private Map<Long, PipelineLogMeta> logMetaByPipelineId() {
+        Map<Long, PipelineLogMeta> metaById = new LinkedHashMap<>();
+        for (PipelineDefinition p : pipelineRepository.findAll()) {
+            metaById.put(p.getId(), toMeta(p));
+        }
+        OffsetDateTime cutoff = OffsetDateTime.now().minusDays(MAX_RANGE_DAYS + 1);
+        for (PipelineMetadataArchive a : metadataArchiveRepository.findByArchivedAtAfter(cutoff)) {
+            metaById.putIfAbsent(a.getPipelineId(), toMeta(a));   // 현존 정의가 우선
+        }
+        return metaById;
     }
 
-    private boolean isLogFile(PipelineDefinition pipeline) {
-        return "LOG_FILE".equalsIgnoreCase(pipeline.getPipelineType());
+    private PipelineLogMeta toMeta(PipelineDefinition p) {
+        boolean logFile = isLogFile(p.getPipelineType());
+        String source = logFile ? "Filebeat"
+                : path(p.getSourceDbType(), p.getSourceSchema(), p.getSourceTable());
+        String target = path(p.getTargetDbType(), p.getTargetSchema(), p.getTargetTable());
+        return new PipelineLogMeta(p.getId(), p.getName(), logFile, source, target);
+    }
+
+    private PipelineLogMeta toMeta(PipelineMetadataArchive a) {
+        return new PipelineLogMeta(a.getPipelineId(), a.getName() + " (삭제됨)",
+                isLogFile(a.getPipelineType()), a.getSourcePath(), a.getTargetPath());
+    }
+
+    private boolean isLogFile(String pipelineType) {
+        return "LOG_FILE".equalsIgnoreCase(pipelineType);
     }
 
     private CdcProcessingLogResponse toProcessingResponse(
-            PipelineDefinition pipeline,
+            PipelineLogMeta meta,
             LocalDateTime occurredAt,
             PipelineMetricSnapshot snapshot,
             long processed,
@@ -168,13 +198,11 @@ public class CdcLogService {
             String sinkState,
             String status) {
         return new CdcProcessingLogResponse(
-                pipeline.getId(),
-                pipeline.getName(),
-                // 로그 파이프라인의 소스는 filebeat라 DB 경로가 없다 - "null · null.null"이
-                // 찍히지 않도록 에이전트 이름으로 표시한다(파이프라인 목록 화면과 동일).
-                isLogFile(pipeline) ? "Filebeat"
-                        : path(pipeline.getSourceDbType(), pipeline.getSourceSchema(), pipeline.getSourceTable()),
-                path(pipeline.getTargetDbType(), pipeline.getTargetSchema(), pipeline.getTargetTable()),
+                meta.id(),
+                meta.name(),
+                // 소스/타겟 경로는 메타에 이미 계산돼 있다(로그 파이프라인은 "Filebeat", 삭제분은 아카이브 값).
+                meta.sourcePath(),
+                meta.targetPath(),
                 snapshot.getTopicName(),
                 occurredAt,
                 processed,
@@ -196,8 +224,8 @@ public class CdcLogService {
      * 것을 UNKNOWN으로 찍으면 "상태를 못 읽었다"처럼 보이므로 null로 두고 화면에서
      * "-"로 표시한다. status() 판정도 null은 실패로 보지 않는다.
      */
-    private String sourceState(PipelineDefinition pipeline, PipelineMetricSnapshot snapshot) {
-        if (isLogFile(pipeline)) {
+    private String sourceState(boolean logFile, PipelineMetricSnapshot snapshot) {
+        if (logFile) {
             return null;
         }
         return snapshot.getSourceConnectorState() != null

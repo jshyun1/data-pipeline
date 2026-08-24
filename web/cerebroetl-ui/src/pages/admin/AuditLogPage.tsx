@@ -33,9 +33,17 @@ const ACTION_COLORS: Record<string, string> = {
 // 운영 자동감사(NIFI_CREATE·KAFKA_DELETE·AIRFLOW_UPDATE 등)는 동사 접미사로 색을 정한다.
 function actionColor(action: string): string {
   if (ACTION_COLORS[action]) return ACTION_COLORS[action];
-  if (action.endsWith("_CREATE")) return "green";
-  if (action.endsWith("_UPDATE")) return "geekblue";
-  if (action.endsWith("_DELETE")) return "volcano";
+  if (action.startsWith("NIFI_CANVAS_")) {
+    if (action.endsWith("_ADD")) return "green";
+    if (action.endsWith("_REMOVE")) return "volcano";
+    return "geekblue";
+  }
+  // 세분화 액션(KAFKA_DEPLOY·AIRFLOW_RUN·AIRFLOW_SCHEDULE …)을 동사 접미사로 색 구분.
+  const suffix = action.includes("_") ? action.slice(action.indexOf("_") + 1) : action;
+  if (["CREATE", "ADD", "DEPLOY", "START", "RUN", "TRIGGER", "RESUME", "ENABLE", "APPROVE"].includes(suffix)) return "green";
+  if (["DELETE", "REMOVE", "STOP", "PAUSE", "DISABLE", "CANCEL", "ROLLBACK", "REJECT"].includes(suffix)) return "volcano";
+  if (["UPDATE", "SCHEDULE", "CONFIGURE", "RESTART"].includes(suffix)) return "geekblue";
+  if (["SYNC", "REPLAY", "RETRY", "UNLOCK"].includes(suffix)) return "cyan";
   return "default";
 }
 
@@ -170,9 +178,9 @@ export function AuditLogPage() {
           dataSource={filtered}
           size="small"
           pagination={{
-            pageSize: 20,
+            defaultPageSize: 10,
             showSizeChanger: true,
-            pageSizeOptions: [20, 50, 100, 200],
+            pageSizeOptions: [10, 20, 50, 100, 200],
             showTotal: (total) => `전체 ${total}건`,
           }}
         />

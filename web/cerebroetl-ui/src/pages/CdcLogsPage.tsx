@@ -201,13 +201,6 @@ export function CdcLogsPage() {
     .map((row) => ({ occurredAt: row.occurredAt, consumerLag: row.consumerLag, pipelineName: row.pipelineName }))
     .sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()), [processingRows]);
 
-  const applyPreset = (amount: number, unit: "hour" | "day") => {
-    const end = dayjs();
-    const range: [Dayjs, Dayjs] = [end.subtract(amount, unit), end];
-    setDateRange(range);
-    setAppliedRange(range);
-  };
-
   // 전일자/당일 프리셋: 해당 날짜 하루로 조회기간을 즉시 맞춘다.
   const applyDayPreset = (offsetDays: 0 | 1) => {
     const day = dayjs().subtract(offsetDays, "day");
@@ -221,12 +214,6 @@ export function CdcLogsPage() {
       <Space.Compact>
         <Button onClick={() => applyDayPreset(1)}>전일자</Button>
         <Button onClick={() => applyDayPreset(0)}>당일</Button>
-      </Space.Compact>
-      <Space.Compact>
-        <Button onClick={() => applyPreset(1, "hour")}>1시간</Button>
-        <Button onClick={() => applyPreset(6, "hour")}>6시간</Button>
-        <Button onClick={() => applyPreset(24, "hour")}>24시간</Button>
-        <Button onClick={() => applyPreset(7, "day")}>7일</Button>
       </Space.Compact>
       <RangePicker
         value={dateRange}
