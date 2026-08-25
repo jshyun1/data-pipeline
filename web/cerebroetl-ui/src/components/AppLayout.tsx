@@ -218,7 +218,12 @@ export function AppLayout() {
                         <NavLink
                           key={child.path}
                           to={child.path}
-                          className={location.pathname === child.path ? "sidebar-sublink active" : "sidebar-sublink"}
+                          // end: 하위 경로까지 활성으로 치지 않는다. "알림/발송 관리"(/settings)는
+                          // "연결정보"(/settings/connections)의 접두어라, 이게 없으면 연결정보를
+                          // 열었을 때 둘 다 빨갛게 표시된다. className 이 문자열이면 react-router 가
+                          // 자체 판정으로 "active" 를 덧붙이므로 여기서 따로 계산하지 않는다.
+                          end
+                          className="sidebar-sublink"
                         >
                           {child.label}
                         </NavLink>
