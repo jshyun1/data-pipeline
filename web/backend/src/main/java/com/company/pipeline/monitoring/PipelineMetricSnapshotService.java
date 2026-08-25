@@ -53,6 +53,12 @@ public class PipelineMetricSnapshotService {
         long committedOffset = kafkaTopicOffsetReader.getCommittedOffsetSum(consumerGroupId, topicName);
         KafkaTopicOffsetReader.TopicEndOffsetSummary endOffsetSummary =
                 kafkaTopicOffsetReader.getEndOffsetSummary(topicName);
+        // retention 으로 앞부분이 지워졌으면 그 구간은 컨슈머가 읽을 수 없어 "미처리"가 아니다.
+        // 하한을 안 두면 committed 가 그보다 작을 때(그룹이 처음 붙어 0 인 경우 등) 삭제된
+        // 구간까지 lag 으로 잡혀 실제보다 크게 나오고, 임계값을 넘겨 "지연"으로 오탐한다
+        // (2026-08-25 실측: 실제 10만 건 스냅샷인데 lag 20만으로 표시).
+        long earliestOffset = kafkaTopicOffsetReader.getEarliestOffsetSum(topicName);
+        long readableFrom = Math.max(committedOffset, earliestOffset);
 
         PipelineMetricSnapshot snapshot = new PipelineMetricSnapshot();
         snapshot.setPipelineId(pipelineId);
@@ -62,9 +68,10 @@ public class PipelineMetricSnapshotService {
         snapshot.setSinkConnectorState(sink.getStatus());
         snapshot.setTopicName(topicName);
         snapshot.setCommittedOffset(committedOffset);
+        snapshot.setEarliestOffset(earliestOffset);
         snapshot.setPartitionCount(endOffsetSummary.partitionCount());
         snapshot.setEndOffset(endOffsetSummary.endOffset());
-        snapshot.setConsumerLag(Math.max(0L, endOffsetSummary.endOffset() - committedOffset));
+        snapshot.setConsumerLag(Math.max(0L, endOffsetSummary.endOffset() - readableFrom));
         return pipelineMetricSnapshotRepository.save(snapshot);
     }
 

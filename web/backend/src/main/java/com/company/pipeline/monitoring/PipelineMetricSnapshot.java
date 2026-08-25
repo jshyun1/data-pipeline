@@ -54,6 +54,13 @@ public class PipelineMetricSnapshot {
     @Column(name = "committed_offset")
     private Long committedOffset;
 
+    /**
+     * 수집 시점 토픽의 가장 오래된 offset 합(V51). retention 으로 앞부분이 삭제되면 0 이 아니다.
+     * lag·처리 건수의 하한으로 쓴다 - 삭제된 구간은 컨슈머가 읽을 수 없어 미처리가 아니다.
+     */
+    @Column(name = "earliest_offset")
+    private Long earliestOffset;
+
     @Column(name = "consumer_lag")
     private Long consumerLag;
 

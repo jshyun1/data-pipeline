@@ -74,7 +74,14 @@ public class KafkaPipelineMetricScheduler {
         long delta = 0;
         if (previous.isPresent() && current.getCommittedOffset() != null
                 && previous.get().getCommittedOffset() != null) {
-            delta = Math.max(0, current.getCommittedOffset() - previous.get().getCommittedOffset());
+            // 직전 스냅샷 시점에 컨슈머가 실제로 읽기 시작할 수 있었던 지점부터 센다.
+            // retention 으로 그 아래가 이미 삭제됐다면 컨슈머는 earliest 로 건너뛰므로,
+            // committed 차이를 그대로 쓰면 읽지도 않은 삭제 구간까지 처리 건수에 들어간다
+            // (2026-08-25 실측: 실제 10만 건인데 20만으로 집계).
+            long previousEarliest = previous.get().getEarliestOffset() == null
+                    ? 0L : previous.get().getEarliestOffset();
+            long countFrom = Math.max(previous.get().getCommittedOffset(), previousEarliest);
+            delta = Math.max(0, current.getCommittedOffset() - countFrom);
         }
         // delta==0(적재 없음/기준점) 에도 기록해 observation_count 를 올린다 - "0건 관측"과 "미관측"을
         // 구분하는 U7 의 핵심(가드 제거).
