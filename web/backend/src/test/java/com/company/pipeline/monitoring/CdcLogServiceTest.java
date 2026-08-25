@@ -10,6 +10,7 @@ import com.company.pipeline.monitoring.dto.CdcProcessingLogResponse;
 import com.company.pipeline.pipeline.PipelineCommandHistoryRepository;
 import com.company.pipeline.pipeline.PipelineDefinition;
 import com.company.pipeline.pipeline.PipelineDefinitionRepository;
+import com.company.pipeline.pipeline.PipelineMetadataArchiveRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -32,11 +33,15 @@ class CdcLogServiceTest {
     @Mock
     private PipelineCommandHistoryRepository commandHistoryRepository;
 
+    @Mock
+    private PipelineMetadataArchiveRepository metadataArchiveRepository;
+
     private CdcLogService service;
 
     @BeforeEach
     void setUp() {
-        service = new CdcLogService(pipelineRepository, snapshotRepository, commandHistoryRepository);
+        service = new CdcLogService(pipelineRepository, snapshotRepository, commandHistoryRepository,
+                metadataArchiveRepository);
     }
 
     @Test

@@ -47,6 +47,8 @@ class PipelineServiceTest {
     private PostgresReplicationCleanupService postgresReplicationCleanupService;
     @Mock
     private KafkaTopicCleanupService kafkaTopicCleanupService;
+    @Mock
+    private PipelineMetadataArchiveRepository metadataArchiveRepository;
 
     private PipelineService pipelineService;
 
@@ -54,7 +56,7 @@ class PipelineServiceTest {
     void setUp() {
         pipelineService = new PipelineService(pipelineDefinitionRepository, pipelineConnectorRepository,
                 connectionRepository, kafkaConnectClient, logPipelineSourceRepository, filebeatInputFileService,
-                postgresReplicationCleanupService, kafkaTopicCleanupService);
+                postgresReplicationCleanupService, kafkaTopicCleanupService, metadataArchiveRepository);
     }
 
     @Test
