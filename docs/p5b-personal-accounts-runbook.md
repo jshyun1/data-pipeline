@@ -40,6 +40,20 @@
 8. **truststore 변경은 NiFi 재기동이 필요하다.** 배포 과정에서 NiFi 가 어차피 재시작한다면
    그 전에 CA 를 넣어 두면 재기동 한 번으로 끝난다.
 
+9. **인증서를 배포 트리 안에 두면 배포가 지운다.** 젠킨스(`docker-control.sh up prod`)가
+   소스 트리를 동기화하면서 `deploy/` 를 통째로 교체해 gitignore 대상인 `p5b-certs/` 가
+   사라졌고, 웹 전체가 재시작 루프에 빠졌다. **`P5B_CERT_DIR` 로 트리 밖을 가리킬 것.**
+   ```env
+   P5B_CERT_DIR=/home/dataworld/certs
+   ```
+   적용 순서가 중요하다 — **인증서를 새 경로에 먼저 두고 나서** 새 compose 를 배포한다.
+   반대로 하면 같은 장애가 한 번 더 난다.
+
+10. **호스트 경로가 디렉터리→파일로 바뀌면 `up -d` 로는 안 살아난다.** 컨테이너가 생성
+    시점의 마운트 타입을 기억하기 때문에 `not a directory` 로 죽는다(exit 127). compose 파일이
+    그대로면 재생성도 하지 않는다. **`docker compose up -d --force-recreate <서비스>`** 로
+    올려야 한다.
+
 ## 2. 인증서 발급 (프록시용 mTLS)
 ```bash
 # CA

@@ -439,10 +439,16 @@ services:
       AIRFLOW_USERNAME: ${AIRFLOW_ADMIN_USERNAME}
       AIRFLOW_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
     volumes:
-      # P5b: NiFi 대행인증용 mTLS 클라이언트 인증서(nginx가 NiFi로 제시). 없으면 nginx 기동
-      # 실패하므로, per-user 프록시를 쓸 때만 이 파일들이 있어야 한다.
-      - ./deploy/p5b-certs/cerebro-proxy.crt:/etc/nginx/certs/cerebro-proxy.crt:ro
-      - ./deploy/p5b-certs/cerebro-proxy.key:/etc/nginx/certs/cerebro-proxy.key:ro
+      # P5b: NiFi 대행인증용 mTLS 클라이언트 인증서(nginx가 NiFi로 제시). 없으면 nginx가
+      # 기동 실패해 재시작 루프에 빠지고, 콘솔만이 아니라 웹 전체가 안 열린다.
+      #
+      # 경로를 P5B_CERT_DIR 로 뺀 이유(2026-08-25 장애): 이 파일들은 gitignore 대상이라
+      # 저장소에 없는데, 젠킨스 배포가 소스 트리를 동기화하면서 deploy/ 를 통째로 교체해
+      # 인증서를 지웠다. Docker 가 그 자리에 빈 디렉터리를 만들어 nginx 가 죽었다.
+      # 배포 트리 밖(예: /home/dataworld/certs)을 가리키면 배포가 건드리지 않는다.
+      # 로컬은 기본값으로 지금까지와 동일하게 동작한다.
+      - ${P5B_CERT_DIR:-./deploy/p5b-certs}/cerebro-proxy.crt:/etc/nginx/certs/cerebro-proxy.crt:ro
+      - ${P5B_CERT_DIR:-./deploy/p5b-certs}/cerebro-proxy.key:/etc/nginx/certs/cerebro-proxy.key:ro
     ports:
       - "${CEREBROETL_UI_PORT}:80"
     healthcheck:
