@@ -45,6 +45,8 @@ public class AlertAdminController {
                        r.params_json::text AS params_json,
                        r.scope_json::text AS scope_json, r.renotify_seconds,
                        r.for_seconds, r.clear_seconds, r.mandatory,
+                       r.schedule_enabled, r.schedule_time, r.schedule_last_fired_on,
+                       r.schedule_run_count, r.schedule_last_run_at,
                        r.last_evaluated_at, r.last_eval_error
                 FROM alert_rule r JOIN alert_rule_type rt ON r.rule_type_code = rt.code
                 WHERE r.deleted_at IS NULL ORDER BY rt.eval_priority, r.name"""));
@@ -59,6 +61,22 @@ public class AlertAdminController {
         if ("CDC".equalsIgnoreCase(category)) {
             return ApiResponse.success(jdbc.queryForList(
                     "SELECT id, name FROM pipeline_definition ORDER BY name"));
+        }
+        // ETL_CHAIN: 프로세스 그룹이 아니라 «적재 테이블 하나»를 감시 단위로 고른다.
+        // 그룹(DZ) 하나가 테이블 5개를 적재하므로 그룹 단위로는 "COM001M만 감시"가 불가능했다.
+        // 체인의 대표는 최종 적재 스텝(target_table 보유)이고, 그 앞의 trigger/extract/truncate 는
+        // etl_job_link 를 거슬러 올라가 같은 체인으로 묶인다(AlertEngine.chainOfProcessor).
+        if ("ETL_CHAIN".equalsIgnoreCase(category)) {
+            return ApiResponse.success(jdbc.queryForList("""
+                    SELECT s.id,
+                           j.job_name || ' / ' || s.target_table
+                           -- 같은 그룹에 같은 테이블을 적재하는 스텝이 둘 이상이면(Template 등)
+                           -- 이름만으로는 드롭다운에서 구분이 안 되니 스텝명을 덧붙인다.
+                           || CASE WHEN count(*) OVER (PARTITION BY j.job_name, s.target_table) > 1
+                                   THEN ' (' || s.step_name || ')' ELSE '' END AS name
+                    FROM etl_job_step s JOIN etl_job j ON j.id = s.job_id
+                    WHERE s.deleted_at IS NULL AND j.deleted_at IS NULL AND s.target_table IS NOT NULL
+                    ORDER BY j.job_name, s.target_table"""));
         }
         return ApiResponse.success(jdbc.queryForList(
                 "SELECT id, job_name AS name FROM etl_job WHERE deleted_at IS NULL ORDER BY job_name"));
@@ -115,13 +133,16 @@ public class AlertAdminController {
                 "min", min, "max", max, "defaultValue", defaultValue);
     }
 
+    // scheduleEnabled/scheduleTime("HH:mm") = 일별 점검. null 이면 종전 값 유지(부분 수정 허용).
     public record UpdateRuleRequest(Boolean enabled, String severity, String paramsJson,
                                     Integer forSeconds, Integer clearSeconds, String name,
-                                    String scopeJson, Integer renotifySeconds) {}
+                                    String scopeJson, Integer renotifySeconds,
+                                    Boolean scheduleEnabled, String scheduleTime) {}
 
     public record CreateRuleRequest(String ruleTypeCode, String name, String severity, String paramsJson,
                                     Integer forSeconds, Integer clearSeconds,
-                                    String scopeJson, Integer renotifySeconds) {}
+                                    String scopeJson, Integer renotifySeconds,
+                                    Boolean scheduleEnabled, String scheduleTime) {}
 
     /**
      * 규칙 추가 (PDF 9쪽 "[+ 규칙 추가]"). 같은 유형으로 임계값만 다른 규칙을 여러 개 두는 것을 허용한다 —
@@ -146,17 +167,27 @@ public class AlertAdminController {
             Long id = jdbc.queryForObject("""
                     INSERT INTO alert_rule
                         (rule_type_code, name, severity, params_json, scope_json, for_seconds, clear_seconds,
-                         renotify_seconds, enabled, mandatory, created_by, updated_by)
+                         renotify_seconds, enabled, mandatory, created_by, updated_by,
+                         schedule_enabled, schedule_time, schedule_last_fired_on,
+                         schedule_run_count, schedule_last_run_at)
                     VALUES (?, ?,
                             COALESCE(?, (SELECT default_severity FROM alert_rule_type WHERE code = ?)),
                             COALESCE(?::jsonb, '{}'::jsonb),
                             COALESCE(?::jsonb, '{"kind": "ALL"}'::jsonb),
-                            COALESCE(?, 120), COALESCE(?, 300), COALESCE(?, 1800), TRUE, FALSE, ?, ?)
+                            COALESCE(?, 120), COALESCE(?, 300), COALESCE(?, 1800), TRUE, FALSE, ?, ?,
+                            COALESCE(?, FALSE), ?::time,
+                            -- 이미 지난 시각으로 스케줄을 만들면 저장하자마자 발화한다.
+                            -- 오늘 몫은 끝난 것으로 찍어 두고 내일부터 돈다. schedule_last_run_at
+                            -- 이 NULL 이라 2회차 조건(간격 경과)도 오늘은 성립하지 않는다.
+                            CASE WHEN ?::time IS NOT NULL AND ?::time <= localtime
+                                 THEN current_date END,
+                            0, NULL)
                     RETURNING id
                     """, Long.class,
                     req.ruleTypeCode(), req.name(), req.severity(), req.ruleTypeCode(),
                     req.paramsJson(), req.scopeJson(), req.forSeconds(), req.clearSeconds(),
-                    req.renotifySeconds(), by, by);
+                    req.renotifySeconds(), by, by,
+                    req.scheduleEnabled(), req.scheduleTime(), req.scheduleTime(), req.scheduleTime());
             return ApiResponse.success(Map.of("id", id == null ? 0L : id));
         } catch (DataAccessException ex) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "규칙 값이 올바르지 않습니다(조건·심각도 확인).");
@@ -167,6 +198,58 @@ public class AlertAdminController {
      * 규칙 삭제. 운영자가 자기 환경에 맞게 규칙 구성을 정할 수 있어야 해서 필수 규칙도 삭제를 허용한다
      * (mandatory 는 기본값 표시용으로만 남는다).
      */
+    // ------------------------------------------------------------ 규칙별 수신자
+
+    /**
+     * 이 규칙의 알림을 «누가» 받는지. 수신자 전원을 내려주고 각자 켬/끔 상태를 함께 준다.
+     *
+     * <p>행이 하나도 없는 규칙은 종전대로 «전원» 받는다(=응답의 enabled 가 모두 true).
+     * 여기서는 누가 받는지만 정한다 — 어떤 Job 을 감시할지는 규칙의 «감시 범위»가 정한다.
+     */
+    @GetMapping("/api/admin/alert-rules/{id}/recipients")
+    public ApiResponse<List<Map<String, Object>>> ruleRecipients(@PathVariable long id) {
+        return ApiResponse.success(jdbc.queryForList("""
+                SELECT r.id AS recipient_id, r.display_name, r.email, r.phone, r.enabled AS recipient_enabled,
+                       -- 규칙에 명시 목록이 없으면 전원 수신이 기본이라 true 로 채워 내린다.
+                       COALESCE(rr.enabled, NOT EXISTS (
+                           SELECT 1 FROM notification_recipient_rule x WHERE x.rule_id = ?
+                       )) AS enabled
+                FROM notification_recipient r
+                LEFT JOIN notification_recipient_rule rr ON rr.recipient_id = r.id AND rr.rule_id = ?
+                WHERE r.deleted_at IS NULL
+                ORDER BY r.display_name
+                """, id, id));
+    }
+
+    public record RuleRecipientRequest(Long recipientId, Boolean enabled) {}
+
+    /**
+     * 규칙별 수신자 «전체 교체». 화면이 켬/끔 목록을 통째로 저장하므로 교체가 맞다.
+     *
+     * <p>끈 수신자도 enabled=false 로 «남긴다». 행을 지워 버리면 "명시 목록이 없다 = 전원 수신"과
+     * 구분되지 않아, 전원을 끄면 오히려 전원에게 가는 뒤집힌 결과가 된다.
+     */
+    @PutMapping("/api/admin/alert-rules/{id}/recipients")
+    public ApiResponse<Void> replaceRuleRecipients(@PathVariable long id,
+                                                   @RequestBody List<RuleRecipientRequest> recipients) {
+        jdbc.update("DELETE FROM notification_recipient_rule WHERE rule_id = ?", id);
+        if (recipients == null) {
+            return ApiResponse.success(null);
+        }
+        for (RuleRecipientRequest r : recipients) {
+            if (r == null || r.recipientId() == null) {
+                continue;
+            }
+            jdbc.update("""
+                    INSERT INTO notification_recipient_rule (recipient_id, rule_id, enabled)
+                    VALUES (?, ?, COALESCE(?, TRUE))
+                    ON CONFLICT (recipient_id, rule_id) DO UPDATE SET
+                        enabled = EXCLUDED.enabled, updated_at = now()
+                    """, r.recipientId(), id, r.enabled());
+        }
+        return ApiResponse.success(null);
+    }
+
     @DeleteMapping("/api/admin/alert-rules/{id}")
     public ApiResponse<Void> deleteRule(@PathVariable long id) {
         int n = jdbc.update("UPDATE alert_rule SET deleted_at=now() WHERE id=? AND deleted_at IS NULL", id);
@@ -191,10 +274,25 @@ public class AlertAdminController {
                         for_seconds      = COALESCE(?, for_seconds),
                         clear_seconds    = COALESCE(?, clear_seconds),
                         renotify_seconds = COALESCE(?, renotify_seconds),
+                        schedule_enabled = COALESCE(?, schedule_enabled),
+                        schedule_time    = CASE WHEN ? IS NULL THEN schedule_time ELSE ?::time END,
+                        -- 시각을 바꿨는데 그게 오늘 이미 지났으면 오늘 몫은 끝난 것으로 본다
+                        -- (저장하자마자 발화하는 것을 막는다). 시각이 아직 안 지났으면 빗장을 푼다.
+                        schedule_last_fired_on = CASE
+                            WHEN ? IS NULL THEN schedule_last_fired_on
+                            WHEN ?::time <= localtime THEN current_date
+                            ELSE NULL END,
+                        -- 시각을 바꾸면 오늘 돈 회차는 무효다. 되돌려 두지 않으면
+                        -- "오늘 이미 3회 다 돌았다"로 남아 새 시각이 오늘 안 돈다.
+                        schedule_run_count  = CASE WHEN ? IS NULL THEN schedule_run_count ELSE 0 END,
+                        schedule_last_run_at = CASE WHEN ? IS NULL THEN schedule_last_run_at ELSE NULL END,
                         updated_by = ?, updated_at = now()
                     WHERE id = ? AND deleted_at IS NULL
                     """, req.name(), req.enabled(), req.severity(), req.paramsJson(),
-                    req.scopeJson(), req.forSeconds(), req.clearSeconds(), req.renotifySeconds(), by, id);
+                    req.scopeJson(), req.forSeconds(), req.clearSeconds(), req.renotifySeconds(),
+                    req.scheduleEnabled(), req.scheduleTime(), req.scheduleTime(),
+                    req.scheduleTime(), req.scheduleTime(),
+                    req.scheduleTime(), req.scheduleTime(), by, id);
             if (n == 0) {
                 throw new BusinessException(ErrorCode.VALIDATION_ERROR, "규칙을 찾을 수 없습니다: " + id);
             }

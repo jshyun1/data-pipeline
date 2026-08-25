@@ -4,18 +4,14 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, Empty, Segmented } from "antd";
 import { Column } from "@ant-design/plots";
 import type { Dayjs } from "dayjs";
-import { getDashboardTop5, type Top5Metric } from "../api/dashboard";
+import { getDashboardTop5, type Top5Item, type Top5Metric } from "../api/dashboard";
 
 // 하단 Job Top 5 — 건수/소요시간/실패 구분. 상단 RangePicker(from~to) 날짜범위를 그대로 따른다.
-const TOP5_TABS: Array<{ label: string; value: Top5Metric; unit: string; hint: string }> = [
-  { label: "건수", value: "count", unit: "건", hint: "조회 기간 내 적재 건수 합계" },
-  {
-    label: "소요시간",
-    value: "duration",
-    unit: "초",
-    hint: "실행 1회 평균 소요시간. 수집 주기가 15초라 ±15초 오차가 있습니다",
-  },
-  { label: "실패", value: "failure", unit: "회", hint: "조회 기간 내 실패 기록 수" },
+// 값은 차트와 툴팁으로만 보여준다(막대 옆 목록은 화면이 복잡해져 걷어냄).
+const TOP5_TABS: Array<{ label: string; value: Top5Metric; unit: string }> = [
+  { label: "건수", value: "count", unit: "건" },
+  { label: "소요시간", value: "duration", unit: "초" },
+  { label: "실패", value: "failure", unit: "회" },
 ];
 
 export function JobTop5Card({ title, from, to }: { title: string; from: Dayjs; to: Dayjs }) {
@@ -55,8 +51,7 @@ export function JobTop5Card({ title, from, to }: { title: string; from: Dayjs; t
       loading={q.isLoading && !q.data}
     >
       {items.length > 0 ? (
-        <>
-          <div className="chart-fit-shell">
+        <div className="chart-fit-shell">
             <Column
               autoFit
               data={items}
@@ -66,28 +61,23 @@ export function JobTop5Card({ title, from, to }: { title: string; from: Dayjs; t
               axis={{ x: { labelAutoHide: false, labelAutoRotate: true }, y: { nice: true } }}
               tooltip={{
                 title: (d: { label: string }) => d.label,
-                items: [{ field: "value", name: tab.label }],
+                // 목록을 없앤 뒤로 수치를 읽을 곳이 툴팁뿐이라 단위까지 붙인다.
+                items: [
+                  {
+                    field: "value",
+                    name: tab.label,
+                    valueFormatter: (v: number) => `${v.toLocaleString()} ${tab.unit}`,
+                  },
+                ],
+              }}
+              // 목록을 없앴으므로 드릴다운은 막대 클릭으로 남긴다.
+              onReady={({ chart }) => {
+                chart.on("element:click", (ev: { data?: { data?: Top5Item } }) => {
+                  drillDown(ev?.data?.data?.job_id ?? null);
+                });
               }}
             />
-          </div>
-          <ul className="trend-top5-list">
-            {items.map((item) => (
-              <li key={item.label}>
-                <button
-                  type="button"
-                  disabled={item.job_id == null}
-                  onClick={() => drillDown(item.job_id)}
-                  title={item.job_id == null ? "이동할 화면을 특정할 수 없습니다" : "실행 이력으로 이동"}
-                >
-                  <span className="trend-top5-name">{item.label}</span>
-                  <span className="trend-top5-value">
-                    {item.value.toLocaleString()} {tab.unit}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
+        </div>
       ) : (
         <div className="empty-chart-placeholder">
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="조회 기간에 집계할 실행이 없습니다." />

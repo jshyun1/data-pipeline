@@ -3050,54 +3050,6 @@ button.airflow-tree-label:hover {
   gap: 10px;
 }
 
-.trend-top5-list {
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.trend-top5-list button {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  padding: 3px 4px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.trend-top5-list button:hover:not(:disabled) {
-  background: #f1f5f9;
-}
-
-.trend-top5-list button:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.trend-top5-name {
-  color: #172033;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.trend-top5-value {
-  color: #64748b;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.trend-top5-hint {
-  margin-top: 6px;
-  color: #94a3b8;
-  font-size: 11px;
-}
-
 /* --- 5-4 주요 프로세스 현황 (이상 우선 / 정상 접기 / 미사용 / 판정 기준) ----- */
 .process-card-head {
   display: flex;

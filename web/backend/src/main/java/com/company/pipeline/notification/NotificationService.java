@@ -2,8 +2,10 @@ package com.company.pipeline.notification;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -63,7 +65,7 @@ public class NotificationService {
         Map<String, Object> inst;
         try {
             inst = jdbc.queryForMap("SELECT id, severity, rule_type_code, target_label, summary, deep_link, "
-                    + "notify_count FROM alert_instance WHERE id = ?", instanceId);
+                    + "notify_count, rule_id FROM alert_instance WHERE id = ?", instanceId);
         } catch (Exception ex) {
             return;
         }
@@ -73,6 +75,8 @@ public class NotificationService {
         String eventKey = "ALERT-" + instanceId + "-" + inst.get("notify_count");
         String summary = (String) inst.get("summary");
         String deepLink = (String) inst.get("deep_link");
+        // 이 규칙을 «누가» 받는지(알림 규칙 화면 → 수신자).
+        Routing routing = routingFor(inst.get("rule_id"));
 
         // IN_APP: 구독한 수신자별 1행. 수신자가 없어도(초기) 브로드캐스트 1행을 남겨 종 배지가 뜬다.
         List<Map<String, Object>> recips = jdbc.queryForList("""
@@ -81,10 +85,14 @@ public class NotificationService {
                 WHERE r.deleted_at IS NULL AND r.enabled
                   AND ? <= CASE s.min_severity WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END
                 """, rank);
+        // 브로드캐스트 폴백은 «수신자를 아무도 등록하지 않은» 초기 상태를 위한 것이다.
+        // 규칙에서 수신자를 걸러 낸 경우까지 폴백하면, 담당 아닌 사람에게 안 보내려던 설정이
+        // 오히려 전체 공지가 되어 버린다. 그래서 필터 «전» 목록으로 폴백 여부를 정한다.
+        List<Map<String, Object>> inAppRecips = routing.filter(recips);
         if (recips.isEmpty()) {
             insertDelivery(eventKey, "IN_APP", severity, rank, category, null, null, summary, deepLink, 0);
         } else {
-            for (Map<String, Object> r : recips) {
+            for (Map<String, Object> r : inAppRecips) {
                 insertDelivery(eventKey, "IN_APP", severity, rank, category,
                         ((Number) r.get("rid")).longValue(), null, summary, deepLink, 0);
             }
@@ -102,7 +110,7 @@ public class NotificationService {
                 WHERE r.deleted_at IS NULL AND r.enabled AND r.email IS NOT NULL AND r.email_disabled_at IS NULL
                   AND ? <= CASE s.min_severity WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END
                 """, rank);
-        for (Map<String, Object> r : emailRecips) {
+        for (Map<String, Object> r : routing.filter(emailRecips)) {
             insertDelivery(eventKey, "EMAIL", severity, rank, category,
                     ((Number) r.get("rid")).longValue(), (String) r.get("email"), summary, deepLink, emailDelaySec);
         }
@@ -113,10 +121,54 @@ public class NotificationService {
                 WHERE r.deleted_at IS NULL AND r.enabled AND r.phone IS NOT NULL AND r.phone <> ''
                   AND ? <= CASE s.min_severity WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END
                 """, rank);
-        for (Map<String, Object> r : smsRecips) {
+        for (Map<String, Object> r : routing.filter(smsRecips)) {
             insertDelivery(eventKey, "SMS", severity, rank, category,
                     ((Number) r.get("rid")).longValue(), (String) r.get("phone"), summary, deepLink, emailDelaySec);
         }
+    }
+
+
+    /**
+     * 이 알림을 누구에게 보낼지 미리 계산해 둔 결과.
+     *
+     * <p>규칙마다 «받는 수신자» 목록을 둔다(알림 규칙 화면 → 수신자). 목록을 한 번도 손대지
+     * 않은 규칙은 종전대로 전원에게 간다 — 그렇게 안 하면 이 기능이 들어간 순간 기존 수신자
+     * 전원이 조용히 알림을 못 받게 된다.
+     *
+     * <p>끈 수신자는 행이 지워지는 게 아니라 enabled=false 로 남는다. 전원을 껐을 때
+     * "목록 없음(=전원 수신)"과 헷갈리지 않기 위해서다.
+     */
+    private record Routing(boolean unrestricted, Set<Long> allowed) {
+
+        private List<Map<String, Object>> filter(List<Map<String, Object>> recips) {
+            if (unrestricted) {
+                return recips;
+            }
+            return recips.stream()
+                    .filter(r -> allowed.contains(((Number) r.get("rid")).longValue()))
+                    .toList();
+        }
+    }
+
+    private Routing routingFor(Object ruleId) {
+        long rid = ruleId instanceof Number n ? n.longValue() : -1L;
+        List<Map<String, Object>> rows;
+        try {
+            rows = jdbc.queryForList(
+                    "SELECT recipient_id, enabled FROM notification_recipient_rule WHERE rule_id = ?", rid);
+        } catch (Exception ex) {
+            return new Routing(true, Set.of());   // 표가 아직 없으면 종전 동작(전원 수신).
+        }
+        if (rows.isEmpty()) {
+            return new Routing(true, Set.of());   // 규칙에 수신자 목록을 지정한 적이 없다.
+        }
+        Set<Long> allowed = new HashSet<>();
+        for (Map<String, Object> row : rows) {
+            if (Boolean.TRUE.equals(row.get("enabled"))) {
+                allowed.add(((Number) row.get("recipient_id")).longValue());
+            }
+        }
+        return new Routing(false, allowed);
     }
 
     private void insertDelivery(String eventKey, String channel, String severity, int rank, String category,

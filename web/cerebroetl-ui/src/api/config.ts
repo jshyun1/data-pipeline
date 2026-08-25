@@ -16,6 +16,10 @@ export interface AlertRule {
   clear_seconds: number;
   mandatory: boolean;
   last_eval_error: string | null;
+  // 일별 점검 스케줄. off(기본)면 20초 평가 루프에서 상시 판정한다.
+  schedule_enabled: boolean;
+  schedule_time: string | null;        // "HH:mm:ss"
+  schedule_last_fired_on: string | null;
 }
 
 export interface ScopeTarget {
@@ -85,6 +89,8 @@ export async function createAlertRule(body: {
   clearSeconds?: number;
   scopeJson?: string;
   renotifySeconds?: number;
+  scheduleEnabled?: boolean;
+  scheduleTime?: string | null;        // "HH:mm"
 }): Promise<void> {
   await apiClient.post("/admin/alert-rules", body);
 }
@@ -109,9 +115,33 @@ export async function updateAlertRule(
     name?: string;
     scopeJson?: string;
     renotifySeconds?: number;
+    scheduleEnabled?: boolean;
+    scheduleTime?: string | null;
   },
 ): Promise<void> {
   await apiClient.put(`/admin/alert-rules/${id}`, body);
+}
+
+// 규칙별 수신자. 목록을 한 번도 손대지 않은 규칙은 종전대로 전원에게 발송된다.
+export interface RuleRecipient {
+  recipient_id: number;
+  display_name: string;
+  email: string | null;
+  phone: string | null;
+  recipient_enabled: boolean;   // 수신자 자체의 사용여부
+  enabled: boolean;             // 이 규칙을 받는지
+}
+
+export async function getRuleRecipients(ruleId: number): Promise<RuleRecipient[]> {
+  const res = await apiClient.get<ApiResponse<RuleRecipient[]>>(`/admin/alert-rules/${ruleId}/recipients`);
+  return unwrap(res.data);
+}
+
+export async function replaceRuleRecipients(
+  ruleId: number,
+  recipients: { recipientId: number; enabled: boolean }[],
+): Promise<void> {
+  await apiClient.put(`/admin/alert-rules/${ruleId}/recipients`, recipients);
 }
 
 export async function getChannels(): Promise<ChannelConfig[]> {

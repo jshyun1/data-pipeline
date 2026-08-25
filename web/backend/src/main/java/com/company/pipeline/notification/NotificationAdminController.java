@@ -212,4 +212,5 @@ public class NotificationAdminController {
                 """, id, req.channelType(), req.minSeverity() == null ? "WARNING" : req.minSeverity());
         return ApiResponse.success(null);
     }
+
 }

@@ -4,6 +4,10 @@ import com.company.pipeline.settings.SettingKey;
 import com.company.pipeline.settings.SettingService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -218,7 +222,11 @@ public class AlertEngine {
                 FROM alert_instance ai JOIN alert_rule r ON r.id = ai.rule_id
                 WHERE ai.closed_at IS NULL AND ai.state = 'FIRING'
                   AND ai.ack_at IS NULL AND ai.suppressed_by IS NULL
+                  -- 끄거나 지운 규칙은 새 판정을 안 하는데(각 평가기가 enabled 를 본다),
+                  -- 여기만 안 보면 «끄기 전에 열려 있던» 알림이 최대 횟수까지 계속 나간다.
+                  AND r.enabled AND r.deleted_at IS NULL
                   AND r.renotify_seconds > 0
+                  AND NOT r.schedule_enabled
                   AND ai.last_notified_at IS NOT NULL
                   AND ai.last_notified_at < now() - make_interval(secs => r.renotify_seconds)
                 """);
@@ -296,26 +304,127 @@ public class AlertEngine {
         }
     }
 
+
+    /** 규칙 SELECT 마다 붙이는 스케줄 컬럼(뒤에 FROM 이 이어지므로 끝에 쉼표 대신 공백). */
+    private static final String SCHEDULE_COLUMNS =
+            "schedule_enabled, schedule_time, schedule_last_fired_on ";
+
+    private static boolean scheduled(Map<String, Object> rule) {
+        return Boolean.TRUE.equals(rule.get("schedule_enabled"));
+    }
+
+    /**
+     * 스케줄 규칙이 «지금 점검할 차례인가». 통과하면 그 자리에서 점검 횟수를 선점한다.
+     *
+     * <p>스케줄이 꺼진 규칙(기본값)은 항상 true — 20초 루프에서 종전대로 상시 판정한다.
+     * 켜진 규칙은 지정 시각의 1회차와, 그 뒤 «점검 간격»마다 «점검 횟수»에 이를 때까지
+     * 다시 돈다. 03:00 / 5분 / 3회면 03:00 · 03:05 · 03:10 세 번 점검한다. 매번 새로
+     * 판정하므로 그 사이 복구된 대상은 다음 점검에서 빠진다.
+     *
+     * <p>판정과 선점을 «한 문장»으로 한다. 20초마다 도는 루프라 읽고-쓰기로 나누면 그 사이
+     * 여러 번 통과해 같은 점검이 연달아 돌 수 있다.
+     *
+     * <p>schedule_time 은 시간대 없는 time 이고 localtime 은 «세션» TZ 기준이다. pgjdbc 가
+     * 접속 시 세션 TZ 를 JVM 기본값으로 맞추므로, 화면에서 고른 03:00 은 앱 기준 03:00 이 된다
+     * (다른 TZ 로 붙는 psql 등에서 이 표를 직접 건드리면 어긋난다 — 기존 신호 테이블과 같은 전제).
+     *
+     * <p>지정 시각에 앱이 꺼져 있었다면 다음 기동 때 그날 몫을 늦게라도 돌린다(안 보내는 것보다
+     * 늦게 보내는 쪽이 관제에 안전하다). 반대로 규칙을 «저장한 날»은 이미 지난 시각이 즉시
+     * 발화하지 않도록 저장 시점에 오늘을 소진 처리해 둔다(AlertAdminController).
+     */
+    private boolean scheduleDue(Map<String, Object> rule) {
+        if (!scheduled(rule)) {
+            return true;
+        }
+        int claimed = jdbc.update("""
+                UPDATE alert_rule SET
+                    schedule_last_fired_on = current_date,
+                    schedule_run_count = CASE
+                        WHEN schedule_last_fired_on IS DISTINCT FROM current_date THEN 1
+                        ELSE schedule_run_count + 1 END,
+                    schedule_last_run_at = now(),
+                    updated_at = now()
+                WHERE id = ?
+                  AND schedule_enabled
+                  AND schedule_time IS NOT NULL
+                  AND localtime >= schedule_time
+                  AND (
+                      -- 오늘 첫 점검
+                      schedule_last_fired_on IS DISTINCT FROM current_date
+                      -- 또는 2회차 이후: 횟수가 남았고 간격이 지났을 때
+                      OR (renotify_seconds > 0
+                          AND schedule_run_count < GREATEST(1, COALESCE((params_json->>'notify_max')::int, 1))
+                          AND schedule_last_run_at < now() - make_interval(secs => renotify_seconds))
+                  )
+                """, ((Number) rule.get("id")).longValue());
+        return claimed == 1;
+    }
+
+    /**
+     * 스케줄 점검 회차마다 «아직 실패 중인» 대상을 다시 알린다.
+     *
+     * <p>2회차부터는 알림 인스턴스가 이미 열려 있어 상태 전이가 없다. 그대로 두면 03:05·03:10
+     * 점검은 아무것도 보내지 않는다 — 요구는 "점검해서 실패건 있으면 발송"이므로 회차마다 보낸다.
+     *
+     * <p>이번 회차에 «새로 만들어져 이미 보낸» 알림은 제외한다. 판정보다 먼저 찍어 둔
+     * schedule_last_run_at 보다 발송 시각이 뒤면 이번 회차에 나간 것이다.
+     * 확인(ack)했거나 상위원인에 접힌(suppressed) 알림은 상시 규칙과 같은 기준으로 건너뛴다.
+     */
+    private void renotifyScheduledRun(long ruleId) {
+        jdbc.query("""
+                SELECT ai.id FROM alert_instance ai JOIN alert_rule r ON r.id = ai.rule_id
+                WHERE ai.rule_id = ? AND ai.closed_at IS NULL AND ai.state = 'FIRING'
+                  AND ai.ack_at IS NULL AND ai.suppressed_by IS NULL
+                  AND (ai.last_notified_at IS NULL OR ai.last_notified_at < r.schedule_last_run_at)
+                """, (rs, i) -> rs.getLong(1), ruleId).forEach(this::notifyFired);
+    }
+
     /** JOB 실패(이벤트 기반). 최근 실패한 잡 실행마다 발화하고, 30분 새 실패가 없으면 해소한다. */
     private void evaluateJobRules() {
         Map<String, Object> jobRule;
         try {
             jobRule = jdbc.queryForMap(
-                    "SELECT id, scope_json::text AS scope FROM alert_rule "
-                            + "WHERE builtin_key = ? AND deleted_at IS NULL AND enabled", JOB_BUILTIN_KEY);
+                    "SELECT id, scope_json::text AS scope, " + SCHEDULE_COLUMNS
+                            + "FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL AND enabled",
+                    JOB_BUILTIN_KEY);
         } catch (Exception ex) {
             return;   // 규칙 미시드/비활성
         }
+        if (!scheduleDue(jobRule)) {
+            return;
+        }
         long ruleId = ((Number) jobRule.get("id")).longValue();
         ScopeFilter scope = scopeOf(jobRule);
+        boolean daily = scheduled(jobRule);
+        if (scope.isChainScoped()) {
+            // (스케줄 여부는 체인 평가기 안에서 다시 본다)
+            // 감시 단위가 «적재 테이블»로 지정된 규칙. 그룹 단위 run 으로는 어느 테이블이
+            // 실패했는지 알 수 없어서 판정 근거 자체를 바꾼다(아래 메서드 주석 참고).
+            evaluateJobRulesByChain(ruleId, scope, daily);
+            return;
+        }
         // ended_at 은 timestamp without time zone. 앱 세션 TZ 로 now() 와 비교되므로,
         // 신호 기록(등록기)과 이 평가기는 반드시 같은 세션 TZ(앱 JVM 기본)에서 돈다.
-        List<Map<String, Object>> failed = jdbc.queryForList("""
-                SELECT r.id AS run_id, r.job_id, j.job_name
-                FROM etl_job_run r JOIN etl_job j ON j.id = r.job_id
-                WHERE r.status = 'FAILED' AND r.ended_at > now() - interval '10 minutes'
-                ORDER BY r.ended_at DESC
-                """);
+        // 상시 규칙은 «방금 난 실패 이벤트»를, 스케줄 규칙은 그 시각의 «현재 실패 상태»
+        // (= 잡별 마지막 실행 결과가 FAILED)를 본다. 하루 한 번 보는데 10분 창을 쓰면
+        // 점검 직전 10분 안에 끝난 실패만 걸려 사실상 아무것도 못 잡는다.
+        List<Map<String, Object>> failed = daily
+                ? jdbc.queryForList("""
+                        SELECT * FROM (
+                            SELECT DISTINCT ON (r.job_id)
+                                   r.id AS run_id, r.job_id, j.job_name, r.status
+                            FROM etl_job_run r JOIN etl_job j ON j.id = r.job_id
+                            WHERE r.ended_at IS NOT NULL AND r.ended_at > now() - interval '7 days'
+                            ORDER BY r.job_id, r.ended_at DESC
+                        ) t WHERE t.status = 'FAILED'
+                        """)
+                : jdbc.queryForList("""
+                        SELECT r.id AS run_id, r.job_id, j.job_name
+                        FROM etl_job_run r JOIN etl_job j ON j.id = r.job_id
+                        WHERE r.status = 'FAILED' AND r.ended_at > now() - interval '10 minutes'
+                        ORDER BY r.ended_at DESC
+                        """);
+        Set<String> failingNow = new HashSet<>();
         for (Map<String, Object> f : failed) {
             long runId = ((Number) f.get("run_id")).longValue();
             long jobId = ((Number) f.get("job_id")).longValue();
@@ -324,6 +433,7 @@ public class AlertEngine {
             }
             String jobName = (String) f.get("job_name");
             String target = "JOB:" + jobId;
+            failingNow.add(target);
             List<Map<String, Object>> open = jdbc.queryForList(
                     "SELECT id, last_failed_run_id FROM alert_instance WHERE rule_id=? AND target_key=? AND closed_at IS NULL",
                     ruleId, target);
@@ -356,11 +466,189 @@ public class AlertEngine {
                 }
             }
         }
-        // 30분간 새 실패가 없으면(마지막 전이 후 clear window) 해소.
+        resolveJobInstances(ruleId, daily, failingNow);
+        if (daily) {
+            renotifyScheduledRun(ruleId);
+        }
+    }
+
+    /**
+     * JOB 규칙 해소. 상시 규칙은 «30분간 새 실패가 없으면» 닫고, 스케줄 규칙은 이번 점검에서
+     * 실패로 안 잡힌 대상을 그 자리에서 닫는다 - 하루 한 번만 보는데 30분 창을 쓰면 발화 30분
+     * 뒤 자동으로 닫히고 다음 날 또 열려, 실제로는 계속 실패 중인데도 «해소됨»으로 보인다.
+     */
+    private void resolveJobInstances(long ruleId, boolean daily, Set<String> failingNow) {
+        if (daily) {
+            for (Map<String, Object> open : jdbc.queryForList(
+                    "SELECT id, target_key FROM alert_instance WHERE rule_id=? AND closed_at IS NULL", ruleId)) {
+                if (!failingNow.contains((String) open.get("target_key"))) {
+                    resolve((Number) open.get("id"), "FIRING");
+                }
+            }
+            return;
+        }
         jdbc.query("""
                 SELECT id FROM alert_instance WHERE rule_id=? AND closed_at IS NULL
                   AND last_transition_at < now() - interval '30 minutes'
                 """, (rs, i) -> rs.getLong(1), ruleId).forEach(id -> resolve(id, "FIRING"));
+    }
+
+    /**
+     * ETL Job 실패를 «적재 테이블(체인)» 단위로 판정한다.
+     *
+     * <p>그룹 단위 판정은 etl_job_run 을 보는데, 그 행은 프로세스 그룹 하나에 하나뿐이라
+     * "DZ 가 실패했다"까지만 알 수 있다. DZ 는 테이블 5개를 적재하므로 정작 필요한
+     * "COM001M 적재만 실패"를 가려낼 수 없다. 그래서 여기서는 프로세서 단위로 남는
+     * nifi_execution_log 의 ERROR 행을 근거로 쓰고, 그 프로세서가 속한 체인의 최종 적재
+     * 스텝을 대표로 삼는다.
+     *
+     * <p>체인은 이름 규칙이 아니라 etl_job_link(실제 NiFi 연결)를 거슬러 올라가 만든다 -
+     * trigger-dz-COM001M -> extract-tb-COM001M -> truncate-dz-COM001M -> load-dz-COM001M
+     * 중 어디서 실패해도 같은 체인의 알림으로 모인다. 이는 ETL 관리 화면 왼쪽 트리가 job 수를
+     * 세는 기준(NifiProcessGroupTreeService.JobCounts - 커넥션으로 이어진 덩어리 하나 = job
+     * 하나)과 같은 단위다. DZ/DW 는 실제로 트리의 5개와 여기 5개가 정확히 일치한다.
+     * 다만 DZ_UPSERT 처럼 적재 스텝이 일렬로 이어져 트리에서 한 덩어리로 보이는 플로우는
+     * 여기서 테이블별로 더 잘게 쪼갠다 - 감시 단위가 트리보다 굵어지는 경우는 없다.
+     */
+    private void evaluateJobRulesByChain(long ruleId, ScopeFilter scope, boolean daily) {
+        Map<String, Long> chainOf = chainByProcessor();
+        if (chainOf.isEmpty()) {
+            return;   // 미러가 아직 안 돌았거나 적재 스텝이 없다.
+        }
+        Map<Long, String> labels = chainLabels();
+
+        // 상시 규칙은 방금 난 실패 이벤트를, 스케줄 규칙은 그 시각의 «현재 실패 상태»를 본다.
+        // 후자는 프로세서별 «가장 최근» 기록만 남긴 뒤(DISTINCT ON) 그게 실패인 것만 고른다 -
+        // 그 뒤에 성공으로 다시 돈 체인까지 매일 아침 알리면 안 된다.
+        List<Map<String, Object>> failures = daily
+                ? jdbc.queryForList("""
+                        SELECT * FROM (
+                            SELECT DISTINCT ON (e.processor_id)
+                                   e.id, e.processor_id, e.job_id, j.job_name, e.status, e.level
+                            FROM nifi_execution_log e LEFT JOIN etl_job j ON j.id = e.job_id
+                            WHERE e.occurred_at > now() - interval '7 days'
+                            ORDER BY e.processor_id, e.occurred_at DESC
+                        ) t WHERE t.status = 'FAILED' AND t.level = 'ERROR'
+                        """)
+                : jdbc.queryForList("""
+                        SELECT e.id, e.processor_id, e.job_id, j.job_name
+                        FROM nifi_execution_log e LEFT JOIN etl_job j ON j.id = e.job_id
+                        WHERE e.status = 'FAILED' AND e.level = 'ERROR'
+                          AND e.occurred_at > now() - interval '10 minutes'
+                        ORDER BY e.occurred_at DESC
+                        """);
+        Set<String> failingNow = new HashSet<>();
+        for (Map<String, Object> f : failures) {
+            String processorId = (String) f.get("processor_id");
+            Long stepId = processorId == null ? null : chainOf.get(processorId);
+            // 어느 적재 체인에도 안 걸리는 프로세서(적재 스텝이 없는 덩어리)는 버리지 않는다.
+            // id 0 으로 두면 INCLUDE 에서는 "고르지 않은 것"이라 조용하고, EXCLUDE 에서는
+            // "제외하지 않은 것"이라 그대로 알린다 - 특정 테이블만 빼려다 나머지 실패까지
+            // 통째로 못 받는 구멍을 막는다.
+            if (!scope.allows(stepId == null ? 0L : stepId)) {
+                continue;   // 감시 범위 밖.
+            }
+            long logId = ((Number) f.get("id")).longValue();
+            // job_id 는 nullable(LEFT JOIN 이고 컬럼 자체도 null 가능) - 미상은 한 칸에 모은다.
+            Object jobId = f.get("job_id");
+            Object jobName = f.get("job_name");
+            String label = stepId != null
+                    ? labels.getOrDefault(stepId, "적재 " + stepId)
+                    : (jobName != null ? (String) jobName : "미상 ETL");
+            String target = stepId != null ? "CHAIN:" + stepId
+                    : "JOB:" + (jobId != null ? jobId : "unknown");
+            if (!failingNow.add(target)) {
+                continue;   // 한 체인의 여러 프로세서가 걸린 경우 - 알림은 체인당 하나면 된다.
+            }
+            List<Map<String, Object>> open = jdbc.queryForList(
+                    "SELECT id, last_failed_run_id FROM alert_instance WHERE rule_id=? AND target_key=? AND closed_at IS NULL",
+                    ruleId, target);
+            if (open.isEmpty()) {
+                Long id = jdbc.queryForObject("""
+                        INSERT INTO alert_instance
+                            (rule_id, rule_type_code, kpi_axis, target_key, target_label, component_code, severity,
+                             state, condition_since, started_at, last_evaluated_at, last_transition_at, summary,
+                             last_failed_run_id, fail_run_count, deep_link)
+                        VALUES (?, ?, 'CURRENT', ?, ?, 'JOB', 'WARNING', 'FIRING', now(), now(), now(), now(), ?, ?, 1,
+                                '/dashboard?panel=jobs')
+                        RETURNING id
+                        """, Long.class, ruleId, JOB_RULE_TYPE, target, label,
+                        "ETL Job 실패: " + label, logId);
+                event(id, "CREATED", null, "FIRING", "SYSTEM");
+                event(id, "FIRED", null, "FIRING", "SYSTEM");
+                notifyFired(id);
+                log.info("JOB 실패 알림 생성(체인) {} target={}", id, label);
+            } else {
+                Map<String, Object> inst = open.get(0);
+                Long last = inst.get("last_failed_run_id") == null ? null
+                        : ((Number) inst.get("last_failed_run_id")).longValue();
+                if (last == null || last != logId) {
+                    Number id = (Number) inst.get("id");
+                    jdbc.update("UPDATE alert_instance SET last_failed_run_id=?, fail_run_count=fail_run_count+1, "
+                            + "last_evaluated_at=now(), last_transition_at=now(), updated_at=now() WHERE id=?", logId, id);
+                    event(id.longValue(), "RECURRED", null, null, "SYSTEM");
+                    notifyFired(id.longValue());
+                }
+            }
+        }
+        resolveJobInstances(ruleId, daily, failingNow);
+        if (daily) {
+            renotifyScheduledRun(ruleId);
+        }
+    }
+
+    /**
+     * NiFi 프로세서 id -> 그 프로세서가 속한 체인의 최종 적재 스텝 id.
+     *
+     * <p>적재 스텝(target_table 보유)에서 링크를 «거꾸로» 따라 올라가며 상류 프로세서를 모은다.
+     * 한 프로세서가 여러 적재 스텝으로 흘러가는 구조라면 먼저 도달한 체인에 귀속시킨다
+     * (지금 플로우들은 테이블별로 갈라져 있어 실제로는 겹치지 않는다).
+     */
+    private Map<String, Long> chainByProcessor() {
+        Map<String, List<String>> upstream = new HashMap<>();
+        for (Map<String, Object> l : jdbc.queryForList(
+                "SELECT from_component_id, to_component_id FROM etl_job_link WHERE deleted_at IS NULL")) {
+            upstream.computeIfAbsent((String) l.get("to_component_id"), k -> new ArrayList<>())
+                    .add((String) l.get("from_component_id"));
+        }
+        List<Map<String, Object>> loadSteps = jdbc.queryForList(
+                "SELECT id, nifi_processor_id FROM etl_job_step "
+                        + "WHERE deleted_at IS NULL AND target_table IS NOT NULL ORDER BY id");
+        // 1단계: 적재 프로세서는 «자기 자신»의 대표로 먼저 못박는다. DZ_UPSERT 처럼 적재 스텝이
+        // 일렬로 이어진 플로우에서, 하류 체인의 상류 탐색이 앞 테이블의 적재 스텝을 삼키는 걸 막는다.
+        Map<String, Long> chainOf = new HashMap<>();
+        for (Map<String, Object> st : loadSteps) {
+            chainOf.put((String) st.get("nifi_processor_id"), ((Number) st.get("id")).longValue());
+        }
+        // 2단계: 각 적재 스텝에서 상류로 거슬러 올라가 아직 임자 없는 프로세서만 흡수한다.
+        for (Map<String, Object> st : loadSteps) {
+            long stepId = ((Number) st.get("id")).longValue();
+            Deque<String> queue = new ArrayDeque<>(upstream.getOrDefault((String) st.get("nifi_processor_id"), List.of()));
+            while (!queue.isEmpty()) {
+                String pid = queue.poll();
+                if (pid == null || chainOf.putIfAbsent(pid, stepId) != null) {
+                    continue;   // 이미 다른(또는 같은) 체인에 귀속됨 - 순환도 여기서 멈춘다.
+                }
+                queue.addAll(upstream.getOrDefault(pid, List.of()));
+            }
+        }
+        return chainOf;
+    }
+
+    /** 적재 스텝 id -> 화면·알림에 쓸 이름("DZ / dz_com001m"). */
+    private Map<Long, String> chainLabels() {
+        Map<Long, String> labels = new HashMap<>();
+        for (Map<String, Object> r : jdbc.queryForList(
+                // 이름 규칙은 감시 범위 드롭다운(AlertAdminController.scopeTargets)과 같게 둔다 -
+                // 고른 이름과 알림에 찍히는 이름이 다르면 어느 걸 고른 건지 알 수 없다.
+                "SELECT s.id, j.job_name || ' / ' || s.target_table "
+                        + "|| CASE WHEN count(*) OVER (PARTITION BY j.job_name, s.target_table) > 1 "
+                        + "THEN ' (' || s.step_name || ')' ELSE '' END AS name "
+                        + "FROM etl_job_step s JOIN etl_job j ON j.id = s.job_id "
+                        + "WHERE s.deleted_at IS NULL AND s.target_table IS NOT NULL")) {
+            labels.put(((Number) r.get("id")).longValue(), (String) r.get("name"));
+        }
+        return labels;
     }
 
     /** DATA 신선도(적재 정체). 24h 내 활동한 소스가 임계(분)만큼 새 입력이 없으면 발화, 재개되면 해소한다. */
@@ -368,12 +656,15 @@ public class AlertEngine {
         Map<String, Object> rule;
         try {
             rule = jdbc.queryForMap(
-                    "SELECT id, severity, params_json::text AS params, enabled "
+                    "SELECT id, severity, params_json::text AS params, enabled, " + SCHEDULE_COLUMNS
                             + "FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL", DATA_BUILTIN_KEY);
         } catch (Exception ex) {
             return;   // 규칙 미시드
         }
         if (!Boolean.TRUE.equals(rule.get("enabled"))) {
+            return;
+        }
+        if (!scheduleDue(rule)) {
             return;
         }
         long ruleId = ((Number) rule.get("id")).longValue();
@@ -430,6 +721,9 @@ public class AlertEngine {
                 resolve((Number) inst.get("id"), "FIRING");
             }
         }
+        if (scheduled(rule)) {
+            renotifyScheduledRun(ruleId);
+        }
     }
 
     /** 수집기 중단(데드맨). WatchdogService 가 연 collector_outage(미종료)를 대기열 알림으로 승격/해소한다. */
@@ -437,12 +731,13 @@ public class AlertEngine {
         Map<String, Object> rule;
         try {
             rule = jdbc.queryForMap(
-                    "SELECT id, severity, enabled FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL",
+                    "SELECT id, severity, enabled, " + SCHEDULE_COLUMNS
+                            + "FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL",
                     COLLECTOR_BUILTIN_KEY);
         } catch (Exception ex) {
             return;
         }
-        if (!Boolean.TRUE.equals(rule.get("enabled"))) {
+        if (!Boolean.TRUE.equals(rule.get("enabled")) || !scheduleDue(rule)) {
             return;
         }
         long ruleId = ((Number) rule.get("id")).longValue();
@@ -497,13 +792,17 @@ public class AlertEngine {
                 resolve((Number) inst.get("id"), "FIRING");
             }
         }
+        if (scheduled(rule)) {
+            renotifyScheduledRun(ruleId);
+        }
     }
 
     private void evaluateMemoryRule() {
         Map<String, Object> rule;
         try {
             rule = jdbc.queryForMap(
-                    "SELECT id, severity, for_seconds, clear_seconds, params_json::text AS params, enabled "
+                    "SELECT id, severity, for_seconds, clear_seconds, params_json::text AS params, enabled, "
+                            + SCHEDULE_COLUMNS
                             + "FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL", BUILTIN_KEY);
         } catch (Exception ex) {
             return;   // 규칙이 아직 시드 안 됨
@@ -511,9 +810,14 @@ public class AlertEngine {
         if (!Boolean.TRUE.equals(rule.get("enabled"))) {
             return;
         }
+        if (!scheduleDue(rule)) {
+            return;
+        }
         long ruleId = ((Number) rule.get("id")).longValue();
-        int forSec = ((Number) rule.get("for_seconds")).intValue();
-        int clearSec = ((Number) rule.get("clear_seconds")).intValue();
+        // 스케줄 규칙은 하루 한 번만 돌므로 지속시간 누적(for/clear)이 영원히 안 찬다.
+        // 그 시각의 상태로 즉시 판정하도록 0 으로 눌러 둔다.
+        int forSec = scheduled(rule) ? 0 : ((Number) rule.get("for_seconds")).intValue();
+        int clearSec = scheduled(rule) ? 0 : ((Number) rule.get("clear_seconds")).intValue();
         // 임계는 params 우선, 없으면 SettingKey. 여기선 params 고정 파싱(단순 슬라이스).
         double threshold = jsonNum(rule.get("params").toString(), "threshold", 80);
         double clearThreshold = jsonNum(rule.get("params").toString(), "clear", 72);
@@ -555,6 +859,9 @@ public class AlertEngine {
             // 임계와 해제 사이 - 상태 유지, 관측값만 갱신.
             jdbc.update("UPDATE alert_instance SET observed_value=?, last_evaluated_at=now() WHERE id=?",
                     memPct, open.get("id"));
+        }
+        if (scheduled(rule)) {
+            renotifyScheduledRun(ruleId);
         }
     }
 
@@ -631,7 +938,13 @@ public class AlertEngine {
      * 규칙 감시 범위(scope_json). ALL=전체 / INCLUDE=지정 대상만 / EXCLUDE=지정 대상 제외.
      * ids 는 JOB 규칙이면 etl_job.id, CDC 규칙이면 pipeline_definition.id.
      */
-    private record ScopeFilter(String kind, Set<Long> ids) {
+    private record ScopeFilter(String kind, Set<Long> ids, String idKind) {
+
+        /** ids 가 etl_job_step.id(적재 체인)를 가리키는가. 기본은 etl_job.id(그룹). */
+        boolean isChainScoped() {
+            return "CHAIN".equals(idKind) && !"ALL".equals(kind);
+        }
+
         boolean allows(long id) {
             if ("INCLUDE".equals(kind)) {
                 return ids.isEmpty() || ids.contains(id);   // 지정 없으면 사실상 전체(미설정 방어)
@@ -648,7 +961,7 @@ public class AlertEngine {
         Object raw = rule.get("scope");
         String json = raw == null ? null : raw.toString();
         if (json == null || json.isBlank()) {
-            return new ScopeFilter("ALL", Set.of());
+            return new ScopeFilter("ALL", Set.of(), "JOB");
         }
         try {
             JsonNode n = MAPPER.readTree(json);
@@ -657,9 +970,9 @@ public class AlertEngine {
             if (n.has("ids") && n.get("ids").isArray()) {
                 n.get("ids").forEach(x -> ids.add(x.asLong()));
             }
-            return new ScopeFilter(kind, ids);
+            return new ScopeFilter(kind, ids, n.path("idKind").asText("JOB"));
         } catch (Exception ex) {
-            return new ScopeFilter("ALL", Set.of());
+            return new ScopeFilter("ALL", Set.of(), "JOB");
         }
     }
 
@@ -735,7 +1048,7 @@ public class AlertEngine {
         try {
             rule = jdbc.queryForMap(
                     "SELECT id, severity, for_seconds, clear_seconds, params_json::text AS params, "
-                            + "scope_json::text AS scope, enabled "
+                            + "scope_json::text AS scope, enabled, " + SCHEDULE_COLUMNS
                             + "FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL", builtinKey);
         } catch (Exception ex) {
             return;   // 아직 시드 안 됨
@@ -743,10 +1056,14 @@ public class AlertEngine {
         if (!Boolean.TRUE.equals(rule.get("enabled"))) {
             return;
         }
+        if (!scheduleDue(rule)) {
+            return;
+        }
         long ruleId = ((Number) rule.get("id")).longValue();
         String severity = (String) rule.get("severity");
-        int forSec = ((Number) rule.get("for_seconds")).intValue();
-        int clearSec = ((Number) rule.get("clear_seconds")).intValue();
+        // 스케줄 규칙은 그 시각 상태로 즉시 발화/해소한다(위 evaluateMemoryRule 주석 참고).
+        int forSec = scheduled(rule) ? 0 : ((Number) rule.get("for_seconds")).intValue();
+        int clearSec = scheduled(rule) ? 0 : ((Number) rule.get("clear_seconds")).intValue();
 
         List<Candidate> candidates = signalFn.apply(rule);
         if (candidates == null) {
@@ -772,6 +1089,9 @@ public class AlertEngine {
                 jdbc.update("UPDATE alert_instance SET false_observed_sec=?, true_observed_sec=0, "
                         + "last_evaluated_at=now(), updated_at=now() WHERE id=?", falseSec, open.get("id"));
             }
+        }
+        if (scheduled(rule)) {
+            renotifyScheduledRun(ruleId);
         }
     }
 
