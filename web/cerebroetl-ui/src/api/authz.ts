@@ -175,8 +175,21 @@ export async function listAssignments(): Promise<AssignmentView[]> {
   return unwrap(res.data);
 }
 
-export async function setUserRoles(userId: string, roleIds: string[]): Promise<void> {
-  unwrap((await apiClient.put<ApiResponse<void>>(`/admin/assignments/${encodeURIComponent(userId)}`, { roleIds })).data);
+export interface SetRolesResult {
+  /**
+   * NiFi/Airflow 개인계정 동기화 실패 사유. 비어 있으면 정상이다.
+   * 동기화는 best-effort 라 실패해도 역할 배정 자체는 성공하지만, 그 사용자는 콘솔이
+   * 열리지 않는다(예: Airflow 는 이메일이 유일값이라 중복이면 409). 화면에서 바로 알린다.
+   */
+  syncWarnings: string[];
+}
+
+export async function setUserRoles(userId: string, roleIds: string[]): Promise<SetRolesResult> {
+  const res = await apiClient.put<ApiResponse<SetRolesResult>>(
+    `/admin/assignments/${encodeURIComponent(userId)}`,
+    { roleIds },
+  );
+  return unwrap(res.data) ?? { syncWarnings: [] };
 }
 
 export interface SyncIdentitiesResult {

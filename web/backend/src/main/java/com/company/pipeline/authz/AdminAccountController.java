@@ -79,6 +79,7 @@ public class AdminAccountController {
         if (userRepository.existsByUserId(req.userId())) {
             throw new BusinessException(ErrorCode.USER_ALREADY_EXISTS);
         }
+        requireUniqueEmail(req.email(), req.userId());
         AppUser user = new AppUser(req.userId());
         user.setUserNm(req.userNm() != null && !req.userNm().isBlank() ? req.userNm() : req.userId());
         user.setEmail(req.email());
@@ -96,6 +97,7 @@ public class AdminAccountController {
     public ApiResponse<AccountView> update(@PathVariable String userId, @RequestBody UpdateAccountRequest req,
                                            @AuthenticationPrincipal AppUser act) {
         AppUser user = find(userId);
+        requireUniqueEmail(req.email(), userId);
         if (req.userNm() != null && !req.userNm().isBlank()) {
             user.setUserNm(req.userNm());
         }
@@ -179,5 +181,23 @@ public class AdminAccountController {
                 locked,
                 u.getLockedUntil() == null ? null : u.getLockedUntil().toString(),
                 u.getLoginFailCount());
+    }
+
+    /**
+     * 이메일 중복을 막는다. 빈 값은 허용한다(여러 계정이 이메일 없이 존재할 수 있다).
+     *
+     * <p>app_user 에는 유니크 제약이 없지만 Airflow(FAB)는 이메일이 유일값이라, 중복인 채로
+     * 역할을 배정하면 개인계정 동기화가 409 Conflict 로 실패하고 그 사용자만 Airflow 콘솔이
+     * "준비하는 중"에서 멈춘다. 동기화는 best-effort 라 화면에는 성공으로 보인다 -
+     * 그래서 만들 때 막는 편이 낫다(2026-08-25 실사례).
+     */
+    private void requireUniqueEmail(String email, String userId) {
+        if (email == null || email.isBlank()) {
+            return;
+        }
+        if (userRepository.existsByEmailIgnoreCaseAndUserIdNot(email.trim(), userId)) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "이미 다른 계정이 사용 중인 이메일입니다: " + email.trim());
+        }
     }
 }

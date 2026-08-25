@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag, message } from "antd";
+import { Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
   createAccount,
@@ -102,8 +102,14 @@ export function AccountManagementPage() {
 
   const roleMut = useMutation({
     mutationFn: (v: { userId: string; roleIds: string[] }) => setUserRoles(v.userId, v.roleIds),
-    onSuccess: () => {
-      message.success("역할을 저장했습니다.");
+    onSuccess: (r) => {
+      // 역할 저장은 됐지만 NiFi/Airflow 개인계정 동기화가 실패했을 수 있다(best-effort).
+      // 그대로 두면 그 사용자만 콘솔이 안 열리는데 화면에는 성공으로만 보인다 - 경고를 띄운다.
+      if (r.syncWarnings?.length) {
+        message.warning(`역할은 저장했지만 콘솔 계정 동기화에 실패했습니다 — ${r.syncWarnings.join(" / ")}`, 10);
+      } else {
+        message.success("역할을 저장했습니다.");
+      }
       setRoleTarget(null);
       refresh();
     },
@@ -130,8 +136,25 @@ export function AccountManagementPage() {
     {
       title: "역할",
       key: "roles",
+      // admin_yn='Y' 는 PermissionService 에서 역할 계산 결과를 전 시스템 최대 권한으로
+      // 덮어쓴다(부트스트랩용 백도어). 그래서 관리자에게 배정된 역할은 실제로 아무 효과가
+      // 없는데, 파란 태그로 나란히 보이면 "이 역할 때문에 이만큼 되는구나"로 읽힌다.
+      // 무시되고 있다는 사실을 그 자리에 그대로 적는다.
       render: (_, row) => {
         const names = rolesByUser.get(row.userId)?.roleNames ?? [];
+        if (row.admin) {
+          return (
+            <Tooltip
+              title={
+                names.length
+                  ? `관리자 권한이 전 시스템을 열어두므로 배정된 역할(${names.join(", ")})은 판정에 쓰이지 않습니다. 역할대로 통제하려면 권한을 '일반'으로 바꾸세요.`
+                  : "관리자 권한이 전 시스템을 열어둡니다. 역할대로 통제하려면 권한을 '일반'으로 바꾸세요."
+              }
+            >
+              <Tag>역할 무시됨</Tag>
+            </Tooltip>
+          );
+        }
         return names.length ? (
           names.map((n) => <Tag key={n} color="blue">{n}</Tag>)
         ) : (
@@ -279,6 +302,14 @@ export function AccountManagementPage() {
           onChange={(v) => setCheckedRoles(v as string[])}
           options={roles.map((r) => ({ label: `${r.roleNm} (${r.roleId})`, value: r.roleId }))}
         />
+        {roleTarget?.admin ? (
+          // 여기서 아무리 골라도 판정에 안 쓰인다는 걸 저장 전에 알려준다 - 나중에 권한을
+          // '일반'으로 내릴 때를 대비해 미리 배정해 두는 것 자체는 유효하므로 막지는 않는다.
+          <p style={{ color: "#b4740f", marginTop: 12, marginBottom: 0 }}>
+            ⚠ 이 계정은 <b>권한이 '관리자'</b>라 전 시스템이 이미 열려 있습니다. 여기서 배정한 역할은
+            권한을 '일반'으로 바꾸기 전까지 판정에 사용되지 않습니다.
+          </p>
+        ) : null}
         <p style={{ color: "#888", marginTop: 12, marginBottom: 0 }}>
           ⓘ 역할이 하나도 없는 사용자는 로그인은 되지만 메뉴가 보이지 않습니다(권한 없음이 기본값).
           역할을 바꾸면 ETL/Airflow 개인계정 권한도 함께 조정됩니다.

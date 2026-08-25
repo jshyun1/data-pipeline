@@ -202,7 +202,7 @@ public class AuthzAdminService {
     }
 
     @Transactional
-    public void setUserRoles(String userId, List<String> roleIds, String actor) {
+    public List<String> setUserRoles(String userId, List<String> roleIds, String actor) {
         AppUser targetUser = userRepository.findById(userId).orElseThrow(() ->
                 new BusinessException(ErrorCode.VALIDATION_ERROR, "사용자를 찾을 수 없습니다: " + userId));
         List<String> before = userRoleRepository.findByUserId(userId).stream()
@@ -218,10 +218,22 @@ public class AuthzAdminService {
         }
         permissionService.invalidate(userId);
         // 역할이 바뀌면 NiFi/Airflow 개인계정도 맞춘다(P5b, 기본 off·best-effort).
-        nifiTenantSyncService.syncUser(userId);
-        airflowUserSyncService.syncUser(userId, targetUser.getUserNm(), targetUser.getEmail());
+        // 실패해도 역할 배정은 유지하되, 사유를 호출부로 올려 화면에서 보이게 한다 - 조용히
+        // 삼키면 "역할을 줬는데 콘솔이 안 열린다"만 남는다(2026-08-25 Airflow 이메일 중복 409).
+        com.company.pipeline.authz.provisioning.SyncOutcome nifi = nifiTenantSyncService.syncUserDetailed(userId);
+        com.company.pipeline.authz.provisioning.SyncOutcome airflow =
+                airflowUserSyncService.syncUserDetailed(userId, targetUser.getUserNm(), targetUser.getEmail());
+        List<String> warnings = new java.util.ArrayList<>();
+        if (nifi.failed()) {
+            warnings.add("NiFi 계정 동기화 실패: " + nifi.message());
+        }
+        if (airflow.failed()) {
+            warnings.add("Airflow 계정 동기화 실패: " + airflow.message());
+        }
         auditService.record(actor, "ASSIGN_ROLE", "USER", userId,
-                String.join(",", before), roleIds == null ? "" : String.join(",", roleIds), null, null);
+                String.join(",", before), roleIds == null ? "" : String.join(",", roleIds),
+                warnings.isEmpty() ? null : String.join(" / ", warnings), null);
+        return warnings;
     }
 
     /**

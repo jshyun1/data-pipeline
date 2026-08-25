@@ -35,11 +35,22 @@ public class AdminAssignmentController {
         return ApiResponse.success(adminService.listAssignments());
     }
 
+    /**
+     * 역할 배정 결과.
+     *
+     * @param syncWarnings NiFi/Airflow 개인계정 동기화 실패 사유. 비어 있으면 정상이다.
+     *                     동기화는 best-effort 라 실패해도 역할 배정 자체는 성공하지만, 그
+     *                     사용자는 콘솔이 안 열린다 - 화면에서 바로 알 수 있게 함께 내려준다.
+     */
+    public record SetRolesResponse(List<String> syncWarnings) {
+    }
+
     @PutMapping("/{userId}")
-    public ApiResponse<Void> setRoles(@PathVariable String userId, @RequestBody SetRolesRequest req,
-                                      @AuthenticationPrincipal AppUser actor) {
-        adminService.setUserRoles(userId, req.roleIds(), actor == null ? null : actor.getUserId());
-        return ApiResponse.success(null);
+    public ApiResponse<SetRolesResponse> setRoles(@PathVariable String userId, @RequestBody SetRolesRequest req,
+                                                  @AuthenticationPrincipal AppUser actor) {
+        List<String> warnings =
+                adminService.setUserRoles(userId, req.roleIds(), actor == null ? null : actor.getUserId());
+        return ApiResponse.success(new SetRolesResponse(warnings));
     }
 
     /**

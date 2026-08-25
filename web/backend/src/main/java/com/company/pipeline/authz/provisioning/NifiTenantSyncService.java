@@ -51,8 +51,13 @@ public class NifiTenantSyncService {
      * @return 동기화가 실제로 시도되어 성공했으면 true, 기능 off·잘못된 입력·실패면 false(일괄동기화 집계용).
      */
     public boolean syncUser(String userId) {
+        return syncUserDetailed(userId).succeeded();
+    }
+
+    /** 실패 사유까지 돌려준다. 호출부가 응답에 경고를 실어 보낼 때 쓴다. */
+    public SyncOutcome syncUserDetailed(String userId) {
         if (!enabled || userId == null || userId.isBlank()) {
-            return false;
+            return SyncOutcome.skipped();
         }
         try {
             AppUser user = userRepository.findById(userId).orElse(null);
@@ -79,14 +84,14 @@ public class NifiTenantSyncService {
                     log.info("NiFi 개인계정 권한 회수 - {}", userId);
                 }
                 auditService.record("system", "SYNC_NIFI_USER", "USER", userId, "권한없음/비활성 → 정책 회수");
-                return true;
+                return SyncOutcome.success();
             }
 
             String nid = nifiClient.ensureNifiUser(userId);
             if (nid == null) {
                 log.warn("NiFi 사용자 동기화: id 확보 실패 - {}", userId);
                 auditService.record("system", "SYNC_NIFI_USER", "USER", userId, "실패: NiFi 사용자 id 확보 실패");
-                return false;
+                return SyncOutcome.failure("NiFi 사용자 id 확보 실패");
             }
             for (String[] p : viewPolicies) {
                 nifiClient.ensureNifiUserPolicy(p[0], p[1], nid);
@@ -104,11 +109,11 @@ public class NifiTenantSyncService {
             log.info("NiFi 개인계정 동기화 완료 - {} (modify={})", userId, canModify);
             auditService.record("system", "SYNC_NIFI_USER", "USER", userId,
                     canModify ? "보기+수정/실행 정책 보장" : "보기 정책 보장 · 수정/실행 회수");
-            return true;
+            return SyncOutcome.success();
         } catch (RuntimeException ex) {
             log.warn("NiFi 개인계정 동기화 실패(무시하고 진행) - {}: {}", userId, ex.getMessage());
             auditService.record("system", "SYNC_NIFI_USER", "USER", userId, "실패: " + ex.getMessage());
-            return false;
+            return SyncOutcome.failure(ex.getMessage());
         }
     }
 }
