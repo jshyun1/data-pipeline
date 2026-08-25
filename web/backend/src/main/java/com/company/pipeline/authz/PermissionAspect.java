@@ -130,7 +130,16 @@ public class PermissionAspect {
     }
 
     private void autoAudit(JoinPoint joinPoint, RequirePermission require) {
-        if (!enforcementEnabled || !require.audit()) {
+        // 인가 강제(enforce)와 달리 감사는 스위치와 무관하게 항상 남긴다.
+        //
+        // 예전엔 enforcementEnabled 를 같이 봤는데, 그러면 "막지는 않지만 누가 뭘 했는지는
+        // 남겨야 하는" 기간에 감사가 통째로 비었다. MSA 포털 연동이 끝날 때까지 서버는
+        // 인가를 못 켜는데, 바로 그 기간이 무인증 호출이 그대로 통과하는 때라 감사가 가장
+        // 필요하다(2026-08-25: ETL Job 생성이 감사 로그에 남지 않는 것을 발견).
+        //
+        // 소음은 아래에서 걸러진다 - 조회(GET/HEAD)·서비스 토큰 호출(DAG)·heartbeat 류 제외.
+        // 인증 안 된 호출은 actor="unknown" 으로 남아, 오히려 무인증 접근을 드러낸다.
+        if (!require.audit()) {
             return;
         }
         HttpServletRequest request = currentRequest();
