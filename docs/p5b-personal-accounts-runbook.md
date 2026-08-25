@@ -19,6 +19,27 @@
 4. NiFi 정책 API는 **`%2F` 인코딩 슬래시를 거부**(Jetty "Ambiguous URI") → `/policies/read/flow`
    처럼 비인코딩 경로 사용. (코드의 `ensureNifiUserPolicy`는 이미 비인코딩으로 처리)
 
+## 1-1. ⚠️ 2026-08-25 배포 실측으로 추가된 함정
+
+5. **인증서 없이 배포하면 웹 전체가 죽는다(콘솔만이 아니다).** `deploy/p5b-certs/` 는 gitignore
+   대상이라 저장소·pull 로 따라오지 않는데, docker-compose 는 그 경로를 bind mount 한다.
+   호스트에 파일이 없으면 Docker 가 **같은 이름의 빈 디렉터리**를 만들고, nginx 가
+   `PEM_read_bio_X509_AUX() failed ... no start line` 로 기동에 실패해 **재시작 무한 루프**에
+   빠진다. 13001 이 통째로 안 열린다. **소스 배포 전에 §2 를 먼저 수행할 것.**
+
+6. **`AUTHZ_PROXY_ENABLED=false` 인 채로 새 nginx.conf 를 올리면 콘솔이 401 이 된다.**
+   nginx 는 `/nifi*` `/airflow/` 에 `auth_request` 를 **무조건** 건다. 그런데 그 종단점이 보는
+   `cetl_session` 쿠키는 `AuthController` 가 **플래그가 켜져 있을 때만** 심는다. 즉 nginx 는
+   요구하는데 쿠키는 발급되지 않는 반쪽 상태가 된다. 새 nginx.conf 를 배포하는 환경은
+   **반드시 플래그도 같이 켜야** 한다(끄고 쓸 거면 nginx.conf 의 auth_request 를 빼야 한다).
+
+7. **`/proxy` write 정책이 이미 있으면 POST 로 새로 만들면 안 된다.** 신규 환경은 404 라
+   생성이 맞지만, 기존 정책이 있는 환경은 `GET /nifi-api/policies/write/proxy` 로 받아
+   **기존 users 배열에 추가해 PUT** 해야 한다. POST 로 덮으면 기존 사용자가 날아간다.
+
+8. **truststore 변경은 NiFi 재기동이 필요하다.** 배포 과정에서 NiFi 가 어차피 재시작한다면
+   그 전에 CA 를 넣어 두면 재기동 한 번으로 끝난다.
+
 ## 2. 인증서 발급 (프록시용 mTLS)
 ```bash
 # CA
