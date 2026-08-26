@@ -136,15 +136,6 @@ function folderName(dag: DashboardDag) {
   return folder || "미분류";
 }
 
-function groupDagsByFolder(dags: DashboardDag[]) {
-  const folders = new Map<string, DashboardDag[]>();
-  dags.forEach((dag) => {
-    const name = folderName(dag);
-    folders.set(name, [...(folders.get(name) ?? []), dag]);
-  });
-  return folders;
-}
-
 function groupRuns(runs: AirflowDagRun[]) {
   const grouped = new Map<string, AirflowDagRun[]>();
   runs.forEach((run) => {
@@ -328,7 +319,6 @@ function BusinessTree({
       <div className="airflow-tree-body">
         {CATEGORY_ORDER.map((category) => {
           const categoryDags = dags.filter((dag) => categoryOf(dag) === category);
-          const folders = groupDagsByFolder(categoryDags);
           const categoryNode = `category:${category}`;
           const categoryCollapsed = collapsedNodes.has(categoryNode);
           return (
@@ -338,48 +328,35 @@ function BusinessTree({
                 {categoryCollapsed ? <FolderOutlined /> : <FolderOpenOutlined />}
                 {category}
               </button>
-              {!categoryCollapsed && [...folders.entries()].map(([folder, folderDags]) => {
-                const folderNode = `folder:${category}:${folder}`;
-                const folderCollapsed = collapsedNodes.has(folderNode);
-                return (
-                  <div key={folder} className="airflow-tree-folder">
-                    <button type="button" className="airflow-tree-label" aria-expanded={!folderCollapsed} onClick={() => toggleNode(folderNode)}>
-                      {folderCollapsed ? <RightOutlined /> : <DownOutlined />}
-                      {folderCollapsed ? <FolderOutlined /> : <FolderOpenOutlined />}
-                      {folder}
-                    </button>
-                    {!folderCollapsed && folderDags.map((dag) => (
-                      <Dropdown
-                        key={dag.dag_id}
-                        trigger={["contextMenu"]}
-                        menu={{
-                          items: [
-                            { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
-                            { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
-                            { key: "delete", icon: <DeleteOutlined />, label: "삭제", danger: true },
-                          ],
-                          onClick: ({ key }) => {
-                            if (key === "detail") onDetail(dag);
-                            else if (key === "execution") onExecution(dag);
-                            else onDelete(dag);
-                          },
-                        }}
-                      >
-                        <button
-                          type="button"
-                          className={selectedDagId === dag.dag_id ? "airflow-tree-dag active" : "airflow-tree-dag"}
-                          onClick={() => onSelect(dag.dag_id)}
-                          onContextMenu={() => onSelect(dag.dag_id)}
-                        >
-                          <DagIcon />
-                          <span>{displayName(dag)}</span>
-                          {alertsByDag.has(dag.dag_id) && <Tag color="error">조치</Tag>}
-                        </button>
-                      </Dropdown>
-                    ))}
-                  </div>
-                );
-              })}
+              {!categoryCollapsed && categoryDags.map((dag) => (
+                <Dropdown
+                  key={dag.dag_id}
+                  trigger={["contextMenu"]}
+                  menu={{
+                    items: [
+                      { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
+                      { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
+                      { key: "delete", icon: <DeleteOutlined />, label: "삭제", danger: true },
+                    ],
+                    onClick: ({ key }) => {
+                      if (key === "detail") onDetail(dag);
+                      else if (key === "execution") onExecution(dag);
+                      else onDelete(dag);
+                    },
+                  }}
+                >
+                  <button
+                    type="button"
+                    className={selectedDagId === dag.dag_id ? "airflow-tree-dag active" : "airflow-tree-dag"}
+                    onClick={() => onSelect(dag.dag_id)}
+                    onContextMenu={() => onSelect(dag.dag_id)}
+                  >
+                    <DagIcon />
+                    <span>{displayName(dag)}</span>
+                    {alertsByDag.has(dag.dag_id) && <Tag color="error">조치</Tag>}
+                  </button>
+                </Dropdown>
+              ))}
             </section>
           );
         })}
@@ -457,16 +434,37 @@ function TaskRows({
     if (!steps.length) {
       return <tr className="airflow-task-loading"><td colSpan={8}>등록된 ETL 실행 단계가 없습니다.</td></tr>;
     }
-    return steps.map((step, index) => {
-      const status = step.runStatus?.toUpperCase();
-      return <tr key={step.id} className="airflow-task-row">
-        <td><span className="airflow-task-name">{String(index + 1).padStart(2, "0")} {step.stepName}</span></td>
-        <td><ProfileOutlined /> {step.stepType ?? "ETL"}</td>
+    // NiFi 프로세서(trigger/extract/truncate/load 등)를 각각 나열하지 않고, 같은 체인에 속한 프로세서를
+    // 하나의 작업(job)으로 묶는다. 체인 키 = step 이름의 마지막 '-' 구획(예: extract-tb-COM001M → COM001M).
+    // ETL 관리 트리가 "체인 1개 = job 1개"로 보는 것과 표기를 맞춘다.
+    type Step = (typeof steps)[number];
+    const chainOrder: string[] = [];
+    const byChain = new Map<string, Step[]>();
+    for (const step of steps) {
+      const parts = (step.stepName ?? "").split("-");
+      const key = (parts[parts.length - 1] || step.stepName || `#${step.id}`).trim();
+      if (!byChain.has(key)) {
+        byChain.set(key, []);
+        chainOrder.push(key);
+      }
+      byChain.get(key)!.push(step);
+    }
+    return chainOrder.map((key, index) => {
+      const chainSteps = byChain.get(key)!;
+      const statuses = chainSteps.map((s) => s.runStatus?.toUpperCase());
+      const chainStatus = statuses.includes("INVALID") ? "INVALID"
+        : statuses.includes("RUNNING") ? "RUNNING" : "STOPPED";
+      const targetTable = chainSteps.find((s) => s.targetTable)?.targetTable;
+      const trigger = chainSteps.find((s) => s.stepType === "GenerateFlowFile");
+      const schedule = (trigger ?? chainSteps[0])?.schedulingPeriod;
+      return <tr key={key} className="airflow-task-row">
+        <td><span className="airflow-task-name">{String(index + 1).padStart(2, "0")} {key}</span></td>
+        <td><ProfileOutlined /> 체인 ({chainSteps.length}단계)</td>
         <td>-</td>
-        <td><Tag color={status === "RUNNING" ? "processing" : status === "INVALID" ? "error" : "default"}>{status === "RUNNING" ? "실행 중" : status === "INVALID" ? "오류" : "중지"}</Tag></td>
-        <td>{step.targetTable ?? step.validationStatus ?? "-"}</td>
+        <td><Tag color={chainStatus === "RUNNING" ? "processing" : chainStatus === "INVALID" ? "error" : "default"}>{chainStatus === "RUNNING" ? "실행 중" : chainStatus === "INVALID" ? "오류" : "중지"}</Tag></td>
+        <td>{targetTable ?? "-"}</td>
         <td>-</td>
-        <td>{step.schedulingPeriod ?? "-"}</td>
+        <td>{schedule ?? "-"}</td>
         <td>-</td>
       </tr>;
     });
@@ -858,11 +856,13 @@ function PropertyPanel({
   return (
     <aside className={`airflow-dashboard-panel airflow-property-panel${inline ? " airflow-property-panel--inline" : ""}`}>
       {!inline && <><h3>속성</h3><h2>{displayName(dag)}</h2></>}
-      <section>
+      {/* 스케줄 현황은 우측 속성 패널에만 둔다 - 하단 인라인 패널에 같은 값을 한 번 더
+          보여주던 것을 제거했다(동일 필드·동일 출처, 버튼만 없는 완전 중복이었음). */}
+      {!inline && <section>
         <strong>스케줄 현황</strong>
         <dl><dt>상태</dt><dd>{scheduleStatus}</dd><dt>스케줄</dt><dd title={dag.timetable_summary}>{scheduleDescription(dag.timetable_summary)}</dd><dt>다음 실행</dt><dd>{nextRun ? dayjs(nextRun).format("YYYY-MM-DD HH:mm") : "-"}</dd><dt>시간대</dt><dd>Asia/Seoul</dd></dl>
-        {!inline && <div className="airflow-schedule-actions"><Button type="primary" onClick={onOpenExecution}>실행 설정</Button><Button disabled={!dag.dag_id.startsWith("nifi_pipeline_")} onClick={onOpenSchedule}>스케줄 설정</Button></div>}
-      </section>
+        <div className="airflow-schedule-actions"><Button type="primary" onClick={onOpenExecution}>실행 설정</Button><Button disabled={!dag.dag_id.startsWith("nifi_pipeline_")} onClick={onOpenSchedule}>스케줄 설정</Button></div>
+      </section>}
       {!inline && <section>
         <strong>이상 감지 설정</strong>
         {monitorable
@@ -881,7 +881,7 @@ function PropertyPanel({
           </article>
         ))}</div> : <p>현재 감지된 이상이 없습니다.</p>}
       </section>}
-      <section><strong>연결 리소스</strong><div className="airflow-resource-links"><Link to={`/airflow/manage?dagId=${encodeURIComponent(dag.dag_id)}`}>DAG 보기</Link>{category === "ETL" ? <Link to={dag.nifi_process_group_id ? `/etl/manage?processGroupId=${encodeURIComponent(dag.nifi_process_group_id)}` : "/etl/manage"}>ETL 캔버스</Link> : <Link to="/cdc/pipelines">CDC 파이프라인</Link>}</div></section>
+      {!inline && <section><strong>연결 리소스</strong><div className="airflow-resource-links"><Link to={`/airflow/manage?dagId=${encodeURIComponent(dag.dag_id)}`}>DAG 보기</Link>{category === "ETL" ? <Link to={dag.nifi_process_group_id ? `/etl/manage?processGroupId=${encodeURIComponent(dag.nifi_process_group_id)}` : "/etl/manage"}>ETL 캔버스</Link> : <Link to="/cdc/pipelines">CDC 파이프라인</Link>}</div></section>}
     </aside>
   );
 }

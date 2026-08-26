@@ -197,9 +197,21 @@ export function CdcLogsPage() {
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [eventsQuery.data, pipelinesQuery.data, processingQuery.data]);
-  const lagTrend = useMemo(() => processingRows
-    .map((row) => ({ occurredAt: row.occurredAt, consumerLag: row.consumerLag, pipelineName: row.pipelineName }))
-    .sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()), [processingRows]);
+  const lagTrend = useMemo(() => {
+    // 차트는 분 단위가 아니라 시간 단위로 집계한다. 파이프라인·시간별 최대 Lag를 대표값으로 표시한다
+    // (처리 이력 표는 그대로 분 단위를 유지한다).
+    const byBucket = new Map<string, { occurredAt: string; consumerLag: number; pipelineName: string }>();
+    for (const row of processingRows) {
+      const hourKey = dayjs(row.occurredAt).format("YYYY-MM-DDTHH:00:00");
+      const key = `${row.pipelineName} ${hourKey}`;
+      const existing = byBucket.get(key);
+      if (!existing || row.consumerLag > existing.consumerLag) {
+        byBucket.set(key, { occurredAt: hourKey, consumerLag: row.consumerLag, pipelineName: row.pipelineName });
+      }
+    }
+    return [...byBucket.values()]
+      .sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
+  }, [processingRows]);
 
   // 전일자/당일 프리셋: 해당 날짜 하루로 조회기간을 즉시 맞춘다.
   const applyDayPreset = (offsetDays: 0 | 1) => {

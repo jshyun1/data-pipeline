@@ -436,11 +436,10 @@ export function PipelinesPage() {
               treeData={pipelineTreeData}
               selectedKeys={[selectedTreeKey]}
               onSelect={(keys) => {
+                // 트리에서 파이프라인을 선택하면 목록(내역)만 그 파이프라인으로 좁힌다.
+                // 상세창(Drawer)은 '상세' 버튼으로만 열도록 하여 선택만으로 열리지 않게 한다.
                 const key = String(keys[0] ?? "all");
                 setSelectedTreeKey(key);
-                if (key.startsWith("pipeline:")) {
-                  setDetailPipelineId(Number(key.split(":")[1]));
-                }
               }}
             />
           </Card>
@@ -559,10 +558,6 @@ export function PipelinesPage() {
             ),
           },
         ]}
-        onRow={(record) => ({
-          onClick: () => setSelectedTreeKey(`pipeline:${record.id}`),
-          style: { cursor: "pointer" },
-        })}
         />
           </div>
         </div>
