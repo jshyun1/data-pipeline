@@ -1,8 +1,14 @@
 import { CheckCircleOutlined, CheckOutlined, LockOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Collapse, message, Space, Tag } from "antd";
+import { Alert, Button, Card, Collapse, message, Select, Space, Tag } from "antd";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { listConnections, listConnectionSchemas, listConnectionTables } from "../api/connections";
+import {
+  listConnections,
+  listConnectionColumns,
+  listConnectionSchemas,
+  listConnectionTables,
+  type ColumnMetadataResponse,
+} from "../api/connections";
 import {
   createInitialDbToDbFlow,
   getNifiProcessGroupTree,
@@ -24,6 +30,7 @@ const WIZARD_STEPS = [
 type WizardStepId = (typeof WIZARD_STEPS)[number]["id"];
 type LoadMode = "INSERT" | "TRUNCATE" | "UPSERT";
 type NifiDatabaseType = "Generic" | "Oracle 12+" | "PostgreSQL" | "MySQL" | "MS SQL 2012+";
+type ConnectionDbType = ConnectionResponse["dbType"];
 
 const STEP_NUMBER: Record<WizardStepId, number> = {
   type: 1,
@@ -62,6 +69,12 @@ const DATABASE_TYPE_OPTIONS: NifiDatabaseType[] = [
   "MS SQL 2012+",
   "Generic",
 ];
+
+const CONNECTION_TO_NIFI_DATABASE_TYPE: Record<ConnectionDbType, NifiDatabaseType> = {
+  ORACLE: "Oracle 12+",
+  POSTGRESQL: "PostgreSQL",
+  MYSQL: "MySQL",
+};
 
 interface ProcessGroupOption {
   id: string;
@@ -155,15 +168,78 @@ function connectionJdbcUrl(connection: ConnectionResponse) {
   return null;
 }
 
-async function tableExists(connection: ConnectionResponse, schemaName: string, tableName: string) {
-  const schema = schemaName.trim();
-  const table = tableName.trim();
-  if (!schema || !table) {
-    throw new Error("스키마와 테이블을 모두 입력해야 합니다.");
-  }
+function nifiDatabaseTypeFromConnection(connection: ConnectionResponse | null) {
+  return connection ? CONNECTION_TO_NIFI_DATABASE_TYPE[connection.dbType] : null;
+}
 
-  const tables = await listConnectionTables(connection.id, schema);
-  return tables.some((candidate) => normalizeName(candidate) === normalizeName(table));
+function matchesSelectOption(input: string, option?: { label?: ReactNode }) {
+  return String(option?.label ?? "").toLowerCase().includes(input.toLowerCase());
+}
+
+function commaSeparatedValues(value: string) {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function columnOptions(columns: ColumnMetadataResponse[]) {
+  return columns.map((column) => ({ label: column.name, value: column.name }));
+}
+
+function ColumnMappingPreview({
+  sourceColumns,
+  targetColumns,
+  loading,
+  error,
+}: {
+  sourceColumns: ColumnMetadataResponse[];
+  targetColumns: ColumnMetadataResponse[];
+  loading?: boolean;
+  error?: string | null;
+}) {
+  const targetByName = new Map(targetColumns.map((column) => [normalizeName(column.name), column]));
+  const rows = sourceColumns.map((sourceColumn) => {
+    const targetColumn = targetByName.get(normalizeName(sourceColumn.name));
+    return {
+      sourceColumn: sourceColumn.name,
+      targetColumn: targetColumn?.name ?? "-",
+      matched: !!targetColumn,
+    };
+  });
+
+  return (
+    <div className="etl-column-mapping-panel">
+      <div className="etl-preview-title">컬럼 매핑 미리보기</div>
+      {loading ? <div className="etl-column-mapping-message">컬럼 정보를 조회 중입니다.</div> : null}
+      {error ? <div className="etl-column-mapping-message error">{error}</div> : null}
+      {!loading && !error && rows.length === 0 ? (
+        <div className="etl-column-mapping-message">소스와 타깃 테이블을 선택하면 컬럼 매핑을 확인할 수 있습니다.</div>
+      ) : null}
+      {!loading && !error && rows.length > 0 ? (
+        <div className="etl-preview-table-scroll">
+          <table className="etl-preview-table">
+            <thead>
+              <tr>
+                <th>소스 컬럼</th>
+                <th>타깃 컬럼</th>
+                <th>상태</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.sourceColumn}>
+                  <td>{row.sourceColumn}</td>
+                  <td>{row.targetColumn}</td>
+                  <td className={row.matched ? "matched" : "unmatched"}>{row.matched ? "✓" : "✕"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function StepLabel({
@@ -302,17 +378,21 @@ function BasicStep({
 function ConnectionStep({
   value,
   onChange,
-  onVerifiedChange,
+  sourceColumns,
+  targetColumns,
+  onSourceColumnsChange,
+  onTargetColumnsChange,
 }: {
   value: ConnectionInfo;
   onChange: (nextValue: Partial<ConnectionInfo>) => void;
-  onVerifiedChange: (verified: boolean) => void;
+  sourceColumns: ColumnMetadataResponse[];
+  targetColumns: ColumnMetadataResponse[];
+  onSourceColumnsChange: (columns: ColumnMetadataResponse[]) => void;
+  onTargetColumnsChange: (columns: ColumnMetadataResponse[]) => void;
 }) {
   const [services, setServices] = useState<ControllerServiceOption[]>([]);
   const [connections, setConnections] = useState<ConnectionResponse[]>([]);
   const [serviceError, setServiceError] = useState<string | null>(null);
-  const [isTesting, setIsTesting] = useState(false);
-  const [testResult, setTestResult] = useState<string | null>(null);
   const [sourceSchemas, setSourceSchemas] = useState<string[]>([]);
   const [sourceTables, setSourceTables] = useState<string[]>([]);
   const [sourceSchemaLoading, setSourceSchemaLoading] = useState(false);
@@ -325,6 +405,10 @@ function ConnectionStep({
   const [targetTableLoading, setTargetTableLoading] = useState(false);
   const [targetSchemaError, setTargetSchemaError] = useState<string | null>(null);
   const [targetTableError, setTargetTableError] = useState<string | null>(null);
+  const [sourceColumnLoading, setSourceColumnLoading] = useState(false);
+  const [targetColumnLoading, setTargetColumnLoading] = useState(false);
+  const [sourceColumnError, setSourceColumnError] = useState<string | null>(null);
+  const [targetColumnError, setTargetColumnError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -417,8 +501,22 @@ function ConnectionStep({
 
   const sourceConnection = connectionByServiceId(value.sourceServiceId);
   const sourceConnectionReady = !!sourceConnection;
+  const sourceDatabaseType = nifiDatabaseTypeFromConnection(sourceConnection);
   const targetConnection = connectionByServiceId(value.targetServiceId);
   const targetConnectionReady = !!targetConnection;
+  const targetDatabaseType = nifiDatabaseTypeFromConnection(targetConnection);
+
+  useEffect(() => {
+    if (sourceDatabaseType && value.sourceDatabaseType !== sourceDatabaseType) {
+      onChange({ sourceDatabaseType });
+    }
+  }, [sourceDatabaseType, value.sourceDatabaseType, onChange]);
+
+  useEffect(() => {
+    if (targetDatabaseType && value.targetDatabaseType !== targetDatabaseType) {
+      onChange({ targetDatabaseType });
+    }
+  }, [targetDatabaseType, value.targetDatabaseType, onChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -462,6 +560,7 @@ function ConnectionStep({
     let cancelled = false;
     setSourceTables([]);
     setSourceTableError(null);
+    onSourceColumnsChange([]);
 
     if (!sourceConnection || !value.sourceSchema.trim()) {
       setSourceTableLoading(false);
@@ -491,7 +590,7 @@ function ConnectionStep({
     return () => {
       cancelled = true;
     };
-  }, [sourceConnection?.id, value.sourceSchema]);
+  }, [sourceConnection?.id, value.sourceSchema, onSourceColumnsChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -535,6 +634,7 @@ function ConnectionStep({
     let cancelled = false;
     setTargetTables([]);
     setTargetTableError(null);
+    onTargetColumnsChange([]);
 
     if (!targetConnection || !value.targetSchema.trim()) {
       setTargetTableLoading(false);
@@ -564,49 +664,142 @@ function ConnectionStep({
     return () => {
       cancelled = true;
     };
-  }, [targetConnection?.id, value.targetSchema]);
+  }, [targetConnection?.id, value.targetSchema, onTargetColumnsChange]);
 
-  const testTables = async () => {
-    setIsTesting(true);
-    setTestResult(null);
-    onVerifiedChange(false);
-    try {
-      const sourceConnection = connectionByServiceId(value.sourceServiceId);
-      const targetConnection = connectionByServiceId(value.targetServiceId);
-      if (!sourceConnection || !targetConnection) {
-        throw new Error("선택한 Controller Service와 매칭되는 연결 정보를 찾을 수 없습니다. 연결 관리에 같은 DB 접속 정보를 등록해 주세요.");
-      }
+  useEffect(() => {
+    let cancelled = false;
+    onSourceColumnsChange([]);
+    setSourceColumnError(null);
 
-      const [sourceExists, targetExists] = await Promise.all([
-        tableExists(sourceConnection, value.sourceSchema, value.sourceTable),
-        tableExists(targetConnection, value.targetSchema, value.targetTable),
-      ]);
-
-      if (sourceExists && targetExists) {
-        setTestResult("소스와 타깃 테이블을 모두 확인했습니다.");
-        onVerifiedChange(true);
-      } else {
-        setTestResult(
-          [
-            sourceExists ? null : "소스 테이블 없음",
-            targetExists ? null : "타깃 테이블 없음",
-          ].filter(Boolean).join(" / "),
-        );
-        onVerifiedChange(false);
-      }
-    } catch (ex) {
-      setTestResult(ex instanceof Error ? ex.message : "연결 테스트에 실패했습니다.");
-      onVerifiedChange(false);
-    } finally {
-      setIsTesting(false);
+    if (!sourceConnection || !value.sourceSchema.trim() || !value.sourceTable.trim()) {
+      setSourceColumnLoading(false);
+      return () => {
+        cancelled = true;
+      };
     }
-  };
+
+    setSourceColumnLoading(true);
+    listConnectionColumns(sourceConnection.id, value.sourceSchema.trim(), value.sourceTable.trim())
+      .then((columns) => {
+        if (!cancelled) {
+          onSourceColumnsChange(columns);
+        }
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setSourceColumnError(ex instanceof Error ? ex.message : "소스 컬럼을 불러오지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSourceColumnLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceConnection?.id, value.sourceSchema, value.sourceTable, onSourceColumnsChange]);
+
+  useEffect(() => {
+    let cancelled = false;
+    onTargetColumnsChange([]);
+    setTargetColumnError(null);
+
+    if (!targetConnection || !value.targetSchema.trim() || !value.targetTable.trim()) {
+      setTargetColumnLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setTargetColumnLoading(true);
+    listConnectionColumns(targetConnection.id, value.targetSchema.trim(), value.targetTable.trim())
+      .then((columns) => {
+        if (!cancelled) {
+          onTargetColumnsChange(columns);
+        }
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setTargetColumnError(ex instanceof Error ? ex.message : "타깃 컬럼을 불러오지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setTargetColumnLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [targetConnection?.id, value.targetSchema, value.targetTable, onTargetColumnsChange]);
 
   const updateValue = (nextValue: Partial<ConnectionInfo>) => {
-    setTestResult(null);
-    onVerifiedChange(false);
     onChange(nextValue);
   };
+
+  const handleSourceServiceChange = (serviceId: string) => {
+    const nextDatabaseType = nifiDatabaseTypeFromConnection(connectionByServiceId(serviceId));
+    updateValue({
+      sourceServiceId: serviceId,
+      sourceDatabaseType: nextDatabaseType ?? value.sourceDatabaseType,
+      sourceSchema: "",
+      sourceTable: "",
+    });
+  };
+
+  const handleTargetServiceChange = (serviceId: string) => {
+    const nextDatabaseType = nifiDatabaseTypeFromConnection(connectionByServiceId(serviceId));
+    updateValue({
+      targetServiceId: serviceId,
+      targetDatabaseType: nextDatabaseType ?? value.targetDatabaseType,
+      targetSchema: "",
+      targetTable: "",
+    });
+  };
+
+  const sourceSchemaPlaceholder = !sourceConnectionReady
+    ? "소스 연결을 선택하세요"
+    : sourceSchemaLoading
+      ? "소스 스키마 조회 중"
+      : sourceSchemaError
+        ? "소스 스키마 조회 실패"
+        : sourceSchemas.length > 0
+          ? "소스 스키마를 선택하세요"
+          : "조회된 소스 스키마가 없습니다";
+  const targetSchemaPlaceholder = !targetConnectionReady
+    ? "타깃 연결을 선택하세요"
+    : targetSchemaLoading
+      ? "타깃 스키마 조회 중"
+      : targetSchemaError
+        ? "타깃 스키마 조회 실패"
+        : targetSchemas.length > 0
+          ? "타깃 스키마를 선택하세요"
+          : "조회된 타깃 스키마가 없습니다";
+  const sourceTablePlaceholder = !value.sourceSchema.trim()
+    ? "소스 스키마를 먼저 선택하세요"
+    : sourceTableLoading
+      ? "소스 테이블 조회 중"
+      : sourceTableError
+        ? "소스 테이블 조회 실패"
+        : sourceTables.length > 0
+          ? "소스 테이블을 선택하세요"
+          : "조회된 소스 테이블이 없습니다";
+  const targetTablePlaceholder = !value.targetSchema.trim()
+    ? "타깃 스키마를 먼저 선택하세요"
+    : targetTableLoading
+      ? "타깃 테이블 조회 중"
+      : targetTableError
+        ? "타깃 테이블 조회 실패"
+        : targetTables.length > 0
+          ? "타깃 테이블을 선택하세요"
+          : "조회된 타깃 테이블이 없습니다";
+  const sourceSchemaOptions = sourceSchemas.map((schema) => ({ label: schema, value: schema }));
+  const targetSchemaOptions = targetSchemas.map((schema) => ({ label: schema, value: schema }));
+  const sourceTableOptions = sourceTables.map((table) => ({ label: table, value: table }));
+  const targetTableOptions = targetTables.map((table) => ({ label: table, value: table }));
 
   return (
     <div className="etl-wizard-form-table compact">
@@ -615,7 +808,7 @@ function ConnectionStep({
         <select
           value={value.sourceServiceId}
           disabled={services.length === 0 || !!serviceError}
-          onChange={(event) => updateValue({ sourceServiceId: event.target.value, sourceSchema: "", sourceTable: "" })}
+          onChange={(event) => handleSourceServiceChange(event.target.value)}
         >
           <option value="" disabled>
             {servicePlaceholder}
@@ -630,7 +823,7 @@ function ConnectionStep({
         <select
           value={value.targetServiceId}
           disabled={services.length === 0 || !!serviceError}
-          onChange={(event) => updateValue({ targetServiceId: event.target.value, targetSchema: "", targetTable: "" })}
+          onChange={(event) => handleTargetServiceChange(event.target.value)}
         >
           <option value="" disabled>
             {servicePlaceholder}
@@ -646,6 +839,7 @@ function ConnectionStep({
         <label>소스 데이터베이스</label>
         <select
           value={value.sourceDatabaseType}
+          disabled={!!sourceDatabaseType}
           onChange={(event) => updateValue({ sourceDatabaseType: event.target.value as NifiDatabaseType })}
         >
           {DATABASE_TYPE_OPTIONS.map((databaseType) => (
@@ -657,6 +851,7 @@ function ConnectionStep({
         <label>타깃 데이터베이스</label>
         <select
           value={value.targetDatabaseType}
+          disabled={!!targetDatabaseType}
           onChange={(event) => updateValue({ targetDatabaseType: event.target.value as NifiDatabaseType })}
         >
           {DATABASE_TYPE_OPTIONS.map((databaseType) => (
@@ -668,120 +863,58 @@ function ConnectionStep({
       </div>
       <div className="form-row two-column">
         <label>소스 스키마</label>
-        <select
-          value={value.sourceSchema}
+        <Select
+          showSearch
+          value={value.sourceSchema || undefined}
+          placeholder={sourceSchemaPlaceholder}
           disabled={!sourceConnectionReady || sourceSchemaLoading || !!sourceSchemaError || sourceSchemas.length === 0}
-          onChange={(event) => updateValue({ sourceSchema: event.target.value, sourceTable: "" })}
-        >
-          <option value="" disabled>
-            {!sourceConnectionReady
-              ? "소스 연결을 선택하세요"
-              : sourceSchemaLoading
-                ? "소스 스키마 조회 중"
-                : sourceSchemaError
-                  ? "소스 스키마 조회 실패"
-                  : sourceSchemas.length > 0
-                    ? "소스 스키마를 선택하세요"
-                    : "조회된 소스 스키마가 없습니다"}
-          </option>
-          {sourceSchemas.map((schema) => (
-            <option key={schema} value={schema}>
-              {schema}
-            </option>
-          ))}
-        </select>
+          loading={sourceSchemaLoading}
+          options={sourceSchemaOptions}
+          filterOption={matchesSelectOption}
+          onChange={(nextSchema) => updateValue({ sourceSchema: nextSchema, sourceTable: "" })}
+        />
         <label>타깃 스키마</label>
-        <select
-          value={value.targetSchema}
+        <Select
+          showSearch
+          value={value.targetSchema || undefined}
+          placeholder={targetSchemaPlaceholder}
           disabled={!targetConnectionReady || targetSchemaLoading || !!targetSchemaError || targetSchemas.length === 0}
-          onChange={(event) => updateValue({ targetSchema: event.target.value, targetTable: "" })}
-        >
-          <option value="" disabled>
-            {!targetConnectionReady
-              ? "타깃 연결을 선택하세요"
-              : targetSchemaLoading
-                ? "타깃 스키마 조회 중"
-                : targetSchemaError
-                  ? "타깃 스키마 조회 실패"
-                  : targetSchemas.length > 0
-                    ? "타깃 스키마를 선택하세요"
-                    : "조회된 타깃 스키마가 없습니다"}
-          </option>
-          {targetSchemas.map((schema) => (
-            <option key={schema} value={schema}>
-              {schema}
-            </option>
-          ))}
-        </select>
+          loading={targetSchemaLoading}
+          options={targetSchemaOptions}
+          filterOption={matchesSelectOption}
+          onChange={(nextSchema) => updateValue({ targetSchema: nextSchema, targetTable: "" })}
+        />
       </div>
       <div className="form-row two-column">
         <label>소스 테이블</label>
-        <select
-          value={value.sourceTable}
+        <Select
+          showSearch
+          value={value.sourceTable || undefined}
+          placeholder={sourceTablePlaceholder}
           disabled={!value.sourceSchema.trim() || sourceTableLoading || !!sourceTableError || sourceTables.length === 0}
-          onChange={(event) => updateValue({ sourceTable: event.target.value })}
-        >
-          <option value="" disabled>
-            {!value.sourceSchema.trim()
-              ? "소스 스키마를 먼저 선택하세요"
-              : sourceTableLoading
-                ? "소스 테이블 조회 중"
-                : sourceTableError
-                  ? "소스 테이블 조회 실패"
-                  : sourceTables.length > 0
-                    ? "소스 테이블을 선택하세요"
-                    : "조회된 소스 테이블이 없습니다"}
-          </option>
-          {sourceTables.map((table) => (
-            <option key={table} value={table}>
-              {table}
-            </option>
-          ))}
-        </select>
+          loading={sourceTableLoading}
+          options={sourceTableOptions}
+          filterOption={matchesSelectOption}
+          onChange={(nextTable) => updateValue({ sourceTable: nextTable })}
+        />
         <label>타깃 테이블</label>
-        <select
-          value={value.targetTable}
+        <Select
+          showSearch
+          value={value.targetTable || undefined}
+          placeholder={targetTablePlaceholder}
           disabled={!value.targetSchema.trim() || targetTableLoading || !!targetTableError || targetTables.length === 0}
-          onChange={(event) => updateValue({ targetTable: event.target.value })}
-        >
-          <option value="" disabled>
-            {!value.targetSchema.trim()
-              ? "타깃 스키마를 먼저 선택하세요"
-              : targetTableLoading
-                ? "타깃 테이블 조회 중"
-                : targetTableError
-                  ? "타깃 테이블 조회 실패"
-                  : targetTables.length > 0
-                    ? "타깃 테이블을 선택하세요"
-                    : "조회된 타깃 테이블이 없습니다"}
-          </option>
-          {targetTables.map((table) => (
-            <option key={table} value={table}>
-              {table}
-            </option>
-          ))}
-        </select>
+          loading={targetTableLoading}
+          options={targetTableOptions}
+          filterOption={matchesSelectOption}
+          onChange={(nextTable) => updateValue({ targetTable: nextTable })}
+        />
       </div>
-      <div className="form-row action-row">
-        <div className="etl-connection-test">
-          <button
-            type="button"
-            onClick={testTables}
-            disabled={
-              isTesting ||
-              !value.sourceServiceId ||
-              !value.targetServiceId ||
-              !value.sourceSchema.trim() ||
-              !value.targetSchema.trim() ||
-              !value.sourceTable.trim() ||
-              !value.targetTable.trim()
-            }
-          >
-            {isTesting ? "확인 중" : "연결 테스트"}
-          </button>
-          {testResult ? <span>{testResult}</span> : null}
-        </div>
-      </div>
+      <ColumnMappingPreview
+        sourceColumns={sourceColumns}
+        targetColumns={targetColumns}
+        loading={sourceColumnLoading || targetColumnLoading}
+        error={sourceColumnError ?? targetColumnError}
+      />
     </div>
   );
 }
@@ -791,6 +924,8 @@ function TargetStep({
   truncateSql,
   changeKeyColumn,
   primaryKeys,
+  sourceColumns,
+  targetColumns,
   showTruncateSql,
   onLoadModeChange,
   onTruncateSqlChange,
@@ -803,6 +938,8 @@ function TargetStep({
   truncateSql: string;
   changeKeyColumn: string;
   primaryKeys: string;
+  sourceColumns: ColumnMetadataResponse[];
+  targetColumns: ColumnMetadataResponse[];
   showTruncateSql: boolean;
   onTruncateSqlChange: (truncateSql: string) => void;
   onChangeKeyColumnChange: (changeKeyColumn: string) => void;
@@ -810,6 +947,8 @@ function TargetStep({
   onShowTruncateSqlChange: (show: boolean) => void;
 }) {
   const showChangeKeyColumn = loadMode === "TRUNCATE" || loadMode === "UPSERT";
+  const sourceColumnOptions = columnOptions(sourceColumns);
+  const targetColumnOptions = columnOptions(targetColumns);
 
   return (
     <div className="etl-target-preview">
@@ -864,50 +1003,38 @@ function TargetStep({
 
       {showChangeKeyColumn ? (
         <div className="etl-change-key-column">
-          <label htmlFor="etl-change-key-column-input">변경기준 컬럼</label>
-          <input
-            id="etl-change-key-column-input"
-            value={changeKeyColumn}
-            onChange={(event) => onChangeKeyColumnChange(event.target.value)}
+          <label>변경기준 컬럼</label>
+          <Select
+            showSearch
+            allowClear
+            value={changeKeyColumn || undefined}
+            disabled={sourceColumns.length === 0}
+            options={sourceColumnOptions}
+            filterOption={matchesSelectOption}
             placeholder="예: UPDATED_AT"
+            onChange={(nextColumn) => onChangeKeyColumnChange(nextColumn ?? "")}
           />
         </div>
       ) : null}
 
       {loadMode === "UPSERT" ? (
         <div className="etl-change-key-column">
-          <label htmlFor="etl-primary-keys-input">Primary Keys</label>
-          <input
-            id="etl-primary-keys-input"
-            value={primaryKeys}
-            onChange={(event) => onPrimaryKeysChange(event.target.value)}
+          <label>Primary Keys</label>
+          <Select
+            mode="multiple"
+            showSearch
+            allowClear
+            value={commaSeparatedValues(primaryKeys)}
+            disabled={targetColumns.length === 0}
+            options={targetColumnOptions}
+            filterOption={matchesSelectOption}
             placeholder="예: ID 또는 ID,SEQ"
+            onChange={(nextColumns) => onPrimaryKeysChange(nextColumns.join(","))}
           />
         </div>
       ) : null}
 
-      <div className="etl-preview-title">컬럼 매핑 미리보기</div>
-      <table className="etl-preview-table">
-        <thead>
-          <tr>
-            <th>소스 컬럼</th>
-            <th>타깃 컬럼</th>
-            <th>상태</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>CRTR_YY</td>
-            <td>crtr_yy</td>
-            <td>✓</td>
-          </tr>
-          <tr>
-            <td>DCLR_YY</td>
-            <td>dclr_yy</td>
-            <td>✓</td>
-          </tr>
-        </tbody>
-      </table>
+      <ColumnMappingPreview sourceColumns={sourceColumns} targetColumns={targetColumns} />
     </div>
   );
 }
@@ -977,7 +1104,6 @@ export function EtlCreatePage() {
   const [completed, setCompleted] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [completedSteps, setCompletedSteps] = useState<WizardStepId[]>([]);
-  const [connectionVerified, setConnectionVerified] = useState(false);
   const [completionSummary, setCompletionSummary] = useState<CompletionSummary | null>(null);
   const [basicInfo, setBasicInfo] = useState<BasicInfo>({
     jobName: "",
@@ -1000,6 +1126,8 @@ export function EtlCreatePage() {
   const [truncateSql, setTruncateSql] = useState("");
   const [changeKeyColumn, setChangeKeyColumn] = useState("");
   const [primaryKeys, setPrimaryKeys] = useState("");
+  const [sourceColumns, setSourceColumns] = useState<ColumnMetadataResponse[]>([]);
+  const [targetColumns, setTargetColumns] = useState<ColumnMetadataResponse[]>([]);
 
   const isUnlocked = (stepId: WizardStepId) => {
     const index = WIZARD_STEPS.findIndex((step) => step.id === stepId);
@@ -1023,6 +1151,13 @@ export function EtlCreatePage() {
     const index = WIZARD_STEPS.findIndex((step) => step.id === stepId);
     setCompletedSteps((previous) => previous.filter((step) => WIZARD_STEPS.findIndex((item) => item.id === step) < index));
   };
+
+  const canCompleteConnection = !!connectionInfo.sourceServiceId &&
+    !!connectionInfo.targetServiceId &&
+    !!connectionInfo.sourceSchema.trim() &&
+    !!connectionInfo.targetSchema.trim() &&
+    !!connectionInfo.sourceTable.trim() &&
+    !!connectionInfo.targetTable.trim();
 
   const completeWizard = async () => {
     if (!basicInfo.jobName.trim() || !basicInfo.parentGroupId) {
@@ -1106,12 +1241,28 @@ export function EtlCreatePage() {
     connection: (
       <ConnectionStep
         value={connectionInfo}
+        sourceColumns={sourceColumns}
+        targetColumns={targetColumns}
         onChange={(nextValue) => {
           setConnectionInfo((current) => ({ ...current, ...nextValue }));
-          setConnectionVerified(false);
+          if (
+            nextValue.sourceServiceId !== undefined ||
+            nextValue.sourceSchema !== undefined ||
+            nextValue.sourceTable !== undefined
+          ) {
+            setChangeKeyColumn("");
+          }
+          if (
+            nextValue.targetServiceId !== undefined ||
+            nextValue.targetSchema !== undefined ||
+            nextValue.targetTable !== undefined
+          ) {
+            setPrimaryKeys("");
+          }
           invalidateFrom("connection");
         }}
-        onVerifiedChange={setConnectionVerified}
+        onSourceColumnsChange={setSourceColumns}
+        onTargetColumnsChange={setTargetColumns}
       />
     ),
     target: (
@@ -1120,6 +1271,8 @@ export function EtlCreatePage() {
         truncateSql={truncateSql}
         changeKeyColumn={changeKeyColumn}
         primaryKeys={primaryKeys}
+        sourceColumns={sourceColumns}
+        targetColumns={targetColumns}
         showTruncateSql={showTruncateSql}
         onLoadModeChange={(nextLoadMode) => {
           setLoadMode(nextLoadMode);
@@ -1142,7 +1295,7 @@ export function EtlCreatePage() {
           type="info"
           showIcon
           message="각 단계를 완료해야 다음 단계가 열립니다."
-          description="연결 단계에서는 소스와 타깃 연결 테스트가 모두 성공해야 대상 테이블을 선택할 수 있습니다."
+          description="연결 단계에서는 소스와 타깃 테이블을 선택하면 컬럼 매핑을 확인할 수 있습니다."
         />
       </Card>
 
@@ -1185,7 +1338,7 @@ export function EtlCreatePage() {
                     <Button onClick={() => setActiveStep("basic")}>이전</Button>
                     <Button
                       type="primary"
-                      disabled={!connectionVerified}
+                      disabled={!canCompleteConnection}
                       onClick={() => completeAndOpen("connection", "target")}
                     >
                       다음: 대상

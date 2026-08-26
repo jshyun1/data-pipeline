@@ -255,10 +255,7 @@ services:
       - nifi-flowfile-repository:/opt/nifi/nifi-current/flowfile_repository
       - nifi-content-repository:/opt/nifi/nifi-current/content_repository
       - nifi-provenance-repository:/opt/nifi/nifi-current/provenance_repository
-      - ./csv_data/in:/data/nifi/csv/in
-      - ./csv_data/error:/data/nifi/csv/error
-      - ./logfile/in:/data/nifi/logfile/in
-      - ./logfile/error:/data/nifi/logfile/error
+      - /opt/etl_repo/file:/opt/nifi/file
     healthcheck:
       test: ["CMD-SHELL", "curl -sfk https://localhost:${NIFI_HTTPS_PORT}/nifi/ || exit 1"]
       interval: 15s

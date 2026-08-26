@@ -67,3 +67,5 @@ docs/ui-mockups/**
 # P5b: 환경별 프록시 인증서(개인키 포함) - 각 환경에서 런북대로 생성
 deploy/p5b-certs/
 *.p5b-bak
+deploy/cerebro-certs/cerebro-proxy.key
+deploy/cerebro-certs/cerebro-proxy.crt
