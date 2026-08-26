@@ -47,7 +47,10 @@ public class AlertAdminController {
                        r.for_seconds, r.clear_seconds, r.mandatory,
                        r.schedule_enabled, r.schedule_time, r.schedule_last_fired_on,
                        r.schedule_run_count, r.schedule_last_run_at,
-                       r.last_evaluated_at, r.last_eval_error
+                       r.last_evaluated_at, r.last_eval_error,
+                       -- 목록 화면의 «누가·언제» 컬럼. 컬럼은 처음부터 있었는데 내려주지 않아
+                       -- 화면에서 볼 수 없었다.
+                       r.created_by, r.updated_by, r.created_at, r.updated_at
                 FROM alert_rule r JOIN alert_rule_type rt ON r.rule_type_code = rt.code
                 WHERE r.deleted_at IS NULL ORDER BY rt.eval_priority, r.name"""));
     }
@@ -80,6 +83,124 @@ public class AlertAdminController {
         }
         return ApiResponse.success(jdbc.queryForList(
                 "SELECT id, job_name AS name FROM etl_job WHERE deleted_at IS NULL ORDER BY job_name"));
+    }
+
+    /**
+     * 감시 범위 선택용 «트리».
+     *
+     * <p>대상이 수백 개가 되면 평면 목록에서는 고르기 어렵다. ETL 관리 화면과 같은 계층으로
+     * 보여주고 그 안에서 고르게 한다. 계층은 NiFi 프로세스 그룹(etl_job.parent_pg_id)에서 온다.
+     *
+     * <p>노드의 {@code id} 가 null 이면 «묶음»일 뿐 선택할 수 없다. 규칙이 감시하는 단위와
+     * 화면에 보이는 계층이 다르기 때문이다 - 예컨대 ETL_CHAIN 은 그룹이 아니라 그 아래
+     * 적재 스텝(테이블) 하나가 감시 단위다.
+     */
+    @GetMapping("/api/admin/alert-scope-tree")
+    public ApiResponse<List<Map<String, Object>>> scopeTree(@RequestParam(defaultValue = "ETL") String category) {
+        if ("CDC".equalsIgnoreCase(category)) {
+            // CDC 는 그룹 계층이 없다. 소스 연결정보로 묶어 준다(같은 원천끼리 모임).
+            List<Map<String, Object>> rows = jdbc.queryForList("""
+                    SELECT p.id, p.name,
+                           COALESCE(c.name, '(연결정보 없음)') AS group_name
+                    FROM pipeline_definition p
+                    LEFT JOIN pipeline_connection c ON c.id = p.source_connection_id
+                    ORDER BY group_name, p.name""");
+            return ApiResponse.success(groupRows(rows, "group_name"));
+        }
+
+        List<Map<String, Object>> jobs = jdbc.queryForList("""
+                SELECT id, nifi_pg_id, parent_pg_id, job_name
+                FROM etl_job WHERE deleted_at IS NULL ORDER BY job_name""");
+
+        if ("ETL_CHAIN".equalsIgnoreCase(category)) {
+            List<Map<String, Object>> steps = jdbc.queryForList("""
+                    SELECT s.id, s.job_id, s.target_table, s.step_name
+                    FROM etl_job_step s JOIN etl_job j ON j.id = s.job_id
+                    WHERE s.deleted_at IS NULL AND j.deleted_at IS NULL AND s.target_table IS NOT NULL
+                    ORDER BY s.target_table""");
+            return ApiResponse.success(jobTree(jobs, steps));
+        }
+        return ApiResponse.success(jobTree(jobs, List.of()));
+    }
+
+    /** 한 컬럼 값으로 묶은 2단 트리. 묶음 노드는 선택 불가(id=null). */
+    private List<Map<String, Object>> groupRows(List<Map<String, Object>> rows, String groupKey) {
+        java.util.LinkedHashMap<String, List<Map<String, Object>>> byGroup = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> r : rows) {
+            byGroup.computeIfAbsent(String.valueOf(r.get(groupKey)), k -> new java.util.ArrayList<>())
+                    .add(node(r.get("id"), String.valueOf(r.get("name")), List.of()));
+        }
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        byGroup.forEach((name, children) -> out.add(node(null, name, children)));
+        return out;
+    }
+
+    /**
+     * etl_job 을 parent_pg_id 로 이어 그룹 계층을 만들고, 스텝이 있으면 잎으로 붙인다.
+     *
+     * <p>스텝을 붙이는 경우(ETL_CHAIN) 그룹 자체는 선택 대상이 아니다. 부모를 못 찾은 그룹은
+     * 최상위로 올린다 - 미러가 아직 상위 그룹을 못 읽었어도 목록에서 사라지지 않게.
+     */
+    private List<Map<String, Object>> jobTree(List<Map<String, Object>> jobs, List<Map<String, Object>> steps) {
+        boolean withSteps = !steps.isEmpty();
+        Map<Object, List<Map<String, Object>>> stepsByJob = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> st : steps) {
+            String label = String.valueOf(st.get("target_table"));
+            stepsByJob.computeIfAbsent(st.get("job_id"), k -> new java.util.ArrayList<>())
+                    .add(node(st.get("id"), label, List.of()));
+        }
+
+        Map<String, Map<String, Object>> nodeByPg = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> j : jobs) {
+            List<Map<String, Object>> children = new java.util.ArrayList<>(
+                    stepsByJob.getOrDefault(j.get("id"), List.of()));
+            // 스텝을 붙이는 화면에서는 그룹을 고를 수 없다(감시 단위가 스텝이므로).
+            Object selfId = withSteps ? null : j.get("id");
+            nodeByPg.put(String.valueOf(j.get("nifi_pg_id")),
+                    node(selfId, String.valueOf(j.get("job_name")), children));
+        }
+
+        List<Map<String, Object>> roots = new java.util.ArrayList<>();
+        for (Map<String, Object> j : jobs) {
+            Map<String, Object> self = nodeByPg.get(String.valueOf(j.get("nifi_pg_id")));
+            Map<String, Object> parent = j.get("parent_pg_id") == null
+                    ? null : nodeByPg.get(String.valueOf(j.get("parent_pg_id")));
+            if (parent != null && parent != self) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> siblings = (List<Map<String, Object>>) parent.get("children");
+                siblings.add(self);
+            } else {
+                roots.add(self);
+            }
+        }
+        return roots;
+    }
+
+    private Map<String, Object> node(Object id, String name, List<Map<String, Object>> children) {
+        Map<String, Object> n = new java.util.LinkedHashMap<>();
+        n.put("id", id);
+        n.put("name", name);
+        n.put("children", new java.util.ArrayList<>(children));
+        return n;
+    }
+
+    /**
+     * 규칙 하나의 «평가 이력». 화면의 [로그] 버튼이 이걸 띄운다.
+     *
+     * <p>규칙이 항상 성공하는 것은 아니다 - 신호를 못 읽거나 평가가 예외로 끝날 수 있는데,
+     * 예전에는 그런 일이 로그 한 줄로만 남아 화면에서는 아무 일도 없었던 것처럼 보였다.
+     */
+    @GetMapping("/api/admin/alert-rules/{id}/eval-logs")
+    public ApiResponse<List<Map<String, Object>>> ruleEvalLogs(
+            @PathVariable long id,
+            @RequestParam(defaultValue = "100") int limit) {
+        int capped = Math.max(1, Math.min(limit, 500));
+        return ApiResponse.success(jdbc.queryForList("""
+                SELECT id, occurred_at, result, matched_count, duration_ms, message
+                FROM alert_rule_eval_log
+                WHERE rule_id = ?
+                ORDER BY occurred_at DESC, id DESC
+                LIMIT ?""", id, capped));
     }
 
     /**

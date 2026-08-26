@@ -85,6 +85,12 @@ authz:
     same-site: ${AUTHZ_PROXY_COOKIE_SAMESITE:Lax}
     cookie-max-age-seconds: ${AUTHZ_PROXY_COOKIE_MAXAGE:2592000}
 
+# 알림 규칙 평가 이력 보존. 규칙이 «어떻게 돌았는지»(발화·해소·평가실패·신호없음)를 남기는
+# alert_rule_eval_log 를 매일 정리한다. 0 이하면 무제한 보존.
+alert:
+  eval-log:
+    retention-days: ${ALERT_EVAL_LOG_RETENTION_DAYS:90}
+
 # MSA 포털(app02) 연동(P4.5). 포털은 pipeline-api 를 무인증으로 프록시하므로 인가 강제를
 # 켜면 ETL 섹션이 전부 401 이 된다. app02 가 /api/authz/portal-exchange 로 포털 JWT 를
 # Cerebro JWT 로 한 번 바꿔 프록시 호출에 싣는 방식으로 푼다.

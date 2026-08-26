@@ -297,11 +297,53 @@ public class AlertEngine {
 
     private void evalSafely(String ruleType,
                             java.util.function.Function<Map<String, Object>, List<Candidate>> signalFn) {
+        long startedAt = System.currentTimeMillis();
         try {
             evaluateWithCandidates(ruleType + ":all", ruleType, signalFn);
         } catch (Exception ex) {
             log.warn("알림 평가 실패({}): {}", ruleType, ex.getMessage());
+            // 로그 한 줄만 남기고 넘어가면 화면에서는 아무 일도 없었던 것처럼 보인다.
+            // "어제 이 규칙이 왜 안 울렸나"에 답하려면 실패가 이력으로 남아야 한다.
+            recordEvalLog(ruleIdOf(ruleType + ":all"), ruleType, "FAILED", null,
+                    (int) (System.currentTimeMillis() - startedAt), ex.toString());
         }
+    }
+
+    /** builtin_key 로 규칙 id 를 찾는다. 아직 시드 전이면 null(이력은 유형 코드로만 남는다). */
+    private Long ruleIdOf(String builtinKey) {
+        try {
+            return jdbc.queryForObject(
+                    "SELECT id FROM alert_rule WHERE builtin_key = ? AND deleted_at IS NULL",
+                    Long.class, builtinKey);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    /**
+     * 규칙 평가 이력 한 줄. «의미 있는 사건»만 남긴다 - 평상시 정상까지 적으면 규칙 하나당
+     * 하루 4,320행이 되어 조회도 보존도 감당하기 어렵다(V55 주석 참고).
+     *
+     * <p>이력 기록이 실패해도 평가 자체를 막지 않는다. 감시 장치가 부수 기능 때문에 멈추면 안 된다.
+     */
+    private void recordEvalLog(Long ruleId, String ruleTypeCode, String result,
+                               Integer matchedCount, Integer durationMs, String message) {
+        try {
+            jdbc.update("""
+                    INSERT INTO alert_rule_eval_log
+                        (rule_id, rule_type_code, result, matched_count, duration_ms, message)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                    ruleId, ruleTypeCode, result, matchedCount, durationMs, clipMessage(message));
+        } catch (Exception ex) {
+            log.debug("규칙 평가 이력 기록 실패({}): {}", ruleTypeCode, ex.getMessage());
+        }
+    }
+
+    private static String clipMessage(String message) {
+        if (message == null) {
+            return null;
+        }
+        return message.length() <= 2000 ? message : message.substring(0, 2000) + "…";
     }
 
 
@@ -921,6 +963,16 @@ public class AlertEngine {
                 + "last_transition_at=now(), last_evaluated_at=now(), updated_at=now(), version=version+1 WHERE id=?", id);
         event(((Number) id).longValue(), "RESOLVED", fromState, "RESOLVED", "SYSTEM");
         log.info("알림 해소 {} (조건 해제)", id);
+        // 규칙 이력에도 남긴다. 발화만 있고 해소가 없으면 "아직 열려 있는지"를 화면에서 알 수 없다.
+        try {
+            Map<String, Object> inst = jdbc.queryForMap(
+                    "SELECT rule_id, rule_type_code, target_key FROM alert_instance WHERE id=?", id);
+            recordEvalLog(inst.get("rule_id") == null ? null : ((Number) inst.get("rule_id")).longValue(),
+                    (String) inst.get("rule_type_code"), "RESOLVED", 1, null,
+                    "조건 해제: " + inst.get("target_key"));
+        } catch (Exception ex) {
+            log.debug("해소 이력 기록 실패: {}", ex.getMessage());
+        }
     }
 
     private void event(Long instanceId, String type, String from, String to, String actor) {
@@ -1065,15 +1117,26 @@ public class AlertEngine {
         int forSec = scheduled(rule) ? 0 : ((Number) rule.get("for_seconds")).intValue();
         int clearSec = scheduled(rule) ? 0 : ((Number) rule.get("clear_seconds")).intValue();
 
+        long evalStartedAt = System.currentTimeMillis();
         List<Candidate> candidates = signalFn.apply(rule);
         if (candidates == null) {
             // 신호 자체를 못 읽은 경우. "모름"을 "정상"으로 칠하지 않으려면 해소도 하지 않는다.
+            // 판정을 «보류»한 구간이라 화면에서 구분할 수 있어야 한다.
+            recordEvalLog(ruleId, ruleType, "NO_SIGNAL", null,
+                    (int) (System.currentTimeMillis() - evalStartedAt), "신호를 읽지 못해 판정을 보류했습니다.");
             return;
         }
         Set<String> firingKeys = new HashSet<>();
         for (Candidate c : candidates) {
             firingKeys.add(c.targetKey());
             advance(ruleId, ruleType, severity, forSec, c);
+        }
+        if (!candidates.isEmpty()) {
+            recordEvalLog(ruleId, ruleType, "FIRED", candidates.size(),
+                    (int) (System.currentTimeMillis() - evalStartedAt),
+                    candidates.stream().map(Candidate::targetKey).limit(5)
+                            .collect(java.util.stream.Collectors.joining(", "))
+                            + (candidates.size() > 5 ? " 외 " + (candidates.size() - 5) : ""));
         }
         // 후보에서 빠진 열린 인스턴스 = 조건 해제 진행 중
         for (Map<String, Object> open : jdbc.queryForList(
