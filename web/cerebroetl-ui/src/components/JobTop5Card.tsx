@@ -5,6 +5,7 @@ import { Card, Empty, Segmented } from "antd";
 import { Column } from "@ant-design/plots";
 import type { Dayjs } from "dayjs";
 import { getDashboardTop5, type Top5Item, type Top5Metric } from "../api/dashboard";
+import { refitAfterLayout } from "./chartFit";
 
 // 하단 Job Top 5 — 건수/소요시간/실패 구분. 상단 RangePicker(from~to) 날짜범위를 그대로 따른다.
 // 값은 차트와 툴팁으로만 보여준다(막대 옆 목록은 화면이 복잡해져 걷어냄).
@@ -75,6 +76,7 @@ export function JobTop5Card({ title, from, to }: { title: string; from: Dayjs; t
                 chart.on("element:click", (ev: { data?: { data?: Top5Item } }) => {
                   drillDown(ev?.data?.data?.job_id ?? null);
                 });
+                refitAfterLayout(chart);
               }}
             />
         </div>

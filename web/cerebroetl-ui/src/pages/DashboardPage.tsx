@@ -32,6 +32,7 @@ import { categorizeDag, NIFI_METRICS_COLLECTOR_DAG_ID, resolveDagDisplayName, ty
 import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
 import { InfraRegion } from "../components/InfraRegion";
 import { ActionQueuePanel } from "../components/ActionQueuePanel";
+import { refitAfterLayout } from "../components/chartFit";
 import { JobTop5Card } from "../components/JobTop5Card";
 import { ChangeIndicator, FlowStateNote, MetricRow, NowDivider, TimeBadge } from "../components/kpi/kpiBits";
 import { formatRecovery, judgeCdcFlow } from "../components/kpi/flowState";
@@ -643,7 +644,7 @@ export function DashboardPage() {
               </Button>
             ) : null}
             <Button size="small" onClick={() => navigate("/cdc/logs")}>
-              처리 로그 →
+              로그 →
             </Button>
           </div>
         </Card>
@@ -749,6 +750,7 @@ export function DashboardPage() {
         >
           <Column
             autoFit
+            onReady={({ chart }) => refitAfterLayout(chart)}
             data={nifiHourly}
             xField="date"
             yField="count"
@@ -772,6 +774,7 @@ export function DashboardPage() {
         >
           <Column
             autoFit
+            onReady={({ chart }) => refitAfterLayout(chart)}
             data={kafkaHourly}
             xField="date"
             yField="count"
@@ -793,6 +796,7 @@ export function DashboardPage() {
         >
           <Column
             autoFit
+            onReady={({ chart }) => refitAfterLayout(chart)}
             data={kafkaLoadTop}
             xField="label"
             yField="count"
