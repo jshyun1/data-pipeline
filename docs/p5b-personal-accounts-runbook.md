@@ -54,6 +54,25 @@
     그대로면 재생성도 하지 않는다. **`docker compose up -d --force-recreate <서비스>`** 로
     올려야 한다.
 
+## 1-2. 🤖 자동화 스크립트 (권장)
+
+아래 §2·§3(인증서 발급 → truststore 등록 → NiFi 재기동 → 사용자·정책 생성 → 검증)은
+`deploy/p5b-setup.sh` 한 번으로 끝난다. 위 함정 1·2·3·7·8을 코드로 강제하므로,
+폐쇄망 신규 환경에서는 손으로 하지 말고 이걸 쓸 것.
+
+```bash
+./deploy/p5b-setup.sh               # 전체 셋업(멱등 - 이미 된 단계는 건너뜀)
+./deploy/p5b-setup.sh --verify-only # 아무것도 바꾸지 않고 현재 상태만 점검
+./deploy/p5b-setup.sh --help
+```
+
+스크립트가 하는 일: nifi-conf 볼륨 백업 → 인증서 발급(clientAuth EKU 강제) →
+`keytool -importcert`로 CA 등록 → NiFi 재기동 후 healthy 대기 → `CN=cerebro-proxy` 사용자 →
+`/proxy` write 정책(**기존 정책이 있으면 GET→users 추가→PUT**, 함정 #7) → 검증 →
+남은 애플리케이션 단계(.env 플래그, `--force-recreate`) 안내 출력.
+
+아래 §2·§3은 스크립트가 무엇을 하는지에 대한 참조용으로 남겨 둔다.
+
 ## 2. 인증서 발급 (프록시용 mTLS)
 ```bash
 # CA
