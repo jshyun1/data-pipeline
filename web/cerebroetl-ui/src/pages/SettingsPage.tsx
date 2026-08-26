@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dayjs from "dayjs";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -324,6 +324,7 @@ function RuleFormModal({
   const isEdit = rule != null;
   const [typeCode, setTypeCode] = useState<string | undefined>(rule?.rule_type_code);
 
+
   const activeCode = isEdit ? rule!.rule_type_code : typeCode;
   const spec = types.find((t) => t.code === activeCode)?.paramSpec ?? [];
   const scopeCategory = activeCode ? SCOPE_TYPES[activeCode] : undefined;
@@ -381,6 +382,31 @@ function RuleFormModal({
       ...Object.fromEntries(spec.map((p) => [`param_${p.key}`, params[p.key] ?? p.defaultValue])),
     };
   }, [rule, spec, scopeCategory]);
+
+  // 열 때마다 대상 규칙 값으로 폼을 다시 채운다.
+  //
+  // Form 의 initialValues 는 «마운트 시점»에만 적용되는데, 이 컴포넌트는 부모에 상주하고
+  // open 만 토글되며 form 인스턴스도 계속 살아 있다. destroyOnHidden 으로 폼을 다시
+  // 마운트해도 규칙명(Input)처럼 값이 남는 필드가 있어, 다른 규칙을 열었는데 직전 규칙명이
+  // 그대로 보였다. 초깃값에 기대지 않고 명시적으로 세팅한다.
+  //
+  // 같은 규칙을 여는 동안 spec/scopeCategory 가 바뀌며 initial 의 identity 가 자주 바뀌므로,
+  // «열림 1회 + 대상 1개»당 한 번만 적용한다. 그렇지 않으면 사용자가 입력하던 값을 덮는다.
+  const appliedFor = useRef<number | string | null>(null);
+  useEffect(() => {
+    if (!open) {
+      appliedFor.current = null;
+      return;
+    }
+    const target = rule?.id ?? "new";
+    if (appliedFor.current === target) {
+      return;
+    }
+    appliedFor.current = target;
+    setTypeCode(rule?.rule_type_code);
+    form.resetFields();
+    form.setFieldsValue(initial);
+  }, [open, rule, initial, form]);
 
   async function submit() {
     const v = await form.validateFields();
@@ -446,7 +472,7 @@ function RuleFormModal({
       onOk={submit}
       okText="저장"
       cancelText="취소"
-      destroyOnClose
+      destroyOnHidden
     >
       <Form form={form} layout="vertical" initialValues={initial} preserve={false}>
         {isEdit ? null : (
@@ -827,7 +853,7 @@ function RuleRecipientsModal({ rule, onClose }: { rule: AlertRule | null; onClos
       okText="저장"
       cancelText="취소"
       width={560}
-      destroyOnClose
+      destroyOnHidden
     >
       <div style={{ fontSize: 12, color: onCount === 0 ? "#b45309" : "#64748b", marginBottom: 10 }}>
         {onCount === 0
@@ -902,7 +928,7 @@ function RecipientEditModal({
       onOk={submit}
       okText="저장"
       cancelText="취소"
-      destroyOnClose
+      destroyOnHidden
     >
       <Form
         form={form}
