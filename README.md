@@ -60,10 +60,41 @@ Kafka + NiFi + Airflow 기반 CDC/ETL 파이프라인과, 그 위에서 파이�
 
 ## 1) 최초 기동
 
+### ⚠️ 먼저 — 저장소에 없는 것들을 만든다
+
+아래 세 가지는 **git 으로 따라오지 않는다**(gitignore 이거나 호스트 절대경로). 준비하지 않고
+컨테이너를 띄우면 Docker 가 같은 이름의 **빈 디렉터리**를 만들어 버리는데, 그 상태는 되돌리기가
+번거롭다(마운트 타입이 디렉터리로 굳어 `docker compose up -d` 로는 안 살아나고
+`--force-recreate` 가 필요하다). **기동 «전»에 한다.**
+
+**① `.env`**
+
 ```bash
 cp .env.example .env
-# 필요 시 .env의 비밀번호 값들을 수정하세요.
+# 비밀번호·시크릿 값을 채운다. 다른 PC 의 .env 를 통째로 복사하지 말 것 -
+# DB·keystore 비밀번호가 다르면 기존 볼륨을 못 열어 컨테이너가 기동하지 않는다.
+```
 
+**② 파일 수집 경로** (`/opt/etl_repo/file`)
+
+`docker-compose.yml` 이 이 **호스트 절대경로**를 NiFi 의 `/opt/nifi/file` 로 마운트한다.
+저장소의 `opt/etl_repo/file/` 은 샘플일 뿐 마운트 대상이 아니다.
+
+```bash
+sudo mkdir -p /opt/etl_repo/file
+sudo cp -r opt/etl_repo/file/. /opt/etl_repo/file/   # csv·excel 샘플
+sudo chown -R 1000:1000 /opt/etl_repo                # 컨테이너 nifi 계정(uid 1000)
+```
+
+**③ P5b mTLS 인증서** (`AUTHZ_PROXY_ENABLED` 사용 시)
+
+없으면 **nginx 가 기동 실패해 재시작 루프에 빠지고, 콘솔만이 아니라 웹 전체(13001)가 안 열린다.**
+발급 절차는 [`docs/p5b-personal-accounts-runbook.md`](docs/p5b-personal-accounts-runbook.md) §2.
+배포가 소스 트리를 동기화하는 환경(젠킨스 등)에서는 `P5B_CERT_DIR` 로 트리 밖을 가리킬 것.
+
+### 기동
+
+```bash
 docker compose up -d --build
 ```
 
@@ -71,6 +102,30 @@ docker compose up -d --build
 연결정보를 등록하고, "파이프라인" 화면에서 생성/배포하면 됩니다. 로컬에 데모용
 타깃 DB 컨테이너도 함께 띄우고 싶다면 `--profile poc`를 추가하세요
 (`docker compose --profile poc up -d --build`).
+
+## 1-1) pull 받은 뒤
+
+**`docker compose restart` 로는 반영되지 않는다.** 소스는 이미지로 빌드해 띄우므로 재빌드가 필요하고,
+`.env` 변경도 컨테이너 «재생성»이라야 들어간다.
+
+```bash
+docker compose up -d --build            # 바뀐 이미지만 다시 빌드하고 필요한 컨테이너만 재생성
+```
+
+바뀐 것에 따라 추가로 확인할 것:
+
+| pull 에 포함된 것 | 해야 할 일 |
+|---|---|
+| `web/backend`, `web/cerebroetl-ui` | 재빌드(위 명령). DB 마이그레이션은 백엔드 기동 시 자동 적용 |
+| `nifi/`, `kafka-connect/` 의 Dockerfile·스크립트 | 재빌드. **NiFi 가 재시작되므로 캔버스 스냅샷을 먼저 뜬다**(`nifi/backup/README.md`) |
+| `docker-compose.yml` 의 마운트 경로 | 그 호스트 경로가 실제로 있는지 확인. 없으면 Docker 가 빈 디렉터리를 만든다 |
+| `.env.example` 에 새 키 | 내 `.env` 에도 추가(기본값으로 동작하는지 주석 확인) |
+| 새 V 마이그레이션 | 자동 적용. 단 **이미 적용된 V 파일이 수정·번호변경됐다면** 체크섬 불일치로 백엔드가 기동하지 않는다 |
+
+> **마이그레이션 번호 충돌** — 서로 다른 브랜치가 같은 번호를 쓰면 Flyway 가
+> `Found more than one migration with version N` 으로 **기동 자체를 막는다**. 파일 목록에 같은
+> 번호가 둘 있는지 먼저 보고, 내 DB 에 이미 적용된 번호가 다른 내용으로 바뀌었다면
+> `flyway_schema_history` 보정이 필요하다.
 
 ## 웹 서비스 / Airflow 접속
 
