@@ -230,9 +230,35 @@ public class KafkaPipelineStateSynchronizer {
         if (connectorMatches && tasksMatch) {
             return null;
         }
-        return role + " 상태 불일치: expected=" + expectedConnectorState
+        String message = role + " 상태 불일치: expected=" + expectedConnectorState
                 + (requireRunningTasks ? "/tasks RUNNING" : "")
                 + ", connector=" + connectorState + ", tasks=" + taskStates;
+        String cause = failedTaskCause(status);
+        if (cause != null) {
+            message += " · 원인: " + cause;
+        }
+        return message;
+    }
+
+    /**
+     * 실패한 task의 stack trace 첫 줄(예: {@code ORA-03113: database connection closed by peer})을 뽑아
+     * 메시지에 싣는다. "tasks=[FAILED]"만으로는 무슨 오류인지 알 수 없어 실질 원인을 함께 남긴다.
+     */
+    private String failedTaskCause(ConnectorStatusResponse status) {
+        if (status == null || status.tasks() == null) {
+            return null;
+        }
+        return status.tasks().stream()
+                .filter(task -> "FAILED".equalsIgnoreCase(task.state())
+                        && task.trace() != null && !task.trace().isBlank())
+                .map(task -> firstLine(task.trace()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private String firstLine(String trace) {
+        String line = trace.split("\\R", 2)[0].trim();
+        return line.length() > 500 ? line.substring(0, 500) + "…" : line;
     }
 
     private String joinProblems(String first, String second) {
