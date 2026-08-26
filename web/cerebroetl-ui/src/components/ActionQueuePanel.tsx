@@ -44,8 +44,8 @@ function formatDuration(sec: number | null): string {
  */
 const RULE_DEEP_LINK: Record<string, { path: string; label: string }> = {
   // 적재 N분간 0건 → CDC 처리 로그
-  DATA_FRESHNESS: { path: "/cdc/logs", label: "처리 로그" },
-  CDC_LAG: { path: "/cdc/logs", label: "처리 로그" },
+  DATA_FRESHNESS: { path: "/cdc/logs", label: "로그" },
+  CDC_LAG: { path: "/cdc/logs", label: "로그" },
   // DAG 실패 / 연속 실패 → Airflow 실행 이력
   JOB_FAILURE: { path: "/airflow/dashboard", label: "실행 이력" },
   // 리소스 임계 → 시스템 상태(대시보드 인프라 구역)
@@ -67,7 +67,7 @@ function resolveDeepLink(item: QueueItem): { path: string; label: string } | nul
   // 알려지지 않은 신규 규칙에 대한 최소 보루. 그래도 못 정하면 버튼을 감춘다 —
   // 눌러도 아무 데도 안 가는 버튼은 없는 것만 못하다.
   if (code.includes("CDC") || code.includes("LAG") || code.includes("FRESH")) {
-    return { path: "/cdc/logs", label: "처리 로그" };
+    return { path: "/cdc/logs", label: "로그" };
   }
   if (code.includes("ETL") || code.includes("NIFI")) return { path: "/etl/logs", label: "ETL 로그" };
   if (code.includes("JOB") || code.includes("DAG") || code.includes("AIRFLOW")) {

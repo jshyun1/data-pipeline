@@ -69,11 +69,13 @@ const NAV_ITEMS: NavItem[] = [
   { path: "/dashboard", label: "대시보드", icon: <DashboardOutlined />, system: "COMMON", action: "READ" },
   {
     path: "/airflow",
-    label: "AirFlow",
+    // 메뉴는 기술명(NiFi/Kafka/Airflow)이 아니라 하는 일로 부른다(ETL·CDC 와 같은 규칙).
+    // "워크플로우" 는 ETL 워크플로우 설계서의 도메인 용어(etl_workflow)와 맞춘 것이다.
+    label: "워크플로우",
     icon: <DeploymentUnitOutlined />,
     children: [
-      { path: "/airflow/dashboard", label: "배치 실행 현황", system: "AIRFLOW", action: "READ" },
-      { path: "/airflow/manage", label: "Airflow 바로가기", system: "AIRFLOW", action: "READ" },
+      { path: "/airflow/dashboard", label: "실행 현황", system: "AIRFLOW", action: "READ" },
+      { path: "/airflow/manage", label: "관리", system: "AIRFLOW", action: "READ" },
     ],
   },
   {
@@ -92,8 +94,8 @@ const NAV_ITEMS: NavItem[] = [
     icon: <NodeIndexOutlined />,
     children: [
       { path: "/cdc/create", label: "생성", system: "KAFKA", action: "WRITE" },
-      { path: "/cdc/pipelines", label: "파이프라인", system: "KAFKA", action: "READ" },
-      { path: "/cdc/logs", label: "처리 로그", system: "KAFKA", action: "READ" },
+      { path: "/cdc/pipelines", label: "관리", system: "KAFKA", action: "READ" },
+      { path: "/cdc/logs", label: "로그", system: "KAFKA", action: "READ" },
     ],
   },
   {

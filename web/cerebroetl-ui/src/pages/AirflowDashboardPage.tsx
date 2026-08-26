@@ -1083,7 +1083,7 @@ export function AirflowDashboardPage() {
   return (
     <div className="airflow-dashboard-page">
       <header className="airflow-dashboard-heading">
-        <div><h1>배치 실행 현황</h1><p>작업 상태와 실행 이력을 한 화면에서 확인하고 조치합니다.</p></div>
+        <div><h1>실행 현황</h1><p>작업 상태와 실행 이력을 한 화면에서 확인하고 조치합니다.</p></div>
         <div className="airflow-refresh-controls"><Button icon={<SyncOutlined />} loading={synchronizing || initialSyncQuery.isFetching} onClick={() => void synchronizeDags()}>동기화</Button><span>갱신 주기</span><Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} /><span>마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}</span></div>
       </header>
 

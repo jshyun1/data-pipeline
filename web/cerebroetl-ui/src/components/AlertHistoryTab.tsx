@@ -24,8 +24,8 @@ const SEVERITY_META: Record<string, { color: string; label: string }> = {
 };
 
 const RULE_LINK: Record<string, { path: string; label: string }> = {
-  DATA_FRESHNESS: { path: "/cdc/logs", label: "CDC 처리 로그" },
-  CDC_LAG: { path: "/cdc/logs", label: "CDC 처리 로그" },
+  DATA_FRESHNESS: { path: "/cdc/logs", label: "CDC 로그" },
+  CDC_LAG: { path: "/cdc/logs", label: "CDC 로그" },
   JOB_FAILURE: { path: "/airflow/dashboard", label: "Airflow 실행 이력" },
   JOB_CONSECUTIVE_FAILURE: { path: "/etl/logs", label: "ETL 로그" },
   JOB_NOT_RUN: { path: "/airflow/dashboard", label: "Airflow 실행 이력" },

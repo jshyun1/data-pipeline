@@ -26,10 +26,10 @@ function AirflowManagePage() {
 
   return (
     <ConsoleFramePage
-      title="AirFlow 관리"
+      title="워크플로우 관리"
       src={src}
       healthcheckSrc="/airflow/"
-      waitMessage="AirFlow 관리 콘솔을 준비하는 중입니다"
+      waitMessage="워크플로우 관리 콘솔을 준비하는 중입니다"
     />
   );
 }
