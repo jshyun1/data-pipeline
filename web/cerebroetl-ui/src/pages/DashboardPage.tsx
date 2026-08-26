@@ -33,6 +33,7 @@ import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
 import { InfraRegion } from "../components/InfraRegion";
 import { ActionQueuePanel } from "../components/ActionQueuePanel";
 import { refitAfterLayout } from "../components/chartFit";
+import { activeDayPreset, dayPresetRange } from "../components/dayPreset";
 import { JobTop5Card } from "../components/JobTop5Card";
 import { ChangeIndicator, FlowStateNote, MetricRow, NowDivider, TimeBadge } from "../components/kpi/kpiBits";
 import { formatRecovery, judgeCdcFlow } from "../components/kpi/flowState";
@@ -313,13 +314,14 @@ export function DashboardPage() {
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().startOf("day"), dayjs().endOf("day")]);
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
 
-  // 전일자/당일 프리셋: 해당 날짜 하루(00:00~23:59)로 조회기간을 즉시 맞춘다.
+  // 당일/전일 프리셋: 해당 날짜 하루(00:00~23:59)로 조회기간을 즉시 맞춘다.
   const applyDayPreset = (offsetDays: 0 | 1) => {
-    const day = dayjs().subtract(offsetDays, "day");
-    const range: [Dayjs, Dayjs] = [day.startOf("day"), day.endOf("day")];
+    const range = dayPresetRange(offsetDays);
     setDateRange(range);
     setAppliedRange(range);
   };
+  // 지금 적용된 기간이 어느 프리셋인지(달력으로 직접 고르면 null) - 버튼 선택 표시에 쓴다.
+  const selectedPreset = activeDayPreset(appliedRange[0], appliedRange[1]);
   const navigate = useNavigate();
   const [airflowActiveTile, setAirflowActiveTile] = useState<AirflowTileKind | null>(null);
   const [nifiFailedOpen, setNifiFailedOpen] = useState(false);
@@ -583,8 +585,8 @@ export function DashboardPage() {
         </div>
         <Space className="dashboard-date-filter" wrap>
           <Space.Compact>
-            <Button onClick={() => applyDayPreset(1)}>전일자</Button>
-            <Button onClick={() => applyDayPreset(0)}>당일</Button>
+            <Button type={selectedPreset === 0 ? "primary" : "default"} onClick={() => applyDayPreset(0)}>당일</Button>
+            <Button type={selectedPreset === 1 ? "primary" : "default"} onClick={() => applyDayPreset(1)}>전일</Button>
           </Space.Compact>
           <RangePicker
             value={dateRange}
