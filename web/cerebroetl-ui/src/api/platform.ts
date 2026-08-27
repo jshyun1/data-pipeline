@@ -549,6 +549,11 @@ export async function getNifiProcessGroupTree(): Promise<NifiProcessGroupTreeNod
   return unwrap<NifiProcessGroupTreeNode>(res.data);
 }
 
+export async function refreshNifiProcessGroupTree(): Promise<NifiProcessGroupTreeNode> {
+  const res = await apiClient.post<ApiResponse<NifiProcessGroupTreeNode>>("/nifi/process-group-tree/refresh");
+  return unwrap<NifiProcessGroupTreeNode>(res.data);
+}
+
 export async function getNifiProcessor(processorId: string): Promise<NifiProcessorDetailResponse> {
   const res = await apiClient.get<ApiResponse<NifiProcessorDetailResponse>>(
     `/nifi/processors/${encodeURIComponent(processorId)}`,

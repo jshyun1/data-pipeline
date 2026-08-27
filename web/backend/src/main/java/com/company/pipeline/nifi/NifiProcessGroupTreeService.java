@@ -52,6 +52,24 @@ public class NifiProcessGroupTreeService {
         }
     }
 
+    public NifiProcessGroupTreeResponse refreshNow() {
+        refreshLock.lock();
+        try {
+            return refreshCache().tree();
+        } finally {
+            refreshLock.unlock();
+        }
+    }
+
+    public void refreshAfterMutation() {
+        try {
+            refreshNow();
+        } catch (RuntimeException ex) {
+            cache.set(null);
+            log.debug("NiFi 프로세스 그룹 트리 캐시 즉시 갱신 실패, 캐시를 무효화합니다: {}", ex.getMessage());
+        }
+    }
+
     @Scheduled(fixedDelay = CACHE_TTL_MS, initialDelay = CACHE_WARMUP_DELAY_MS)
     public void warmTreeCache() {
         CachedTree cached = cache.get();

@@ -2256,6 +2256,31 @@ button.airflow-tree-label:hover {
   font-size: 11px;
 }
 
+.nifi-tree-search-heading {
+  padding: 0 8px 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nifi-tree-search-heading .nifi-tree-section-title {
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.nifi-tree-refresh-button {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  color: #0f766e;
+}
+
+.nifi-tree-refresh-button:hover {
+  color: #0d9488 !important;
+  background: #ecfdf5 !important;
+}
+
 .nifi-tree-search-input {
   width: calc(100% - 28px);
   height: 30px;

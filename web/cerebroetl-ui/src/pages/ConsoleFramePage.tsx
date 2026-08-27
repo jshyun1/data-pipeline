@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { Alert, Button, Result, Spin } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -13,6 +13,7 @@ import {
 import {
   getNifiProcessor,
   getNifiProcessGroupTree,
+  refreshNifiProcessGroupTree,
   acquireNifiProcessorEditLock,
   heartbeatNifiProcessorEditLock,
   releaseNifiProcessorEditLock,
@@ -530,8 +531,10 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
       doc.removeEventListener("mouseup", stop, true);
       if (!wasMoved) {
         const panels = Array.from(doc.querySelectorAll(`[${NIFI_PANEL_ATTRIBUTE}]`));
-        const shouldExpand = !panels.some((item) => item.getAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE) === "true");
-        panels.forEach((item) => item.setAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE, shouldExpand ? "true" : "false"));
+        const isExpanded = panel.getAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE) === "true";
+        panels.forEach((item) => {
+          item.setAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE, item === panel && !isExpanded ? "true" : "false");
+        });
       }
     };
 
@@ -844,35 +847,51 @@ type NifiTreeStatusFilter = "ALL" | "RUNNING" | "DONE" | "FAILED" | "STOPPED";
 function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTreePanelProps) {
   const navigate = useNavigate();
   const [tree, setTree] = useState<NifiProcessGroupTreeNode | null>(null);
+  const treeRef = useRef<NifiProcessGroupTreeNode | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeStatusFilter, setActiveStatusFilter] = useState<NifiTreeStatusFilter | null>(null);
 
-  useEffect(() => {
+  const loadTree = useCallback((forceRefresh = false, resetExpanded = false, quietError = false) => {
     let cancelled = false;
-    setIsLoading(true);
-    setError(null);
+    if (forceRefresh) {
+      setIsRefreshing(true);
+    } else if (!treeRef.current) {
+      setIsLoading(true);
+    }
+    if (!quietError) {
+      setError(null);
+    }
 
-    getNifiProcessGroupTree()
+    const request = forceRefresh ? refreshNifiProcessGroupTree() : getNifiProcessGroupTree();
+    request
       .then((result) => {
         if (cancelled) {
           return;
         }
+        treeRef.current = result;
         setTree(result);
+        setError(null);
         onTreeChange?.(result);
-        setExpandedIds(new Set());
+        if (resetExpanded) {
+          setExpandedIds(new Set());
+        }
       })
       .catch((ex) => {
         if (!cancelled) {
-          setError(ex instanceof Error ? ex.message : "트리를 불러오지 못했습니다.");
-          onTreeChange?.(null);
+          if (!quietError) {
+            setError(ex instanceof Error ? ex.message : "트리를 불러오지 못했습니다.");
+            onTreeChange?.(null);
+          }
         }
       })
       .finally(() => {
         if (!cancelled) {
           setIsLoading(false);
+          setIsRefreshing(false);
         }
       });
 
@@ -880,6 +899,20 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
       cancelled = true;
     };
   }, [onTreeChange]);
+
+  useEffect(() => loadTree(false, true), [loadTree]);
+
+  useEffect(() => {
+    let cleanupRequest = () => {};
+    const timerId = window.setInterval(() => {
+      cleanupRequest();
+      cleanupRequest = loadTree(false, false, true);
+    }, 5000);
+    return () => {
+      window.clearInterval(timerId);
+      cleanupRequest();
+    };
+  }, [loadTree]);
 
   useEffect(() => {
     const selected = findTreeNode(tree, activeGroupId);
@@ -1048,9 +1081,21 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
           )}
         </div>
       ) : null}
-      <label className="nifi-tree-section-title" htmlFor="nifi-tree-search">
-        트리 검색
-      </label>
+      <div className="nifi-tree-search-heading">
+        <label className="nifi-tree-section-title" htmlFor="nifi-tree-search">
+          트리 검색
+        </label>
+        <Button
+          type="text"
+          size="small"
+          className="nifi-tree-refresh-button"
+          icon={<ReloadOutlined />}
+          loading={isRefreshing}
+          title="트리 캐시 새로고침"
+          aria-label="트리 캐시 새로고침"
+          onClick={() => loadTree(true, false)}
+        />
+      </div>
       <input
         id="nifi-tree-search"
         className="nifi-tree-search-input"

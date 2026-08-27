@@ -71,19 +71,28 @@ public class NifiController {
     public ApiResponse<NifiProcessGroupResponse> createProcessGroup(
             @Valid @RequestBody NifiProcessGroupCreateRequest request
     ) {
-        return ApiResponse.success(nifiClient.createRootProcessGroup(request.name().trim()));
+        NifiProcessGroupResponse response = nifiClient.createRootProcessGroup(request.name().trim());
+        processGroupTreeService.refreshAfterMutation();
+        return ApiResponse.success(response);
     }
 
     @PostMapping("/etl/initial-db-to-db")
     public ApiResponse<NifiProcessGroupResponse> createInitialDbToDbFlow(
             @Valid @RequestBody NifiInitialDbToDbCreateRequest request
     ) {
-        return ApiResponse.success(nifiClient.createInitialDbToDbFlow(request));
+        NifiProcessGroupResponse response = nifiClient.createInitialDbToDbFlow(request);
+        processGroupTreeService.refreshAfterMutation();
+        return ApiResponse.success(response);
     }
 
     @GetMapping("/process-group-tree")
     public ApiResponse<NifiProcessGroupTreeResponse> processGroupTree() {
         return ApiResponse.success(processGroupTreeService.getTree());
+    }
+
+    @PostMapping("/process-group-tree/refresh")
+    public ApiResponse<NifiProcessGroupTreeResponse> refreshProcessGroupTree() {
+        return ApiResponse.success(processGroupTreeService.refreshNow());
     }
 
     @GetMapping("/processors/{processorId}")
