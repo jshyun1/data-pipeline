@@ -190,11 +190,17 @@ export interface NifiProcessGroupEntity {
 export interface NifiProcessGroupTreeNode {
   id: string;
   name: string;
+  groupType?: "GROUPING" | "JOB" | "EMPTY";
+  jobStatus?: "WAITING" | "RUNNING" | "STOPPED" | "FAILED";
   processorCount: number;
   runningCount: number;
   stoppedCount: number;
   invalidCount: number;
   disabledCount: number;
+  activeThreadCount?: number;
+  flowFilesQueued?: number;
+  sourceInputCount?: number;
+  terminalInputCount?: number;
   children: NifiProcessGroupTreeNode[];
 }
 

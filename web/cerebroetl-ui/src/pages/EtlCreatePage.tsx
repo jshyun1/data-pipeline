@@ -187,61 +187,6 @@ function columnOptions(columns: ColumnMetadataResponse[]) {
   return columns.map((column) => ({ label: column.name, value: column.name }));
 }
 
-function ColumnMappingPreview({
-  sourceColumns,
-  targetColumns,
-  loading,
-  error,
-}: {
-  sourceColumns: ColumnMetadataResponse[];
-  targetColumns: ColumnMetadataResponse[];
-  loading?: boolean;
-  error?: string | null;
-}) {
-  const targetByName = new Map(targetColumns.map((column) => [normalizeName(column.name), column]));
-  const rows = sourceColumns.map((sourceColumn) => {
-    const targetColumn = targetByName.get(normalizeName(sourceColumn.name));
-    return {
-      sourceColumn: sourceColumn.name,
-      targetColumn: targetColumn?.name ?? "-",
-      matched: !!targetColumn,
-    };
-  });
-
-  return (
-    <div className="etl-column-mapping-panel">
-      <div className="etl-preview-title">컬럼 매핑 미리보기</div>
-      {loading ? <div className="etl-column-mapping-message">컬럼 정보를 조회 중입니다.</div> : null}
-      {error ? <div className="etl-column-mapping-message error">{error}</div> : null}
-      {!loading && !error && rows.length === 0 ? (
-        <div className="etl-column-mapping-message">소스와 타깃 테이블을 선택하면 컬럼 매핑을 확인할 수 있습니다.</div>
-      ) : null}
-      {!loading && !error && rows.length > 0 ? (
-        <div className="etl-preview-table-scroll">
-          <table className="etl-preview-table">
-            <thead>
-              <tr>
-                <th>소스 컬럼</th>
-                <th>타깃 컬럼</th>
-                <th>상태</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.sourceColumn}>
-                  <td>{row.sourceColumn}</td>
-                  <td>{row.targetColumn}</td>
-                  <td className={row.matched ? "matched" : "unmatched"}>{row.matched ? "✓" : "✕"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function StepLabel({
   step,
   title,
@@ -378,15 +323,11 @@ function BasicStep({
 function ConnectionStep({
   value,
   onChange,
-  sourceColumns,
-  targetColumns,
   onSourceColumnsChange,
   onTargetColumnsChange,
 }: {
   value: ConnectionInfo;
   onChange: (nextValue: Partial<ConnectionInfo>) => void;
-  sourceColumns: ColumnMetadataResponse[];
-  targetColumns: ColumnMetadataResponse[];
   onSourceColumnsChange: (columns: ColumnMetadataResponse[]) => void;
   onTargetColumnsChange: (columns: ColumnMetadataResponse[]) => void;
 }) {
@@ -405,11 +346,6 @@ function ConnectionStep({
   const [targetTableLoading, setTargetTableLoading] = useState(false);
   const [targetSchemaError, setTargetSchemaError] = useState<string | null>(null);
   const [targetTableError, setTargetTableError] = useState<string | null>(null);
-  const [sourceColumnLoading, setSourceColumnLoading] = useState(false);
-  const [targetColumnLoading, setTargetColumnLoading] = useState(false);
-  const [sourceColumnError, setSourceColumnError] = useState<string | null>(null);
-  const [targetColumnError, setTargetColumnError] = useState<string | null>(null);
-
   useEffect(() => {
     let cancelled = false;
 
@@ -669,30 +605,22 @@ function ConnectionStep({
   useEffect(() => {
     let cancelled = false;
     onSourceColumnsChange([]);
-    setSourceColumnError(null);
 
     if (!sourceConnection || !value.sourceSchema.trim() || !value.sourceTable.trim()) {
-      setSourceColumnLoading(false);
       return () => {
         cancelled = true;
       };
     }
 
-    setSourceColumnLoading(true);
     listConnectionColumns(sourceConnection.id, value.sourceSchema.trim(), value.sourceTable.trim())
       .then((columns) => {
         if (!cancelled) {
           onSourceColumnsChange(columns);
         }
       })
-      .catch((ex) => {
+      .catch(() => {
         if (!cancelled) {
-          setSourceColumnError(ex instanceof Error ? ex.message : "소스 컬럼을 불러오지 못했습니다.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setSourceColumnLoading(false);
+          onSourceColumnsChange([]);
         }
       });
 
@@ -704,30 +632,22 @@ function ConnectionStep({
   useEffect(() => {
     let cancelled = false;
     onTargetColumnsChange([]);
-    setTargetColumnError(null);
 
     if (!targetConnection || !value.targetSchema.trim() || !value.targetTable.trim()) {
-      setTargetColumnLoading(false);
       return () => {
         cancelled = true;
       };
     }
 
-    setTargetColumnLoading(true);
     listConnectionColumns(targetConnection.id, value.targetSchema.trim(), value.targetTable.trim())
       .then((columns) => {
         if (!cancelled) {
           onTargetColumnsChange(columns);
         }
       })
-      .catch((ex) => {
+      .catch(() => {
         if (!cancelled) {
-          setTargetColumnError(ex instanceof Error ? ex.message : "타깃 컬럼을 불러오지 못했습니다.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setTargetColumnLoading(false);
+          onTargetColumnsChange([]);
         }
       });
 
@@ -909,12 +829,6 @@ function ConnectionStep({
           onChange={(nextTable) => updateValue({ targetTable: nextTable })}
         />
       </div>
-      <ColumnMappingPreview
-        sourceColumns={sourceColumns}
-        targetColumns={targetColumns}
-        loading={sourceColumnLoading || targetColumnLoading}
-        error={sourceColumnError ?? targetColumnError}
-      />
     </div>
   );
 }
@@ -1033,8 +947,6 @@ function TargetStep({
           />
         </div>
       ) : null}
-
-      <ColumnMappingPreview sourceColumns={sourceColumns} targetColumns={targetColumns} />
     </div>
   );
 }
@@ -1241,8 +1153,6 @@ export function EtlCreatePage() {
     connection: (
       <ConnectionStep
         value={connectionInfo}
-        sourceColumns={sourceColumns}
-        targetColumns={targetColumns}
         onChange={(nextValue) => {
           setConnectionInfo((current) => ({ ...current, ...nextValue }));
           if (
@@ -1295,7 +1205,6 @@ export function EtlCreatePage() {
           type="info"
           showIcon
           message="각 단계를 완료해야 다음 단계가 열립니다."
-          description="연결 단계에서는 소스와 타깃 테이블을 선택하면 컬럼 매핑을 확인할 수 있습니다."
         />
       </Card>
 

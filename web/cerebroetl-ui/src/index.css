@@ -1012,93 +1012,6 @@ button.airflow-tree-label:hover {
   box-shadow: none;
 }
 
-.etl-column-mapping-panel {
-  width: min(560px, 100%);
-  margin-top: 18px;
-}
-
-.etl-preview-title {
-  margin-top: 28px;
-  color: #293442;
-  font-size: 16px;
-  font-weight: 800;
-}
-
-.etl-column-mapping-panel .etl-preview-title {
-  margin-top: 0;
-}
-
-.etl-column-mapping-message {
-  margin-top: 8px;
-  padding: 10px 12px;
-  color: #475467;
-  background: #f8fafc;
-  border: 1px solid #eceff3;
-}
-
-.etl-column-mapping-message.error {
-  color: #b42318;
-  background: #fff4f2;
-  border-color: #fecdca;
-}
-
-.etl-preview-table-scroll {
-  width: min(560px, 100%);
-  max-height: 424px;
-  margin-top: 8px;
-  overflow-y: auto;
-  border: 1px solid #89929e;
-  background: #ffffff;
-}
-
-.etl-preview-table {
-  width: 100%;
-  border-collapse: collapse;
-  color: #293442;
-  background: #ffffff;
-  font-size: 16px;
-}
-
-.etl-preview-table th,
-.etl-preview-table td {
-  padding: 8px 16px;
-  border: 1px solid #89929e;
-  text-align: left;
-}
-
-.etl-preview-table-scroll .etl-preview-table th:first-child,
-.etl-preview-table-scroll .etl-preview-table td:first-child {
-  border-left: 0;
-}
-
-.etl-preview-table-scroll .etl-preview-table th:last-child,
-.etl-preview-table-scroll .etl-preview-table td:last-child {
-  border-right: 0;
-}
-
-.etl-preview-table-scroll .etl-preview-table thead tr:first-child th {
-  border-top: 0;
-}
-
-.etl-preview-table-scroll .etl-preview-table tbody tr:last-child td {
-  border-bottom: 0;
-}
-
-.etl-preview-table th {
-  background: #f8fafc;
-  font-weight: 800;
-}
-
-.etl-preview-table td.matched {
-  color: #027a48;
-  font-weight: 800;
-}
-
-.etl-preview-table td.unmatched {
-  color: #b42318;
-  font-weight: 800;
-}
-
 .etl-target-actions {
   width: 100%;
   margin-top: 14px;
@@ -2174,88 +2087,6 @@ button.airflow-tree-label:hover {
   color: #334155;
 }
 
-.nifi-job-summary {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 7px 10px;
-  padding: 0 14px 10px;
-  color: #475569;
-  font-size: 13px;
-  line-height: 1.25;
-}
-
-.nifi-job-summary button {
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.nifi-job-summary button:hover,
-.nifi-job-summary button.active {
-  color: #d40000;
-  font-weight: 750;
-}
-
-.nifi-job-summary button:last-child {
-  grid-column: 1 / span 2;
-}
-
-.nifi-status-job-list {
-  max-height: 170px;
-  margin: 0 10px 10px;
-  padding: 4px;
-  overflow: auto;
-  border: 1px solid #e5eaf1;
-  border-radius: 7px;
-  background: #f8fafc;
-}
-
-.nifi-status-job-list button {
-  width: 100%;
-  min-height: 43px;
-  padding: 6px 7px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 2px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: #1f2937;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.nifi-status-job-list button:hover {
-  background: #fff1f1;
-  color: #d40000;
-}
-
-.nifi-status-job-list span,
-.nifi-status-job-list small {
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.nifi-status-job-list span {
-  font-size: 12.5px;
-  font-weight: 750;
-}
-
-.nifi-status-job-list small {
-  color: #64748b;
-  font-size: 11px;
-}
-
 .nifi-tree-search-heading {
   padding: 0 8px 0 14px;
   display: flex;
@@ -2424,6 +2255,10 @@ button.airflow-tree-label:hover {
   background: #dc2626;
 }
 
+.nifi-detail-status.stopped .nifi-detail-dot {
+  background: #64748b;
+}
+
 .nifi-detail-message {
   padding: 10px 28px;
   border-bottom: 1px solid #c7cdd4;
@@ -2479,6 +2314,75 @@ button.airflow-tree-label:hover {
   overflow-wrap: anywhere;
   color: #111827;
   font-weight: 600;
+}
+
+.nifi-job-status-list {
+  display: grid;
+  gap: 6px;
+}
+
+.nifi-job-status-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 0;
+  border: 0;
+  border-bottom: 1px solid #e2e8f0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.nifi-job-status-row:hover .nifi-job-status-name {
+  color: #0f3f8c;
+  text-decoration: underline;
+}
+
+.nifi-job-status-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #111827;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nifi-job-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 48px;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.nifi-job-status-badge.running {
+  color: #1d4ed8;
+}
+
+.nifi-job-status-badge.error {
+  color: #b91c1c;
+}
+
+.nifi-job-status-badge.stopped {
+  color: #475569;
+}
+
+.nifi-job-status-badge.running .nifi-detail-dot {
+  background: #2563eb;
+}
+
+.nifi-job-status-badge.error .nifi-detail-dot {
+  background: #dc2626;
+}
+
+.nifi-job-status-badge.stopped .nifi-detail-dot {
+  background: #64748b;
 }
 
 .nifi-detail-properties > div {

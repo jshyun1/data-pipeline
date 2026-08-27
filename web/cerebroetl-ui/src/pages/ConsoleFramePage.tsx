@@ -842,8 +842,6 @@ interface ProcessGroupTreePanelProps {
   onTreeChange?: (tree: NifiProcessGroupTreeNode | null) => void;
 }
 
-type NifiTreeStatusFilter = "ALL" | "RUNNING" | "DONE" | "FAILED" | "STOPPED";
-
 function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTreePanelProps) {
   const navigate = useNavigate();
   const [tree, setTree] = useState<NifiProcessGroupTreeNode | null>(null);
@@ -853,7 +851,6 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeStatusFilter, setActiveStatusFilter] = useState<NifiTreeStatusFilter | null>(null);
 
   const loadTree = useCallback((forceRefresh = false, resetExpanded = false, quietError = false) => {
     let cancelled = false;
@@ -942,61 +939,6 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
     });
   };
 
-  const jobSummary = (() => {
-    const total = tree?.processorCount ?? 0;
-    const running = tree?.runningCount ?? 0;
-    const failed = tree?.invalidCount ?? 0;
-    const stopped = tree?.stoppedCount ?? 0;
-    const completed = total - running - failed - stopped;
-    return {
-      total,
-      running,
-      completed: Math.max(completed, 0),
-      failed,
-      stopped,
-    };
-  })();
-
-  const processGroupJobs = useMemo(() => flattenTree(tree).filter((node) => node.id !== "root" && node.processorCount > 0), [tree]);
-
-  const statusCounts = (node: NifiProcessGroupTreeNode) => {
-    const running = node.runningCount ?? 0;
-    const failed = node.invalidCount ?? 0;
-    const stopped = node.stoppedCount ?? 0;
-    const completed = Math.max((node.processorCount ?? 0) - running - failed - stopped, 0);
-    return { running, completed, failed, stopped };
-  };
-
-  const statusJobs = useMemo(() => {
-    if (!activeStatusFilter) {
-      return [];
-    }
-    return processGroupJobs.filter((node) => {
-      const { running, completed, failed, stopped } = statusCounts(node);
-      switch (activeStatusFilter) {
-        case "RUNNING":
-          return running > 0;
-        case "DONE":
-          return completed > 0;
-        case "FAILED":
-          return failed > 0;
-        case "STOPPED":
-          return stopped > 0;
-        case "ALL":
-        default:
-          return true;
-      }
-    });
-  }, [activeStatusFilter, processGroupJobs]);
-
-  const statusButtons: Array<{ key: NifiTreeStatusFilter; label: string; count: number }> = [
-    { key: "ALL", label: "전체", count: jobSummary.total },
-    { key: "RUNNING", label: "실행중", count: jobSummary.running },
-    { key: "DONE", label: "완료", count: jobSummary.completed },
-    { key: "FAILED", label: "실패", count: jobSummary.failed },
-    { key: "STOPPED", label: "중지", count: jobSummary.stopped },
-  ];
-
   const matchesSearch = (node: NifiProcessGroupTreeNode, normalizedQuery: string): boolean =>
     node.name.toLowerCase().includes(normalizedQuery);
 
@@ -1049,38 +991,6 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
 
   return (
     <aside className="nifi-tree-panel" aria-label="NiFi 프로세스 그룹 트리">
-      <div className="nifi-tree-section-title">상태</div>
-      <div className="nifi-job-summary" aria-label="NiFi job 상태 요약">
-        {statusButtons.map((status) => (
-          <button
-            key={status.key}
-            type="button"
-            className={activeStatusFilter === status.key ? "active" : ""}
-            onClick={() => setActiveStatusFilter((current) => (current === status.key ? null : status.key))}
-          >
-            {status.label} ({status.count})
-          </button>
-        ))}
-      </div>
-      {activeStatusFilter ? (
-        <div className="nifi-status-job-list" aria-label="상태별 NiFi job 목록">
-          {statusJobs.length > 0 ? (
-            statusJobs.map((node) => {
-              const counts = statusCounts(node);
-              return (
-                <button key={node.id} type="button" title={node.name} onClick={() => openGroup(node.id)}>
-                  <span>{node.name}</span>
-                  <small>
-                    실행 {counts.running} · 완료 {counts.completed} · 실패 {counts.failed} · 중지 {counts.stopped}
-                  </small>
-                </button>
-              );
-            })
-          ) : (
-            <div className="nifi-tree-message">해당 Job 없음</div>
-          )}
-        </div>
-      ) : null}
       <div className="nifi-tree-search-heading">
         <label className="nifi-tree-section-title" htmlFor="nifi-tree-search">
           트리 검색
@@ -1144,6 +1054,13 @@ function flattenTree(node: NifiProcessGroupTreeNode | null): NifiProcessGroupTre
     return [];
   }
   return [node, ...node.children.flatMap((child) => flattenTree(child))];
+}
+
+function collectJobNodes(node: NifiProcessGroupTreeNode | null): NifiProcessGroupTreeNode[] {
+  if (!node) {
+    return [];
+  }
+  return flattenTree(node).filter((entry) => entry.id !== node.id && entry.groupType === "JOB");
 }
 
 function processGroupTextCandidates(element: Element | null) {
@@ -1210,6 +1127,9 @@ function formatDateTime(value?: string | null) {
 }
 
 function statusText(job: EtlJobResponse | null, node: NifiProcessGroupTreeNode | null) {
+  if (node?.jobStatus) {
+    return jobStatusText(node.jobStatus);
+  }
   if (job?.invalidCount || node?.invalidCount) {
     return "실패";
   }
@@ -1220,14 +1140,48 @@ function statusText(job: EtlJobResponse | null, node: NifiProcessGroupTreeNode |
 }
 
 function statusClass(job: EtlJobResponse | null, node: NifiProcessGroupTreeNode | null) {
+  if (node?.jobStatus) {
+    return jobStatusClass(node.jobStatus);
+  }
   const status = statusText(job, node);
   if (status === "실패") {
     return "error";
   }
-  if (status === "실행중") {
+  if (status === "실행중" || status === "실행") {
     return "running";
   }
+  if (status === "중단") {
+    return "stopped";
+  }
   return "done";
+}
+
+function jobStatusText(status: NifiProcessGroupTreeNode["jobStatus"]) {
+  switch (status) {
+    case "STOPPED":
+      return "중단";
+    case "RUNNING":
+      return "실행";
+    case "FAILED":
+      return "실패";
+    case "WAITING":
+    default:
+      return "대기";
+  }
+}
+
+function jobStatusClass(status: NifiProcessGroupTreeNode["jobStatus"]) {
+  switch (status) {
+    case "STOPPED":
+      return "stopped";
+    case "RUNNING":
+      return "running";
+    case "FAILED":
+      return "error";
+    case "WAITING":
+    default:
+      return "done";
+  }
 }
 
 function uniqueValues(values: Array<string | null | undefined>) {
@@ -1755,6 +1709,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const displayNode = selected?.node ?? null;
   const pathText = selected?.path.map((entry) => entry.name).join(" / ") ?? "-";
   const stepCount = job?.stepCount ?? displayNode?.processorCount ?? groupJobs.reduce((sum, entry) => sum + entry.stepCount, 0);
+  const groupedJobs = displayNode?.groupType === "GROUPING" ? collectJobNodes(displayNode) : [];
 
   return (
     <aside className="nifi-detail-panel" aria-label="선택한 프로세스 그룹 상세">
@@ -1771,6 +1726,28 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
 
       {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
       {!isLoading && error ? <div className="nifi-detail-message error">조회 실패</div> : null}
+
+      {groupedJobs.length > 0 ? (
+        <section className="nifi-detail-section">
+          <h3>JOB 상태</h3>
+          <div className="nifi-job-status-list">
+            {groupedJobs.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                className="nifi-job-status-row"
+                onClick={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(entry.id)}`)}
+              >
+                <span className="nifi-job-status-name" title={entry.name}>{entry.name}</span>
+                <span className={`nifi-job-status-badge ${jobStatusClass(entry.jobStatus)}`}>
+                  <span className="nifi-detail-dot" aria-hidden="true" />
+                  {jobStatusText(entry.jobStatus)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="nifi-detail-section">
         <h3>기본 정보</h3>
