@@ -205,6 +205,19 @@ function commaSeparatedValues(value: string) {
     .filter(Boolean);
 }
 
+function defaultUpdateExtractQuery(databaseType: NifiDatabaseType) {
+  if (databaseType === "MySQL") {
+    return "upd_dttm BETWEEN CONCAT(DATE_FORMAT(CURDATE() - INTERVAL 1 DAY, '%Y%m%d'), '000000')\n"
+      + "                   AND CONCAT(DATE_FORMAT(CURDATE() - INTERVAL 1 DAY, '%Y%m%d'), '235959')";
+  }
+  if (databaseType === "Oracle 12+") {
+    return "upd_dttm BETWEEN TO_CHAR(SYSDATE - 1, 'YYYYMMDD') || '000000'\n"
+      + "                   AND TO_CHAR(SYSDATE - 1, 'YYYYMMDD') || '235959'";
+  }
+  return "upd_dttm BETWEEN TO_CHAR(CURRENT_DATE - 1, 'YYYYMMDD') || '000000'\n"
+    + "                   AND TO_CHAR(CURRENT_DATE - 1, 'YYYYMMDD') || '235959'";
+}
+
 function columnOptions(columns: ColumnMetadataResponse[]) {
   return columns.map((column) => ({ label: column.name, value: column.name }));
 }
@@ -926,32 +939,28 @@ function ConnectionStep({
 function TargetStep({
   loadMode,
   truncateSql,
-  changeKeyColumn,
+  updateExtractQuery,
   primaryKeys,
-  sourceColumns,
   targetColumns,
   showTruncateSql,
   onLoadModeChange,
   onTruncateSqlChange,
-  onChangeKeyColumnChange,
+  onUpdateExtractQueryChange,
   onPrimaryKeysChange,
   onShowTruncateSqlChange,
 }: {
   loadMode: LoadMode;
   onLoadModeChange: (loadMode: LoadMode) => void;
   truncateSql: string;
-  changeKeyColumn: string;
+  updateExtractQuery: string;
   primaryKeys: string;
-  sourceColumns: ColumnMetadataResponse[];
   targetColumns: ColumnMetadataResponse[];
   showTruncateSql: boolean;
   onTruncateSqlChange: (truncateSql: string) => void;
-  onChangeKeyColumnChange: (changeKeyColumn: string) => void;
+  onUpdateExtractQueryChange: (updateExtractQuery: string) => void;
   onPrimaryKeysChange: (primaryKeys: string) => void;
   onShowTruncateSqlChange: (show: boolean) => void;
 }) {
-  const showChangeKeyColumn = loadMode === "TRUNCATE" || loadMode === "UPSERT";
-  const sourceColumnOptions = columnOptions(sourceColumns);
   const targetColumnOptions = columnOptions(targetColumns);
 
   return (
@@ -1005,25 +1014,20 @@ function TargetStep({
         </div>
       ) : null}
 
-      {showChangeKeyColumn ? (
+      {loadMode === "UPSERT" ? (
         <div className="etl-change-key-column">
-          <label>변경기준 컬럼</label>
-          <Select
-            showSearch
-            allowClear
-            value={changeKeyColumn || undefined}
-            disabled={sourceColumns.length === 0}
-            options={sourceColumnOptions}
-            filterOption={matchesSelectOption}
-            placeholder="예: UPDATED_AT"
-            onChange={(nextColumn) => onChangeKeyColumnChange(nextColumn ?? "")}
+          <label>UPDATE행 추출 쿼리</label>
+          <textarea
+            value={updateExtractQuery}
+            onChange={(event) => onUpdateExtractQueryChange(event.target.value)}
+            placeholder="예: upd_dttm BETWEEN ..."
           />
         </div>
       ) : null}
 
       {loadMode === "UPSERT" ? (
         <div className="etl-change-key-column">
-          <label>Primary Keys</label>
+          <label>Target Primary Keys</label>
           <Select
             mode="multiple"
             showSearch
@@ -1153,9 +1157,9 @@ export function EtlCreatePage() {
   const [loadMode, setLoadMode] = useState<LoadMode>("INSERT");
   const [showTruncateSql, setShowTruncateSql] = useState(false);
   const [truncateSql, setTruncateSql] = useState("");
-  const [changeKeyColumn, setChangeKeyColumn] = useState("");
+  const [updateExtractQuery, setUpdateExtractQuery] = useState(defaultUpdateExtractQuery("PostgreSQL"));
   const [primaryKeys, setPrimaryKeys] = useState("");
-  const [sourceColumns, setSourceColumns] = useState<ColumnMetadataResponse[]>([]);
+  const [, setSourceColumns] = useState<ColumnMetadataResponse[]>([]);
   const [targetColumns, setTargetColumns] = useState<ColumnMetadataResponse[]>([]);
 
   const isUnlocked = (stepId: WizardStepId) => {
@@ -1212,12 +1216,12 @@ export function EtlCreatePage() {
       moveStep("connection");
       return;
     }
-    if (!isFileLoad && loadMode === "UPSERT" && !changeKeyColumn.trim()) {
-      message.warning("UPSERT 적재 방식은 변경기준 컬럼을 입력해야 합니다.");
+    if (!isFileLoad && loadMode === "UPSERT" && !updateExtractQuery.trim()) {
+      message.warning("UPSERT 적재 방식은 UPDATE행 추출 쿼리를 입력해야 합니다.");
       return;
     }
     if (!isFileLoad && loadMode === "UPSERT" && !primaryKeys.trim()) {
-      message.warning("UPSERT 적재 방식은 Primary Keys를 입력해야 합니다.");
+      message.warning("UPSERT 적재 방식은 Target Primary Keys를 입력해야 합니다.");
       return;
     }
 
@@ -1260,7 +1264,7 @@ export function EtlCreatePage() {
           targetTable: connectionInfo.targetTable.trim(),
           loadMode,
           truncateSql: loadMode === "TRUNCATE" ? truncateSql.trim() : undefined,
-          changeKeyColumn: (loadMode === "TRUNCATE" || loadMode === "UPSERT") ? changeKeyColumn.trim() : undefined,
+          updateExtractQuery: loadMode === "UPSERT" ? updateExtractQuery.trim() : undefined,
           primaryKeys: loadMode === "UPSERT" ? primaryKeys.trim() : undefined,
         });
       }
@@ -1313,14 +1317,15 @@ export function EtlCreatePage() {
         value={connectionInfo}
         etlType={etlType}
         onChange={(nextValue) => {
-          setConnectionInfo((current) => ({ ...current, ...nextValue }));
-          if (
-            nextValue.sourceServiceId !== undefined ||
-            nextValue.sourceSchema !== undefined ||
-            nextValue.sourceTable !== undefined
-          ) {
-            setChangeKeyColumn("");
-          }
+          const shouldResetUpdateQuery = nextValue.sourceServiceId !== undefined ||
+            nextValue.sourceDatabaseType !== undefined;
+          setConnectionInfo((current) => {
+            const merged = { ...current, ...nextValue };
+            if (shouldResetUpdateQuery) {
+              setUpdateExtractQuery(defaultUpdateExtractQuery(merged.sourceDatabaseType));
+            }
+            return merged;
+          });
           if (
             nextValue.targetServiceId !== undefined ||
             nextValue.targetSchema !== undefined ||
@@ -1340,9 +1345,8 @@ export function EtlCreatePage() {
       <TargetStep
         loadMode={loadMode}
         truncateSql={truncateSql}
-        changeKeyColumn={changeKeyColumn}
+        updateExtractQuery={updateExtractQuery}
         primaryKeys={primaryKeys}
-        sourceColumns={sourceColumns}
         targetColumns={targetColumns}
         showTruncateSql={showTruncateSql}
         onLoadModeChange={(nextLoadMode) => {
@@ -1350,9 +1354,12 @@ export function EtlCreatePage() {
           if (nextLoadMode !== "TRUNCATE") {
             setShowTruncateSql(false);
           }
+          if (nextLoadMode === "UPSERT" && !updateExtractQuery.trim()) {
+            setUpdateExtractQuery(defaultUpdateExtractQuery(connectionInfo.sourceDatabaseType));
+          }
         }}
         onTruncateSqlChange={setTruncateSql}
-        onChangeKeyColumnChange={setChangeKeyColumn}
+        onUpdateExtractQueryChange={setUpdateExtractQuery}
         onPrimaryKeysChange={setPrimaryKeys}
         onShowTruncateSqlChange={setShowTruncateSql}
       />
@@ -1429,7 +1436,7 @@ export function EtlCreatePage() {
                     <Button
                       type="primary"
                       loading={isCreating}
-                      disabled={!isFileLoad && loadMode === "UPSERT" && (!changeKeyColumn.trim() || !primaryKeys.trim())}
+                      disabled={!isFileLoad && loadMode === "UPSERT" && (!updateExtractQuery.trim() || !primaryKeys.trim())}
                       onClick={completeWizard}
                     >
                       완료

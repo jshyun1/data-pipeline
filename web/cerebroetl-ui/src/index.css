@@ -1009,10 +1009,10 @@ button.airflow-tree-label:hover {
 }
 
 .etl-change-key-column {
-  width: min(520px, 100%);
+  width: min(760px, 100%);
   margin-top: 14px;
   display: grid;
-  grid-template-columns: 130px minmax(0, 1fr);
+  grid-template-columns: 150px minmax(0, 1fr);
   align-items: stretch;
   border: 1px solid #eceff3;
   background: #ffffff;
@@ -1037,6 +1037,19 @@ button.airflow-tree-label:hover {
   border: 0;
   border-radius: 0;
   box-shadow: none;
+}
+
+.etl-change-key-column textarea {
+  min-height: 96px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 0;
+  color: #293442;
+  background: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
 }
 
 .etl-file-columns {

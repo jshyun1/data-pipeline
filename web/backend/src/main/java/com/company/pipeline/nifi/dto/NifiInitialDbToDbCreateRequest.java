@@ -52,8 +52,8 @@ public record NifiInitialDbToDbCreateRequest(
         @Size(max = 4000)
         String truncateSql,
 
-        @Size(max = 512)
-        String changeKeyColumn,
+        @Size(max = 4000)
+        String updateExtractQuery,
 
         @Size(max = 512)
         String primaryKeys

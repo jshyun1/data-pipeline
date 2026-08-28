@@ -77,10 +77,10 @@ public class NifiClient {
             "Table Name",
             "table-name"
     );
-    private static final List<String> QUERY_MAXIMUM_VALUE_KEYS = List.of(
-            "Maximum-value Columns",
-            "Maximum Value Columns",
-            "maximum-value-column-names"
+    private static final List<String> QUERY_ADDITIONAL_WHERE_KEYS = List.of(
+            "Additional WHERE clause",
+            "Additional Where Clause",
+            "additional-where-clause"
     );
     private static final List<String> PUT_DBCP_KEYS = List.of(
             "put-db-record-dcbp-service",
@@ -201,11 +201,11 @@ public class NifiClient {
         if (!"INSERT".equals(loadMode) && !"TRUNCATE".equals(loadMode) && !"UPSERT".equals(loadMode)) {
             throw new NifiClientException("DB -> DB 템플릿은 INSERT, TRUNCATE, UPSERT 적재 방식만 지원합니다.", null);
         }
-        if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.changeKeyColumn())) {
-            throw new NifiClientException("UPSERT 적재 방식은 변경기준 컬럼이 필요합니다.", null);
+        if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.updateExtractQuery())) {
+            throw new NifiClientException("UPSERT 적재 방식은 UPDATE행 추출 쿼리가 필요합니다.", null);
         }
         if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.primaryKeys())) {
-            throw new NifiClientException("UPSERT 적재 방식은 Primary Keys가 필요합니다.", null);
+            throw new NifiClientException("UPSERT 적재 방식은 Target Primary Keys가 필요합니다.", null);
         }
 
         String token = getToken();
@@ -920,7 +920,7 @@ public class NifiClient {
         putProperty(sourceProperties, QUERY_DATABASE_TYPE_KEYS, request.sourceDatabaseType().trim());
         putProperty(sourceProperties, QUERY_TABLE_KEYS, "%s.%s".formatted(
                 request.sourceSchema().trim(), request.sourceTable().trim()));
-        putProperty(sourceProperties, QUERY_MAXIMUM_VALUE_KEYS, request.changeKeyColumn().trim());
+        putProperty(sourceProperties, QUERY_ADDITIONAL_WHERE_KEYS, request.updateExtractQuery().trim());
         updateProcessorProperties(token, source, sourceProperties);
 
         updateTargetDbRecordProcessor(token, upsert, request, "UPSERT");
