@@ -199,6 +199,7 @@ export interface NifiProcessGroupTreeNode {
   id: string;
   name: string;
   comments?: string | null;
+  createdBy?: string | null;
   groupType?: "GROUPING" | "JOB" | "EMPTY";
   jobStatus?: "WAITING" | "RUNNING" | "STOPPED" | "FAILED";
   processorCount: number;

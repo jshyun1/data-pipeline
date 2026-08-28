@@ -68,6 +68,7 @@ public class NifiController {
     private final EtlJobRepository etlJobRepository;
     private final EtlJobStepRepository etlJobStepRepository;
     private final NifiProcessorEditLockService processorEditLockService;
+    private final NifiProcessGroupMetadataService processGroupMetadataService;
 
     public NifiController(NifiClient nifiClient,
             NifiProcessGroupTreeService processGroupTreeService,
@@ -75,7 +76,8 @@ public class NifiController {
             NifiProcessorRunRepository processorRunRepository,
             EtlJobRepository etlJobRepository,
             EtlJobStepRepository etlJobStepRepository,
-            NifiProcessorEditLockService processorEditLockService) {
+            NifiProcessorEditLockService processorEditLockService,
+            NifiProcessGroupMetadataService processGroupMetadataService) {
         this.nifiClient = nifiClient;
         this.processGroupTreeService = processGroupTreeService;
         this.executionLogRepository = executionLogRepository;
@@ -83,31 +85,40 @@ public class NifiController {
         this.etlJobRepository = etlJobRepository;
         this.etlJobStepRepository = etlJobStepRepository;
         this.processorEditLockService = processorEditLockService;
+        this.processGroupMetadataService = processGroupMetadataService;
     }
 
     @PostMapping("/process-groups")
     public ApiResponse<NifiProcessGroupResponse> createProcessGroup(
-            @Valid @RequestBody NifiProcessGroupCreateRequest request
+            @Valid @RequestBody NifiProcessGroupCreateRequest request,
+            @AuthenticationPrincipal AppUser user
     ) {
         NifiProcessGroupResponse response = nifiClient.createRootProcessGroup(request.name().trim());
+        processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(), null, user);
         processGroupTreeService.refreshAfterMutation();
         return ApiResponse.success(response);
     }
 
     @PostMapping("/etl/initial-db-to-db")
     public ApiResponse<NifiProcessGroupResponse> createInitialDbToDbFlow(
-            @Valid @RequestBody NifiInitialDbToDbCreateRequest request
+            @Valid @RequestBody NifiInitialDbToDbCreateRequest request,
+            @AuthenticationPrincipal AppUser user
     ) {
         NifiProcessGroupResponse response = nifiClient.createInitialDbToDbFlow(request);
+        processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
+                request.comments(), user);
         processGroupTreeService.refreshAfterMutation();
         return ApiResponse.success(response);
     }
 
     @PostMapping("/etl/file-load")
     public ApiResponse<NifiProcessGroupResponse> createFileLoadFlow(
-            @Valid @RequestBody NifiFileLoadCreateRequest request
+            @Valid @RequestBody NifiFileLoadCreateRequest request,
+            @AuthenticationPrincipal AppUser user
     ) {
         NifiProcessGroupResponse response = nifiClient.createFileLoadFlow(request);
+        processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
+                request.comments(), user);
         processGroupTreeService.refreshAfterMutation();
         return ApiResponse.success(response);
     }

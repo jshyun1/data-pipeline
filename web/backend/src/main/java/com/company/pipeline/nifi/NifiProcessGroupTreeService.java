@@ -28,11 +28,13 @@ public class NifiProcessGroupTreeService {
     private static final long CACHE_WARMUP_DELAY_MS = 5_000L;
 
     private final NifiClient nifiClient;
+    private final NifiProcessGroupMetadataService metadataService;
     private final AtomicReference<CachedTree> cache = new AtomicReference<>();
     private final ReentrantLock refreshLock = new ReentrantLock();
 
-    public NifiProcessGroupTreeService(NifiClient nifiClient) {
+    public NifiProcessGroupTreeService(NifiClient nifiClient, NifiProcessGroupMetadataService metadataService) {
         this.nifiClient = nifiClient;
+        this.metadataService = metadataService;
     }
 
     public NifiProcessGroupTreeResponse getTree() {
@@ -96,14 +98,16 @@ public class NifiProcessGroupTreeService {
     }
 
     private NifiProcessGroupTreeResponse buildTree() {
-        return toNode(ROOT_GROUP_ID, "ETL Root", null, new HashSet<>(), collectGroupStatusSnapshots());
+        return toNode(ROOT_GROUP_ID, "ETL Root", null, null, new HashSet<>(), collectGroupStatusSnapshots());
     }
 
-    private NifiProcessGroupTreeResponse toNode(String groupId, String fallbackName, String fallbackComments, Set<String> visited,
+    private NifiProcessGroupTreeResponse toNode(String groupId, String fallbackName, String fallbackComments,
+                                                String parentGroupId, Set<String> visited,
                                                 Map<String, NifiFlowStatusResponse.ProcessGroupStatusSnapshot> statusSnapshots) {
         if (!visited.add(groupId)) {
             return new NifiProcessGroupTreeResponse(groupId, displayName(fallbackName, groupId),
                     fallbackComments,
+                    NifiProcessGroupMetadataService.LEGACY_ACTOR,
                     "EMPTY", "WAITING", 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of());
         }
 
@@ -114,6 +118,9 @@ public class NifiProcessGroupTreeService {
         if (!ROOT_GROUP_ID.equals(groupId) && processGroupFlow != null && StringUtils.hasText(processGroupFlow.id())) {
             nodeId = processGroupFlow.id();
         }
+        String nodeName = displayName(fallbackName, nodeId);
+        NifiProcessGroupMetadata metadata = metadataService.ensureDiscovered(nodeId, nodeName, parentGroupId,
+                fallbackComments);
 
         List<NifiProcessGroupTreeResponse> children = contents == null || contents.processGroups() == null
                 ? List.of()
@@ -125,7 +132,7 @@ public class NifiProcessGroupTreeService {
                             String childName = component == null ? childId : component.name();
                             String childComments = component == null ? null : component.comments();
                             return StringUtils.hasText(childId)
-                                    ? toNode(childId, childName, childComments, visited, statusSnapshots)
+                                    ? toNode(childId, childName, childComments, nodeId, visited, statusSnapshots)
                                     : null;
                         })
                         .filter(node -> node != null)
@@ -150,8 +157,9 @@ public class NifiProcessGroupTreeService {
 
         return new NifiProcessGroupTreeResponse(
                 nodeId,
-                displayName(fallbackName, nodeId),
+                nodeName,
                 fallbackComments,
+                metadata.getCreatedBy(),
                 groupType,
                 jobStatus,
                 totalJobCount,

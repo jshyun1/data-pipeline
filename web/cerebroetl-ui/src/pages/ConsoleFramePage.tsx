@@ -7,6 +7,7 @@ import {
   getEtlJobRuns,
   listEtlJobs,
   type EtlJobDetailResponse,
+  type EtlJobLinkView,
   type EtlJobResponse,
   type EtlJobRunResponse,
   type EtlJobStepView,
@@ -23,7 +24,6 @@ import {
   type NifiProcessorDetailResponse,
   type NifiProcessGroupTreeNode,
 } from "../api/platform";
-import { useAuth } from "../auth/AuthContext";
 
 const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
 const CANVAS_SELECTION_SYNC_ATTRIBUTE = "data-cerebro-canvas-selection-sync";
@@ -1252,7 +1252,7 @@ function directParentName(path?: NifiProcessGroupTreeNode[]) {
   return path[path.length - 2]?.name ?? "-";
 }
 
-function firstProcessor(steps: EtlJobStepView[]) {
+function sortProcessorsByPosition(steps: EtlJobStepView[]) {
   return [...steps].sort((a, b) => {
     const ax = a.xPos ?? Number.MAX_SAFE_INTEGER;
     const bx = b.xPos ?? Number.MAX_SAFE_INTEGER;
@@ -1262,7 +1262,19 @@ function firstProcessor(steps: EtlJobStepView[]) {
     const ay = a.yPos ?? Number.MAX_SAFE_INTEGER;
     const by = b.yPos ?? Number.MAX_SAFE_INTEGER;
     return ay - by;
-  })[0] ?? null;
+  });
+}
+
+function firstStartProcessor(steps: EtlJobStepView[], links: EtlJobLinkView[]) {
+  const processorIds = new Set(steps.map((step) => step.nifiProcessorId));
+  const incomingIds = new Set(
+    links
+      .map((link) => link.toComponentId)
+      .filter((id): id is string => !!id && processorIds.has(id)),
+  );
+  return sortProcessorsByPosition(steps.filter((step) => !incomingIds.has(step.nifiProcessorId)))[0]
+    ?? sortProcessorsByPosition(steps)[0]
+    ?? null;
 }
 
 const CRON_SCHEDULE_LABELS: Record<string, string> = {
@@ -1287,7 +1299,7 @@ function scheduleLabel(step: EtlJobStepView | null) {
   }
   if (strategy.includes("cron")) {
     const label = CRON_SCHEDULE_LABELS[period];
-    return label ? `${label} (${period})` : period;
+    return label ?? period;
   }
   return period;
 }
@@ -1741,7 +1753,6 @@ interface ProcessGroupDetailPanelProps {
 
 function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPanelProps) {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const [jobs, setJobs] = useState<EtlJobResponse[]>([]);
   const [details, setDetails] = useState<EtlJobDetailResponse[]>([]);
   const [runs, setRuns] = useState<EtlJobRunResponse[]>([]);
@@ -1843,12 +1854,13 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const isJobGroup = displayNode?.groupType === "JOB";
   const isGroupingGroup = displayNode?.groupType === "GROUPING";
   const directParent = directParentName(selected?.path);
-  const author = user?.userId ?? "-";
+  const author = displayNode?.createdBy ?? "-";
   const displayDetail = details.find((entry) => entry.job.nifiPgId === selectedGroupId)
     ?? (displayJob ? details.find((entry) => entry.job.id === displayJob.id) : null)
     ?? null;
   const jobSteps = displayDetail?.steps ?? [];
-  const firstStep = firstProcessor(jobSteps);
+  const jobLinks = displayDetail?.links ?? [];
+  const firstStep = firstStartProcessor(jobSteps, jobLinks);
   const sourceStep = jobSteps.find((step) => processorTypeIncludes(step, "QueryDatabaseTableRecord")) ?? null;
   const targetStep = jobSteps.find((step) => processorTypeIncludes(step, "PutDatabaseRecord")) ?? null;
   const dagId = relatedJob?.airflowDagId ?? airflowDags[0] ?? null;
