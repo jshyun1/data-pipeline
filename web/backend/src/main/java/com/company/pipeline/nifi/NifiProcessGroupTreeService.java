@@ -121,6 +121,7 @@ public class NifiProcessGroupTreeService {
         String nodeName = displayName(fallbackName, nodeId);
         NifiProcessGroupMetadata metadata = metadataService.ensureDiscovered(nodeId, nodeName, parentGroupId,
                 fallbackComments);
+        final String resolvedNodeId = nodeId;
 
         List<NifiProcessGroupTreeResponse> children = contents == null || contents.processGroups() == null
                 ? List.of()
@@ -132,7 +133,7 @@ public class NifiProcessGroupTreeService {
                             String childName = component == null ? childId : component.name();
                             String childComments = component == null ? null : component.comments();
                             return StringUtils.hasText(childId)
-                                    ? toNode(childId, childName, childComments, nodeId, visited, statusSnapshots)
+                                    ? toNode(childId, childName, childComments, resolvedNodeId, visited, statusSnapshots)
                                     : null;
                         })
                         .filter(node -> node != null)
