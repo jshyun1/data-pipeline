@@ -114,8 +114,10 @@ public class AlertQueueController {
             args.add(severity);
         }
         if (q != null && !q.isBlank()) {
-            where.append(" AND (summary ILIKE ? OR target_label ILIKE ?)");
+            where.append(" AND (summary ILIKE ? OR target_label ILIKE ? OR target_key ILIKE ? OR rule_type_code ILIKE ?)");
             String like = "%" + q.trim() + "%";
+            args.add(like);
+            args.add(like);
             args.add(like);
             args.add(like);
         }

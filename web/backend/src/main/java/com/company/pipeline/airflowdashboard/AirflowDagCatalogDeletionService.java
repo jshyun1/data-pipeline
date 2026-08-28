@@ -3,6 +3,7 @@ package com.company.pipeline.airflowdashboard;
 import com.company.pipeline.common.BusinessException;
 import com.company.pipeline.common.ErrorCode;
 import com.company.pipeline.nifi.NifiClient;
+import com.company.pipeline.nifi.NifiProcessGroupTreeService;
 import com.company.pipeline.pipeline.PipelineService;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -18,16 +19,19 @@ public class AirflowDagCatalogDeletionService {
     private final AirflowDagRunClient airflowClient;
     private final PipelineService pipelineService;
     private final NifiClient nifiClient;
+    private final NifiProcessGroupTreeService processGroupTreeService;
 
     public AirflowDagCatalogDeletionService(
             AirflowDagCatalogRepository repository,
             AirflowDagRunClient airflowClient,
             PipelineService pipelineService,
-            NifiClient nifiClient) {
+            NifiClient nifiClient,
+            NifiProcessGroupTreeService processGroupTreeService) {
         this.repository = repository;
         this.airflowClient = airflowClient;
         this.pipelineService = pipelineService;
         this.nifiClient = nifiClient;
+        this.processGroupTreeService = processGroupTreeService;
     }
 
     public void delete(String dagId) {
@@ -40,6 +44,7 @@ public class AirflowDagCatalogDeletionService {
             pipelineService.delete(Long.parseLong(cdc.group(1)));
         } else if (etl.matches()) {
             nifiClient.deleteRootProcessGroupByIdPrefix(etl.group(1));
+            processGroupTreeService.refreshAfterMutation();
         } else {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "삭제할 수 없는 DAG 형식입니다: " + dagId);
         }
