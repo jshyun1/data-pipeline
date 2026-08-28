@@ -5,6 +5,7 @@ import java.util.List;
 public record NifiProcessGroupTreeResponse(
         String id,
         String name,
+        String comments,
         String groupType,
         String jobStatus,
         int processorCount,

@@ -96,13 +96,14 @@ public class NifiProcessGroupTreeService {
     }
 
     private NifiProcessGroupTreeResponse buildTree() {
-        return toNode(ROOT_GROUP_ID, "ETL Root", new HashSet<>(), collectGroupStatusSnapshots());
+        return toNode(ROOT_GROUP_ID, "ETL Root", null, new HashSet<>(), collectGroupStatusSnapshots());
     }
 
-    private NifiProcessGroupTreeResponse toNode(String groupId, String fallbackName, Set<String> visited,
+    private NifiProcessGroupTreeResponse toNode(String groupId, String fallbackName, String fallbackComments, Set<String> visited,
                                                 Map<String, NifiFlowStatusResponse.ProcessGroupStatusSnapshot> statusSnapshots) {
         if (!visited.add(groupId)) {
             return new NifiProcessGroupTreeResponse(groupId, displayName(fallbackName, groupId),
+                    fallbackComments,
                     "EMPTY", "WAITING", 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of());
         }
 
@@ -122,8 +123,9 @@ public class NifiProcessGroupTreeService {
                             String childId = component != null && StringUtils.hasText(component.id())
                                     ? component.id() : child.id();
                             String childName = component == null ? childId : component.name();
+                            String childComments = component == null ? null : component.comments();
                             return StringUtils.hasText(childId)
-                                    ? toNode(childId, childName, visited, statusSnapshots)
+                                    ? toNode(childId, childName, childComments, visited, statusSnapshots)
                                     : null;
                         })
                         .filter(node -> node != null)
@@ -149,6 +151,7 @@ public class NifiProcessGroupTreeService {
         return new NifiProcessGroupTreeResponse(
                 nodeId,
                 displayName(fallbackName, nodeId),
+                fallbackComments,
                 groupType,
                 jobStatus,
                 totalJobCount,

@@ -390,6 +390,7 @@ services:
       - nifi-provenance-repository:/observed/nifi-provenance:ro
       - nifi-flowfile-repository:/observed/nifi-flowfile:ro
       - nifi-database-repository:/observed/nifi-database:ro
+      - /opt/etl_repo/file:/opt/etl_repo/file
     ports:
       - "${PIPELINE_API_PUBLIC_PORT}:${PIPELINE_API_PORT}"
     healthcheck:

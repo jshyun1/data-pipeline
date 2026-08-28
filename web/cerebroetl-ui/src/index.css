@@ -822,6 +822,12 @@ button.airflow-tree-label:hover {
   box-shadow: inset 0 0 0 2px #b95505;
 }
 
+.etl-type-card:disabled {
+  color: #8a95a6;
+  background: #f2f5f8;
+  cursor: not-allowed;
+}
+
 .etl-type-card strong {
   font-size: 16px;
   font-weight: 800;
@@ -899,6 +905,27 @@ button.airflow-tree-label:hover {
 .form-row textarea {
   min-height: 58px;
   resize: none;
+}
+
+.etl-radio-cell,
+.etl-file-cell {
+  min-width: 0;
+  min-height: 37px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-right: 1px solid #eceff3;
+  background: #ffffff;
+}
+
+.etl-file-cell input[type="file"] {
+  display: none;
+}
+
+.etl-file-cell span {
+  color: #5b6472;
+  font-size: 14px;
 }
 
 .etl-step-complete-actions {
@@ -1010,6 +1037,14 @@ button.airflow-tree-label:hover {
   border: 0;
   border-radius: 0;
   box-shadow: none;
+}
+
+.etl-file-columns {
+  width: min(620px, 100%);
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid #eceff3;
+  background: #ffffff;
 }
 
 .etl-target-actions {
@@ -2239,6 +2274,17 @@ button.airflow-tree-label:hover {
   letter-spacing: 0;
 }
 
+.nifi-detail-status.stacked {
+  display: grid;
+  gap: 4px;
+}
+
+.nifi-detail-status.stacked > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .nifi-detail-dot {
   width: 9px;
   height: 9px;
@@ -2316,9 +2362,16 @@ button.airflow-tree-label:hover {
   font-weight: 600;
 }
 
+.nifi-detail-preline {
+  white-space: pre-line;
+}
+
 .nifi-job-status-list {
   display: grid;
   gap: 6px;
+  max-height: 196px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .nifi-job-status-row {
@@ -2383,6 +2436,38 @@ button.airflow-tree-label:hover {
 
 .nifi-job-status-badge.stopped .nifi-detail-dot {
   background: #64748b;
+}
+
+.nifi-detail-alert-list {
+  display: grid;
+  gap: 4px;
+  max-height: 96px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.nifi-detail-alert-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 13px;
+}
+
+.nifi-detail-alert-row:last-child {
+  border-bottom: 0;
+}
+
+.nifi-detail-alert-row span {
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+}
+
+.nifi-detail-alert-row strong {
+  color: #991b1b;
+  font-weight: 800;
 }
 
 .nifi-detail-properties > div {

@@ -18,7 +18,7 @@ import {
   SyncOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   getAirflowTaskLog,
   acknowledgeAirflowDagAlert,
@@ -976,8 +976,11 @@ function InfrastructureBar({ groups }: { groups: ProcessGroup[] }) {
 }
 
 export function AirflowDashboardPage() {
+  const [searchParams] = useSearchParams();
+  const initialDagId = searchParams.get("dagId") ?? undefined;
+  const openInitialDetail = searchParams.get("detail") === "1";
   const [refreshSeconds, setRefreshSeconds] = useState(30);
-  const [selectedDagId, setSelectedDagId] = useState<string>();
+  const [selectedDagId, setSelectedDagId] = useState<string | undefined>(initialDagId);
   const [search, setSearch] = useState("");
   const [actionCategory, setActionCategory] = useState<BusinessCategory>();
   const [activeDetailTab, setActiveDetailTab] = useState<DetailTab>("tasks");
@@ -1020,10 +1023,20 @@ export function AirflowDashboardPage() {
   }, [actionCategory, alertsByDag, businessDags, search]);
 
   useEffect(() => {
+    if (initialDagId && filteredDags.some((dag) => dag.dag_id === initialDagId)) {
+      setSelectedDagId(initialDagId);
+      return;
+    }
     if (!filteredDags.some((dag) => dag.dag_id === selectedDagId)) {
       setSelectedDagId(filteredDags[0]?.dag_id);
     }
-  }, [filteredDags, selectedDagId]);
+  }, [filteredDags, initialDagId, selectedDagId]);
+
+  useEffect(() => {
+    if (openInitialDetail && selectedDagId === initialDagId && selectedDagId) {
+      setDetailOpen(true);
+    }
+  }, [initialDagId, openInitialDetail, selectedDagId]);
 
   useEffect(() => {
     if (initialSyncQuery.isError) {

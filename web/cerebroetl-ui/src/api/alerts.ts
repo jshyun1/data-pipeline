@@ -57,6 +57,7 @@ export interface HistoryItem {
   rule_type_code: string;
   severity: "CRITICAL" | "WARNING" | "INFO";
   state: string;
+  target_key: string;
   target_label: string | null;
   summary: string;
   observed_value: number | null;

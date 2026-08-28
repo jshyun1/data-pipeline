@@ -26,6 +26,8 @@ public record EtlJobDetailResponse(
             String targetTable,
             String statementType,
             String updateKeys,
+            String dbcpServiceId,
+            String propsJson,
             String validationStatus,
             String runStatus,
             Double xPos,
@@ -35,7 +37,8 @@ public record EtlJobDetailResponse(
             return new StepView(step.getId(), step.getNifiProcessorId(), step.getStepName(),
                     step.getStepType(), step.getSchedulingStrategy(), step.getSchedulingPeriod(),
                     step.getSqlText(), step.getTargetTable(), step.getStatementType(),
-                    step.getUpdateKeys(), step.getValidationStatus(), step.getRunStatus(),
+                    step.getUpdateKeys(), step.getDbcpServiceId(), step.getPropsJson(),
+                    step.getValidationStatus(), step.getRunStatus(),
                     step.getXPos(), step.getYPos());
         }
     }

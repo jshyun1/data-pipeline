@@ -187,9 +187,18 @@ export interface NifiProcessGroupEntity {
   processorCount?: number | null;
 }
 
+export interface NifiFileUploadResponse {
+  folderName: string;
+  serverDirectory: string;
+  nifiInputDirectory: string;
+  storedFiles: string[];
+  columns: string[];
+}
+
 export interface NifiProcessGroupTreeNode {
   id: string;
   name: string;
+  comments?: string | null;
   groupType?: "GROUPING" | "JOB" | "EMPTY";
   jobStatus?: "WAITING" | "RUNNING" | "STOPPED" | "FAILED";
   processorCount: number;
@@ -450,6 +459,35 @@ export async function retryAirflowTaskFrom(dagId: string, dagRunId: string, task
     only_failed: false,
     reset_dag_runs: true,
   });
+}
+
+export async function uploadFileLoadFiles(
+  jobName: string,
+  fileExtension: "csv" | "excel",
+  files: File[],
+): Promise<NifiFileUploadResponse> {
+  const formData = new FormData();
+  formData.append("jobName", jobName);
+  formData.append("fileExtension", fileExtension);
+  files.forEach((file) => formData.append("files", file));
+  const res = await apiClient.post<ApiResponse<NifiFileUploadResponse>>("/nifi/etl/file-load/files", formData);
+  return unwrap(res.data);
+}
+
+export async function createFileLoadFlow(payload: {
+  jobName: string;
+  parentGroupId: string;
+  comments?: string;
+  fileExtension: "csv" | "excel";
+  inputDirectory: string;
+  columns: string[];
+  targetServiceId: string;
+  targetDatabaseType: string;
+  targetSchema: string;
+  targetTable: string;
+}): Promise<NifiProcessGroupEntity> {
+  const res = await apiClient.post<ApiResponse<NifiProcessGroupEntity>>("/nifi/etl/file-load", payload);
+  return unwrap(res.data);
 }
 
 interface AirflowLogMessage {

@@ -11,6 +11,8 @@ import com.company.pipeline.monitoring.NifiExecutionLogEntry;
 import com.company.pipeline.monitoring.NifiExecutionLogEntryRepository;
 import com.company.pipeline.monitoring.NifiProcessorRunRepository;
 import com.company.pipeline.nifi.dto.NifiExecutionLogResponse;
+import com.company.pipeline.nifi.dto.NifiFileLoadCreateRequest;
+import com.company.pipeline.nifi.dto.NifiFileUploadResponse;
 import com.company.pipeline.nifi.dto.NifiInitialDbToDbCreateRequest;
 import com.company.pipeline.nifi.dto.NifiProcessorEditLockRequest;
 import com.company.pipeline.nifi.dto.NifiProcessorEditLockResponse;
@@ -21,14 +23,26 @@ import com.company.pipeline.nifi.dto.NifiProcessorDetailResponse;
 import com.company.pipeline.nifi.dto.NifiProcessorRunResponse;
 import com.company.pipeline.user.AppUser;
 import jakarta.validation.Valid;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -37,11 +51,15 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/nifi")
 @RequirePermission(system = SystemCode.NIFI)
 public class NifiController {
+
+    private static final Path FILE_LOAD_SERVER_ROOT = Path.of("/opt/etl_repo/file");
+    private static final String FILE_LOAD_NIFI_ROOT = "/opt/nifi/file";
 
     private final NifiClient nifiClient;
     private final NifiProcessGroupTreeService processGroupTreeService;
@@ -83,6 +101,80 @@ public class NifiController {
         NifiProcessGroupResponse response = nifiClient.createInitialDbToDbFlow(request);
         processGroupTreeService.refreshAfterMutation();
         return ApiResponse.success(response);
+    }
+
+    @PostMapping("/etl/file-load")
+    public ApiResponse<NifiProcessGroupResponse> createFileLoadFlow(
+            @Valid @RequestBody NifiFileLoadCreateRequest request
+    ) {
+        NifiProcessGroupResponse response = nifiClient.createFileLoadFlow(request);
+        processGroupTreeService.refreshAfterMutation();
+        return ApiResponse.success(response);
+    }
+
+    @PostMapping(path = "/etl/file-load/files", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<NifiFileUploadResponse> uploadFileLoadFiles(
+            @RequestParam String jobName,
+            @RequestParam String fileExtension,
+            @RequestParam("files") List<MultipartFile> files,
+            @AuthenticationPrincipal AppUser user
+    ) {
+        if (files == null || files.isEmpty() || files.stream().allMatch(MultipartFile::isEmpty)) {
+            throw new NifiClientException("업로드할 파일을 선택하세요.", null);
+        }
+        String normalizedExtension = fileExtension == null ? "" : fileExtension.trim().toLowerCase();
+        if (!List.of("csv", "excel").contains(normalizedExtension)) {
+            throw new NifiClientException("파일적재는 csv, excel 파일만 선택할 수 있습니다.", null);
+        }
+        String actor = user == null || !hasText(user.getUserId()) ? "anonymous" : user.getUserId();
+        String folderName = safePathPart(actor) + "_" + safePathPart(jobName);
+        if (!hasText(folderName.replace("_", ""))) {
+            throw new NifiClientException("작업명을 입력하세요.", null);
+        }
+        Path targetDir = FILE_LOAD_SERVER_ROOT.resolve(folderName).normalize();
+        if (!targetDir.startsWith(FILE_LOAD_SERVER_ROOT)) {
+            throw new NifiClientException("파일 저장 경로가 올바르지 않습니다.", null);
+        }
+
+        try {
+            Files.createDirectories(targetDir);
+            List<String> storedFiles = new ArrayList<>();
+            Path firstStoredPath = null;
+            for (MultipartFile file : files) {
+                if (file.isEmpty()) {
+                    continue;
+                }
+                if (!matchesExtension(file.getOriginalFilename(), normalizedExtension)) {
+                    throw new NifiClientException("선택한 파일확장자와 다른 파일이 포함되어 있습니다: "
+                            + file.getOriginalFilename(), null);
+                }
+                String storedName = safeFileName(file.getOriginalFilename());
+                Path destination = targetDir.resolve(storedName).normalize();
+                if (!destination.startsWith(targetDir)) {
+                    throw new NifiClientException("파일명이 올바르지 않습니다: " + file.getOriginalFilename(), null);
+                }
+                Files.copy(file.getInputStream(), destination, StandardCopyOption.REPLACE_EXISTING);
+                storedFiles.add(storedName);
+                if (firstStoredPath == null) {
+                    firstStoredPath = destination;
+                }
+            }
+            if (firstStoredPath == null) {
+                throw new NifiClientException("저장된 파일이 없습니다.", null);
+            }
+            List<String> columns = "csv".equals(normalizedExtension)
+                    ? csvColumns(firstStoredPath)
+                    : excelColumns(firstStoredPath);
+            return ApiResponse.success(new NifiFileUploadResponse(
+                    folderName,
+                    targetDir.toString(),
+                    FILE_LOAD_NIFI_ROOT + "/" + folderName,
+                    storedFiles,
+                    columns
+            ));
+        } catch (IOException ex) {
+            throw new NifiClientException("파일 저장 실패: " + ex.getMessage(), ex);
+        }
     }
 
     @GetMapping("/process-group-tree")
@@ -189,6 +281,80 @@ public class NifiController {
 
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private static String safePathPart(String value) {
+        return (value == null ? "" : value.trim())
+                .replaceAll("[^A-Za-z0-9가-힣._-]", "_")
+                .replaceAll("_+", "_");
+    }
+
+    private static String safeFileName(String value) {
+        String fileName = Path.of(value == null ? "upload" : value).getFileName().toString();
+        String sanitized = safePathPart(fileName);
+        return hasText(sanitized) ? sanitized : "upload";
+    }
+
+    private static boolean matchesExtension(String fileName, String fileExtension) {
+        String lower = fileName == null ? "" : fileName.toLowerCase();
+        if ("csv".equals(fileExtension)) {
+            return lower.endsWith(".csv");
+        }
+        return lower.endsWith(".xlsx") || lower.endsWith(".xls");
+    }
+
+    private static List<String> csvColumns(Path path) throws IOException {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(Files.newInputStream(path), StandardCharsets.UTF_8))) {
+            String header = reader.readLine();
+            return splitCsvHeader(header);
+        }
+    }
+
+    private static List<String> excelColumns(Path path) throws IOException {
+        try (var input = Files.newInputStream(path); var workbook = WorkbookFactory.create(input)) {
+            Row row = workbook.getSheetAt(0).getRow(0);
+            if (row == null) {
+                return List.of();
+            }
+            DataFormatter formatter = new DataFormatter();
+            List<String> columns = new ArrayList<>();
+            for (int index = 0; index < row.getLastCellNum(); index++) {
+                String value = formatter.formatCellValue(row.getCell(index)).trim();
+                if (hasText(value)) {
+                    columns.add(value);
+                }
+            }
+            return columns;
+        }
+    }
+
+    private static List<String> splitCsvHeader(String header) {
+        if (!hasText(header)) {
+            return List.of();
+        }
+        List<String> columns = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean quoted = false;
+        for (int index = 0; index < header.length(); index++) {
+            char ch = header.charAt(index);
+            if (ch == '"') {
+                quoted = !quoted;
+            } else if (ch == ',' && !quoted) {
+                addColumn(columns, current);
+            } else {
+                current.append(ch);
+            }
+        }
+        addColumn(columns, current);
+        return columns;
+    }
+
+    private static void addColumn(List<String> columns, StringBuilder current) {
+        String column = current.toString().trim();
+        if (hasText(column)) {
+            columns.add(column);
+        }
+        current.setLength(0);
     }
 
     /**

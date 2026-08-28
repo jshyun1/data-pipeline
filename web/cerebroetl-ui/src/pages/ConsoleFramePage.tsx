@@ -9,7 +9,9 @@ import {
   type EtlJobDetailResponse,
   type EtlJobResponse,
   type EtlJobRunResponse,
+  type EtlJobStepView,
 } from "../api/etlJobs";
+import { getAlertHistory, type HistoryItem } from "../api/alerts";
 import {
   getNifiProcessor,
   getNifiProcessGroupTree,
@@ -21,6 +23,7 @@ import {
   type NifiProcessorDetailResponse,
   type NifiProcessGroupTreeNode,
 } from "../api/platform";
+import { useAuth } from "../auth/AuthContext";
 
 const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
 const CANVAS_SELECTION_SYNC_ATTRIBUTE = "data-cerebro-canvas-selection-sync";
@@ -384,6 +387,31 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     }
   };
 
+  const patchCanvasStatusLabel = (element: Element) => {
+    const text = element.textContent?.trim();
+    if (!text || !text.includes("마지막 실행") || !/^●\s*(실행|완료|실패|대기|중지|중단)/m.test(text)) {
+      return;
+    }
+
+    let current: Element = element;
+    for (let depth = 0; depth < 6 && current.parentElement; depth += 1) {
+      const rect = current.getBoundingClientRect();
+      const candidateText = current.textContent?.trim() ?? "";
+      if (
+        candidateText.includes("마지막 실행")
+        && rect.width >= 60
+        && rect.width <= 320
+        && rect.height >= 24
+        && rect.height <= 180
+      ) {
+        current.setAttribute(NIFI_STATUS_HIDDEN_ATTRIBUTE, "true");
+        return;
+      }
+      current = current.parentElement;
+    }
+    element.setAttribute(NIFI_STATUS_HIDDEN_ATTRIBUTE, "true");
+  };
+
   const patchElement = (element: Element) => {
     NIFI_TOOLTIP_ATTRIBUTES.forEach((attributeName) => {
       const value = element.getAttribute(attributeName);
@@ -402,6 +430,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     patchExactTextElement(element);
     patchStatusIconVisibility(element);
     patchStatusTooltipText(element);
+    patchCanvasStatusLabel(element);
   };
 
   const patchDocument = () => {
@@ -415,6 +444,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     NIFI_STATUS_TOOLTIP_ICON_TEXT.forEach(([iconClass]) => {
       doc.querySelectorAll(`.${iconClass}`).forEach(patchStatusTooltipText);
     });
+    doc.querySelectorAll("div, span, p, label, text, textarea").forEach(patchCanvasStatusLabel);
   };
 
   patchDocument();
@@ -452,6 +482,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
           .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], title")
           .forEach(patchElement);
         node.querySelectorAll("*").forEach(patchExactTextElement);
+        node.querySelectorAll("div, span, p, label, text, textarea").forEach(patchCanvasStatusLabel);
         HIDDEN_NIFI_STATUS_ICON_CLASSES.forEach((iconClass) => {
           node.querySelectorAll(`.${iconClass}`).forEach(patchStatusIconVisibility);
         });
@@ -1150,7 +1181,7 @@ function statusClass(job: EtlJobResponse | null, node: NifiProcessGroupTreeNode 
   if (status === "실행중" || status === "실행") {
     return "running";
   }
-  if (status === "중단") {
+  if (status === "중지") {
     return "stopped";
   }
   return "done";
@@ -1159,7 +1190,7 @@ function statusClass(job: EtlJobResponse | null, node: NifiProcessGroupTreeNode 
 function jobStatusText(status: NifiProcessGroupTreeNode["jobStatus"]) {
   switch (status) {
     case "STOPPED":
-      return "중단";
+      return "중지";
     case "RUNNING":
       return "실행";
     case "FAILED":
@@ -1168,6 +1199,10 @@ function jobStatusText(status: NifiProcessGroupTreeNode["jobStatus"]) {
     default:
       return "대기";
   }
+}
+
+function formatCount(value?: number | null) {
+  return value == null ? "0" : value.toLocaleString("ko-KR");
 }
 
 function jobStatusClass(status: NifiProcessGroupTreeNode["jobStatus"]) {
@@ -1197,17 +1232,6 @@ function collectTreeIds(node: NifiProcessGroupTreeNode | null, ids = new Set<str
   return ids;
 }
 
-function compactCountLabel(count: number, unit: string) {
-  return count > 0 ? `${count}${unit}` : "-";
-}
-
-function firstOrCountLabel(values: string[], suffix = "") {
-  if (values.length === 0) {
-    return "-";
-  }
-  return values.length === 1 ? values[0] : `${values.length}${suffix}`;
-}
-
 function displayValue(value: unknown) {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -1219,6 +1243,118 @@ function displayValue(value: unknown) {
     return value.length ? value.join(", ") : "-";
   }
   return String(value);
+}
+
+function directParentName(path?: NifiProcessGroupTreeNode[]) {
+  if (!path || path.length < 2) {
+    return "-";
+  }
+  return path[path.length - 2]?.name ?? "-";
+}
+
+function firstProcessor(steps: EtlJobStepView[]) {
+  return [...steps].sort((a, b) => {
+    const ax = a.xPos ?? Number.MAX_SAFE_INTEGER;
+    const bx = b.xPos ?? Number.MAX_SAFE_INTEGER;
+    if (ax !== bx) {
+      return ax - bx;
+    }
+    const ay = a.yPos ?? Number.MAX_SAFE_INTEGER;
+    const by = b.yPos ?? Number.MAX_SAFE_INTEGER;
+    return ay - by;
+  })[0] ?? null;
+}
+
+const CRON_SCHEDULE_LABELS: Record<string, string> = {
+  "0 0 0 * * ?": "매일 00:00",
+  "0 0 2 * * ?": "매일 02:00",
+  "0 30 9 * * ?": "매일 09:30",
+  "0 0 * * * ?": "매시간 정각",
+  "0 0/10 * * * ?": "10분마다",
+  "0 0 8 ? * MON-FRI": "월~금 오전 8시",
+  "0 0 9 ? * MON": "매주 월요일 오전 9시",
+  "0 0 1 1 * ?": "매월 1일 오전 1시",
+};
+
+function scheduleLabel(step: EtlJobStepView | null) {
+  if (!step) {
+    return "-";
+  }
+  const strategy = (step.schedulingStrategy ?? "").replace(/_/g, " ").toLowerCase();
+  const period = step.schedulingPeriod?.trim();
+  if (!period) {
+    return "-";
+  }
+  if (strategy.includes("cron")) {
+    const label = CRON_SCHEDULE_LABELS[period];
+    return label ? `${label} (${period})` : period;
+  }
+  return period;
+}
+
+function stepProperties(step?: EtlJobStepView | null): Record<string, string> {
+  if (!step?.propsJson) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(step.propsJson);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? Object.fromEntries(Object.entries(parsed).map(([key, value]) => [key, String(value ?? "")]))
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function pickProperty(props: Record<string, string>, keys: string[]) {
+  for (const key of keys) {
+    const value = props[key]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function processorTypeIncludes(step: EtlJobStepView, typeName: string) {
+  return (step.stepType ?? "").toLowerCase().includes(typeName.toLowerCase());
+}
+
+function tableParts(value?: string | null) {
+  const parts = (value ?? "").split(".").map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    return { schema: parts.slice(0, -1).join("."), table: parts[parts.length - 1] };
+  }
+  return { schema: null, table: parts[0] ?? null };
+}
+
+function sourceTargetText(step: EtlJobStepView | null, kind: "source" | "target") {
+  if (!step) {
+    return "-";
+  }
+  const props = stepProperties(step);
+  const databaseType = pickProperty(props, ["db-type", "Database Type"]);
+  if (kind === "source") {
+    const table = pickProperty(props, ["Table Name", "table-name"]) ?? tableParts(step.targetTable).table;
+    return [databaseType, table].filter(Boolean).join(" / ") || "-";
+  }
+  const fallback = tableParts(step.targetTable);
+  const schema = pickProperty(props, ["put-db-record-schema-name", "Schema Name"]) ?? fallback.schema;
+  const table = pickProperty(props, ["put-db-record-table-name", "Table Name"]) ?? fallback.table;
+  return [databaseType, schema, table].filter(Boolean).join(" / ") || "-";
+}
+
+function severityText(severity?: HistoryItem["severity"]) {
+  switch (severity) {
+    case "CRITICAL":
+      return "위험";
+    case "WARNING":
+      return "경고";
+    case "INFO":
+      return "정보";
+    default:
+      return severity ?? "-";
+  }
 }
 
 function shortProcessorType(type?: string) {
@@ -1605,9 +1741,12 @@ interface ProcessGroupDetailPanelProps {
 
 function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPanelProps) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [jobs, setJobs] = useState<EtlJobResponse[]>([]);
   const [details, setDetails] = useState<EtlJobDetailResponse[]>([]);
   const [runs, setRuns] = useState<EtlJobRunResponse[]>([]);
+  const [alertItems, setAlertItems] = useState<HistoryItem[]>([]);
+  const [alertsLoading, setAlertsLoading] = useState(false);
   const [jobsLoading, setJobsLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1626,12 +1765,6 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const groupJobIdsKey = groupJobs.map((entry) => entry.id).join(",");
   const primaryJob = job ?? groupJobs[0] ?? null;
   const latestRun = runs[0] ?? null;
-  const allSteps = details.flatMap((entry) => entry.steps);
-  const allLinks = details.flatMap((entry) => entry.links);
-  const targetTables = uniqueValues(allSteps.map((step) => step.targetTable));
-  const operationTypes = uniqueValues(allSteps.map((step) => step.statementType ?? step.stepType));
-  const sourceValues = uniqueValues(groupJobs.map((entry) => entry.comments || entry.engine));
-  const targetValues = uniqueValues(groupJobs.map((entry) => entry.parameterContextName));
   const airflowDags = uniqueValues(groupJobs.map((entry) => entry.airflowDagId));
   const isLoading = jobsLoading || detailLoading;
 
@@ -1707,9 +1840,64 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const displayJob = details.find((entry) => entry.job.nifiPgId === selectedGroupId)?.job ?? job;
   const relatedJob = displayJob ?? primaryJob;
   const displayNode = selected?.node ?? null;
-  const pathText = selected?.path.map((entry) => entry.name).join(" / ") ?? "-";
-  const stepCount = job?.stepCount ?? displayNode?.processorCount ?? groupJobs.reduce((sum, entry) => sum + entry.stepCount, 0);
+  const isJobGroup = displayNode?.groupType === "JOB";
+  const isGroupingGroup = displayNode?.groupType === "GROUPING";
+  const directParent = directParentName(selected?.path);
+  const author = user?.userId ?? "-";
+  const displayDetail = details.find((entry) => entry.job.nifiPgId === selectedGroupId)
+    ?? (displayJob ? details.find((entry) => entry.job.id === displayJob.id) : null)
+    ?? null;
+  const jobSteps = displayDetail?.steps ?? [];
+  const firstStep = firstProcessor(jobSteps);
+  const sourceStep = jobSteps.find((step) => processorTypeIncludes(step, "QueryDatabaseTableRecord")) ?? null;
+  const targetStep = jobSteps.find((step) => processorTypeIncludes(step, "PutDatabaseRecord")) ?? null;
+  const dagId = relatedJob?.airflowDagId ?? airflowDags[0] ?? null;
   const groupedJobs = displayNode?.groupType === "GROUPING" ? collectJobNodes(displayNode) : [];
+  const showHeaderStatus = isJobGroup;
+  const lastRunTime = formatDateTime(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
+  const lastRunCount = formatCount(latestRun?.totalInserted ?? 0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAlertItems([]);
+    if (!isJobGroup || !displayJob) {
+      setAlertsLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setAlertsLoading(true);
+    getAlertHistory({
+      filter: "all",
+      severity: "ALL",
+      q: String(displayJob.id),
+      days: 90,
+      page: 0,
+      pageSize: 20,
+    })
+      .then((history) => {
+        if (cancelled) {
+          return;
+        }
+        const targetKeys = new Set([`JOB:${displayJob.id}`, `JOB_STREAK:${displayJob.id}`]);
+        setAlertItems(history.items
+          .filter((item) => item.rule_type_code === "JOB_FAILURE" && targetKeys.has(item.target_key))
+          .slice(0, 3));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAlertItems([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAlertsLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [displayJob?.id, isJobGroup]);
 
   return (
     <aside className="nifi-detail-panel" aria-label="선택한 프로세스 그룹 상세">
@@ -1717,11 +1905,15 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
         <div className="nifi-detail-title" title={displayJob?.jobName ?? displayNode?.name ?? "선택 없음"}>
           {displayJob?.jobName ?? displayNode?.name ?? "선택 없음"}
         </div>
-        <div className={`nifi-detail-status ${statusClass(displayJob, displayNode)}`}>
-          <span className="nifi-detail-dot" aria-hidden="true" />
-          <span>{statusText(displayJob, displayNode)}</span>
-          <span>{formatDateTime(latestRun?.startedAt ?? relatedJob?.lastSyncedAt)}</span>
-        </div>
+        {showHeaderStatus ? (
+          <div className={`nifi-detail-status stacked ${statusClass(displayJob, displayNode)}`}>
+            <div>
+              <span className="nifi-detail-dot" aria-hidden="true" />
+              <span>{statusText(displayJob, displayNode)}</span>
+            </div>
+            <span>마지막 실행 {lastRunTime} · {lastRunCount}건</span>
+          </div>
+        ) : null}
       </div>
 
       {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
@@ -1754,73 +1946,83 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
         <dl>
           <div>
             <dt>상위 경로</dt>
-            <dd>{pathText}</dd>
+            <dd>{directParent}</dd>
           </div>
           <div>
-            <dt>운영 / 적재</dt>
-            <dd>{relatedJob?.engine ?? "NIFI"} / {operationTypes[0] ?? "적재"}</dd>
+            <dt>작성자</dt>
+            <dd>{author}</dd>
           </div>
-          <div>
-            <dt>스텝 수</dt>
-            <dd>{stepCount}</dd>
-          </div>
+          {isJobGroup ? (
+            <>
+              <div>
+                <dt>스케줄</dt>
+                <dd>{scheduleLabel(firstStep)}</dd>
+              </div>
+              <div>
+                <dt>연결 DAG</dt>
+                <dd>
+                  {dagId ? (
+                    <>
+                      {dagId}{" "}
+                      <button
+                        type="button"
+                        className="nifi-detail-link"
+                        onClick={() => navigate(`/airflow/dashboard?dagId=${encodeURIComponent(dagId)}&detail=1`)}
+                      >
+                        [열기]
+                      </button>
+                    </>
+                  ) : (
+                    "-"
+                  )}
+                </dd>
+              </div>
+            </>
+          ) : null}
+          {isGroupingGroup ? (
+            <div>
+              <dt>설명</dt>
+              <dd className="nifi-detail-preline">{displayNode?.comments || "-"}</dd>
+            </div>
+          ) : null}
         </dl>
       </section>
 
-      <section className="nifi-detail-section">
-        <h3>실행</h3>
-        <dl>
-          <div>
-            <dt>선행 의존</dt>
-            <dd>{compactCountLabel(allLinks.length, "개 연결")}</dd>
-          </div>
-          <div>
-            <dt>연결 DAG</dt>
-            <dd>
-              {airflowDags.length > 0 ? (
-                <>
-                  {firstOrCountLabel(airflowDags, "개")}{" "}
-                  <button type="button" className="nifi-detail-link" onClick={() => navigate("/airflow/manage")}>
-                    [열기]
-                  </button>
-                </>
-              ) : (
-                "-"
-              )}
-            </dd>
-          </div>
-        </dl>
-      </section>
+      {isJobGroup ? (
+        <>
+          <section className="nifi-detail-section">
+            <h3>대상</h3>
+            <dl>
+              <div>
+                <dt>소스</dt>
+                <dd>{sourceTargetText(sourceStep, "source")}</dd>
+              </div>
+              <div>
+                <dt>타깃</dt>
+                <dd>{sourceTargetText(targetStep, "target")}</dd>
+              </div>
+            </dl>
+          </section>
 
-      <section className="nifi-detail-section">
-        <h3>대상</h3>
-        <dl>
-          <div>
-            <dt>소스</dt>
-            <dd>{firstOrCountLabel(sourceValues, "종")}</dd>
-          </div>
-          <div>
-            <dt>타깃</dt>
-            <dd>{firstOrCountLabel(targetValues, "종")}</dd>
-          </div>
-          <div>
-            <dt>테이블</dt>
-            <dd>
-              {targetTables.length > 0 ? (
-                <>
-                  {targetTables.length}종{" "}
-                  <details className="nifi-detail-inline-details">
-                    <summary>[보기]</summary>
-                    <div>{targetTables.join(", ")}</div>
-                  </details>
-                </>
-              ) : (
-                "-"
-              )}
-            </dd>
-          </div>
-        </dl>
-      </section>
+          <section className="nifi-detail-section">
+            <h3>알림</h3>
+            {alertsLoading ? (
+              <div className="nifi-detail-empty">불러오는 중</div>
+            ) : alertItems.length ? (
+              <div className="nifi-detail-alert-list">
+                {alertItems.map((item) => (
+                  <div key={item.id} className="nifi-detail-alert-row">
+                    <span>{formatDateTime(item.started_at ?? item.condition_since ?? item.last_transition_at)}</span>
+                    <strong>{severityText(item.severity)}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="nifi-detail-empty">-</div>
+            )}
+          </section>
+        </>
+      ) : null}
     </aside>
   );
 }

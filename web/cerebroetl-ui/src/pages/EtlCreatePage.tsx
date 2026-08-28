@@ -1,5 +1,5 @@
-import { CheckCircleOutlined, CheckOutlined, LockOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Collapse, message, Select, Space, Tag } from "antd";
+import { CheckCircleOutlined, CheckOutlined, LockOutlined, UploadOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, Collapse, message, Radio, Select, Space, Tag } from "antd";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -11,8 +11,10 @@ import {
 } from "../api/connections";
 import {
   createInitialDbToDbFlow,
+  createFileLoadFlow,
   getNifiProcessGroupTree,
   listRootNifiControllerServices,
+  uploadFileLoadFiles,
   type NifiProcessGroupEntity,
   type NifiControllerServiceEntity,
   type NifiProcessGroupTreeNode,
@@ -28,7 +30,9 @@ const WIZARD_STEPS = [
 ] as const;
 
 type WizardStepId = (typeof WIZARD_STEPS)[number]["id"];
+type EtlType = "DB_TO_DB" | "FILE_LOAD" | "HTTP" | "UNSTRUCTURED" | "MANUAL";
 type LoadMode = "INSERT" | "TRUNCATE" | "UPSERT";
+type FileExtension = "csv" | "excel" | "log" | "json";
 type NifiDatabaseType = "Generic" | "Oracle 12+" | "PostgreSQL" | "MySQL" | "MS SQL 2012+";
 type ConnectionDbType = ConnectionResponse["dbType"];
 
@@ -41,25 +45,40 @@ const STEP_NUMBER: Record<WizardStepId, number> = {
 
 const TYPE_OPTIONS = [
   {
+    value: "DB_TO_DB",
     title: "DB -> DB 적재",
     description: "원천 DB에서 읽어 대상에 적재",
   },
   {
+    value: "FILE_LOAD",
     title: "파일 적재",
     description: "서버 폴더의 파일을 읽어 적재",
   },
   {
+    value: "HTTP",
     title: "HTTP 수집",
     description: "HTTP로 받은 데이터를 적재",
+    disabled: true,
   },
   {
+    value: "UNSTRUCTURED",
     title: "비정형 전송",
     description: "이미지, 문서를 받아 저장",
+    disabled: true,
   },
   {
+    value: "MANUAL",
     title: "직접 구성",
     description: "빈 그룹만 생성",
+    disabled: true,
   },
+] satisfies Array<{ value: EtlType; title: string; description: string; disabled?: boolean }>;
+
+const FILE_EXTENSION_OPTIONS: Array<{ value: FileExtension; label: string; disabled?: boolean }> = [
+  { value: "csv", label: "csv" },
+  { value: "excel", label: "excel" },
+  { value: "log", label: "log", disabled: true },
+  { value: "json", label: "json", disabled: true },
 ];
 
 const DATABASE_TYPE_OPTIONS: NifiDatabaseType[] = [
@@ -92,6 +111,8 @@ interface BasicInfo {
   parentGroupId: string;
   parentGroupPath: string;
   comments: string;
+  fileExtension: FileExtension;
+  files: File[];
 }
 
 interface ConnectionInfo {
@@ -110,6 +131,7 @@ interface CompletionSummary {
   processGroupPath: string;
   processorCount: number;
   loadMode: LoadMode;
+  etlType: EtlType;
 }
 
 function flattenProcessGroups(
@@ -208,12 +230,26 @@ function StepLabel({
   );
 }
 
-function TypeStep({ onComplete }: { onComplete: () => void }) {
+function TypeStep({
+  selectedType,
+  onTypeChange,
+  onComplete,
+}: {
+  selectedType: EtlType;
+  onTypeChange: (type: EtlType) => void;
+  onComplete: () => void;
+}) {
   return (
     <>
       <div className="etl-wizard-type-grid">
-        {TYPE_OPTIONS.map((option, index) => (
-          <button key={option.title} type="button" className={index === 0 ? "etl-type-card selected" : "etl-type-card"}>
+        {TYPE_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            disabled={option.disabled}
+            className={selectedType === option.value ? "etl-type-card selected" : "etl-type-card"}
+            onClick={() => onTypeChange(option.value)}
+          >
             <strong>{option.title}</strong>
             <span>{option.description}</span>
           </button>
@@ -230,10 +266,12 @@ function TypeStep({ onComplete }: { onComplete: () => void }) {
 
 function BasicStep({
   value,
+  etlType,
   onChange,
   onComplete,
 }: {
   value: BasicInfo;
+  etlType: EtlType;
   onChange: (nextValue: Partial<BasicInfo>) => void;
   onComplete: () => void;
 }) {
@@ -265,7 +303,10 @@ function BasicStep({
     () => (groupTree ? flattenProcessGroups(groupTree) : []),
     [groupTree],
   );
-  const canComplete = value.jobName.trim().length > 0 && value.parentGroupId.length > 0;
+  const isFileLoad = etlType === "FILE_LOAD";
+  const canComplete = value.jobName.trim().length > 0 &&
+    value.parentGroupId.length > 0 &&
+    (!isFileLoad || (["csv", "excel"].includes(value.fileExtension) && value.files.length > 0));
 
   return (
     <>
@@ -309,6 +350,36 @@ function BasicStep({
             placeholder="설명을 입력하세요"
           />
         </div>
+        {isFileLoad ? (
+          <>
+            <div className="form-row">
+              <label>파일확장자</label>
+              <div className="etl-radio-cell">
+                <Radio.Group
+                  value={value.fileExtension}
+                  options={FILE_EXTENSION_OPTIONS}
+                  onChange={(event) => onChange({ fileExtension: event.target.value, files: [] })}
+                />
+              </div>
+            </div>
+            <div className="form-row">
+              <label>파일 추가</label>
+              <div className="etl-file-cell">
+                <Button icon={<UploadOutlined />} onClick={() => document.getElementById("etl-file-load-input")?.click()}>
+                  파일선택
+                </Button>
+                <input
+                  id="etl-file-load-input"
+                  type="file"
+                  multiple
+                  accept={value.fileExtension === "csv" ? ".csv" : value.fileExtension === "excel" ? ".xlsx,.xls" : undefined}
+                  onChange={(event) => onChange({ files: Array.from(event.target.files ?? []) })}
+                />
+                <span>{value.files.length > 0 ? `${value.files.length}개 파일 선택됨` : "선택된 파일 없음"}</span>
+              </div>
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div className="etl-step-complete-actions">
@@ -322,11 +393,13 @@ function BasicStep({
 
 function ConnectionStep({
   value,
+  etlType,
   onChange,
   onSourceColumnsChange,
   onTargetColumnsChange,
 }: {
   value: ConnectionInfo;
+  etlType: EtlType;
   onChange: (nextValue: Partial<ConnectionInfo>) => void;
   onSourceColumnsChange: (columns: ColumnMetadataResponse[]) => void;
   onTargetColumnsChange: (columns: ColumnMetadataResponse[]) => void;
@@ -346,6 +419,7 @@ function ConnectionStep({
   const [targetTableLoading, setTargetTableLoading] = useState(false);
   const [targetSchemaError, setTargetSchemaError] = useState<string | null>(null);
   const [targetTableError, setTargetTableError] = useState<string | null>(null);
+  const sourceEnabled = etlType === "DB_TO_DB";
   useEffect(() => {
     let cancelled = false;
 
@@ -461,7 +535,7 @@ function ConnectionStep({
     setSourceSchemaError(null);
     setSourceTableError(null);
 
-    if (!sourceConnection) {
+    if (!sourceEnabled || !sourceConnection) {
       setSourceSchemaLoading(false);
       setSourceTableLoading(false);
       return () => {
@@ -490,7 +564,7 @@ function ConnectionStep({
     return () => {
       cancelled = true;
     };
-  }, [sourceConnection?.id]);
+  }, [sourceEnabled, sourceConnection?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -498,7 +572,7 @@ function ConnectionStep({
     setSourceTableError(null);
     onSourceColumnsChange([]);
 
-    if (!sourceConnection || !value.sourceSchema.trim()) {
+    if (!sourceEnabled || !sourceConnection || !value.sourceSchema.trim()) {
       setSourceTableLoading(false);
       return () => {
         cancelled = true;
@@ -526,7 +600,7 @@ function ConnectionStep({
     return () => {
       cancelled = true;
     };
-  }, [sourceConnection?.id, value.sourceSchema, onSourceColumnsChange]);
+  }, [sourceEnabled, sourceConnection?.id, value.sourceSchema, onSourceColumnsChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -606,7 +680,7 @@ function ConnectionStep({
     let cancelled = false;
     onSourceColumnsChange([]);
 
-    if (!sourceConnection || !value.sourceSchema.trim() || !value.sourceTable.trim()) {
+    if (!sourceEnabled || !sourceConnection || !value.sourceSchema.trim() || !value.sourceTable.trim()) {
       return () => {
         cancelled = true;
       };
@@ -627,7 +701,7 @@ function ConnectionStep({
     return () => {
       cancelled = true;
     };
-  }, [sourceConnection?.id, value.sourceSchema, value.sourceTable, onSourceColumnsChange]);
+  }, [sourceEnabled, sourceConnection?.id, value.sourceSchema, value.sourceTable, onSourceColumnsChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -723,22 +797,26 @@ function ConnectionStep({
 
   return (
     <div className="etl-wizard-form-table compact">
-      <div className="form-row two-column">
-        <label>소스 연결</label>
-        <select
-          value={value.sourceServiceId}
-          disabled={services.length === 0 || !!serviceError}
-          onChange={(event) => handleSourceServiceChange(event.target.value)}
-        >
-          <option value="" disabled>
-            {servicePlaceholder}
-          </option>
-          {services.map((service) => (
-            <option key={service.id} value={service.id}>
-              {service.name}
-            </option>
-          ))}
-        </select>
+      <div className={sourceEnabled ? "form-row two-column" : "form-row"}>
+        {sourceEnabled ? (
+          <>
+            <label>소스 연결</label>
+            <select
+              value={value.sourceServiceId}
+              disabled={services.length === 0 || !!serviceError}
+              onChange={(event) => handleSourceServiceChange(event.target.value)}
+            >
+              <option value="" disabled>
+                {servicePlaceholder}
+              </option>
+              {services.map((service) => (
+                <option key={service.id} value={service.id}>
+                  {service.name}
+                </option>
+              ))}
+            </select>
+          </>
+        ) : null}
         <label>타깃 연결</label>
         <select
           value={value.targetServiceId}
@@ -755,19 +833,23 @@ function ConnectionStep({
           ))}
         </select>
       </div>
-      <div className="form-row two-column">
-        <label>소스 데이터베이스</label>
-        <select
-          value={value.sourceDatabaseType}
-          disabled={!!sourceDatabaseType}
-          onChange={(event) => updateValue({ sourceDatabaseType: event.target.value as NifiDatabaseType })}
-        >
-          {DATABASE_TYPE_OPTIONS.map((databaseType) => (
-            <option key={databaseType} value={databaseType}>
-              {databaseType}
-            </option>
-          ))}
-        </select>
+      <div className={sourceEnabled ? "form-row two-column" : "form-row"}>
+        {sourceEnabled ? (
+          <>
+            <label>소스 데이터베이스</label>
+            <select
+              value={value.sourceDatabaseType}
+              disabled={!!sourceDatabaseType}
+              onChange={(event) => updateValue({ sourceDatabaseType: event.target.value as NifiDatabaseType })}
+            >
+              {DATABASE_TYPE_OPTIONS.map((databaseType) => (
+                <option key={databaseType} value={databaseType}>
+                  {databaseType}
+                </option>
+              ))}
+            </select>
+          </>
+        ) : null}
         <label>타깃 데이터베이스</label>
         <select
           value={value.targetDatabaseType}
@@ -781,18 +863,22 @@ function ConnectionStep({
           ))}
         </select>
       </div>
-      <div className="form-row two-column">
-        <label>소스 스키마</label>
-        <Select
-          showSearch
-          value={value.sourceSchema || undefined}
-          placeholder={sourceSchemaPlaceholder}
-          disabled={!sourceConnectionReady || sourceSchemaLoading || !!sourceSchemaError || sourceSchemas.length === 0}
-          loading={sourceSchemaLoading}
-          options={sourceSchemaOptions}
-          filterOption={matchesSelectOption}
-          onChange={(nextSchema) => updateValue({ sourceSchema: nextSchema, sourceTable: "" })}
-        />
+      <div className={sourceEnabled ? "form-row two-column" : "form-row"}>
+        {sourceEnabled ? (
+          <>
+            <label>소스 스키마</label>
+            <Select
+              showSearch
+              value={value.sourceSchema || undefined}
+              placeholder={sourceSchemaPlaceholder}
+              disabled={!sourceConnectionReady || sourceSchemaLoading || !!sourceSchemaError || sourceSchemas.length === 0}
+              loading={sourceSchemaLoading}
+              options={sourceSchemaOptions}
+              filterOption={matchesSelectOption}
+              onChange={(nextSchema) => updateValue({ sourceSchema: nextSchema, sourceTable: "" })}
+            />
+          </>
+        ) : null}
         <label>타깃 스키마</label>
         <Select
           showSearch
@@ -805,18 +891,22 @@ function ConnectionStep({
           onChange={(nextSchema) => updateValue({ targetSchema: nextSchema, targetTable: "" })}
         />
       </div>
-      <div className="form-row two-column">
-        <label>소스 테이블</label>
-        <Select
-          showSearch
-          value={value.sourceTable || undefined}
-          placeholder={sourceTablePlaceholder}
-          disabled={!value.sourceSchema.trim() || sourceTableLoading || !!sourceTableError || sourceTables.length === 0}
-          loading={sourceTableLoading}
-          options={sourceTableOptions}
-          filterOption={matchesSelectOption}
-          onChange={(nextTable) => updateValue({ sourceTable: nextTable })}
-        />
+      <div className={sourceEnabled ? "form-row two-column" : "form-row"}>
+        {sourceEnabled ? (
+          <>
+            <label>소스 테이블</label>
+            <Select
+              showSearch
+              value={value.sourceTable || undefined}
+              placeholder={sourceTablePlaceholder}
+              disabled={!value.sourceSchema.trim() || sourceTableLoading || !!sourceTableError || sourceTables.length === 0}
+              loading={sourceTableLoading}
+              options={sourceTableOptions}
+              filterOption={matchesSelectOption}
+              onChange={(nextTable) => updateValue({ sourceTable: nextTable })}
+            />
+          </>
+        ) : null}
         <label>타깃 테이블</label>
         <Select
           showSearch
@@ -951,6 +1041,26 @@ function TargetStep({
   );
 }
 
+function FileTargetStep({ columns }: { columns: string[] }) {
+  return (
+    <div className="etl-target-preview">
+      <div className="etl-load-mode">
+        <span>적재 방식</span>
+        <label>
+          <input type="radio" checked readOnly /> INSERT
+        </label>
+      </div>
+      {columns.length > 0 ? (
+        <div className="etl-file-columns">
+          {columns.map((column) => (
+            <Tag key={column}>{column.toUpperCase()}</Tag>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function flowLabel(loadMode: LoadMode) {
   if (loadMode === "TRUNCATE") {
     return "extract > truncate > load";
@@ -959,6 +1069,10 @@ function flowLabel(loadMode: LoadMode) {
     return "extract > upsert > load";
   }
   return "extract > insert > load";
+}
+
+function summaryFlowLabel(summary: CompletionSummary) {
+  return summary.etlType === "FILE_LOAD" ? "file > query record > insert" : flowLabel(summary.loadMode);
 }
 
 function CompletionView({
@@ -987,7 +1101,7 @@ function CompletionView({
             </div>
             <div>
               <dt>흐름</dt>
-              <dd>{flowLabel(summary.loadMode)}</dd>
+              <dd>{summaryFlowLabel(summary)}</dd>
             </div>
             <div>
               <dt>Airflow 작업</dt>
@@ -1013,6 +1127,7 @@ function CompletionView({
 export function EtlCreatePage() {
   const navigate = useNavigate();
   const [activeStep, setActiveStep] = useState<WizardStepId>("type");
+  const [etlType, setEtlType] = useState<EtlType>("DB_TO_DB");
   const [completed, setCompleted] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [completedSteps, setCompletedSteps] = useState<WizardStepId[]>([]);
@@ -1022,6 +1137,8 @@ export function EtlCreatePage() {
     parentGroupId: "",
     parentGroupPath: "",
     comments: "",
+    fileExtension: "csv",
+    files: [],
   });
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo>({
     sourceServiceId: "",
@@ -1064,11 +1181,12 @@ export function EtlCreatePage() {
     setCompletedSteps((previous) => previous.filter((step) => WIZARD_STEPS.findIndex((item) => item.id === step) < index));
   };
 
-  const canCompleteConnection = !!connectionInfo.sourceServiceId &&
+  const isFileLoad = etlType === "FILE_LOAD";
+  const canCompleteConnection = (isFileLoad || !!connectionInfo.sourceServiceId) &&
     !!connectionInfo.targetServiceId &&
-    !!connectionInfo.sourceSchema.trim() &&
     !!connectionInfo.targetSchema.trim() &&
-    !!connectionInfo.sourceTable.trim() &&
+    (isFileLoad || !!connectionInfo.sourceSchema.trim()) &&
+    (isFileLoad || !!connectionInfo.sourceTable.trim()) &&
     !!connectionInfo.targetTable.trim();
 
   const completeWizard = async () => {
@@ -1077,10 +1195,15 @@ export function EtlCreatePage() {
       moveStep("basic");
       return;
     }
+    if (isFileLoad && basicInfo.files.length === 0) {
+      message.warning("파일을 선택하세요.");
+      moveStep("basic");
+      return;
+    }
     if (
-      !connectionInfo.sourceServiceId ||
-      !connectionInfo.sourceSchema.trim() ||
-      !connectionInfo.sourceTable.trim() ||
+      (!isFileLoad && (!connectionInfo.sourceServiceId ||
+        !connectionInfo.sourceSchema.trim() ||
+        !connectionInfo.sourceTable.trim())) ||
       !connectionInfo.targetServiceId ||
       !connectionInfo.targetSchema.trim() ||
       !connectionInfo.targetTable.trim()
@@ -1089,34 +1212,58 @@ export function EtlCreatePage() {
       moveStep("connection");
       return;
     }
-    if (loadMode === "UPSERT" && !changeKeyColumn.trim()) {
+    if (!isFileLoad && loadMode === "UPSERT" && !changeKeyColumn.trim()) {
       message.warning("UPSERT 적재 방식은 변경기준 컬럼을 입력해야 합니다.");
       return;
     }
-    if (loadMode === "UPSERT" && !primaryKeys.trim()) {
+    if (!isFileLoad && loadMode === "UPSERT" && !primaryKeys.trim()) {
       message.warning("UPSERT 적재 방식은 Primary Keys를 입력해야 합니다.");
       return;
     }
 
     setIsCreating(true);
     try {
-      const createdGroup: NifiProcessGroupEntity = await createInitialDbToDbFlow({
-        jobName: basicInfo.jobName.trim(),
-        parentGroupId: basicInfo.parentGroupId,
-        comments: basicInfo.comments.trim(),
-        sourceServiceId: connectionInfo.sourceServiceId,
-        sourceDatabaseType: connectionInfo.sourceDatabaseType,
-        sourceSchema: connectionInfo.sourceSchema.trim(),
-        sourceTable: connectionInfo.sourceTable.trim(),
-        targetServiceId: connectionInfo.targetServiceId,
-        targetDatabaseType: connectionInfo.targetDatabaseType,
-        targetSchema: connectionInfo.targetSchema.trim(),
-        targetTable: connectionInfo.targetTable.trim(),
-        loadMode,
-        truncateSql: loadMode === "TRUNCATE" ? truncateSql.trim() : undefined,
-        changeKeyColumn: (loadMode === "TRUNCATE" || loadMode === "UPSERT") ? changeKeyColumn.trim() : undefined,
-        primaryKeys: loadMode === "UPSERT" ? primaryKeys.trim() : undefined,
-      });
+      let createdGroup: NifiProcessGroupEntity;
+      if (isFileLoad) {
+        const uploadResult = await uploadFileLoadFiles(
+          basicInfo.jobName.trim(),
+          basicInfo.fileExtension as "csv" | "excel",
+          basicInfo.files,
+        );
+        if (uploadResult.columns.length === 0) {
+          throw new Error("파일 헤더에서 컬럼을 찾지 못했습니다.");
+        }
+        createdGroup = await createFileLoadFlow({
+          jobName: basicInfo.jobName.trim(),
+          parentGroupId: basicInfo.parentGroupId,
+          comments: basicInfo.comments.trim(),
+          fileExtension: basicInfo.fileExtension as "csv" | "excel",
+          inputDirectory: uploadResult.nifiInputDirectory,
+          columns: uploadResult.columns,
+          targetServiceId: connectionInfo.targetServiceId,
+          targetDatabaseType: connectionInfo.targetDatabaseType,
+          targetSchema: connectionInfo.targetSchema.trim(),
+          targetTable: connectionInfo.targetTable.trim(),
+        });
+      } else {
+        createdGroup = await createInitialDbToDbFlow({
+          jobName: basicInfo.jobName.trim(),
+          parentGroupId: basicInfo.parentGroupId,
+          comments: basicInfo.comments.trim(),
+          sourceServiceId: connectionInfo.sourceServiceId,
+          sourceDatabaseType: connectionInfo.sourceDatabaseType,
+          sourceSchema: connectionInfo.sourceSchema.trim(),
+          sourceTable: connectionInfo.sourceTable.trim(),
+          targetServiceId: connectionInfo.targetServiceId,
+          targetDatabaseType: connectionInfo.targetDatabaseType,
+          targetSchema: connectionInfo.targetSchema.trim(),
+          targetTable: connectionInfo.targetTable.trim(),
+          loadMode,
+          truncateSql: loadMode === "TRUNCATE" ? truncateSql.trim() : undefined,
+          changeKeyColumn: (loadMode === "TRUNCATE" || loadMode === "UPSERT") ? changeKeyColumn.trim() : undefined,
+          primaryKeys: loadMode === "UPSERT" ? primaryKeys.trim() : undefined,
+        });
+      }
       const processGroupId = createdGroup.id;
       if (!processGroupId) {
         throw new Error("missing process group id");
@@ -1125,7 +1272,8 @@ export function EtlCreatePage() {
         processGroupId,
         processGroupPath: `${basicInfo.parentGroupPath || basicInfo.parentGroupId} / ${basicInfo.jobName.trim()}`,
         processorCount: createdGroup.processorCount ?? 0,
-        loadMode,
+        loadMode: isFileLoad ? "INSERT" : loadMode,
+        etlType,
       });
       message.success("NiFi 템플릿 그룹을 복제하고 설정을 반영했습니다.");
       setCompletedSteps((previous) => previous.includes("target") ? previous : [...previous, "target"]);
@@ -1139,10 +1287,20 @@ export function EtlCreatePage() {
   };
 
   const content = {
-    type: <TypeStep onComplete={() => completeAndOpen("type", "basic")} />,
+    type: (
+      <TypeStep
+        selectedType={etlType}
+        onTypeChange={(nextType) => {
+          setEtlType(nextType);
+          invalidateFrom("type");
+        }}
+        onComplete={() => completeAndOpen("type", "basic")}
+      />
+    ),
     basic: (
       <BasicStep
         value={basicInfo}
+        etlType={etlType}
         onChange={(nextValue) => {
           setBasicInfo((current) => ({ ...current, ...nextValue }));
           invalidateFrom("basic");
@@ -1153,6 +1311,7 @@ export function EtlCreatePage() {
     connection: (
       <ConnectionStep
         value={connectionInfo}
+        etlType={etlType}
         onChange={(nextValue) => {
           setConnectionInfo((current) => ({ ...current, ...nextValue }));
           if (
@@ -1175,7 +1334,9 @@ export function EtlCreatePage() {
         onTargetColumnsChange={setTargetColumns}
       />
     ),
-    target: (
+    target: isFileLoad ? (
+      <FileTargetStep columns={[]} />
+    ) : (
       <TargetStep
         loadMode={loadMode}
         truncateSql={truncateSql}
@@ -1268,7 +1429,7 @@ export function EtlCreatePage() {
                     <Button
                       type="primary"
                       loading={isCreating}
-                      disabled={loadMode === "UPSERT" && (!changeKeyColumn.trim() || !primaryKeys.trim())}
+                      disabled={!isFileLoad && loadMode === "UPSERT" && (!changeKeyColumn.trim() || !primaryKeys.trim())}
                       onClick={completeWizard}
                     >
                       완료
