@@ -1277,6 +1277,18 @@ function firstStartProcessor(steps: EtlJobStepView[], links: EtlJobLinkView[]) {
     ?? null;
 }
 
+function lastTerminalProcessor(steps: EtlJobStepView[], links: EtlJobLinkView[]) {
+  const processorIds = new Set(steps.map((step) => step.nifiProcessorId));
+  const outgoingIds = new Set(
+    links
+      .map((link) => link.fromComponentId)
+      .filter((id): id is string => !!id && processorIds.has(id)),
+  );
+  return sortProcessorsByPosition(steps.filter((step) => !outgoingIds.has(step.nifiProcessorId))).at(-1)
+    ?? sortProcessorsByPosition(steps).at(-1)
+    ?? null;
+}
+
 const CRON_SCHEDULE_LABELS: Record<string, string> = {
   "0 0 0 * * ?": "매일 00:00",
   "0 0 2 * * ?": "매일 02:00",
@@ -1320,7 +1332,9 @@ function stepProperties(step?: EtlJobStepView | null): Record<string, string> {
 
 function pickProperty(props: Record<string, string>, keys: string[]) {
   for (const key of keys) {
-    const value = props[key]?.trim();
+    const exactValue = props[key]?.trim();
+    const matchedKey = Object.keys(props).find((propKey) => propKey.toLowerCase() === key.toLowerCase());
+    const value = exactValue || (matchedKey ? props[matchedKey]?.trim() : "");
     if (value) {
       return value;
     }
@@ -1328,31 +1342,18 @@ function pickProperty(props: Record<string, string>, keys: string[]) {
   return null;
 }
 
-function processorTypeIncludes(step: EtlJobStepView, typeName: string) {
-  return (step.stepType ?? "").toLowerCase().includes(typeName.toLowerCase());
-}
-
-function tableParts(value?: string | null) {
-  const parts = (value ?? "").split(".").map((part) => part.trim()).filter(Boolean);
-  if (parts.length >= 2) {
-    return { schema: parts.slice(0, -1).join("."), table: parts[parts.length - 1] };
-  }
-  return { schema: null, table: parts[0] ?? null };
-}
-
 function sourceTargetText(step: EtlJobStepView | null, kind: "source" | "target") {
   if (!step) {
     return "-";
   }
   const props = stepProperties(step);
-  const databaseType = pickProperty(props, ["db-type", "Database Type"]);
+  const databaseType = pickProperty(props, ["Database Type", "db-type"]);
   if (kind === "source") {
-    const table = pickProperty(props, ["Table Name", "table-name"]) ?? tableParts(step.targetTable).table;
+    const table = pickProperty(props, ["Table Name", "TABLE NAME", "table-name"]);
     return [databaseType, table].filter(Boolean).join(" / ") || "-";
   }
-  const fallback = tableParts(step.targetTable);
-  const schema = pickProperty(props, ["put-db-record-schema-name", "Schema Name"]) ?? fallback.schema;
-  const table = pickProperty(props, ["put-db-record-table-name", "Table Name"]) ?? fallback.table;
+  const schema = pickProperty(props, ["SCHEMA NAME", "Schema Name", "put-db-record-schema-name"]);
+  const table = pickProperty(props, ["TABLE NAME", "Table Name", "put-db-record-table-name"]);
   return [databaseType, schema, table].filter(Boolean).join(" / ") || "-";
 }
 
@@ -1861,8 +1862,8 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const jobSteps = displayDetail?.steps ?? [];
   const jobLinks = displayDetail?.links ?? [];
   const firstStep = firstStartProcessor(jobSteps, jobLinks);
-  const sourceStep = jobSteps.find((step) => processorTypeIncludes(step, "QueryDatabaseTableRecord")) ?? null;
-  const targetStep = jobSteps.find((step) => processorTypeIncludes(step, "PutDatabaseRecord")) ?? null;
+  const sourceStep = firstStep;
+  const targetStep = lastTerminalProcessor(jobSteps, jobLinks);
   const dagId = relatedJob?.airflowDagId ?? airflowDags[0] ?? null;
   const groupedJobs = displayNode?.groupType === "GROUPING" ? collectJobNodes(displayNode) : [];
   const showHeaderStatus = isJobGroup;
