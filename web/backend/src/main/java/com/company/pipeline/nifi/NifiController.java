@@ -30,11 +30,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.poi.ss.usermodel.DataFormatter;
@@ -60,6 +63,8 @@ public class NifiController {
 
     private static final Path FILE_LOAD_SERVER_ROOT = Path.of("/opt/etl_repo/file");
     private static final String FILE_LOAD_NIFI_ROOT = "/opt/nifi/file";
+    private static final Set<PosixFilePermission> FILE_LOAD_DIRECTORY_PERMISSIONS =
+            PosixFilePermissions.fromString("rwxrwxr-x");
 
     private final NifiClient nifiClient;
     private final NifiProcessGroupTreeService processGroupTreeService;
@@ -148,7 +153,8 @@ public class NifiController {
         }
 
         try {
-            Files.createDirectories(targetDir);
+            ensureFileLoadDirectory(targetDir);
+            ensureFileLoadDirectory(targetDir.resolve("archive"));
             List<String> storedFiles = new ArrayList<>();
             Path firstStoredPath = null;
             for (MultipartFile file : files) {
@@ -185,6 +191,15 @@ public class NifiController {
             ));
         } catch (IOException ex) {
             throw new NifiClientException("파일 저장 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    private void ensureFileLoadDirectory(Path directory) throws IOException {
+        Files.createDirectories(directory);
+        try {
+            Files.setPosixFilePermissions(directory, FILE_LOAD_DIRECTORY_PERMISSIONS);
+        } catch (UnsupportedOperationException ignored) {
+            // POSIX 권한을 지원하지 않는 파일시스템에서는 기본 권한을 그대로 사용한다.
         }
     }
 
