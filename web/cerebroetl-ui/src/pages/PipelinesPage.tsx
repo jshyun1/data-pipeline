@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useAuth } from "../auth/AuthContext";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
@@ -128,6 +129,10 @@ function formatRelativeTime(value: string | null) {
 
 export function PipelinesPage() {
   const navigate = useNavigate();
+  // CDC 쓰기 권한이 없으면 생성·삭제를 막는다. 권한이 아직 안 실렸을 때는 사이드바와 같은
+  // 규칙으로 fail-open 한다(잠깐 비활성으로 깜빡이지 않게). 실제 차단은 백엔드가 한다.
+  const { can, permissionsLoaded } = useAuth();
+  const canWrite = !permissionsLoaded || can("KAFKA", "WRITE");
   const queryClient = useQueryClient();
   const [detailPipelineId, setDetailPipelineId] = useState<number | null>(null);
   const [nameFilter, setNameFilter] = useState("");
@@ -484,8 +489,14 @@ export function PipelinesPage() {
               type="primary"
               icon={<PlusOutlined />}
               onClick={() => navigate("/cdc/create")}
-              disabled={!connections || connections.length < 1}
-              title={!connections || connections.length < 1 ? "연결정보가 최소 1개는 있어야 합니다" : undefined}
+              disabled={!canWrite || !connections || connections.length < 1}
+              title={
+                !canWrite
+                  ? "CDC 쓰기 권한이 없습니다"
+                  : !connections || connections.length < 1
+                    ? "연결정보가 최소 1개는 있어야 합니다"
+                    : undefined
+              }
             >
               파이프라인 신규 생성
             </Button>
@@ -549,8 +560,14 @@ export function PipelinesPage() {
                   title="이 파이프라인을 삭제할까요?"
                   description="배포된 CDC 커넥터도 함께 삭제됩니다."
                   onConfirm={() => deleteMutation.mutate(record.id)}
+                  disabled={!canWrite}
                 >
-                  <Button danger size="small">
+                  <Button
+                    danger
+                    size="small"
+                    disabled={!canWrite}
+                    title={!canWrite ? "CDC 쓰기 권한이 없습니다" : undefined}
+                  >
                     삭제
                   </Button>
                 </Popconfirm>
@@ -707,7 +724,10 @@ export function PipelinesPage() {
                     <Button
                       type="primary"
                       loading={consistencyMutation.isPending}
-                      disabled={detailPipeline.pipelineType === "LOG_FILE"}
+                      // 정합성 검증은 POST 라 백엔드에서 KAFKA WRITE 로 판정된다.
+                      // 막아두지 않으면 조회자가 눌렀을 때 403 오류만 보게 된다.
+                      disabled={!canWrite || detailPipeline.pipelineType === "LOG_FILE"}
+                      title={!canWrite ? "CDC 쓰기 권한이 없습니다" : undefined}
                       onClick={() => consistencyMutation.mutate(detailPipeline.id)}
                       style={{ marginBottom: 16 }}
                     >지금 검증</Button>

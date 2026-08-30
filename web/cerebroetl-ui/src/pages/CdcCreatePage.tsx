@@ -227,10 +227,10 @@ function CdcCreateWizard() {
         <Result
           status="success"
           title={`${createdPipelines.length}개 CDC 파이프라인 생성 완료`}
-          subTitle={`${createdPipelines.map((pipeline) => pipeline.name).join(", ")}이(가) 실행 대기 상태로 준비되었습니다. 실행 제어는 AirFlow에서 진행하세요.`}
+          subTitle={`${createdPipelines.map((pipeline) => pipeline.name).join(", ")}이(가) 실행 대기 상태로 준비되었습니다. 실행 제어는 워크플로우에서 진행하세요.`}
           extra={[
             <Button type="primary" key="list" onClick={() => navigate("/cdc/pipelines")}>파이프라인 목록</Button>,
-            <Button key="airflow" onClick={() => navigate("/airflow/dashboard")}>AirFlow에서 열기</Button>,
+            <Button key="airflow" onClick={() => navigate("/airflow/dashboard")}>워크플로우에서 열기</Button>,
             <Button key="again" onClick={() => {
               form.resetFields();
               setCompletedSteps([]);
@@ -617,7 +617,7 @@ function CdcCreateWizard() {
                       style={{ marginTop: 12 }}
                     />
                   )}
-                  <Alert type="warning" showIcon style={{ marginTop: 16 }} message="생성 시 CDC 커넥터까지 준비됩니다" description="완료 후 실행은 AirFlow에서 진행합니다." />
+                  <Alert type="warning" showIcon style={{ marginTop: 16 }} message="생성 시 CDC 커넥터까지 준비됩니다" description="완료 후 실행은 워크플로우에서 진행합니다." />
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
                     <Button onClick={() => setActiveStep("options")}>이전</Button>
                     <Button type="primary" loading={createMutation.isPending} onClick={async () => {

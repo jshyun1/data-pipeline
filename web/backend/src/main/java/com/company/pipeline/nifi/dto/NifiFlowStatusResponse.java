@@ -23,7 +23,13 @@ public record NifiFlowStatusResponse(ProcessGroupStatus processGroupStatus) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record ProcessorStatus(String id, String name, String type, Integer activeThreadCount) {
+    public record ProcessorStatus(String id, String name, String type, String runStatus,
+                                  Integer activeThreadCount, Integer flowFilesReceived,
+                                  Integer flowFilesSent) {
+
+        public ProcessorStatus(String id, String name, String type, Integer activeThreadCount) {
+            this(id, name, type, null, activeThreadCount, 0, 0);
+        }
 
         /** activeThreadCount는 응답에 없을 수도 있어(구버전/부분 응답) null을 0으로 본다. */
         public int activeThreads() {
@@ -39,8 +45,23 @@ public record NifiFlowStatusResponse(ProcessGroupStatus processGroupStatus) {
     public record ProcessGroupStatusSnapshot(
             String id,
             String name,
+            Integer flowFilesQueued,
+            Integer activeThreadCount,
             List<ProcessorStatusEntry> processorStatusSnapshots,
             List<ProcessGroupStatusEntry> processGroupStatusSnapshots
     ) {
+        public ProcessGroupStatusSnapshot(String id, String name,
+                                          List<ProcessorStatusEntry> processorStatusSnapshots,
+                                          List<ProcessGroupStatusEntry> processGroupStatusSnapshots) {
+            this(id, name, 0, 0, processorStatusSnapshots, processGroupStatusSnapshots);
+        }
+
+        public int queuedFlowFiles() {
+            return flowFilesQueued == null ? 0 : flowFilesQueued;
+        }
+
+        public int activeThreads() {
+            return activeThreadCount == null ? 0 : activeThreadCount;
+        }
     }
 }

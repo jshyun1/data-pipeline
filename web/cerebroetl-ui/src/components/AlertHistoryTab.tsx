@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, DatePicker, Input, Segmented, Select, Space, Spin, Table, Tag, Timeline } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
+import { activeDayPreset, dayPresetRange } from "./dayPreset";
 
 const { RangePicker } = DatePicker;
 import {
@@ -24,8 +25,8 @@ const SEVERITY_META: Record<string, { color: string; label: string }> = {
 };
 
 const RULE_LINK: Record<string, { path: string; label: string }> = {
-  DATA_FRESHNESS: { path: "/cdc/logs", label: "CDC 처리 로그" },
-  CDC_LAG: { path: "/cdc/logs", label: "CDC 처리 로그" },
+  DATA_FRESHNESS: { path: "/cdc/logs", label: "CDC 로그" },
+  CDC_LAG: { path: "/cdc/logs", label: "CDC 로그" },
   JOB_FAILURE: { path: "/airflow/dashboard", label: "Airflow 실행 이력" },
   JOB_CONSECUTIVE_FAILURE: { path: "/etl/logs", label: "ETL 로그" },
   JOB_NOT_RUN: { path: "/airflow/dashboard", label: "Airflow 실행 이력" },
@@ -117,12 +118,12 @@ export function AlertHistoryTab() {
     placeholderData: (prev) => prev,
   });
 
-  // 전일자/당일 프리셋: 해당 날짜 하루로 조회기간을 즉시 맞추고 1페이지로.
+  // 당일/전일 프리셋: 해당 날짜 하루로 조회기간을 즉시 맞추고 1페이지로.
   const applyDayPreset = (offsetDays: 0 | 1) => {
-    const day = dayjs().subtract(offsetDays, "day");
-    setAppliedRange([day.startOf("day"), day.endOf("day")]);
+    setAppliedRange(dayPresetRange(offsetDays));
     setPage(0);
   };
+  const selectedPreset = activeDayPreset(appliedRange[0], appliedRange[1]);
 
   const items = data?.items ?? [];
   const counts = data?.counts;
@@ -183,8 +184,8 @@ export function AlertHistoryTab() {
     <Space direction="vertical" style={{ width: "100%" }} size="middle">
       <Space wrap size="middle">
         <Space.Compact>
-          <Button size="small" onClick={() => applyDayPreset(1)}>전일자</Button>
-          <Button size="small" onClick={() => applyDayPreset(0)}>당일</Button>
+          <Button size="small" type={selectedPreset === 0 ? "primary" : "default"} onClick={() => applyDayPreset(0)}>당일</Button>
+          <Button size="small" type={selectedPreset === 1 ? "primary" : "default"} onClick={() => applyDayPreset(1)}>전일</Button>
         </Space.Compact>
         <RangePicker
           size="small"

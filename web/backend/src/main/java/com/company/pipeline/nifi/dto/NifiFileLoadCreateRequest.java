@@ -1,10 +1,12 @@
 package com.company.pipeline.nifi.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.util.List;
 
-public record NifiInitialDbToDbCreateRequest(
+public record NifiFileLoadCreateRequest(
         @NotBlank
         @Size(max = 128)
         String jobName,
@@ -16,19 +18,14 @@ public record NifiInitialDbToDbCreateRequest(
         String comments,
 
         @NotBlank
-        String sourceServiceId,
+        @Pattern(regexp = "csv|excel")
+        String fileExtension,
 
         @NotBlank
-        @Size(max = 64)
-        String sourceDatabaseType,
+        String inputDirectory,
 
-        @NotBlank
-        @Size(max = 128)
-        String sourceSchema,
-
-        @NotBlank
-        @Size(max = 128)
-        String sourceTable,
+        @NotEmpty
+        List<@NotBlank @Size(max = 128) String> columns,
 
         @NotBlank
         String targetServiceId,
@@ -43,19 +40,6 @@ public record NifiInitialDbToDbCreateRequest(
 
         @NotBlank
         @Size(max = 128)
-        String targetTable,
-
-        @NotBlank
-        @Pattern(regexp = "INSERT|TRUNCATE|UPSERT")
-        String loadMode,
-
-        @Size(max = 4000)
-        String truncateSql,
-
-        @Size(max = 4000)
-        String updateExtractQuery,
-
-        @Size(max = 512)
-        String primaryKeys
+        String targetTable
 ) {
 }

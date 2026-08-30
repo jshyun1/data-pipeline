@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.company.pipeline.nifi.NifiClient;
+import com.company.pipeline.nifi.NifiProcessGroupMetadataService;
 import com.company.pipeline.nifi.dto.NifiFlowResponse;
 import com.company.pipeline.nifi.dto.NifiFlowResponse.ConnectionComponent;
 import com.company.pipeline.nifi.dto.NifiFlowResponse.ConnectionEndpoint;
@@ -40,6 +41,8 @@ class NifiJobMirrorServiceTest {
     @Mock
     private NifiClient nifiClient;
     @Mock
+    private NifiProcessGroupMetadataService processGroupMetadataService;
+    @Mock
     private EtlJobRepository jobRepository;
     @Mock
     private EtlJobStepRepository stepRepository;
@@ -56,7 +59,7 @@ class NifiJobMirrorServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new NifiJobMirrorService(nifiClient, jobRepository, stepRepository,
+        service = new NifiJobMirrorService(nifiClient, processGroupMetadataService, jobRepository, stepRepository,
                 linkRepository, paramRepository, snapshotRepository, jobLookup);
         when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(stepRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));

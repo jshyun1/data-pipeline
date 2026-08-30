@@ -822,6 +822,12 @@ button.airflow-tree-label:hover {
   box-shadow: inset 0 0 0 2px #b95505;
 }
 
+.etl-type-card:disabled {
+  color: #8a95a6;
+  background: #f2f5f8;
+  cursor: not-allowed;
+}
+
 .etl-type-card strong {
   font-size: 16px;
   font-weight: 800;
@@ -879,9 +885,47 @@ button.airflow-tree-label:hover {
   font: inherit;
 }
 
+.form-row .ant-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.form-row .ant-select .ant-select-selector {
+  min-height: 37px;
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid #eceff3;
+  box-shadow: none;
+}
+
+.form-row .ant-select-focused .ant-select-selector {
+  box-shadow: inset 0 0 0 1px #1677ff;
+}
+
 .form-row textarea {
   min-height: 58px;
   resize: none;
+}
+
+.etl-radio-cell,
+.etl-file-cell {
+  min-width: 0;
+  min-height: 37px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-right: 1px solid #eceff3;
+  background: #ffffff;
+}
+
+.etl-file-cell input[type="file"] {
+  display: none;
+}
+
+.etl-file-cell span {
+  color: #5b6472;
+  font-size: 14px;
 }
 
 .etl-step-complete-actions {
@@ -909,41 +953,6 @@ button.airflow-tree-label:hover {
   background: #eef2f7;
   border-color: #d6dde6;
   cursor: not-allowed;
-}
-
-.etl-connection-test {
-  min-width: 0;
-  padding: 6px 10px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: #ffffff;
-  border-right: 1px solid #eceff3;
-}
-
-.etl-connection-test button {
-  min-height: 32px;
-  padding: 0 14px;
-  color: #ffffff;
-  background: #1473e6;
-  border: 1px solid #1473e6;
-  border-radius: 5px;
-  font: inherit;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.etl-connection-test button:disabled {
-  color: #667085;
-  background: #eef2f7;
-  border-color: #d6dde6;
-  cursor: not-allowed;
-}
-
-.etl-connection-test span {
-  min-width: 0;
-  color: #344054;
-  overflow-wrap: anywhere;
 }
 
 .etl-load-mode {
@@ -1000,10 +1009,10 @@ button.airflow-tree-label:hover {
 }
 
 .etl-change-key-column {
-  width: min(520px, 100%);
+  width: min(760px, 100%);
   margin-top: 14px;
   display: grid;
-  grid-template-columns: 130px minmax(0, 1fr);
+  grid-template-columns: 150px minmax(0, 1fr);
   align-items: stretch;
   border: 1px solid #eceff3;
   background: #ffffff;
@@ -1018,41 +1027,37 @@ button.airflow-tree-label:hover {
   font-weight: 800;
 }
 
-.etl-change-key-column input {
+.etl-change-key-column .ant-select {
   width: 100%;
   min-width: 0;
-  padding: 8px 10px;
-  color: #374151;
+}
+
+.etl-change-key-column .ant-select .ant-select-selector {
+  min-height: 38px;
   border: 0;
-  font: inherit;
+  border-radius: 0;
+  box-shadow: none;
 }
 
-.etl-preview-title {
-  margin-top: 28px;
-  color: #293442;
-  font-size: 16px;
-  font-weight: 800;
-}
-
-.etl-preview-table {
-  width: min(440px, 100%);
-  margin-top: 8px;
-  border-collapse: collapse;
+.etl-change-key-column textarea {
+  min-height: 96px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 0;
   color: #293442;
   background: #ffffff;
-  font-size: 16px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
 }
 
-.etl-preview-table th,
-.etl-preview-table td {
-  padding: 8px 16px;
-  border: 1px solid #89929e;
-  text-align: left;
-}
-
-.etl-preview-table th {
-  background: #f8fafc;
-  font-weight: 800;
+.etl-file-columns {
+  width: min(620px, 100%);
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid #eceff3;
+  background: #ffffff;
 }
 
 .etl-target-actions {
@@ -1201,8 +1206,7 @@ button.airflow-tree-label:hover {
   .form-row > label,
   .form-row input,
   .form-row select,
-  .form-row textarea,
-  .etl-connection-test {
+  .form-row textarea {
     border-right: 1px solid #eceff3;
   }
 
@@ -2131,86 +2135,29 @@ button.airflow-tree-label:hover {
   color: #334155;
 }
 
-.nifi-job-summary {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 7px 10px;
-  padding: 0 14px 10px;
-  color: #475569;
-  font-size: 13px;
-  line-height: 1.25;
-}
-
-.nifi-job-summary button {
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.nifi-job-summary button:hover,
-.nifi-job-summary button.active {
-  color: #d40000;
-  font-weight: 750;
-}
-
-.nifi-job-summary button:last-child {
-  grid-column: 1 / span 2;
-}
-
-.nifi-status-job-list {
-  max-height: 170px;
-  margin: 0 10px 10px;
-  padding: 4px;
-  overflow: auto;
-  border: 1px solid #e5eaf1;
-  border-radius: 7px;
-  background: #f8fafc;
-}
-
-.nifi-status-job-list button {
-  width: 100%;
-  min-height: 43px;
-  padding: 6px 7px;
+.nifi-tree-search-heading {
+  padding: 0 8px 0 14px;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 2px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: #1f2937;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.nifi-status-job-list button:hover {
-  background: #fff1f1;
-  color: #d40000;
+.nifi-tree-search-heading .nifi-tree-section-title {
+  padding-right: 0;
+  padding-left: 0;
 }
 
-.nifi-status-job-list span,
-.nifi-status-job-list small {
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.nifi-tree-refresh-button {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  color: #0f766e;
 }
 
-.nifi-status-job-list span {
-  font-size: 12.5px;
-  font-weight: 750;
-}
-
-.nifi-status-job-list small {
-  color: #64748b;
-  font-size: 11px;
+.nifi-tree-refresh-button:hover {
+  color: #0d9488 !important;
+  background: #ecfdf5 !important;
 }
 
 .nifi-tree-search-input {
@@ -2340,6 +2287,17 @@ button.airflow-tree-label:hover {
   letter-spacing: 0;
 }
 
+.nifi-detail-status.stacked {
+  display: grid;
+  gap: 4px;
+}
+
+.nifi-detail-status.stacked > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .nifi-detail-dot {
   width: 9px;
   height: 9px;
@@ -2354,6 +2312,10 @@ button.airflow-tree-label:hover {
 
 .nifi-detail-status.error .nifi-detail-dot {
   background: #dc2626;
+}
+
+.nifi-detail-status.stopped .nifi-detail-dot {
+  background: #64748b;
 }
 
 .nifi-detail-message {
@@ -2411,6 +2373,114 @@ button.airflow-tree-label:hover {
   overflow-wrap: anywhere;
   color: #111827;
   font-weight: 600;
+}
+
+.nifi-detail-preline {
+  white-space: pre-line;
+}
+
+.nifi-job-status-list {
+  display: grid;
+  gap: 6px;
+  max-height: 196px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.nifi-job-status-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 0;
+  border: 0;
+  border-bottom: 1px solid #e2e8f0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.nifi-job-status-row:hover .nifi-job-status-name {
+  color: #0f3f8c;
+  text-decoration: underline;
+}
+
+.nifi-job-status-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #111827;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nifi-job-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 48px;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.nifi-job-status-badge.running {
+  color: #1d4ed8;
+}
+
+.nifi-job-status-badge.error {
+  color: #b91c1c;
+}
+
+.nifi-job-status-badge.stopped {
+  color: #475569;
+}
+
+.nifi-job-status-badge.running .nifi-detail-dot {
+  background: #2563eb;
+}
+
+.nifi-job-status-badge.error .nifi-detail-dot {
+  background: #dc2626;
+}
+
+.nifi-job-status-badge.stopped .nifi-detail-dot {
+  background: #64748b;
+}
+
+.nifi-detail-alert-list {
+  display: grid;
+  gap: 4px;
+  max-height: 96px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.nifi-detail-alert-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 13px;
+}
+
+.nifi-detail-alert-row:last-child {
+  border-bottom: 0;
+}
+
+.nifi-detail-alert-row span {
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+}
+
+.nifi-detail-alert-row strong {
+  color: #991b1b;
+  font-weight: 800;
 }
 
 .nifi-detail-properties > div {

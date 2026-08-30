@@ -20,11 +20,47 @@ export interface AlertRule {
   schedule_enabled: boolean;
   schedule_time: string | null;        // "HH:mm:ss"
   schedule_last_fired_on: string | null;
+  // 누가·언제 (목록 컬럼). 서버가 timestamptz 를 ISO 문자열로 내려준다.
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 export interface ScopeTarget {
   id: number;
   name: string;
+}
+
+/** 감시 범위 선택 트리. id 가 null 인 노드는 «묶음»이라 고를 수 없다. */
+export interface ScopeTreeNode {
+  id: number | null;
+  name: string;
+  children: ScopeTreeNode[];
+}
+
+export async function getScopeTree(category: string): Promise<ScopeTreeNode[]> {
+  const res = await apiClient.get<ApiResponse<ScopeTreeNode[]>>("/admin/alert-scope-tree", {
+    params: { category },
+  });
+  return unwrap(res.data);
+}
+
+/** 규칙 평가 이력 한 줄. result: FAILED | NO_SIGNAL | FIRED | RESOLVED */
+export interface RuleEvalLog {
+  id: number;
+  occurred_at: string;
+  result: string;
+  matched_count: number | null;
+  duration_ms: number | null;
+  message: string | null;
+}
+
+export async function getRuleEvalLogs(ruleId: number): Promise<RuleEvalLog[]> {
+  const res = await apiClient.get<ApiResponse<RuleEvalLog[]>>(
+    `/admin/alert-rules/${ruleId}/eval-logs`,
+  );
+  return unwrap(res.data);
 }
 
 export async function getScopeTargets(category: string): Promise<ScopeTarget[]> {

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, DatePicker, Input, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
 import { QuestionCircleOutlined } from "@ant-design/icons";
 import dayjs, { type Dayjs } from "dayjs";
+import { activeDayPresetByDate } from "../components/dayPreset";
 import {
   listNifiExecutionLogs,
   listNifiProcessorRuns,
@@ -208,12 +209,14 @@ export function EtlLogsPage() {
     setDateRange(range);
     setAppliedRange(range);
   };
+  // 이 화면의 RangePicker 는 날짜 단위라 시각까지 비교하는 판정으로는 일치하지 않는다.
+  const selectedPreset = activeDayPresetByDate(appliedRange[0], appliedRange[1]);
 
   const filters = (
     <Space style={{ marginBottom: 16 }} wrap>
       <Space.Compact>
-        <Button onClick={() => applyDatePreset(1)}>전일자</Button>
-        <Button onClick={() => applyDatePreset(0)}>당일</Button>
+        <Button type={selectedPreset === 0 ? "primary" : "default"} onClick={() => applyDatePreset(0)}>당일</Button>
+        <Button type={selectedPreset === 1 ? "primary" : "default"} onClick={() => applyDatePreset(1)}>전일</Button>
       </Space.Compact>
       <RangePicker
         value={dateRange}

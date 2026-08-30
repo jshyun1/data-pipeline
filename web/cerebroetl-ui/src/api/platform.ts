@@ -187,14 +187,30 @@ export interface NifiProcessGroupEntity {
   processorCount?: number | null;
 }
 
+export interface NifiFileUploadResponse {
+  folderName: string;
+  serverDirectory: string;
+  nifiInputDirectory: string;
+  storedFiles: string[];
+  columns: string[];
+}
+
 export interface NifiProcessGroupTreeNode {
   id: string;
   name: string;
+  comments?: string | null;
+  createdBy?: string | null;
+  groupType?: "GROUPING" | "JOB" | "EMPTY";
+  jobStatus?: "WAITING" | "RUNNING" | "STOPPED" | "FAILED";
   processorCount: number;
   runningCount: number;
   stoppedCount: number;
   invalidCount: number;
   disabledCount: number;
+  activeThreadCount?: number;
+  flowFilesQueued?: number;
+  sourceInputCount?: number;
+  terminalInputCount?: number;
   children: NifiProcessGroupTreeNode[];
 }
 
@@ -446,6 +462,35 @@ export async function retryAirflowTaskFrom(dagId: string, dagRunId: string, task
   });
 }
 
+export async function uploadFileLoadFiles(
+  jobName: string,
+  fileExtension: "csv" | "excel",
+  files: File[],
+): Promise<NifiFileUploadResponse> {
+  const formData = new FormData();
+  formData.append("jobName", jobName);
+  formData.append("fileExtension", fileExtension);
+  files.forEach((file) => formData.append("files", file));
+  const res = await apiClient.post<ApiResponse<NifiFileUploadResponse>>("/nifi/etl/file-load/files", formData);
+  return unwrap(res.data);
+}
+
+export async function createFileLoadFlow(payload: {
+  jobName: string;
+  parentGroupId: string;
+  comments?: string;
+  fileExtension: "csv" | "excel";
+  inputDirectory: string;
+  columns: string[];
+  targetServiceId: string;
+  targetDatabaseType: string;
+  targetSchema: string;
+  targetTable: string;
+}): Promise<NifiProcessGroupEntity> {
+  const res = await apiClient.post<ApiResponse<NifiProcessGroupEntity>>("/nifi/etl/file-load", payload);
+  return unwrap(res.data);
+}
+
 interface AirflowLogMessage {
   timestamp?: string;
   event?: string;
@@ -533,7 +578,7 @@ export interface InitialDbToDbFlowCreateRequest {
   targetTable: string;
   loadMode: "INSERT" | "TRUNCATE" | "UPSERT";
   truncateSql?: string;
-  changeKeyColumn?: string;
+  updateExtractQuery?: string;
   primaryKeys?: string;
 }
 
@@ -546,6 +591,11 @@ export async function createInitialDbToDbFlow(
 
 export async function getNifiProcessGroupTree(): Promise<NifiProcessGroupTreeNode> {
   const res = await apiClient.get<ApiResponse<NifiProcessGroupTreeNode>>("/nifi/process-group-tree");
+  return unwrap<NifiProcessGroupTreeNode>(res.data);
+}
+
+export async function refreshNifiProcessGroupTree(): Promise<NifiProcessGroupTreeNode> {
+  const res = await apiClient.post<ApiResponse<NifiProcessGroupTreeNode>>("/nifi/process-group-tree/refresh");
   return unwrap<NifiProcessGroupTreeNode>(res.data);
 }
 

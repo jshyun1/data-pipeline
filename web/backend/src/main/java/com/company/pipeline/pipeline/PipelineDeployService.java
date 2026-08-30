@@ -7,6 +7,7 @@ import com.company.pipeline.connection.ConnectionRepository;
 import com.company.pipeline.connection.PipelineConnection;
 import com.company.pipeline.connector.ConnectorConfigRenderer;
 import com.company.pipeline.connector.KafkaConnectClient;
+import com.company.pipeline.connector.KafkaConnectTimeoutException;
 import com.company.pipeline.connector.PipelineConnector;
 import com.company.pipeline.connector.PipelineConnectorRepository;
 import com.company.pipeline.connector.dto.ConnectorStatusResponse;
@@ -28,6 +29,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -44,6 +47,8 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class PipelineDeployService {
+
+    private static final Logger log = LoggerFactory.getLogger(PipelineDeployService.class);
 
     // Oracle Debezium은 최초 시작 시 DB 접속·스키마 히스토리 준비로 수 초 이상 걸릴 수
     // 있다. Connector만 RUNNING이고 task가 아직 비어 있는 정상 초기화 구간을 실패로
@@ -206,12 +211,16 @@ public class PipelineDeployService {
      */
     private void prepareStoppedConnector(Long pipelineId, String role, RenderedConnectorConfig rendered) {
         if (kafkaConnectClient.listConnectors().contains(rendered.connectorName())) {
-            kafkaConnectClient.stop(rendered.connectorName());
+            tolerateTimeout("stop", rendered.connectorName(),
+                    () -> kafkaConnectClient.stop(rendered.connectorName()));
             awaitConnectorState(rendered.connectorName(), "STOPPED", false);
-            kafkaConnectClient.upsertConfig(rendered.connectorName(), rendered.config());
-            kafkaConnectClient.stop(rendered.connectorName());
+            tolerateTimeout("upsertConfig", rendered.connectorName(),
+                    () -> kafkaConnectClient.upsertConfig(rendered.connectorName(), rendered.config()));
+            tolerateTimeout("stop", rendered.connectorName(),
+                    () -> kafkaConnectClient.stop(rendered.connectorName()));
         } else {
-            kafkaConnectClient.createStopped(rendered.connectorName(), rendered.config());
+            tolerateTimeout("createStopped", rendered.connectorName(),
+                    () -> kafkaConnectClient.createStopped(rendered.connectorName(), rendered.config()));
         }
 
         ConnectorStatusResponse status = awaitConnectorState(rendered.connectorName(), "STOPPED", false);
@@ -478,6 +487,27 @@ public class PipelineDeployService {
     public PipelineResponse restart(Long pipelineId) {
         return applyToAllConnectors(pipelineId, "RESTART", PipelineStatus.DEPLOYED,
                 connectorName -> kafkaConnectClient.restartTask(connectorName, 0));
+    }
+
+    /**
+     * Kafka Connect 제어 호출을 실행하되, <b>타임아웃은 실패로 단정하지 않는다.</b>
+     *
+     * <p>커넥터 등록/갱신·정지는 클러스터 리밸런스를 유발해 응답이 늦는데, 그 사이 Connect 는
+     * 요청을 이미 반영해 둔 경우가 많다. 실제로 2026-08-26 에 {@code PUT /config} 가 타임아웃
+     * 됐지만 설정은 정상 반영됐고, 그럼에도 파이프라인만 FAILED 로 떨어져 이후 start 가 막혔다.
+     *
+     * <p>타임아웃은 "결과를 모름"이므로, 여기서 삼키고 <b>바로 뒤의 awaitConnectorState 가
+     * 실제 상태를 확인해</b> 판정하게 한다. 변경 요청을 다시 보내지는 않는다 - 재시도는
+     * 리밸런스를 겹치게 만들어 상황을 악화시킨다. 확인은 횟수 제한이 있고, 커넥터가 확정
+     * 실패면 즉시 중단된다.
+     */
+    private void tolerateTimeout(String operation, String connectorName, Runnable call) {
+        try {
+            call.run();
+        } catch (KafkaConnectTimeoutException ex) {
+            log.warn("Kafka Connect {} 응답 지연 - 실제 상태로 판정한다. connector={}, 사유={}",
+                    operation, connectorName, ex.getMessage());
+        }
     }
 
     private ConnectorStatusResponse awaitConnectorState(String connectorName, String expectedState,

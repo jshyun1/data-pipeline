@@ -1,8 +1,10 @@
 package com.company.pipeline.jobcatalog;
 
 import com.company.pipeline.nifi.NifiClient;
+import com.company.pipeline.nifi.NifiProcessGroupMetadataService;
 import com.company.pipeline.nifi.dto.NifiFlowResponse;
 import com.company.pipeline.nifi.dto.NifiFlowResponse.ConnectionEntity;
+import com.company.pipeline.nifi.dto.NifiFlowResponse.ProcessGroupComponent;
 import com.company.pipeline.nifi.dto.NifiFlowResponse.ProcessGroupEntity;
 import com.company.pipeline.nifi.dto.NifiFlowResponse.ProcessorComponent;
 import com.company.pipeline.nifi.dto.NifiFlowResponse.ProcessorEntity;
@@ -31,9 +33,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * NiFi 캔버스를 읽어 잡 카탈로그 테이블에 미러링한다(NiFi 원본, DB 사본).
  *
- * <p>대상은 루트 바로 아래 프로세스 그룹 = "잡"이다. Airflow 동적 DAG가 이미 같은 단위로
- * DAG를 만들고 있어서 그 모델을 그대로 따른다. 잡 안의 하위 그룹(예: 비정형의 종류별
- * 그룹)에 있는 프로세서까지 재귀로 훑어 스텝으로 담는다.
+ * <p>모든 프로세스 그룹은 metadata로 남기고, Template 하위가 아니면서 직계 프로세서를 가진
+ * 그룹만 etl_job으로 미러링한다. 상위 그룹/그룹핑 그룹과 실제 JOB그룹의 경계를 DB에서도
+ * 분리하기 위해 JOB의 스텝/연결은 직계 구성만 담는다.
  *
  * <p>안전장치 두 가지가 있다.
  * <ul>
@@ -54,8 +56,10 @@ public class NifiJobMirrorService {
     /** 이 개수를 넘겨 한 번에 사라지면 삭제 표시를 보류한다(캔버스 유실 의심). */
     private static final int MASS_DELETION_THRESHOLD = 3;
     private static final int SNAPSHOT_RETENTION_DAYS = 90;
+    private static final String TEMPLATE_GROUP_NAME = "Template";
 
     private final NifiClient nifiClient;
+    private final NifiProcessGroupMetadataService processGroupMetadataService;
     private final EtlJobRepository jobRepository;
     private final EtlJobStepRepository stepRepository;
     private final EtlJobLinkRepository linkRepository;
@@ -65,6 +69,7 @@ public class NifiJobMirrorService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public NifiJobMirrorService(NifiClient nifiClient,
+                                NifiProcessGroupMetadataService processGroupMetadataService,
                                 EtlJobRepository jobRepository,
                                 EtlJobStepRepository stepRepository,
                                 EtlJobLinkRepository linkRepository,
@@ -72,6 +77,7 @@ public class NifiJobMirrorService {
                                 EtlJobSnapshotRepository snapshotRepository,
                                 JobLookup jobLookup) {
         this.nifiClient = nifiClient;
+        this.processGroupMetadataService = processGroupMetadataService;
         this.jobRepository = jobRepository;
         this.stepRepository = stepRepository;
         this.linkRepository = linkRepository;
@@ -95,20 +101,25 @@ public class NifiJobMirrorService {
     @Transactional
     public SyncResult sync() {
         NifiFlowResponse rootFlow = nifiClient.getFlow(ROOT_GROUP_ID);
-        List<ProcessGroupEntity> topLevelGroups = topLevelGroups(rootFlow);
+        List<MirroredGroup> jobGroups = new ArrayList<>();
+        Set<String> allDiscoveredGroupIds = new HashSet<>();
+        String rootGroupId = rootFlow == null || rootFlow.processGroupFlow() == null
+                || rootFlow.processGroupFlow().id() == null
+                ? ROOT_GROUP_ID : rootFlow.processGroupFlow().id();
+        allDiscoveredGroupIds.add(rootGroupId);
+        processGroupMetadataService.ensureDiscovered(rootGroupId, "ETL Root", null, null);
+        collectGroupsForMirror(rootGroupId, childProcessGroups(rootFlow),
+                false, allDiscoveredGroupIds, jobGroups);
 
-        Set<String> seenPgIds = new HashSet<>();
+        Set<String> seenJobGroupIds = new HashSet<>();
         int created = 0;
         int updated = 0;
         int snapshots = 0;
 
-        for (ProcessGroupEntity group : topLevelGroups) {
+        for (MirroredGroup group : jobGroups) {
             var component = group.component();
-            if (component == null) {
-                continue;
-            }
-            String pgId = component.id() != null ? component.id() : group.id();
-            seenPgIds.add(pgId);
+            String pgId = group.groupId();
+            seenJobGroupIds.add(pgId);
 
             Optional<EtlJob> existing = jobRepository.findByNifiPgId(pgId);
             EtlJob job = existing.orElseGet(() -> new EtlJob(pgId, component.name()));
@@ -120,10 +131,10 @@ public class NifiJobMirrorService {
                 updated++;
             }
 
-            GroupContents contents = collectRecursively(pgId);
+            GroupContents contents = group.contents();
             job.applySnapshot(
                     component.name(),
-                    rootFlow.processGroupFlow() == null ? null : rootFlow.processGroupFlow().id(),
+                    group.parentGroupId(),
                     component.comments(),
                     component.parameterContext() == null ? null : component.parameterContext().id(),
                     component.parameterContext() == null ? null : component.parameterContext().name(),
@@ -144,51 +155,61 @@ public class NifiJobMirrorService {
             }
         }
 
-        int deleted = markMissingJobsDeleted(seenPgIds);
+        int deleted = markMissingJobsDeleted(seenJobGroupIds, allDiscoveredGroupIds);
         // 구성이 바뀌었을 수 있으므로 프로세서 -> 잡 캐시를 비운다(이력 귀속이 새 구성을 따르도록).
         jobLookup.invalidate();
-        return new SyncResult(topLevelGroups.size(), created, updated, deleted, snapshots);
+        return new SyncResult(jobGroups.size(), created, updated, deleted, snapshots);
     }
 
-    private List<ProcessGroupEntity> topLevelGroups(NifiFlowResponse rootFlow) {
-        if (rootFlow == null || rootFlow.processGroupFlow() == null
-                || rootFlow.processGroupFlow().flow() == null
-                || rootFlow.processGroupFlow().flow().processGroups() == null) {
+    private void collectGroupsForMirror(String parentGroupId, List<ProcessGroupEntity> groups,
+                                        boolean templateBranch, Set<String> allDiscoveredGroupIds,
+                                        List<MirroredGroup> jobGroups) {
+        for (ProcessGroupEntity group : groups) {
+            var component = group.component();
+            if (component == null) {
+                continue;
+            }
+            String groupId = component.id() != null ? component.id() : group.id();
+            if (groupId == null) {
+                continue;
+            }
+
+            String groupName = component.name();
+            boolean inTemplateBranch = templateBranch || isTemplateGroup(groupName);
+            allDiscoveredGroupIds.add(groupId);
+            processGroupMetadataService.ensureDiscovered(groupId, groupName, parentGroupId, component.comments());
+
+            NifiFlowResponse groupFlow = nifiClient.getFlow(groupId);
+            GroupContents contents = directContents(groupFlow);
+            if (!inTemplateBranch && !contents.processors().isEmpty()) {
+                jobGroups.add(new MirroredGroup(groupId, parentGroupId, component, contents));
+            }
+            collectGroupsForMirror(groupId, childProcessGroups(groupFlow),
+                    inTemplateBranch, allDiscoveredGroupIds, jobGroups);
+        }
+    }
+
+    private List<ProcessGroupEntity> childProcessGroups(NifiFlowResponse flow) {
+        if (flow == null || flow.processGroupFlow() == null
+                || flow.processGroupFlow().flow() == null
+                || flow.processGroupFlow().flow().processGroups() == null) {
             return List.of();
         }
-        return rootFlow.processGroupFlow().flow().processGroups();
+        return flow.processGroupFlow().flow().processGroups();
     }
 
-    /** 잡 하위 그룹까지 재귀로 훑어 프로세서/연결을 모은다. */
-    private GroupContents collectRecursively(String groupId) {
-        List<ProcessorEntity> processors = new ArrayList<>();
-        List<ConnectionEntity> connections = new ArrayList<>();
-        collectInto(groupId, processors, connections);
-        return new GroupContents(processors, connections);
-    }
-
-    private void collectInto(String groupId, List<ProcessorEntity> processors,
-                             List<ConnectionEntity> connections) {
-        NifiFlowResponse flow = nifiClient.getFlow(groupId);
+    private GroupContents directContents(NifiFlowResponse flow) {
         if (flow == null || flow.processGroupFlow() == null || flow.processGroupFlow().flow() == null) {
-            return;
+            return new GroupContents(List.of(), List.of());
         }
         var inner = flow.processGroupFlow().flow();
-        if (inner.processors() != null) {
-            processors.addAll(inner.processors());
-        }
-        if (inner.connections() != null) {
-            connections.addAll(inner.connections());
-        }
-        if (inner.processGroups() != null) {
-            for (ProcessGroupEntity child : inner.processGroups()) {
-                String childId = child.component() != null && child.component().id() != null
-                        ? child.component().id() : child.id();
-                if (childId != null) {
-                    collectInto(childId, processors, connections);
-                }
-            }
-        }
+        return new GroupContents(
+                inner.processors() == null ? List.of() : inner.processors(),
+                inner.connections() == null ? List.of() : inner.connections());
+    }
+
+    private static boolean isTemplateGroup(String groupName) {
+        return TEMPLATE_GROUP_NAME.equalsIgnoreCase(groupName) || "템플릿".equals(groupName);
     }
 
     private void mirrorSteps(EtlJob job, List<ProcessorEntity> processors) {
@@ -357,15 +378,20 @@ public class NifiJobMirrorService {
     }
 
     /**
-     * NiFi에 더 이상 없는 잡을 삭제 표시한다. 한 번에 여러 개가 사라지면 캔버스 유실을
-     * 의심해서 아무것도 지우지 않는다.
+     * etl_job 조건에서 빠졌거나 NiFi에 더 이상 없는 잡을 삭제 표시한다. NiFi에서 아예
+     * 사라진 잡이 한 번에 여러 개면 캔버스 유실을 의심해 삭제 표시를 보류한다.
      */
-    private int markMissingJobsDeleted(Set<String> seenPgIds) {
+    private int markMissingJobsDeleted(Set<String> seenJobGroupIds, Set<String> allDiscoveredGroupIds) {
         List<EtlJob> live = jobRepository.findByDeletedAtIsNullOrderByJobNameAsc();
-        List<EtlJob> missing = live.stream()
-                .filter(job -> !seenPgIds.contains(job.getNifiPgId()))
+        List<EtlJob> noLongerJobs = live.stream()
+                .filter(job -> !seenJobGroupIds.contains(job.getNifiPgId()))
+                .filter(job -> allDiscoveredGroupIds.contains(job.getNifiPgId()))
                 .toList();
-        if (missing.isEmpty()) {
+        List<EtlJob> missing = live.stream()
+                .filter(job -> !seenJobGroupIds.contains(job.getNifiPgId()))
+                .filter(job -> !allDiscoveredGroupIds.contains(job.getNifiPgId()))
+                .toList();
+        if (noLongerJobs.isEmpty() && missing.isEmpty()) {
             return 0;
         }
         if (missing.size() > MASS_DELETION_THRESHOLD) {
@@ -373,14 +399,35 @@ public class NifiJobMirrorService {
                             + "삭제 표시를 보류합니다 - NiFi 상태를 확인하세요: {}",
                     missing.size(), MASS_DELETION_THRESHOLD,
                     missing.stream().map(EtlJob::getJobName).toList());
-            return 0;
+            missing = List.of();
         }
+        noLongerJobs.forEach(job -> {
+            markJobDeleted(job);
+            log.info("프로세스 그룹은 존재하지만 etl_job 조건에서 제외되어 삭제 표시 - {}({})",
+                    job.getJobName(), job.getNifiPgId());
+        });
         missing.forEach(job -> {
-            job.markDeleted();
-            jobRepository.save(job);
+            markJobDeleted(job);
             log.info("잡이 NiFi에서 사라져 삭제 표시 - {}({})", job.getJobName(), job.getNifiPgId());
         });
-        return missing.size();
+        return noLongerJobs.size() + missing.size();
+    }
+
+    private void markJobDeleted(EtlJob job) {
+        stepRepository.findByJobIdAndDeletedAtIsNull(job.getId()).forEach(step -> {
+            step.markDeleted();
+            stepRepository.save(step);
+        });
+        linkRepository.findByJobIdAndDeletedAtIsNull(job.getId()).forEach(link -> {
+            link.markDeleted();
+            linkRepository.save(link);
+        });
+        paramRepository.findByJobIdAndDeletedAtIsNull(job.getId()).forEach(param -> {
+            param.markDeleted();
+            paramRepository.save(param);
+        });
+        job.markDeleted();
+        jobRepository.save(job);
     }
 
     /** 스냅샷 보존 90일. 하루 한 번만 돌면 충분하다. */
@@ -453,6 +500,10 @@ public class NifiJobMirrorService {
     }
 
     private record GroupContents(List<ProcessorEntity> processors, List<ConnectionEntity> connections) {
+    }
+
+    private record MirroredGroup(String groupId, String parentGroupId, ProcessGroupComponent component,
+                                 GroupContents contents) {
     }
 
     /** 동기화 1회 결과. 수동 재동기화 API 응답으로도 쓴다. */

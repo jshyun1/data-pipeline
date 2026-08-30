@@ -27,6 +27,8 @@ export interface EtlJobStepView {
   targetTable?: string | null;
   statementType?: string | null;
   updateKeys?: string | null;
+  dbcpServiceId?: string | null;
+  propsJson?: string | null;
   validationStatus?: string | null;
   runStatus?: string | null;
   xPos?: number | null;

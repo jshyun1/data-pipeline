@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dayjs from "dayjs";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -17,6 +17,7 @@ import {
   Tabs,
   Tag,
   TimePicker,
+  TreeSelect,
   Tooltip,
   message,
 } from "antd";
@@ -31,6 +32,8 @@ import {
   getRecipients,
   getRuleRecipients,
   getScopeTargets,
+  getScopeTree,
+  getRuleEvalLogs,
   replaceRuleRecipients,
   testChannel,
   updateAlertRule,
@@ -41,6 +44,8 @@ import {
   type ChannelConfig,
   type Recipient,
   type RuleParamSpec,
+  type ScopeTreeNode,
+  type RuleEvalLog,
 } from "../api/config";
 
 const SEVERITIES = [
@@ -105,16 +110,113 @@ function describeCondition(rule: AlertRule, spec: RuleParamSpec[]): string {
     .join(" · ");
 }
 
+/**
+ * 검사대상(감시 범위) 한 줄 요약.
+ *
+ * scope_json 에는 id 만 들어 있어 그대로 보여주면 무엇을 감시하는지 알 수 없다. 후보 목록
+ * (ETL/CDC 대상)에서 이름을 찾아 붙이고, 못 찾은 id 는 숫자로 남긴다(대상이 지워졌을 수 있다).
+ */
+function scopeSummary(rule: AlertRule, nameById: Map<number, string>) {
+  const scope = parseScopeJson(rule.scope_json);
+  if (scope.mode === "ALL" || scope.ids.length === 0) {
+    return <span style={{ color: "#64748b" }}>전체</span>;
+  }
+  const names = scope.ids.map((id) => nameById.get(id) ?? `#${id}`);
+  const prefix = scope.mode === "EXCLUDE" ? "제외" : "지정";
+  return (
+    <Tooltip title={names.join(", ")}>
+      <span>
+        {prefix} {scope.ids.length}건 · {names[0]}
+        {names.length > 1 ? ` 외 ${names.length - 1}` : ""}
+      </span>
+    </Tooltip>
+  );
+}
+
+/**
+ * 규칙유형 대분류. 유형이 늘어나면 한 목록에서 고르기 어려워, 감시 대상 시스템 축으로 먼저 좁힌다.
+ *
+ * 기존 alert_rule_type.category(DATA/HOST/JOB/PROCESS)는 «성격» 축이라 화면에서 쓰기 어렵다.
+ * 여기서는 사용자가 메뉴에서 보는 축(워크플로우·ETL·CDC·인프라)으로 다시 묶는다.
+ * JOB_* 는 Airflow 가 돌리지만 감시 대상이 ETL Job 이므로 ETL 로 둔다(2026-08-26 결정).
+ */
+const RULE_GROUPS = [
+  { key: "ETL", label: "ETL" },
+  { key: "CDC", label: "CDC" },
+  { key: "WORKFLOW", label: "워크플로우" },
+  { key: "INFRA", label: "인프라" },
+] as const;
+type RuleGroupKey = (typeof RULE_GROUPS)[number]["key"];
+
+const RULE_GROUP_BY_CODE: Record<string, RuleGroupKey> = {
+  JOB_FAILURE: "ETL",
+  JOB_CONSECUTIVE_FAILURE: "ETL",
+  JOB_NOT_RUN: "ETL",
+  CDC_LAG: "CDC",
+  CONNECTOR_FAILED: "CDC",
+  DATA_FRESHNESS: "CDC",
+  SERVER_DISK: "INFRA",
+  SERVER_MEMORY: "INFRA",
+  COLLECTOR_DOWN: "INFRA",
+  SERVICE_UNREACHABLE: "INFRA",
+};
+
+/** 표에 없는 신규 유형은 기존 category 로 추정한다 - 유형이 추가돼도 목록에서 사라지지 않게. */
+function ruleGroupOf(type: { code: string; category: string }): RuleGroupKey {
+  const mapped = RULE_GROUP_BY_CODE[type.code];
+  if (mapped) return mapped;
+  if (type.category === "JOB") return "ETL";
+  if (type.category === "DATA") return "CDC";
+  return "INFRA";
+}
+
+/**
+ * 서버 트리 → antd TreeSelect 노드.
+ *
+ * id 가 null 인 노드는 «묶음»이라 고를 수 없다(selectable=false). 그런 노드도 key 는 있어야
+ * 해서 이름 기반의 가짜 key 를 준다 - 실제 값으로는 쓰이지 않는다.
+ */
+function toTreeData(nodes: ScopeTreeNode[], path = ""): Array<Record<string, unknown>> {
+  return nodes.map((n, i) => {
+    const key = n.id != null ? n.id : `${path}g${i}-${n.name}`;
+    return {
+      title: n.name,
+      value: key,
+      key,
+      selectable: n.id != null,
+      checkable: n.id != null,
+      children: toTreeData(n.children ?? [], `${key}/`),
+    };
+  });
+}
+
 function RulesTab() {
   const qc = useQueryClient();
   const { data: rules = [], isLoading } = useQuery({ queryKey: ["alert-rules"], queryFn: getAlertRules });
   const { data: types = [] } = useQuery({ queryKey: ["alert-rule-types"], queryFn: getAlertRuleTypes });
   const [editing, setEditing] = useState<AlertRule | null>(null);
   const [recipientsOf, setRecipientsOf] = useState<AlertRule | null>(null);
+  const [logsOf, setLogsOf] = useState<AlertRule | null>(null);
   const [creating, setCreating] = useState(false);
   // 규칙은 대부분 꺼 둔 채로 두고 쓰는 것만 켜서 운영한다. 기본을 «사용»으로 두면
   // 화면을 열자마자 지금 실제로 도는 규칙만 보인다(전체/미사용은 골라서 본다).
   const [enabledFilter, setEnabledFilter] = useState<"all" | "on" | "off">("on");
+
+  // 검사대상 컬럼에 이름을 붙이려면 후보 목록이 필요하다. 카테고리가 3종뿐이라 한 번에 받는다.
+  const scopeQueries = useQuery({
+    queryKey: ["scope-targets", "all"],
+    queryFn: async () => {
+      const cats = ["ETL", "ETL_CHAIN", "CDC"];
+      const lists = await Promise.all(cats.map((c) => getScopeTargets(c).catch(() => [])));
+      return lists.flat();
+    },
+    staleTime: 60_000,
+  });
+  const scopeNameById = useMemo(() => {
+    const m = new Map<number, string>();
+    (scopeQueries.data ?? []).forEach((t) => m.set(t.id, t.name));
+    return m;
+  }, [scopeQueries.data]);
 
   const specByCode = useMemo(() => {
     const m = new Map<string, RuleParamSpec[]>();
@@ -199,22 +301,23 @@ function RulesTab() {
               ),
           },
           {
-            title: "지속",
-            width: 130,
-            render: (_: unknown, r) => (
-              r.schedule_enabled ? (
-                // 하루 한 번 보는 규칙은 지속시간이 찰 수가 없어 그 시각 상태로 즉시 판정한다.
-                <Tooltip title="일별 점검 규칙은 점검 시각의 상태로 즉시 판정합니다">
-                  <span style={{ color: "#94a3b8" }}>즉시 판정</span>
-                </Tooltip>
-              ) : (
-                <Tooltip title="발화: 조건이 이만큼 이어져야 알림 / 해제: 조건이 풀린 뒤 이만큼 지나야 종료">
-                  <span>
-                    발화 {r.for_seconds}s · 해제 {r.clear_seconds}s
-                  </span>
-                </Tooltip>
-              )
-            ),
+            title: "검사대상",
+            width: 170,
+            render: (_: unknown, r) => scopeSummary(r, scopeNameById),
+          },
+          { title: "생성자", dataIndex: "created_by", width: 110, render: (v: string | null) => v ?? "-" },
+          {
+            title: "생성일시",
+            dataIndex: "created_at",
+            width: 150,
+            render: (v: string | null) => (v ? dayjs(v).format("YYYY-MM-DD HH:mm") : "-"),
+          },
+          { title: "마지막 수정자", dataIndex: "updated_by", width: 120, render: (v: string | null) => v ?? "-" },
+          {
+            title: "수정일시",
+            dataIndex: "updated_at",
+            width: 150,
+            render: (v: string | null) => (v ? dayjs(v).format("YYYY-MM-DD HH:mm") : "-"),
           },
           {
             title: "사용",
@@ -232,7 +335,10 @@ function RulesTab() {
                   수신자
                 </Button>
                 <Button size="small" onClick={() => setEditing(r)}>
-                  수정
+                  설정
+                </Button>
+                <Button size="small" onClick={() => setLogsOf(r)}>
+                  로그
                 </Button>
                 <Button size="small" danger onClick={() => remove(r)}>
                   삭제
@@ -249,6 +355,8 @@ function RulesTab() {
       ) : null}
 
       <RuleRecipientsModal rule={recipientsOf} onClose={() => setRecipientsOf(null)} />
+
+      <RuleLogsModal rule={logsOf} onClose={() => setLogsOf(null)} />
 
       <RuleFormModal
         open={creating}
@@ -323,6 +431,9 @@ function RuleFormModal({
   const [form] = Form.useForm();
   const isEdit = rule != null;
   const [typeCode, setTypeCode] = useState<string | undefined>(rule?.rule_type_code);
+  // 규칙유형 대분류(선택). 유형 목록을 좁히기만 하고 저장되지는 않는다.
+  const [ruleGroup, setRuleGroup] = useState<RuleGroupKey | undefined>(undefined);
+
 
   const activeCode = isEdit ? rule!.rule_type_code : typeCode;
   const spec = types.find((t) => t.code === activeCode)?.paramSpec ?? [];
@@ -344,9 +455,11 @@ function RuleFormModal({
     );
     return `점검: 매일 ${at.join(" · ")}${times > 6 ? ` … 총 ${times}회` : ""}`;
   }, [scheduleEnabled, scheduleTime, renotifyMinutes, notifyMax]);
-  const { data: scopeTargets = [] } = useQuery({
-    queryKey: ["scope-targets", scopeCategory],
-    queryFn: () => getScopeTargets(scopeCategory!),
+  // 대상이 수백 개가 되면 평면 목록에서 고르기 어렵다. ETL 관리 화면과 같은 계층으로 보여준다.
+  // (평면 목록 조회는 트리로 대체했다 - 목록 화면의 «검사대상» 컬럼만 이름 조회에 계속 쓴다.)
+  const { data: scopeTree = [] } = useQuery({
+    queryKey: ["scope-tree", scopeCategory],
+    queryFn: () => getScopeTree(scopeCategory!),
     enabled: !!scopeCategory,
   });
 
@@ -381,6 +494,32 @@ function RuleFormModal({
       ...Object.fromEntries(spec.map((p) => [`param_${p.key}`, params[p.key] ?? p.defaultValue])),
     };
   }, [rule, spec, scopeCategory]);
+
+  // 열 때마다 대상 규칙 값으로 폼을 다시 채운다.
+  //
+  // Form 의 initialValues 는 «마운트 시점»에만 적용되는데, 이 컴포넌트는 부모에 상주하고
+  // open 만 토글되며 form 인스턴스도 계속 살아 있다. destroyOnHidden 으로 폼을 다시
+  // 마운트해도 규칙명(Input)처럼 값이 남는 필드가 있어, 다른 규칙을 열었는데 직전 규칙명이
+  // 그대로 보였다. 초깃값에 기대지 않고 명시적으로 세팅한다.
+  //
+  // 같은 규칙을 여는 동안 spec/scopeCategory 가 바뀌며 initial 의 identity 가 자주 바뀌므로,
+  // «열림 1회 + 대상 1개»당 한 번만 적용한다. 그렇지 않으면 사용자가 입력하던 값을 덮는다.
+  const appliedFor = useRef<number | string | null>(null);
+  useEffect(() => {
+    if (!open) {
+      appliedFor.current = null;
+      return;
+    }
+    const target = rule?.id ?? "new";
+    if (appliedFor.current === target) {
+      return;
+    }
+    appliedFor.current = target;
+    setTypeCode(rule?.rule_type_code);
+    setRuleGroup(rule ? RULE_GROUP_BY_CODE[rule.rule_type_code] : undefined);
+    form.resetFields();
+    form.setFieldsValue(initial);
+  }, [open, rule, initial, form]);
 
   async function submit() {
     const v = await form.validateFields();
@@ -446,9 +585,28 @@ function RuleFormModal({
       onOk={submit}
       okText="저장"
       cancelText="취소"
-      destroyOnClose
+      destroyOnHidden
     >
       <Form form={form} layout="vertical" initialValues={initial} preserve={false}>
+        {isEdit ? null : (
+          <Form.Item
+            label="분류"
+            tooltip="감시 대상 시스템으로 먼저 좁힙니다. 유형이 많아졌을 때 고르기 쉽게 하기 위한 것입니다."
+          >
+            <Select
+              placeholder="전체"
+              allowClear
+              value={ruleGroup}
+              onChange={(v) => {
+                setRuleGroup(v ?? undefined);
+                // 분류를 바꾸면 지금 고른 유형이 그 분류에 없을 수 있다 - 비워서 다시 고르게 한다.
+                form.setFieldValue("ruleTypeCode", undefined);
+                setTypeCode(undefined);
+              }}
+              options={RULE_GROUPS.map((g) => ({ label: g.label, value: g.key }))}
+            />
+          </Form.Item>
+        )}
         {isEdit ? null : (
           <Form.Item
             label="규칙 유형"
@@ -457,7 +615,9 @@ function RuleFormModal({
           >
             <Select
               placeholder="무엇을 감시할지 고릅니다"
-              options={types.map((t) => ({ label: `${t.label} (${t.category})`, value: t.code }))}
+              options={types
+                .filter((t) => !ruleGroup || ruleGroupOf(t) === ruleGroup)
+                .map((t) => ({ label: t.label, value: t.code }))}
               onChange={(v) => setTypeCode(v)}
             />
           </Form.Item>
@@ -581,15 +741,21 @@ function RuleFormModal({
             </Form.Item>
             {scopeMode && scopeMode !== "ALL" ? (
               <Form.Item name="scopeIds" style={{ marginBottom: 0 }}>
-                <Select
-                  mode="multiple"
+                <TreeSelect
+                  multiple
                   allowClear
                   showSearch
-                  optionFilterProp="label"
+                  treeCheckable
+                  // 부모까지 값으로 올려보내면 «묶음» id(null)가 섞인다. 잎만 값으로 쓴다.
+                  showCheckedStrategy={TreeSelect.SHOW_CHILD}
+                  treeNodeFilterProp="title"
+                  treeDefaultExpandAll
+                  maxTagCount="responsive"
+                  style={{ width: "100%" }}
                   placeholder={
-                    scopeCategory === "CDC" ? "감시/제외할 파이프라인 선택" : "감시/제외할 Job 선택"
+                    scopeCategory === "CDC" ? "감시/제외할 파이프라인 선택" : "감시/제외할 대상 선택"
                   }
-                  options={scopeTargets.map((t) => ({ label: t.name, value: t.id }))}
+                  treeData={toTreeData(scopeTree)}
                 />
               </Form.Item>
             ) : null}
@@ -785,6 +951,75 @@ function RecipientsTab() {
  * <p>한 번도 손대지 않은 규칙은 전원이 받는다(열면 전부 켜져 있다). 끈 사람도 «껐다»는 사실을
  * 저장하므로, 전원을 꺼 두면 아무에게도 가지 않는다.
  */
+/** 규칙 평가 이력 팝업. 규칙이 언제 발화·해소됐는지, 실패했는지를 한자리에서 본다. */
+const EVAL_RESULTS: Record<string, { label: string; color: string }> = {
+  FAILED: { label: "평가 실패", color: "red" },
+  NO_SIGNAL: { label: "신호 없음", color: "orange" },
+  FIRED: { label: "발화", color: "volcano" },
+  RESOLVED: { label: "해소", color: "green" },
+};
+
+function RuleLogsModal({ rule, onClose }: { rule: AlertRule | null; onClose: () => void }) {
+  const { data = [], isFetching } = useQuery({
+    queryKey: ["rule-eval-logs", rule?.id],
+    queryFn: () => getRuleEvalLogs(rule!.id),
+    enabled: rule != null,
+  });
+
+  return (
+    <Modal
+      open={rule != null}
+      title={rule ? `${rule.name} — 평가 이력` : "평가 이력"}
+      onCancel={onClose}
+      footer={null}
+      width={860}
+      destroyOnHidden
+    >
+      <p style={{ color: "#64748b", fontSize: 12, marginTop: 0 }}>
+        의미 있는 사건만 남깁니다 — 평가 실패·신호 없음·발화·해소. 조건이 계속 정상인 구간은
+        기록하지 않습니다.
+      </p>
+      <Table<RuleEvalLog>
+        rowKey="id"
+        size="small"
+        loading={isFetching}
+        dataSource={data}
+        pagination={{ pageSize: 20, showTotal: (t) => `총 ${t}건` }}
+        columns={[
+          {
+            title: "시각",
+            dataIndex: "occurred_at",
+            width: 160,
+            render: (v: string) => dayjs(v).format("YYYY-MM-DD HH:mm:ss"),
+          },
+          {
+            title: "결과",
+            dataIndex: "result",
+            width: 100,
+            render: (v: string) => {
+              const r = EVAL_RESULTS[v] ?? { label: v, color: "default" };
+              return <Tag color={r.color}>{r.label}</Tag>;
+            },
+          },
+          {
+            title: "대상 수",
+            dataIndex: "matched_count",
+            width: 80,
+            render: (v: number | null) => v ?? "-",
+          },
+          {
+            title: "소요",
+            dataIndex: "duration_ms",
+            width: 80,
+            render: (v: number | null) => (v == null ? "-" : `${v}ms`),
+          },
+          { title: "내용", dataIndex: "message", render: (v: string | null) => v ?? "-" },
+        ]}
+      />
+    </Modal>
+  );
+}
+
 function RuleRecipientsModal({ rule, onClose }: { rule: AlertRule | null; onClose: () => void }) {
   const qc = useQueryClient();
   const open = rule != null;
@@ -827,7 +1062,7 @@ function RuleRecipientsModal({ rule, onClose }: { rule: AlertRule | null; onClos
       okText="저장"
       cancelText="취소"
       width={560}
-      destroyOnClose
+      destroyOnHidden
     >
       <div style={{ fontSize: 12, color: onCount === 0 ? "#b45309" : "#64748b", marginBottom: 10 }}>
         {onCount === 0
@@ -902,7 +1137,7 @@ function RecipientEditModal({
       onOk={submit}
       okText="저장"
       cancelText="취소"
-      destroyOnClose
+      destroyOnHidden
     >
       <Form
         form={form}

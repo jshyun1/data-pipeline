@@ -5,6 +5,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.company.pipeline.nifi.NifiClient;
+import com.company.pipeline.nifi.NifiProcessGroupTreeService;
 import com.company.pipeline.pipeline.PipelineService;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,12 +17,14 @@ class AirflowDagCatalogDeletionServiceTest {
     private final AirflowDagRunClient airflowClient = mock(AirflowDagRunClient.class);
     private final PipelineService pipelineService = mock(PipelineService.class);
     private final NifiClient nifiClient = mock(NifiClient.class);
+    private final NifiProcessGroupTreeService processGroupTreeService = mock(NifiProcessGroupTreeService.class);
     private final AirflowDagCatalog catalog = mock(AirflowDagCatalog.class);
     private AirflowDagCatalogDeletionService service;
 
     @BeforeEach
     void setUp() {
-        service = new AirflowDagCatalogDeletionService(repository, airflowClient, pipelineService, nifiClient);
+        service = new AirflowDagCatalogDeletionService(
+                repository, airflowClient, pipelineService, nifiClient, processGroupTreeService);
     }
 
     @Test
@@ -44,6 +47,7 @@ class AirflowDagCatalogDeletionServiceTest {
         service.delete(dagId);
 
         verify(nifiClient).deleteRootProcessGroupByIdPrefix("abcd1234");
+        verify(processGroupTreeService).refreshAfterMutation();
         verify(airflowClient).deleteDag(dagId);
         verify(repository).delete(catalog);
     }
