@@ -72,7 +72,7 @@ public class NifiController {
     private static final Set<PosixFilePermission> FILE_LOAD_DIRECTORY_PERMISSIONS =
             PosixFilePermissions.fromString("rwxrwxrwx");
     private static final Set<PosixFilePermission> FILE_LOAD_FILE_PERMISSIONS =
-            PosixFilePermissions.fromString("rw-rw-r--");
+            PosixFilePermissions.fromString("rw-rw-rw-");
     private static final String FILE_LOAD_NIFI_OWNER = "nifi";
     private static final String FILE_LOAD_NIFI_GROUP = "nifi";
 
