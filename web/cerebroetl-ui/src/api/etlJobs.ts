@@ -88,3 +88,23 @@ export async function getEtlJobRuns(id: number): Promise<EtlJobRunResponse[]> {
   const res = await apiClient.get<ApiResponse<EtlJobRunResponse[]>>(`/etl/jobs/${id}/runs`);
   return unwrap(res.data);
 }
+
+/** NiFi 잡 미러링 1회 실행 결과. 화면에서 "무엇이 바뀌었는지" 알려주는 데 쓴다. */
+export interface EtlJobSyncResult {
+  jobsSeen: number;
+  created: number;
+  updated: number;
+  deleted: number;
+  snapshots: number;
+}
+
+/**
+ * 5분 주기를 기다리지 않고 NiFi에서 즉시 다시 읽어온다.
+ *
+ * 캔버스에서 job을 만들거나 지운 직후에는 화면을 새로고침해도 소용이 없다 - 백엔드가
+ * 아직 NiFi를 안 봤기 때문이다. 그래서 조회를 다시 하기 전에 이걸 먼저 부른다.
+ */
+export async function syncEtlJobs(): Promise<EtlJobSyncResult> {
+  const res = await apiClient.post<ApiResponse<EtlJobSyncResult>>("/etl/jobs/sync");
+  return unwrap(res.data);
+}

@@ -2,11 +2,12 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Empty, Form, Input, message, Modal, Popconfirm, Space, Table, Tag, Tree, TreeSelect } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { PlusOutlined, SyncOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useAuth } from "../auth/AuthContext";
 import { getNifiProcessGroupTree, type NifiProcessGroupTreeNode } from "../api/platform";
+import { syncEtlJobs } from "../api/etlJobs";
 import {
   createWorkflow,
   deleteWorkflow,
@@ -39,6 +40,25 @@ export function WorkflowDesignPage() {
   const treeQuery = useQuery({ queryKey: ["nifi-pg-tree"], queryFn: getNifiProcessGroupTree });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["workflows"] });
+
+  /**
+   * 업무 그룹 트리는 NiFi 미러링 결과라, 캔버스에서 그룹을 만든 직후에는 여기 나오지 않는다
+   * (미러링은 5분 주기). 기다리지 않고 바로 반영하고 싶을 때 쓴다.
+   */
+  const syncMutation = useMutation({
+    mutationFn: syncEtlJobs,
+    onSuccess: (result) => {
+      const changed = result.created + result.deleted;
+      message.success(changed > 0
+          ? `동기화 완료 - job ${result.jobsSeen}개 (신규 ${result.created}, 삭제 ${result.deleted})`
+          : `동기화 완료 - job ${result.jobsSeen}개 (변경 없음)`);
+    },
+    onError: (error: Error) => message.warning(`동기화 실패(목록만 새로고침합니다): ${error.message}`),
+    onSettled: () => {
+      void treeQuery.refetch();
+      void refresh();
+    },
+  });
 
   const createMutation = useMutation({
     mutationFn: createWorkflow,
@@ -238,6 +258,11 @@ export function WorkflowDesignPage() {
     <Card
       title="워크플로우 스케줄링"
       extra={
+        <Space>
+        <Button size="small" icon={<SyncOutlined />} loading={syncMutation.isPending}
+                onClick={() => syncMutation.mutate()}>
+          동기화
+        </Button>
         <Button type="primary" icon={<PlusOutlined />} disabled={!canWrite}
                 onClick={() => {
                   // 트리에서 그룹을 골라둔 채로 만들면 그 그룹으로 들어가는 게 자연스럽다.
@@ -248,6 +273,7 @@ export function WorkflowDesignPage() {
                 }}>
           새 워크플로우
         </Button>
+        </Space>
       }
     >
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>

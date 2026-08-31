@@ -34,7 +34,7 @@ import {
 } from "antd";
 import { ArrowLeftOutlined, SyncOutlined } from "@ant-design/icons";
 import { useAuth } from "../auth/AuthContext";
-import { listEtlJobs, type EtlJobResponse } from "../api/etlJobs";
+import { listEtlJobs, syncEtlJobs, type EtlJobResponse } from "../api/etlJobs";
 import { getNifiProcessGroupTree, type NifiProcessGroupTreeNode } from "../api/platform";
 import {
   nextPresetRuns,
@@ -262,6 +262,27 @@ export function WorkflowCanvasPage() {
     onError: (error: Error) => message.error(error.message),
   });
 
+  /**
+   * 팔레트 새로고침. 조회만 다시 하면 «백엔드가 아직 NiFi를 안 본» 상태라 방금 만든 job이
+   * 나오지 않는다(미러링은 5분 주기). 그래서 미러링을 먼저 돌리고 그 다음에 다시 읽는다.
+   *
+   * 동기화가 실패해도 조회는 해준다 - NiFi가 잠깐 응답하지 않는다고 화면까지 멈출 이유는 없다.
+   */
+  const syncMutation = useMutation({
+    mutationFn: syncEtlJobs,
+    onSuccess: (result) => {
+      const changed = result.created + result.deleted;
+      message.success(changed > 0
+          ? `동기화 완료 - job ${result.jobsSeen}개 (신규 ${result.created}, 삭제 ${result.deleted})`
+          : `동기화 완료 - job ${result.jobsSeen}개 (변경 없음)`);
+    },
+    onError: (error: Error) => message.warning(`동기화 실패(목록만 새로고침합니다): ${error.message}`),
+    onSettled: () => {
+      void jobsQuery.refetch();
+      void treeQuery.refetch();
+    },
+  });
+
   const validateMutation = useMutation({
     mutationFn: () => validateWorkflow(workflowId),
     onSuccess: (result) => {
@@ -457,7 +478,9 @@ export function WorkflowCanvasPage() {
         <div style={{ display: "grid", gridTemplateColumns: "260px 1fr 300px", gap: 12, minHeight: 560 }}>
           {/* 좌: job 팔레트 - ETL(NiFi)에서 만들어 둔 job 목록 */}
           <Card size="small" title="job 팔레트"
-                extra={<Button size="small" icon={<SyncOutlined />} onClick={() => { void jobsQuery.refetch(); void treeQuery.refetch(); }} />}
+                extra={<Button size="small" icon={<SyncOutlined />} title="NiFi에서 다시 읽어옵니다"
+                               loading={syncMutation.isPending}
+                               onClick={() => syncMutation.mutate()} />}
                 styles={{ body: { maxHeight: 520, overflowY: "auto" } }}>
             {ownGroup && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
