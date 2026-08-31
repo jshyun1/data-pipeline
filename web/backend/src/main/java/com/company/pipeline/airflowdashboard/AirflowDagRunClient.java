@@ -214,6 +214,11 @@ public class AirflowDagRunClient {
             @JsonProperty("dag_run_id") String dagRunId,
             String state,
             @JsonProperty("start_date") OffsetDateTime startDate,
-            @JsonProperty("end_date") OffsetDateTime endDate) {
+            @JsonProperty("end_date") OffsetDateTime endDate,
+            /**
+             * 수동 실행 때 넘긴 파라미터. CDC 제어 DAG는 여기에 action(deploy/start/stop/monitor)이
+             * 들어온다 - "지금 도는 Run이 감시 Run인가"를 판정하는 유일한 근거다.
+             */
+            Map<String, Object> conf) {
     }
 }

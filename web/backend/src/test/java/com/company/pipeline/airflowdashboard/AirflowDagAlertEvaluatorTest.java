@@ -45,6 +45,8 @@ class AirflowDagAlertEvaluatorTest {
     }
 
     private DagRun run(String id, String state, OffsetDateTime start, OffsetDateTime end) {
-        return new DagRun(id, state, start, end);
+        // conf 는 «감시 Run 인지» 판정용이라 경보 평가와 무관하다. null 을 넘겨도
+        // isWatchAction 이 null 을 걸러내므로 안전하다.
+        return new DagRun(id, state, start, end, null);
     }
 }

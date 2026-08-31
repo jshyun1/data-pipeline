@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Space, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { RealtimePipelineMetricResponse } from "../api/dashboard";
@@ -129,12 +130,18 @@ export function renderLag(metric: RealtimePipelineMetricResponse | undefined) {
 }
 
 /**
- * CDC 파이프라인 목록 열. 이름·유형·소스→타깃·Topic·상태·지연·마지막 처리.
+ * CDC 파이프라인 목록 열. 이름·유형·소스→타깃·Topic·(워크플로우 상태)·상태·지연·마지막 처리.
  * 관리 화면은 여기에 "관리" 열을 덧붙이고, 실행 현황은 이대로 쓴다.
+ *
+ * <p>workflowStatus를 넘기면 "워크플로우 상태" 열이 하나 더 붙고, 뒤따르는 열 이름이
+ * "커넥터 상태"로 바뀐다. 둘은 다른 것을 뜻한다 - 워크플로우는 <b>제어 DAG가 지금 도는지</b>,
+ * 커넥터는 <b>데이터가 실제로 흐르는지</b>다. 한 열에 섞으면 "커넥터는 RUNNING인데 감시
+ * Run이 죽은" 상태를 화면에서 구분할 수 없다.
  */
 export function cdcPipelineColumns(
   runtimeByPipeline: Map<number, PipelineRuntimeStatusResponse>,
   metricByPipeline: Map<number, RealtimePipelineMetricResponse>,
+  workflowStatus?: { render: (pipeline: PipelineResponse) => ReactNode },
 ): ColumnsType<PipelineResponse> {
   return [
     { title: "이름", dataIndex: "name", width: 160 },
@@ -155,8 +162,16 @@ export function cdcPipelineColumns(
       ),
     },
     { title: "Topic", dataIndex: "topicName", width: 180 },
+    ...(workflowStatus
+      ? [{
+          title: "워크플로우 상태",
+          width: 130,
+          render: (_: unknown, row: PipelineResponse) => workflowStatus.render(row),
+        }]
+      : []),
     {
-      title: "상태",
+      // 워크플로우 열이 없으면(CDC 관리 화면) 상태 열이 하나뿐이라 그냥 "상태"로 둔다.
+      title: workflowStatus ? "커넥터 상태" : "상태",
       width: 170,
       render: (_, row) => renderRuntimeStatus(row, runtimeByPipeline.get(row.id)),
     },

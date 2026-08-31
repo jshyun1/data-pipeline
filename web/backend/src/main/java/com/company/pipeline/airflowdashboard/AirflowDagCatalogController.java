@@ -76,7 +76,41 @@ public class AirflowDagCatalogController {
     public ApiResponse<AirflowDagRunClient.DagRun> run(
             @PathVariable String dagId,
             @RequestBody(required = false) java.util.Map<String, Object> conf) {
+        rejectDuplicateWatch(dagId, conf);
         return ApiResponse.success(dagRunClient.triggerDag(dagId, conf));
+    }
+
+    /**
+     * CDC 제어 DAG의 «감시 재개(monitor)» 중복 실행을 막는다.
+     *
+     * <p>monitor/start Run은 마지막 태스크가 reschedule 센서(monitor_cdc_runtime)라 DagRun이
+     * 무기한 running으로 남는다. 그래서 한 번 더 누르면 같은 파이프라인을 감시하는 Run이 둘이
+     * 되고, 실행 현황에는 «실행 중»이 두 건으로 보인다(2026-08-31에 8초 간격 중복 실행 발생).
+     *
+     * <p>DAG의 max_active_runs=2는 "start가 감시 중이어도 stop은 들어갈 수 있어야 한다"를 위해
+     * 비워 둔 자리다. 그 자리를 두 번째 감시 Run이 채우면 정작 중지 지시가 막힌다.
+     *
+     * <p>deploy/stop은 센서가 즉시 통과하므로(monitor_cdc_runtime이 True를 바로 돌려준다)
+     * 감시 Run으로 세지 않는다.
+     */
+    private void rejectDuplicateWatch(String dagId, java.util.Map<String, Object> conf) {
+        if (conf == null || !"monitor".equals(conf.get("action"))) {
+            return;
+        }
+        boolean alreadyWatching = dagRunClient.getDagRuns(dagId).stream()
+                .filter(run -> "running".equalsIgnoreCase(run.state()))
+                .anyMatch(run -> isWatchAction(run.conf()));
+        if (alreadyWatching) {
+            throw new com.company.pipeline.common.BusinessException(
+                    com.company.pipeline.common.ErrorCode.VALIDATION_ERROR,
+                    "이미 감시 중인 실행이 있습니다. 감시 재개는 감시 실행이 없을 때만 사용하세요.");
+        }
+    }
+
+    /** 감시 센서까지 도달하는 동작. 이 Run이 살아 있으면 파이프라인은 이미 감시되고 있다. */
+    private static boolean isWatchAction(java.util.Map<String, Object> conf) {
+        Object action = conf == null ? null : conf.get("action");
+        return "monitor".equals(action) || "start".equals(action);
     }
 
     /**

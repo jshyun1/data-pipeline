@@ -52,7 +52,7 @@ import {
 } from "../utils/cdcPresentation";
 import { getNifiProcessGroupTree, type NifiProcessGroupTreeNode } from "../api/platform";
 import { getEtlJob, listEtlJobs } from "../api/etlJobs";
-import { categorizeDag, type DagCategory } from "../utils/dagHistory";
+import { categorizeDag, extractKafkaPipelineId, type DagCategory } from "../utils/dagHistory";
 import { scheduleDescription } from "../utils/schedulePreset";
 
 type BusinessCategory = Exclude<DagCategory, "기타">;
@@ -262,6 +262,33 @@ type ListScope =
   | { kind: "metric"; category: BusinessCategory; metric: StatusMetric };
 
 /**
+ * 지표 하나에 대한 판정. 카드 숫자와 가운데 목록이 <b>같은 기준</b>을 쓰도록 한 곳에 둔다.
+ *
+ * <p>예전에는 StatusCard와 ScopeList가 같은 조건을 각자 다시 써서, 한쪽만 고치면
+ * "카드는 3건인데 목록엔 2건"이 되기 쉬웠다.
+ *
+ * <p>«실행 중»만 날짜와 무관하다(어제 시작해 아직 도는 것도 포함). 나머지는 «오늘 마지막
+ * 실행»이 무엇이었는지로 판정한다 - runsByDag가 최신순이라 첫 항목이 그것이다.
+ */
+function matchesMetric(
+  metric: StatusMetric,
+  dag: DashboardDag,
+  runs: AirflowDagRun[],
+  today: Dayjs,
+): boolean {
+  if (metric === "all") return true;
+  if (metric === "new") return Boolean(dag.created_at && dayjs(dag.created_at).isAfter(today));
+  if (metric === "running") return runs.some((run) => run.state === "running");
+  const latestToday = runs.find((run) => {
+    const startedAt = runAt(run);
+    return Boolean(startedAt && dayjs(startedAt).isAfter(today));
+  });
+  if (metric === "success") return latestToday?.state === "success";
+  if (metric === "failed") return latestToday?.state === "failed";
+  return latestToday?.state === "queued" || latestToday?.state === "scheduled";
+}
+
+/**
  * 업무별 상태 카드.
  *
  * <p>모든 숫자가 <b>당일 · 작업(DAG) 기준</b>이다. «전체 작업»이 DAG 수인데 나머지만 실행
@@ -293,20 +320,11 @@ function StatusCard({
   let fresh = 0;
   for (const dag of dags) {
     const runs = runsByDag.get(dag.dag_id) ?? [];
-    if (runs.some((run) => run.state === "running")) {
-      active += 1;
-    }
-    // runsByDag는 최신순이므로 첫 항목이 오늘의 마지막 실행이다.
-    const latestToday = runs.find((run) => {
-      const startedAt = runAt(run);
-      return Boolean(startedAt && dayjs(startedAt).isAfter(today));
-    });
-    if (latestToday?.state === "success") success += 1;
-    else if (latestToday?.state === "failed") failed += 1;
-    else if (latestToday?.state === "queued" || latestToday?.state === "scheduled") waiting += 1;
-    if (dag.created_at && dayjs(dag.created_at).isAfter(today)) {
-      fresh += 1;
-    }
+    if (matchesMetric("running", dag, runs, today)) active += 1;
+    if (matchesMetric("success", dag, runs, today)) success += 1;
+    if (matchesMetric("failed", dag, runs, today)) failed += 1;
+    if (matchesMetric("waiting", dag, runs, today)) waiting += 1;
+    if (matchesMetric("new", dag, runs, today)) fresh += 1;
   }
 
   const metric = (key: StatusMetric, icon: React.ReactNode | null, label: string, value: number, modifier = "") => (
@@ -1046,8 +1064,14 @@ function ScopeList({
   onSelectDag: (dagId: string) => void;
   onSelectPipeline: (pipelineId: number) => void;
 }) {
+  const today = dayjs().startOf("day");
+
+  // CDC는 파이프라인이 실행 단위다. 트리에서 고르든 상단 지표를 누르든 같은 표를 그린다 -
+  // 예전에는 지표를 누르면 ETL과 같은 DAG 표가 나와서, 같은 대상을 두 가지 모양으로
+  // 보여주고 있었다(scope.kind만 보고 category를 안 봤다).
+  let cdcRows: PipelineResponse[] | null = null;
   if (scope.kind === "cdc") {
-    const rows = pipelines.filter((pipeline) => {
+    cdcRows = pipelines.filter((pipeline) => {
       if (scope.scope === "all") return true;
       if (scope.scope === "logfile") return pipeline.pipelineType === "LOG_FILE" || pipeline.sourceConnectionId == null;
       if (scope.scope === "connection") return pipeline.sourceConnectionId === scope.connectionId;
@@ -1057,13 +1081,34 @@ function ScopeList({
       }
       return pipeline.id === scope.pipelineId;
     });
+  } else if (scope.kind === "metric" && scope.category === "CDC") {
+    // 지표는 DAG 기준으로 세므로 걸러내기도 DAG로 하고, 그 뒤에 파이프라인으로 되돌린다.
+    // 이렇게 해야 카드 숫자와 목록 건수가 어긋나지 않는다.
+    const pipelineIds = new Set(
+      dags
+        .filter((dag) => categoryOf(dag) === "CDC"
+          && matchesMetric(scope.metric, dag, runsByDag.get(dag.dag_id) ?? [], today))
+        .map((dag) => extractKafkaPipelineId(dag.dag_id)),
+    );
+    cdcRows = pipelines.filter((pipeline) => pipelineIds.has(String(pipeline.id)));
+  }
+
+  if (cdcRows) {
+    // 파이프라인 -> 그 파이프라인 제어 DAG의 최근 실행. "워크플로우 상태" 열에 쓴다.
+    const latestRunOfPipeline = (pipelineId: number) =>
+      (runsByDag.get(`kafka_pipeline_${pipelineId}_control`) ?? [])[0];
     return (
       <Table<PipelineResponse>
         rowKey="id"
         size="small"
-        dataSource={rows}
-        scroll={{ x: 1000 }}
-        columns={cdcPipelineColumns(runtimeByPipeline, metricByPipeline)}
+        dataSource={cdcRows}
+        scroll={{ x: 1130 }}
+        columns={cdcPipelineColumns(runtimeByPipeline, metricByPipeline, {
+          render: (pipeline) => {
+            const run = latestRunOfPipeline(pipeline.id);
+            return <Tag color={stateColor(run?.state)}>{stateLabel(run?.state)}</Tag>;
+          },
+        })}
         pagination={{ pageSize: 20, hideOnSinglePage: true, showTotal: (total) => `전체 ${total}건` }}
         rowClassName={(row) => row.id === selectedPipelineId ? "airflow-row-selected" : ""}
         onRow={(row) => ({ onClick: () => onSelectPipeline(row.id) })}
@@ -1072,32 +1117,19 @@ function ScopeList({
     );
   }
 
-  // ETL 그룹 / 지표 선택 -> DAG(워크플로우) 목록
-  const today = dayjs().startOf("day");
+  // ETL 그룹 / ETL 지표 선택 -> DAG(워크플로우) 목록
   const latestRun = (dagId: string) => (runsByDag.get(dagId) ?? [])[0];
-  let rows: DashboardDag[];
+  // cdc 범위는 위에서 이미 반환했으므로 여기서는 남은 세 가지만 다룬다.
+  let rows: DashboardDag[] = [];
   if (scope.kind === "etl") {
     const dagIds = workflowsByGroup.get(scope.groupPgId) ?? new Set<string>();
     rows = dags.filter((dag) => dagIds.has(dag.dag_id));
   } else if (scope.kind === "metric") {
-    const inCategory = dags.filter((dag) => categoryOf(dag) === scope.category);
-    rows = scope.metric === "all" ? inCategory : inCategory.filter((dag) => {
-      if (scope.metric === "new") {
-        return Boolean(dag.created_at && dayjs(dag.created_at).isAfter(today));
-      }
-      const runs = runsByDag.get(dag.dag_id) ?? [];
-      if (scope.metric === "running") return runs.some((run) => run.state === "running");
-      // 카드와 같은 기준: 오늘 마지막 실행이 무엇이었나(최신순이므로 첫 항목).
-      const latestToday = runs.find((run) => {
-        const startedAt = runAt(run);
-        return Boolean(startedAt && dayjs(startedAt).isAfter(today));
-      });
-      if (scope.metric === "success") return latestToday?.state === "success";
-      if (scope.metric === "failed") return latestToday?.state === "failed";
-      return latestToday?.state === "queued" || latestToday?.state === "scheduled";
-    });
-  } else {
-    // kind === "dag": 그 DAG 한 줄만.
+    // CDC 지표는 위에서 파이프라인 표로 처리했으므로 여기 오는 건 ETL뿐이다.
+    rows = dags.filter((dag) => categoryOf(dag) === scope.category
+      && matchesMetric(scope.metric, dag, runsByDag.get(dag.dag_id) ?? [], today));
+  } else if (scope.kind === "dag") {
+    // 그 DAG 한 줄만.
     rows = dags.filter((dag) => dag.dag_id === scope.dagId);
   }
 
@@ -1461,11 +1493,13 @@ function PropertyPanel({
 function ExecutionSettingsModal({
   open,
   dag,
+  runs,
   onClose,
   onExecuted,
 }: {
   open: boolean;
   dag?: DashboardDag;
+  runs: AirflowDagRun[];
   onClose: () => void;
   onExecuted: () => void;
 }) {
@@ -1476,6 +1510,11 @@ function ExecutionSettingsModal({
     if (open) setAction("start");
   }, [dag?.dag_id, open]);
 
+  // 감시 센서까지 도달하는 동작(start/monitor)의 Run이 살아 있으면 이미 감시 중이다.
+  // deploy/stop은 센서가 즉시 통과하므로 감시 Run이 아니다.
+  const watching = runs.some((run) => run.state === "running"
+    && (run.conf?.action === "monitor" || run.conf?.action === "start"));
+
   const options = dag && categoryOf(dag) === "CDC"
     ? [
         { label: "배포 (Deploy)", value: "deploy" },
@@ -1483,7 +1522,9 @@ function ExecutionSettingsModal({
         { label: "중지 (Stop)", value: "stop" },
         // 이미 돌고 있는 CDC의 감시 Run만 잃었을 때. 커넥터에는 아무 지시도 하지 않는다.
         // 예전에는 이걸 되살리려면 stop -> start 밖에 없어서 Sink를 한 번 멈춰야 했다.
-        { label: "감시 재개 (Monitor)", value: "monitor" },
+        // 감시 Run이 살아 있는데 또 누르면 같은 파이프라인을 감시하는 Run이 둘이 되고,
+        // 그 둘이 max_active_runs=2를 다 차지해 정작 중지 지시가 막힌다. 그래서 잠근다.
+        { label: "감시 재개 (Monitor)", value: "monitor", disabled: watching },
       ]
     : [
         { label: "시작 (Start)", value: "start" },
@@ -1492,6 +1533,10 @@ function ExecutionSettingsModal({
 
   const execute = async () => {
     if (!dag) return;
+    if (action === "monitor" && watching) {
+      message.warning("이미 감시 중인 실행이 있습니다.");
+      return;
+    }
     setTriggering(true);
     try {
       await triggerAirflowDag(dag.dag_id, { action });
@@ -1517,6 +1562,11 @@ function ExecutionSettingsModal({
       destroyOnHidden
     >
       <p>Airflow DAG에 전달할 실행 동작을 선택하세요.</p>
+      {watching && (
+        <p style={{ color: "#888", fontSize: 12 }}>
+          이미 감시 중인 실행이 있어 «감시 재개»는 선택할 수 없습니다.
+        </p>
+      )}
       <Radio.Group
         block
         optionType="button"
@@ -1834,7 +1884,9 @@ export function AirflowDashboardPage() {
                            onChanged={() => void dashboardQuery.refetch()} />
           </div>
           <InfrastructureBar groups={dashboardQuery.data?.processGroups ?? []} />
-          <ExecutionSettingsModal open={executionOpen} dag={selectedDag} onClose={() => setExecutionOpen(false)} onExecuted={() => { setHistoryOpen(true); void dashboardQuery.refetch(); }} />
+          <ExecutionSettingsModal open={executionOpen} dag={selectedDag}
+                                  runs={selectedDag ? runsByDag.get(selectedDag.dag_id) ?? [] : []}
+                                  onClose={() => setExecutionOpen(false)} onExecuted={() => { setHistoryOpen(true); void dashboardQuery.refetch(); }} />
           <RunHistoryModal open={historyOpen} dag={selectedPipeline ? pipelineDag : selectedDag}
                            runs={historyRuns} refreshSeconds={refreshSeconds} onClose={() => setHistoryOpen(false)} />
           <Modal title="DAG 상세" open={detailOpen} footer={null} onCancel={() => setDetailOpen(false)}>
