@@ -94,7 +94,9 @@ public class AirflowDagCatalogController {
      * 감시 Run으로 세지 않는다.
      */
     private void rejectDuplicateWatch(String dagId, java.util.Map<String, Object> conf) {
-        if (conf == null || !"monitor".equals(conf.get("action"))) {
+        // 판정과 차단의 기준을 맞춘다. start 를 «감시 중»으로 세면서 start 요청은 막지 않으면,
+        // 감시 재개만 잠근 의미가 없다 - 같은 중복이 시작 쪽으로 그대로 생긴다.
+        if (!isWatchAction(conf)) {
             return;
         }
         boolean alreadyWatching = dagRunClient.getDagRuns(dagId).stream()
@@ -103,7 +105,7 @@ public class AirflowDagCatalogController {
         if (alreadyWatching) {
             throw new com.company.pipeline.common.BusinessException(
                     com.company.pipeline.common.ErrorCode.VALIDATION_ERROR,
-                    "이미 감시 중인 실행이 있습니다. 감시 재개는 감시 실행이 없을 때만 사용하세요.");
+                    "이미 감시 중인 실행이 있습니다. 중지 후 다시 시작해주세요.");
         }
     }
 

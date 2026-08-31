@@ -1503,28 +1503,31 @@ function ExecutionSettingsModal({
   onClose: () => void;
   onExecuted: () => void;
 }) {
-  const [action, setAction] = useState<ExecutionAction>("start");
+  const [action, setAction] = useState<ExecutionAction | undefined>("start");
   const [triggering, setTriggering] = useState(false);
-
-  useEffect(() => {
-    if (open) setAction("start");
-  }, [dag?.dag_id, open]);
 
   // 감시 센서까지 도달하는 동작(start/monitor)의 Run이 살아 있으면 이미 감시 중이다.
   // deploy/stop은 센서가 즉시 통과하므로 감시 Run이 아니다.
   const watching = runs.some((run) => run.state === "running"
     && (run.conf?.action === "monitor" || run.conf?.action === "start"));
 
+  useEffect(() => {
+    if (open) setAction(watching ? undefined : "start");
+  }, [dag?.dag_id, open, watching]);
+
   const options = dag && categoryOf(dag) === "CDC"
     ? [
         { label: "배포 (Deploy)", value: "deploy" },
-        { label: "시작 (Start)", value: "start" },
+        // 시작도 감시 센서까지 가는 동작이라 감시 재개와 똑같이 자리를 차지한다.
+        // 한쪽만 막으면 같은 중복이 시작 쪽으로 그대로 생긴다.
+        { label: "시작 (Start)", value: "start", disabled: watching },
         { label: "중지 (Stop)", value: "stop" },
         // 이미 돌고 있는 CDC의 감시 Run만 잃었을 때. 커넥터에는 아무 지시도 하지 않는다.
         // 예전에는 이걸 되살리려면 stop -> start 밖에 없어서 Sink를 한 번 멈춰야 했다.
         // 감시 Run이 살아 있는데 또 누르면 같은 파이프라인을 감시하는 Run이 둘이 되고,
         // 그 둘이 max_active_runs=2를 다 차지해 정작 중지 지시가 막힌다. 그래서 잠근다.
-        { label: "감시 재개 (Monitor)", value: "monitor", disabled: watching },
+        // 라벨에 "(Monitor)"를 붙이면 block 라디오의 한 칸 폭을 넘겨 줄바꿈된다.
+        { label: "감시 재개", value: "monitor", disabled: watching },
       ]
     : [
         { label: "시작 (Start)", value: "start" },
@@ -1532,9 +1535,9 @@ function ExecutionSettingsModal({
       ];
 
   const execute = async () => {
-    if (!dag) return;
-    if (action === "monitor" && watching) {
-      message.warning("이미 감시 중인 실행이 있습니다.");
+    if (!dag || !action) return;
+    if ((action === "monitor" || action === "start") && watching) {
+      message.warning("이미 감시 중인 실행이 있습니다. 중지 후 다시 시작해주세요.");
       return;
     }
     setTriggering(true);
@@ -1556,7 +1559,8 @@ function ExecutionSettingsModal({
       open={open}
       onCancel={onClose}
       footer={<>
-        <Button type="primary" loading={triggering} onClick={() => void execute()}>실행</Button>
+        <Button type="primary" loading={triggering} disabled={!action}
+                onClick={() => void execute()}>실행</Button>
         <Button disabled={triggering} onClick={onClose}>취소</Button>
       </>}
       destroyOnHidden
@@ -1564,7 +1568,8 @@ function ExecutionSettingsModal({
       <p>Airflow DAG에 전달할 실행 동작을 선택하세요.</p>
       {watching && (
         <p style={{ color: "#888", fontSize: 12 }}>
-          이미 감시 중인 실행이 있어 «감시 재개»는 선택할 수 없습니다.
+          이미 감시 중인 실행이 있어 «시작»과 «감시 재개»는 선택할 수 없습니다.
+          다시 켜려면 «중지» 후 «시작»을 해주세요.
         </p>
       )}
       <Radio.Group
