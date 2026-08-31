@@ -70,7 +70,7 @@ public class NifiController {
     private static final Path FILE_LOAD_SERVER_ROOT = Path.of("/opt/etl_repo/file");
     private static final String FILE_LOAD_NIFI_ROOT = "/opt/nifi/file";
     private static final Set<PosixFilePermission> FILE_LOAD_DIRECTORY_PERMISSIONS =
-            PosixFilePermissions.fromString("rwxrwxr-x");
+            PosixFilePermissions.fromString("rwxrwxrwx");
     private static final Set<PosixFilePermission> FILE_LOAD_FILE_PERMISSIONS =
             PosixFilePermissions.fromString("rw-rw-r--");
     private static final String FILE_LOAD_NIFI_OWNER = "nifi";
