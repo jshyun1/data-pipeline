@@ -1094,13 +1094,6 @@ function flattenTree(node: NifiProcessGroupTreeNode | null): NifiProcessGroupTre
   return [node, ...node.children.flatMap((child) => flattenTree(child))];
 }
 
-function collectJobNodes(node: NifiProcessGroupTreeNode | null): NifiProcessGroupTreeNode[] {
-  if (!node) {
-    return [];
-  }
-  return flattenTree(node).filter((entry) => entry.id !== node.id && entry.groupType === "JOB");
-}
-
 function processGroupTextCandidates(element: Element | null) {
   const values: string[] = [];
   let current = element;
@@ -1210,6 +1203,13 @@ function jobStatusText(status: NifiProcessGroupTreeNode["jobStatus"]) {
 
 function formatCount(value?: number | null) {
   return value == null ? "0" : value.toLocaleString("ko-KR");
+}
+
+function waitingCount(node: NifiProcessGroupTreeNode) {
+  return Math.max(
+    (node.processorCount ?? 0) - (node.runningCount ?? 0) - (node.invalidCount ?? 0) - (node.stoppedCount ?? 0),
+    0,
+  );
 }
 
 function localDateString(date: Date) {
@@ -2096,14 +2096,20 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const sourceText = sourceTargetText(sourceStep, "source");
   const targetText = sourceTargetText(targetStep, "target");
   const dagId = relatedJob?.airflowDagId ?? airflowDags[0] ?? null;
-  const groupedJobs = displayNode?.groupType === "GROUPING" ? collectJobNodes(displayNode) : [];
+  const directGroupingGroups = isGroupingGroup
+    ? (displayNode?.children ?? []).filter((entry) => entry.groupType === "GROUPING")
+    : [];
+  const directJobGroups = isGroupingGroup
+    ? (displayNode?.children ?? []).filter((entry) => entry.groupType === "JOB")
+    : [];
+  const hasDirectJobStatus = directGroupingGroups.length > 0 || directJobGroups.length > 0;
   const showHeaderStatus = isJobGroup;
   const lastRunTime = formatDateTime(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
   const lastRunCount = formatCount(latestRun?.totalInserted ?? 0);
   const logKeyword = detailLogKeyword(displayJob, displayNode);
   const titleName = displayJob?.jobName ?? displayNode?.name ?? "선택 없음";
   const headerTitle = isJobGroup
-    ? `Job 이름: ${titleName}`
+    ? `Job 명: ${titleName}`
     : isGroupingGroup
       ? `그룹명 : ${titleName}`
       : titleName;
@@ -2225,24 +2231,53 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
       {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
       {!isLoading && error ? <div className="nifi-detail-message error">조회 실패</div> : null}
 
-      {groupedJobs.length > 0 ? (
+      {hasDirectJobStatus ? (
         <section className="nifi-detail-section">
           <h3>JOB 상태</h3>
-          <div className="nifi-job-status-list">
-            {groupedJobs.map((entry) => (
-              <button
-                key={entry.id}
-                type="button"
-                className="nifi-job-status-row"
-                onClick={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(entry.id)}`)}
-              >
-                <span className="nifi-job-status-name" title={entry.name}>{entry.name}</span>
-                <span className={`nifi-job-status-badge ${jobStatusClass(entry.jobStatus)}`}>
-                  <span className="nifi-detail-dot" aria-hidden="true" />
-                  {jobStatusText(entry.jobStatus)}
-                </span>
-              </button>
-            ))}
+          <div className="nifi-direct-status-list">
+            {directGroupingGroups.length > 0 ? (
+              <div className="nifi-grouping-status-table">
+                <div className="nifi-grouping-status-row heading">
+                  <span />
+                  <span>중지</span>
+                  <span>대기</span>
+                  <span>성공</span>
+                  <span>실패</span>
+                </div>
+                {directGroupingGroups.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className="nifi-grouping-status-row"
+                    onClick={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(entry.id)}`)}
+                  >
+                    <span className="nifi-grouping-status-name" title={entry.name}>{entry.name}</span>
+                    <span className="nifi-grouping-status-cell">{formatCount(entry.stoppedCount)}</span>
+                    <span className="nifi-grouping-status-cell">{formatCount(waitingCount(entry))}</span>
+                    <span className="nifi-grouping-status-cell">{formatCount(entry.runningCount)}</span>
+                    <span className="nifi-grouping-status-cell">{formatCount(entry.invalidCount)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {directJobGroups.length > 0 ? (
+              <div className="nifi-job-status-list">
+                {directJobGroups.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className="nifi-job-status-row"
+                    onClick={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(entry.id)}`)}
+                  >
+                    <span className="nifi-job-status-name" title={entry.name}>{entry.name}</span>
+                    <span className={`nifi-job-status-badge ${jobStatusClass(entry.jobStatus)}`}>
+                      <span className="nifi-detail-dot" aria-hidden="true" />
+                      {jobStatusText(entry.jobStatus)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -2251,7 +2286,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
         <>
           <section className="nifi-detail-section">
             <h3>대상</h3>
-            <dl>
+            <dl className="nifi-detail-target-list">
               <div>
                 <dt>소스</dt>
                 <dd className="nifi-detail-inline-value" title={sourceText}>

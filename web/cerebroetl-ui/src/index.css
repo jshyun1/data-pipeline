@@ -2365,6 +2365,7 @@ button.airflow-tree-label:hover {
   overflow-wrap: anywhere;
   color: #111827;
   font-weight: 400;
+  text-align: right;
 }
 
 .nifi-detail-message {
@@ -2430,16 +2431,71 @@ button.airflow-tree-label:hover {
   white-space: nowrap;
 }
 
+.nifi-detail-target-list > div {
+  grid-template-columns: 34px minmax(0, 1fr) !important;
+  column-gap: 4px !important;
+}
+
 .nifi-detail-preline {
   white-space: pre-line;
+}
+
+.nifi-direct-status-list {
+  display: grid;
+  gap: 6px;
 }
 
 .nifi-job-status-list {
   display: grid;
   gap: 6px;
-  max-height: 196px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+}
+
+.nifi-grouping-status-table {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.nifi-grouping-status-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(4, 32px);
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  border-bottom: 1px solid #e2e8f0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.nifi-grouping-status-row.heading {
+  padding-top: 0;
+  color: #475569;
+  cursor: default;
+  font-size: 12px;
+}
+
+.nifi-grouping-status-row.heading span:not(:first-child),
+.nifi-grouping-status-cell {
+  text-align: right;
+}
+
+.nifi-grouping-status-row:hover .nifi-grouping-status-name {
+  color: #0f3f8c;
+  text-decoration: underline;
+}
+
+.nifi-grouping-status-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #111827;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nifi-job-status-row {
