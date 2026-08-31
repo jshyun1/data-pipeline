@@ -32,6 +32,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.UserPrincipalLookupService;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,6 +45,8 @@ import java.util.stream.Collectors;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.http.MediaType;
@@ -61,10 +65,16 @@ import org.springframework.web.multipart.MultipartFile;
 @RequirePermission(system = SystemCode.NIFI)
 public class NifiController {
 
+    private static final Logger log = LoggerFactory.getLogger(NifiController.class);
+
     private static final Path FILE_LOAD_SERVER_ROOT = Path.of("/opt/etl_repo/file");
     private static final String FILE_LOAD_NIFI_ROOT = "/opt/nifi/file";
     private static final Set<PosixFilePermission> FILE_LOAD_DIRECTORY_PERMISSIONS =
-            PosixFilePermissions.fromString("rwxrwxr-x");
+            PosixFilePermissions.fromString("rwxrwxrwx");
+    private static final Set<PosixFilePermission> FILE_LOAD_FILE_PERMISSIONS =
+            PosixFilePermissions.fromString("rw-rw-rw-");
+    private static final String FILE_LOAD_NIFI_OWNER = "nifi";
+    private static final String FILE_LOAD_NIFI_GROUP = "nifi";
 
     private final NifiClient nifiClient;
     private final NifiProcessGroupTreeService processGroupTreeService;
@@ -121,6 +131,11 @@ public class NifiController {
             @Valid @RequestBody NifiFileLoadCreateRequest request,
             @AuthenticationPrincipal AppUser user
     ) {
+        try {
+            ensureFileLoadDirectoriesForNifiPath(request.inputDirectory());
+        } catch (IOException ex) {
+            throw new NifiClientException("파일 적재 archive 경로 준비 실패: " + ex.getMessage(), ex);
+        }
         NifiProcessGroupResponse response = nifiClient.createFileLoadFlow(request);
         processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
                 request.comments(), user);
@@ -171,6 +186,7 @@ public class NifiController {
                     throw new NifiClientException("파일명이 올바르지 않습니다: " + file.getOriginalFilename(), null);
                 }
                 Files.copy(file.getInputStream(), destination, StandardCopyOption.REPLACE_EXISTING);
+                applyFileLoadOwnerAndPermissions(destination, FILE_LOAD_FILE_PERMISSIONS);
                 storedFiles.add(storedName);
                 if (firstStoredPath == null) {
                     firstStoredPath = destination;
@@ -194,13 +210,97 @@ public class NifiController {
         }
     }
 
+    @PostMapping(path = "/etl/file-load/input-files", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<NifiInputDirectoryUploadResponse> uploadFileLoadInputFiles(
+            @RequestParam String inputDirectory,
+            @RequestParam("files") List<MultipartFile> files
+    ) {
+        if (files == null || files.isEmpty() || files.stream().allMatch(MultipartFile::isEmpty)) {
+            throw new NifiClientException("추가할 파일을 선택하세요.", null);
+        }
+
+        try {
+            Path targetDir = fileLoadServerPath(inputDirectory);
+            ensureFileLoadDirectory(targetDir);
+            ensureFileLoadDirectory(targetDir.resolve("archive"));
+
+            List<String> storedFiles = new ArrayList<>();
+            for (MultipartFile file : files) {
+                if (file.isEmpty()) {
+                    continue;
+                }
+                String storedName = safeFileName(file.getOriginalFilename());
+                Path destination = targetDir.resolve(storedName).normalize();
+                if (!destination.startsWith(targetDir)) {
+                    throw new NifiClientException("파일명이 올바르지 않습니다: " + file.getOriginalFilename(), null);
+                }
+                Files.copy(file.getInputStream(), destination, StandardCopyOption.REPLACE_EXISTING);
+                applyFileLoadOwnerAndPermissions(destination, FILE_LOAD_FILE_PERMISSIONS);
+                storedFiles.add(storedName);
+            }
+            if (storedFiles.isEmpty()) {
+                throw new NifiClientException("저장된 파일이 없습니다.", null);
+            }
+            return ApiResponse.success(new NifiInputDirectoryUploadResponse(inputDirectory.trim(), storedFiles));
+        } catch (IOException ex) {
+            throw new NifiClientException("파일 추가 실패: " + ex.getMessage(), ex);
+        }
+    }
+
     private void ensureFileLoadDirectory(Path directory) throws IOException {
         Files.createDirectories(directory);
+        applyFileLoadOwnerAndPermissions(directory, FILE_LOAD_DIRECTORY_PERMISSIONS);
+    }
+
+    private void applyFileLoadOwnerAndPermissions(Path path, Set<PosixFilePermission> permissions)
+            throws IOException {
         try {
-            Files.setPosixFilePermissions(directory, FILE_LOAD_DIRECTORY_PERMISSIONS);
+            UserPrincipalLookupService lookupService = path.getFileSystem().getUserPrincipalLookupService();
+            Files.setOwner(path, lookupService.lookupPrincipalByName(FILE_LOAD_NIFI_OWNER));
+            PosixFileAttributeView view = Files.getFileAttributeView(path, PosixFileAttributeView.class);
+            if (view != null) {
+                view.setGroup(lookupService.lookupPrincipalByGroupName(FILE_LOAD_NIFI_GROUP));
+            }
+        } catch (IOException ex) {
+            log.warn("파일 적재 경로 소유자 설정 실패({}: {}), POSIX 권한 설정을 계속 시도합니다",
+                    path, ex.getMessage());
+        } catch (UnsupportedOperationException ignored) {
+            // POSIX 소유자/그룹을 지원하지 않는 파일시스템에서는 기본 소유자를 그대로 사용한다.
+        }
+        try {
+            Files.setPosixFilePermissions(path, permissions);
         } catch (UnsupportedOperationException ignored) {
             // POSIX 권한을 지원하지 않는 파일시스템에서는 기본 권한을 그대로 사용한다.
         }
+    }
+
+    private void ensureFileLoadDirectoriesForNifiPath(String nifiDirectory) throws IOException {
+        Path serverDirectory = fileLoadServerPath(nifiDirectory);
+        ensureFileLoadDirectory(serverDirectory);
+        ensureFileLoadDirectory(serverDirectory.resolve("archive"));
+    }
+
+    private Path fileLoadServerPath(String nifiDirectory) {
+        if (!hasText(nifiDirectory)) {
+            throw new NifiClientException("파일 적재 입력 경로가 비어 있습니다.", null);
+        }
+        String trimmed = nifiDirectory.trim();
+        String relative;
+        if (FILE_LOAD_NIFI_ROOT.equals(trimmed)) {
+            relative = "";
+        } else if (trimmed.startsWith(FILE_LOAD_NIFI_ROOT + "/")) {
+            relative = trimmed.substring((FILE_LOAD_NIFI_ROOT + "/").length());
+        } else {
+            throw new NifiClientException("파일 적재 입력 경로가 올바르지 않습니다: " + nifiDirectory, null);
+        }
+        Path serverDirectory = FILE_LOAD_SERVER_ROOT.resolve(relative).normalize();
+        if (!serverDirectory.startsWith(FILE_LOAD_SERVER_ROOT)) {
+            throw new NifiClientException("파일 적재 입력 경로가 올바르지 않습니다: " + nifiDirectory, null);
+        }
+        return serverDirectory;
+    }
+
+    public record NifiInputDirectoryUploadResponse(String inputDirectory, List<String> storedFiles) {
     }
 
     @GetMapping("/process-group-tree")

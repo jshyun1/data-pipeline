@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
-import { Alert, Button, Result, Spin } from "antd";
-import { ReloadOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type SyntheticEvent } from "react";
+import { Alert, Button, Result, Spin, message } from "antd";
+import { ReloadOutlined, UploadOutlined } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   getEtlJob,
@@ -12,16 +12,20 @@ import {
   type EtlJobRunResponse,
   type EtlJobStepView,
 } from "../api/etlJobs";
-import { getAlertHistory, type HistoryItem } from "../api/alerts";
 import {
   getNifiProcessor,
   getNifiProcessGroupTree,
+  listNifiExecutionLogs,
+  listNifiProcessorRuns,
   refreshNifiProcessGroupTree,
   acquireNifiProcessorEditLock,
   heartbeatNifiProcessorEditLock,
   releaseNifiProcessorEditLock,
+  uploadNifiInputDirectoryFiles,
+  type NifiExecutionLogEntry,
   type NifiProcessorEditLockResponse,
   type NifiProcessorDetailResponse,
+  type NifiProcessorRun,
   type NifiProcessGroupTreeNode,
 } from "../api/platform";
 
@@ -1208,6 +1212,157 @@ function formatCount(value?: number | null) {
   return value == null ? "0" : value.toLocaleString("ko-KR");
 }
 
+function localDateString(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function shiftedDate(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date;
+}
+
+function logRowDateKey(value?: string | null) {
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value.slice(0, 10) : localDateString(parsed);
+}
+
+function detailLogKeyword(job: EtlJobResponse | null, node: NifiProcessGroupTreeNode | null) {
+  return job?.jobName ?? node?.name ?? "";
+}
+
+function executionLogGroupName(row: NifiExecutionLogEntry) {
+  return row.groupName ?? row.rootGroupName ?? "";
+}
+
+function matchesRunLogKeyword(row: NifiProcessorRun, keyword: string) {
+  const needle = keyword.trim().toLowerCase();
+  if (!needle) {
+    return true;
+  }
+  return [row.processorName, row.groupName, row.targetTable, row.processorType].some((text) =>
+    (text ?? "").toLowerCase().includes(needle),
+  );
+}
+
+function matchesExecutionLogKeyword(row: NifiExecutionLogEntry, keyword: string) {
+  const needle = keyword.trim().toLowerCase();
+  if (!needle) {
+    return true;
+  }
+  return [row.processorName, executionLogGroupName(row), row.jobName, row.status, row.level, row.message].some((text) =>
+    (text ?? "").toLowerCase().includes(needle),
+  );
+}
+
+interface DetailLogSummary {
+  key: string;
+  label: string;
+  from: string;
+  to: string;
+  processedCount: number;
+  errorCount: number;
+}
+
+function recentDetailLogPeriods() {
+  const today = localDateString(new Date());
+  const yesterday = localDateString(shiftedDate(-1));
+  const weekStart = localDateString(shiftedDate(-6));
+  return {
+    queryFrom: weekStart,
+    queryTo: today,
+    periods: [
+      { key: "today", label: "오늘", from: today, to: today },
+      { key: "yesterday", label: "어제", from: yesterday, to: yesterday },
+      { key: "week", label: "최근 일주일", from: weekStart, to: today },
+    ],
+  };
+}
+
+function buildDetailLogSummaries(
+  keyword: string,
+  runRows: NifiProcessorRun[],
+  eventRows: NifiExecutionLogEntry[],
+): DetailLogSummary[] {
+  const { periods } = recentDetailLogPeriods();
+  const matchedRuns = runRows.filter((row) => matchesRunLogKeyword(row, keyword));
+  const matchedEvents = eventRows
+    .filter((row) => row.status === "FAILED" && row.level !== "WARNING")
+    .filter((row) => matchesExecutionLogKeyword(row, keyword));
+  return periods.map((period) => ({
+    ...period,
+    processedCount: matchedRuns
+      .filter((row) => {
+        const dateKey = logRowDateKey(row.startedAt);
+        return dateKey >= period.from && dateKey <= period.to;
+      })
+      .reduce((sum, row) => sum + row.insertedCount, 0),
+    errorCount: matchedEvents
+      .filter((row) => {
+        const dateKey = logRowDateKey(row.occurredAt);
+        return dateKey >= period.from && dateKey <= period.to;
+      })
+      .length,
+  }));
+}
+
+function detailLogUrl(item: DetailLogSummary, tab: "runs" | "events", keyword: string) {
+  return `/etl/logs?tab=${tab}&from=${item.from}&to=${item.to}&q=${encodeURIComponent(keyword)}`;
+}
+
+function DetailLogRows({
+  loading,
+  summaries,
+  keyword,
+  onNavigate,
+}: {
+  loading: boolean;
+  summaries: DetailLogSummary[];
+  keyword: string;
+  onNavigate: (url: string) => void;
+}) {
+  if (loading) {
+    return <div className="nifi-detail-empty">불러오는 중</div>;
+  }
+  if (!summaries.length) {
+    return <div className="nifi-detail-empty">-</div>;
+  }
+  return (
+    <div className="nifi-detail-alert-list">
+      {summaries.map((item) => (
+        <div key={item.key} className="nifi-detail-alert-row">
+          <span>{item.label}</span>
+          <span>
+            처리{" "}
+            <button
+              type="button"
+              className="nifi-detail-link"
+              onClick={() => onNavigate(detailLogUrl(item, "runs", keyword))}
+            >
+              {formatCount(item.processedCount)}
+            </button>
+            건 · 에러{" "}
+            <button
+              type="button"
+              className="nifi-detail-link"
+              onClick={() => onNavigate(detailLogUrl(item, "events", keyword))}
+            >
+              {formatCount(item.errorCount)}
+            </button>
+            건
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function jobStatusClass(status: NifiProcessGroupTreeNode["jobStatus"]) {
   switch (status) {
     case "STOPPED":
@@ -1345,6 +1500,54 @@ function pickProperty(props: Record<string, string>, keys: string[]) {
   return null;
 }
 
+function processorTypeIncludes(step: EtlJobStepView, typeName: string) {
+  return (step.stepType ?? "").toLowerCase().includes(typeName.toLowerCase());
+}
+
+function listFileInputDirectory(step?: EtlJobStepView | null) {
+  if (!step || !processorTypeIncludes(step, "ListFile")) {
+    return null;
+  }
+  return pickProperty(stepProperties(step), ["Input Directory", "input-directory"]);
+}
+
+function sqlTableName(rawName: string) {
+  const cleaned = rawName
+    .replace(/[`"\[\]]/g, "")
+    .trim();
+  if (!cleaned || cleaned.startsWith("(")) {
+    return null;
+  }
+  const parts = cleaned.split(".").map((part) => part.trim()).filter(Boolean);
+  return parts.at(-1) ?? null;
+}
+
+function sqlSourceTables(sql?: string | null) {
+  if (!sql?.trim()) {
+    return [];
+  }
+  const normalized = sql
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--.*$/gm, " ")
+    .replace(/\s+/g, " ");
+  const tables: string[] = [];
+  const seen = new Set<string>();
+  const clausePattern = /\b(from|join)\s+(.+?)(?=\s+\b(?:inner|left|right|full|cross|join|where|on|group|order|having|union|limit|offset|fetch)\b|$)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = clausePattern.exec(normalized)) !== null) {
+    const fragment = match[2] ?? "";
+    for (const part of fragment.split(",")) {
+      const token = part.trim().split(/\s+/)[0] ?? "";
+      const table = sqlTableName(token);
+      if (table && !seen.has(table)) {
+        seen.add(table);
+        tables.push(table);
+      }
+    }
+  }
+  return tables;
+}
+
 function sourceTargetText(step: EtlJobStepView | null, kind: "source" | "target") {
   if (!step) {
     return "-";
@@ -1352,25 +1555,16 @@ function sourceTargetText(step: EtlJobStepView | null, kind: "source" | "target"
   const props = stepProperties(step);
   const databaseType = pickProperty(props, ["Database Type", "db-type"]);
   if (kind === "source") {
-    const table = pickProperty(props, ["Table Name", "TABLE NAME", "table-name"]);
-    return [databaseType, table].filter(Boolean).join(" / ") || "-";
+    const sql = pickProperty(props, ["SQL select query"]) ?? step.sqlText;
+    const tables = sqlSourceTables(sql);
+    const tableText = tables.length > 0
+      ? tables.join(", ")
+      : pickProperty(props, ["Table Name", "TABLE NAME", "table-name"]);
+    return [databaseType, tableText].filter(Boolean).join(" / ") || "-";
   }
   const schema = pickProperty(props, ["SCHEMA NAME", "Schema Name", "put-db-record-schema-name"]);
   const table = pickProperty(props, ["TABLE NAME", "Table Name", "put-db-record-table-name"]);
   return [databaseType, schema, table].filter(Boolean).join(" / ") || "-";
-}
-
-function severityText(severity?: HistoryItem["severity"]) {
-  switch (severity) {
-    case "CRITICAL":
-      return "위험";
-    case "WARNING":
-      return "경고";
-    case "INFO":
-      return "정보";
-    default:
-      return severity ?? "-";
-  }
 }
 
 function shortProcessorType(type?: string) {
@@ -1444,11 +1638,14 @@ interface ProcessorDetailPanelProps {
 }
 
 function ProcessorDetailPanel({ processorId, onParentGroupFound }: ProcessorDetailPanelProps) {
+  const navigate = useNavigate();
   const [processor, setProcessor] = useState<NifiProcessorDetailResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editLock, setEditLock] = useState<NifiProcessorEditLockResponse | null>(null);
   const [lockError, setLockError] = useState<string | null>(null);
+  const [logSummaries, setLogSummaries] = useState<DetailLogSummary[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
   const ownerTokenRef = useRef(newLockOwnerToken());
   const processorNameRef = useRef<string | null>(null);
 
@@ -1542,11 +1739,46 @@ function ProcessorDetailPanel({ processorId, onParentGroupFound }: ProcessorDeta
   const config = component?.config;
   const bundle = component?.bundle;
   const rows = propertyRows(processor);
-  const bulletins = processor?.bulletins?.map((entry) => entry.bulletin).filter(Boolean) ?? [];
   const relationships = component?.relationships ?? [];
   const autoTerminated = component?.autoTerminatedRelationships ?? config?.autoTerminatedRelationships ?? [];
   const activeThreadCount = processor?.status?.aggregateSnapshot?.activeThreadCount ?? processor?.status?.activeThreadCount;
   const isReadOnlyByLock = Boolean(editLock && !editLock.heldByMe);
+  const logKeyword = component?.name ?? "";
+
+  useEffect(() => {
+    let cancelled = false;
+    setLogSummaries([]);
+    if (!logKeyword) {
+      setLogsLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const { queryFrom, queryTo } = recentDetailLogPeriods();
+    setLogsLoading(true);
+    Promise.all([
+      listNifiProcessorRuns(queryFrom, queryTo),
+      listNifiExecutionLogs(queryFrom, queryTo),
+    ])
+      .then(([runRows, eventRows]) => {
+        if (!cancelled) {
+          setLogSummaries(buildDetailLogSummaries(logKeyword, runRows, eventRows));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLogSummaries([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLogsLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [logKeyword]);
 
   return (
     <aside className="nifi-detail-panel" aria-label="선택한 프로세서 상세">
@@ -1728,23 +1960,13 @@ function ProcessorDetailPanel({ processorId, onParentGroupFound }: ProcessorDeta
       </section>
 
       <section className="nifi-detail-section">
-        <h3>알림</h3>
-        {bulletins.length ? (
-          <dl>
-            {bulletins.map((bulletin, index) => (
-              <div key={`${bulletin?.timestamp ?? index}-${bulletin?.message ?? ""}`}>
-                <dt>{bulletin?.level ?? "-"}</dt>
-                <dd>
-                  {[formatDateTime(bulletin?.timestamp), bulletin?.category, bulletin?.message]
-                    .filter(Boolean)
-                    .join(" / ")}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        ) : (
-          <div className="nifi-detail-empty">-</div>
-        )}
+        <h3>로그</h3>
+        <DetailLogRows
+          loading={logsLoading}
+          summaries={logSummaries}
+          keyword={logKeyword}
+          onNavigate={navigate}
+        />
       </section>
     </aside>
   );
@@ -1760,11 +1982,13 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const [jobs, setJobs] = useState<EtlJobResponse[]>([]);
   const [details, setDetails] = useState<EtlJobDetailResponse[]>([]);
   const [runs, setRuns] = useState<EtlJobRunResponse[]>([]);
-  const [alertItems, setAlertItems] = useState<HistoryItem[]>([]);
-  const [alertsLoading, setAlertsLoading] = useState(false);
+  const [logSummaries, setLogSummaries] = useState<DetailLogSummary[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
   const [jobsLoading, setJobsLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [isAddingFiles, setIsAddingFiles] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const addFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const selected = useMemo(() => findTreeNode(tree, activeGroupId), [activeGroupId, tree]);
   const selectedGroupId = activeGroupId ?? "root";
@@ -1867,53 +2091,68 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const firstStep = firstStartProcessor(jobSteps, jobLinks);
   const sourceStep = firstStep;
   const targetStep = lastTerminalProcessor(jobSteps, jobLinks);
+  const listFileStep = jobSteps.find((step) => processorTypeIncludes(step, "ListFile")) ?? null;
+  const inputDirectory = listFileInputDirectory(listFileStep);
   const dagId = relatedJob?.airflowDagId ?? airflowDags[0] ?? null;
   const groupedJobs = displayNode?.groupType === "GROUPING" ? collectJobNodes(displayNode) : [];
   const showHeaderStatus = isJobGroup;
   const lastRunTime = formatDateTime(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
   const lastRunCount = formatCount(latestRun?.totalInserted ?? 0);
+  const logKeyword = detailLogKeyword(displayJob, displayNode);
 
   useEffect(() => {
     let cancelled = false;
-    setAlertItems([]);
+    setLogSummaries([]);
     if (!isJobGroup || !displayJob) {
-      setAlertsLoading(false);
+      setLogsLoading(false);
       return () => {
         cancelled = true;
       };
     }
-    setAlertsLoading(true);
-    getAlertHistory({
-      filter: "all",
-      severity: "ALL",
-      q: String(displayJob.id),
-      days: 90,
-      page: 0,
-      pageSize: 20,
-    })
-      .then((history) => {
+    const { queryFrom, queryTo } = recentDetailLogPeriods();
+
+    setLogsLoading(true);
+    Promise.all([
+      listNifiProcessorRuns(queryFrom, queryTo),
+      listNifiExecutionLogs(queryFrom, queryTo),
+    ])
+      .then(([runRows, eventRows]) => {
         if (cancelled) {
           return;
         }
-        const targetKeys = new Set([`JOB:${displayJob.id}`, `JOB_STREAK:${displayJob.id}`]);
-        setAlertItems(history.items
-          .filter((item) => item.rule_type_code === "JOB_FAILURE" && targetKeys.has(item.target_key))
-          .slice(0, 3));
+        setLogSummaries(buildDetailLogSummaries(logKeyword, runRows, eventRows));
       })
       .catch(() => {
         if (!cancelled) {
-          setAlertItems([]);
+          setLogSummaries([]);
         }
       })
       .finally(() => {
         if (!cancelled) {
-          setAlertsLoading(false);
+          setLogsLoading(false);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [displayJob?.id, isJobGroup]);
+  }, [displayJob?.id, isJobGroup, logKeyword]);
+
+  const handleAddFiles = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.currentTarget.files ?? []);
+    event.currentTarget.value = "";
+    if (!inputDirectory || files.length === 0) {
+      return;
+    }
+    setIsAddingFiles(true);
+    try {
+      const result = await uploadNifiInputDirectoryFiles(inputDirectory, files);
+      message.success(`${result.storedFiles.length}개 파일을 추가했습니다.`);
+    } catch (ex) {
+      message.error(ex instanceof Error ? ex.message : "파일 추가에 실패했습니다.");
+    } finally {
+      setIsAddingFiles(false);
+    }
+  };
 
   return (
     <aside className="nifi-detail-panel" aria-label="선택한 프로세스 그룹 상세">
@@ -2021,22 +2260,34 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
           </section>
 
           <section className="nifi-detail-section">
-            <h3>알림</h3>
-            {alertsLoading ? (
-              <div className="nifi-detail-empty">불러오는 중</div>
-            ) : alertItems.length ? (
-              <div className="nifi-detail-alert-list">
-                {alertItems.map((item) => (
-                  <div key={item.id} className="nifi-detail-alert-row">
-                    <span>{formatDateTime(item.started_at ?? item.condition_since ?? item.last_transition_at)}</span>
-                    <strong>{severityText(item.severity)}</strong>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="nifi-detail-empty">-</div>
-            )}
+            <h3>로그</h3>
+            <DetailLogRows
+              loading={logsLoading}
+              summaries={logSummaries}
+              keyword={logKeyword}
+              onNavigate={navigate}
+            />
           </section>
+
+          {inputDirectory ? (
+            <section className="nifi-detail-section">
+              <Button
+                icon={<UploadOutlined />}
+                loading={isAddingFiles}
+                onClick={() => addFileInputRef.current?.click()}
+                size="small"
+              >
+                파일 추가
+              </Button>
+              <input
+                ref={addFileInputRef}
+                hidden
+                multiple
+                type="file"
+                onChange={handleAddFiles}
+              />
+            </section>
+          ) : null}
         </>
       ) : null}
     </aside>
