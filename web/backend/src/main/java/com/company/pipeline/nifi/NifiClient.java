@@ -952,11 +952,9 @@ public class NifiClient {
         NifiFlowResponse.ProcessorEntity select = findProcessorByName(processors, "04_SELECT");
         NifiFlowResponse.ProcessorEntity insert = findProcessorByName(processors, "05_INSERT");
 
-        if (StringUtils.hasText(request.truncateSql())) {
-            Map<String, String> replaceProperties = mergedProperties(replaceText);
-            putProperty(replaceProperties, REPLACE_TEXT_VALUE_KEYS, request.truncateSql().trim());
-            updateProcessorProperties(token, replaceText, replaceProperties);
-        }
+        Map<String, String> replaceProperties = mergedProperties(replaceText);
+        putProperty(replaceProperties, REPLACE_TEXT_VALUE_KEYS, truncateSql(request));
+        updateProcessorProperties(token, replaceText, replaceProperties);
 
         Map<String, String> truncateProperties = mergedProperties(truncate);
         putProperty(truncateProperties, TRUNCATE_DBCP_KEYS, request.targetServiceId().trim());
@@ -974,6 +972,13 @@ public class NifiClient {
         putProperty(insertProperties, PUT_SCHEMA_KEYS, request.targetSchema().trim());
         putProperty(insertProperties, PUT_TABLE_KEYS, request.targetTable().trim());
         updateProcessorProperties(token, insert, insertProperties);
+    }
+
+    private String truncateSql(NifiInitialDbToDbCreateRequest request) {
+        if (StringUtils.hasText(request.truncateSql())) {
+            return request.truncateSql().trim();
+        }
+        return "TRUNCATE TABLE %s.%s".formatted(request.targetSchema().trim(), request.targetTable().trim());
     }
 
     private int directProcessorCount(String groupId) {

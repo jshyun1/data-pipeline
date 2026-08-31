@@ -218,6 +218,10 @@ function defaultUpdateExtractQuery(databaseType: NifiDatabaseType) {
     + "                   AND TO_CHAR(CURRENT_DATE - 1, 'YYYYMMDD') || '235959'";
 }
 
+function defaultTruncateSql(targetSchema: string, targetTable: string) {
+  return `TRUNCATE TABLE ${targetSchema.trim()}.${targetTable.trim()}`;
+}
+
 function columnOptions(columns: ColumnMetadataResponse[]) {
   return columns.map((column) => ({ label: column.name, value: column.name }));
 }
@@ -1263,7 +1267,9 @@ export function EtlCreatePage() {
           targetSchema: connectionInfo.targetSchema.trim(),
           targetTable: connectionInfo.targetTable.trim(),
           loadMode,
-          truncateSql: loadMode === "TRUNCATE" ? truncateSql.trim() : undefined,
+          truncateSql: loadMode === "TRUNCATE"
+            ? truncateSql.trim() || defaultTruncateSql(connectionInfo.targetSchema, connectionInfo.targetTable)
+            : undefined,
           updateExtractQuery: loadMode === "UPSERT" ? updateExtractQuery.trim() : undefined,
           primaryKeys: loadMode === "UPSERT" ? primaryKeys.trim() : undefined,
         });

@@ -2093,12 +2093,20 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const targetStep = lastTerminalProcessor(jobSteps, jobLinks);
   const listFileStep = jobSteps.find((step) => processorTypeIncludes(step, "ListFile")) ?? null;
   const inputDirectory = listFileInputDirectory(listFileStep);
+  const sourceText = sourceTargetText(sourceStep, "source");
+  const targetText = sourceTargetText(targetStep, "target");
   const dagId = relatedJob?.airflowDagId ?? airflowDags[0] ?? null;
   const groupedJobs = displayNode?.groupType === "GROUPING" ? collectJobNodes(displayNode) : [];
   const showHeaderStatus = isJobGroup;
   const lastRunTime = formatDateTime(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
   const lastRunCount = formatCount(latestRun?.totalInserted ?? 0);
   const logKeyword = detailLogKeyword(displayJob, displayNode);
+  const titleName = displayJob?.jobName ?? displayNode?.name ?? "선택 없음";
+  const headerTitle = isJobGroup
+    ? `Job 이름: ${titleName}`
+    : isGroupingGroup
+      ? `그룹명 : ${titleName}`
+      : titleName;
 
   useEffect(() => {
     let cancelled = false;
@@ -2157,8 +2165,8 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   return (
     <aside className="nifi-detail-panel" aria-label="선택한 프로세스 그룹 상세">
       <div className="nifi-detail-header">
-        <div className="nifi-detail-title" title={displayJob?.jobName ?? displayNode?.name ?? "선택 없음"}>
-          {displayJob?.jobName ?? displayNode?.name ?? "선택 없음"}
+        <div className="nifi-detail-title" title={headerTitle}>
+          {headerTitle}
         </div>
         {showHeaderStatus ? (
           <div className={`nifi-detail-status stacked ${statusClass(displayJob, displayNode)}`}>
@@ -2169,36 +2177,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
             <span>마지막 실행 {lastRunTime} · {lastRunCount}건</span>
           </div>
         ) : null}
-      </div>
-
-      {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
-      {!isLoading && error ? <div className="nifi-detail-message error">조회 실패</div> : null}
-
-      {groupedJobs.length > 0 ? (
-        <section className="nifi-detail-section">
-          <h3>JOB 상태</h3>
-          <div className="nifi-job-status-list">
-            {groupedJobs.map((entry) => (
-              <button
-                key={entry.id}
-                type="button"
-                className="nifi-job-status-row"
-                onClick={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(entry.id)}`)}
-              >
-                <span className="nifi-job-status-name" title={entry.name}>{entry.name}</span>
-                <span className={`nifi-job-status-badge ${jobStatusClass(entry.jobStatus)}`}>
-                  <span className="nifi-detail-dot" aria-hidden="true" />
-                  {jobStatusText(entry.jobStatus)}
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <section className="nifi-detail-section">
-        <h3>기본 정보</h3>
-        <dl>
+        <dl className="nifi-detail-header-info">
           <div>
             <dt>상위 경로</dt>
             <dd>{directParent}</dd>
@@ -2241,7 +2220,32 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
             </div>
           ) : null}
         </dl>
-      </section>
+      </div>
+
+      {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
+      {!isLoading && error ? <div className="nifi-detail-message error">조회 실패</div> : null}
+
+      {groupedJobs.length > 0 ? (
+        <section className="nifi-detail-section">
+          <h3>JOB 상태</h3>
+          <div className="nifi-job-status-list">
+            {groupedJobs.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                className="nifi-job-status-row"
+                onClick={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(entry.id)}`)}
+              >
+                <span className="nifi-job-status-name" title={entry.name}>{entry.name}</span>
+                <span className={`nifi-job-status-badge ${jobStatusClass(entry.jobStatus)}`}>
+                  <span className="nifi-detail-dot" aria-hidden="true" />
+                  {jobStatusText(entry.jobStatus)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {isJobGroup ? (
         <>
@@ -2250,11 +2254,15 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
             <dl>
               <div>
                 <dt>소스</dt>
-                <dd>{sourceTargetText(sourceStep, "source")}</dd>
+                <dd className="nifi-detail-inline-value" title={sourceText}>
+                  {sourceText}
+                </dd>
               </div>
               <div>
                 <dt>타깃</dt>
-                <dd>{sourceTargetText(targetStep, "target")}</dd>
+                <dd className="nifi-detail-inline-value" title={targetText}>
+                  {targetText}
+                </dd>
               </div>
             </dl>
           </section>
