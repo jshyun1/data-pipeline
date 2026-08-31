@@ -475,6 +475,25 @@ export async function uploadFileLoadFiles(
   return unwrap(res.data);
 }
 
+export interface NifiInputDirectoryUploadResponse {
+  inputDirectory: string;
+  storedFiles: string[];
+}
+
+export async function uploadNifiInputDirectoryFiles(
+  inputDirectory: string,
+  files: File[],
+): Promise<NifiInputDirectoryUploadResponse> {
+  const formData = new FormData();
+  formData.append("inputDirectory", inputDirectory);
+  files.forEach((file) => formData.append("files", file));
+  const res = await apiClient.post<ApiResponse<NifiInputDirectoryUploadResponse>>(
+    "/nifi/etl/file-load/input-files",
+    formData,
+  );
+  return unwrap(res.data);
+}
+
 export async function createFileLoadFlow(payload: {
   jobName: string;
   parentGroupId: string;

@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Card, DatePicker, Input, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
 import { QuestionCircleOutlined } from "@ant-design/icons";
 import dayjs, { type Dayjs } from "dayjs";
+import { useSearchParams } from "react-router-dom";
 import {
   listNifiExecutionLogs,
   listNifiProcessorRuns,
@@ -105,14 +106,35 @@ function formatDuration(seconds?: number | null) {
 //    때"만 보이므로 실패를 표현할 방법이 원래 없었고, 그래서 DB 인증 실패나 OOM처럼 실제로
 //    파이프라인이 죽은 날에도 이 화면엔 아무것도 안 남았다.
 export function EtlLogsPage() {
-  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs(), dayjs()]);
-  const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
-  const [keyword, setKeyword] = useState("");
+  const [searchParams] = useSearchParams();
+  const initialFrom = searchParams.get("from");
+  const initialTo = searchParams.get("to");
+  const initialRange: [Dayjs, Dayjs] = [
+    initialFrom ? dayjs(initialFrom) : dayjs(),
+    initialTo ? dayjs(initialTo) : dayjs(),
+  ];
+  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>(initialRange);
+  const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(initialRange);
+  const [keyword, setKeyword] = useState(searchParams.get("q") ?? "");
   const [groupFilter, setGroupFilter] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState("runs");
+  const [activeTab, setActiveTab] = useState(searchParams.get("tab") === "events" ? "events" : "runs");
 
   const from = appliedRange[0].format("YYYY-MM-DD");
   const to = appliedRange[1].format("YYYY-MM-DD");
+
+  useEffect(() => {
+    const nextFrom = searchParams.get("from");
+    const nextTo = searchParams.get("to");
+    const nextKeyword = searchParams.get("q") ?? "";
+    const nextTab = searchParams.get("tab") === "events" ? "events" : "runs";
+    if (nextFrom && nextTo) {
+      const nextRange: [Dayjs, Dayjs] = [dayjs(nextFrom), dayjs(nextTo)];
+      setDateRange(nextRange);
+      setAppliedRange(nextRange);
+    }
+    setKeyword(nextKeyword);
+    setActiveTab(nextTab);
+  }, [searchParams]);
 
   const runsQuery = useQuery({
     queryKey: ["nifi-processor-runs", from, to],
