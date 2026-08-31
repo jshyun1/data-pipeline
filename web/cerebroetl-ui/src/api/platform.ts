@@ -37,6 +37,8 @@ export interface AirflowDagCatalogEntry {
   staleDaysThreshold: number;
   durationMultiplier: number;
   slaMinutes: number | null;
+  /** 카탈로그에 처음 잡힌 시각. 실행 현황의 "오늘 신규" 판정에 쓴다. */
+  createdAt?: string;
 }
 
 export async function listAirflowDagCatalog(): Promise<AirflowDagCatalogEntry[]> {
@@ -451,6 +453,28 @@ export async function listAirflowTaskInstances(dagId: string, dagRunId: string):
   return res.data.task_instances ?? [];
 }
 
+/**
+ * 여러 태스크를 한꺼번에 다시 돌린다.
+ *
+ * 화면의 실행 단위는 job(TaskGroup)이라 그 안의 단계를 한 번에 지워야 한다.
+ * 한 단계만 지우면 그 job이 반쪽만 다시 돈다.
+ *
+ * @param withDownstream true면 후행 작업까지(중간이 막혔을 때), false면 이 job만.
+ */
+export async function retryAirflowTasks(
+  dagId: string, dagRunId: string, taskIds: string[], withDownstream: boolean,
+): Promise<void> {
+  await axios.post(`${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/clearTaskInstances`, {
+    dry_run: false,
+    dag_run_id: dagRunId,
+    task_ids: taskIds,
+    include_downstream: withDownstream,
+    only_failed: false,
+    reset_dag_runs: true,
+  });
+}
+
+/** 이 작업부터 후행까지 다시 돌린다. 중간 job이 실패해 뒤가 멈췄을 때 쓴다. */
 export async function retryAirflowTaskFrom(dagId: string, dagRunId: string, taskId: string): Promise<void> {
   await axios.post(`${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/clearTaskInstances`, {
     dry_run: false,

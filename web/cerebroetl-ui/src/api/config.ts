@@ -220,3 +220,30 @@ export async function updateRecipient(
 export async function deleteRecipient(id: number): Promise<void> {
   await apiClient.delete(`/admin/notification/recipients/${id}`);
 }
+
+/** 이 대상(job/파이프라인)을 감시하고 있는 알림 규칙. 실행 현황 속성창이 읽는다. */
+export interface WatchingAlertRule {
+  id: number;
+  rule_type_code: string;
+  type_label: string;
+  category: string;
+  name: string;
+  enabled: boolean;
+  severity: string;
+  scope_json: string | null;
+  schedule_enabled: boolean;
+  schedule_time: string | null;
+  last_evaluated_at: string | null;
+  last_eval_error: string | null;
+}
+
+export async function getAlertRulesWatching(
+  target: "CDC" | "ETL",
+  ids: Array<number | string>,
+): Promise<WatchingAlertRule[]> {
+  if (!ids.length) return [];
+  const res = await apiClient.get<ApiResponse<WatchingAlertRule[]>>("/admin/alert-rules/watching", {
+    params: { target, ids: ids.join(",") },
+  });
+  return unwrap(res.data);
+}

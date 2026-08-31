@@ -1010,7 +1010,10 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
           </button>
           <button type="button" className="nifi-tree-label" title={node.name} onClick={() => openGroup(node.id)}>
             <span className="nifi-tree-name">{node.name}</span>
-            {node.processorCount > 0 ? <span className="nifi-tree-count">({node.processorCount})</span> : null}
+            {/* 프로세서 수가 아니라 하위 그룹 수를 보여준다 - 트리에서 알고 싶은 건
+                "이 그룹 안에 몇 개가 들어있나"지 프로세서 개수가 아니다. */}
+            {node.children.length > 0
+              ? <span className="nifi-tree-count">({node.children.length})</span> : null}
           </button>
         </div>
         {hasChildren && expanded ? node.children.map((child) => renderNode(child, depth + 1)) : null}

@@ -37,6 +37,7 @@ Sensor는 worker를 점유한 채 sleep하지 않고 30초마다 잠깐 실행�
 별도 stop 실행이 STOPPED를 만들면 성공으로 끝난다. 백엔드 런타임 모니터가 Kafka
 Connect의 연속 장애를 FAILED로 확정하면 Sensor도 실패해 DAG Run을 FAILED로 만든다.
 """
+import json
 import time
 from datetime import datetime
 
@@ -46,6 +47,7 @@ import _pipeline_svc_auth  # noqa: F401  # import 만으로 pipeline-api 서비�
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.sensors.python import PythonSensor
+from airflow.models import Variable
 from airflow.sdk import Asset, Param
 from airflow.sdk.exceptions import AirflowException, AirflowSkipException
 
@@ -54,7 +56,13 @@ PIPELINE_API_BASE_URL = "http://pipeline-api:8081"
 # 지시하지 않았는데 적재가 시작되는" 경로가 생긴다. 파이프라인의 생성/삭제만 화면이
 # 맡고 실행 계통(배포·시작·중지)은 전부 Airflow가 지시한다 - NiFi 쪽에
 # autoResumeState=false로 강제해둔 것과 같은 규칙이다.
-ACTIONS = ["deploy", "start", "stop"]
+# monitor: 커넥터를 건드리지 않고 감시만 다시 붙인다.
+# 감시 Run이 죽으면(파싱 실패·워커 재시작 등) 되살릴 방법이 stop -> start 뿐이었는데,
+# 그건 이미 잘 돌고 있는 CDC의 Sink를 한 번 멈춰야 한다. 감시만 잃은 경우를 위한 통로다.
+ACTIONS = ["deploy", "start", "stop", "monitor"]
+
+CDC_INDEX_VARIABLE = "cdc_pipeline_index"
+CDC_SPEC_PREFIX = "cdc_pipeline_spec__"
 VERIFY_ATTEMPTS = 6
 VERIFY_INTERVAL_SECONDS = 5
 RUNTIME_MONITOR_INTERVAL_SECONDS = 30
@@ -64,6 +72,10 @@ def call_pipeline_action(pipeline_id: int, **context):
     action = context["params"]["action"]
     if action not in ACTIONS:
         raise ValueError(f"알 수 없는 action: {action}")
+    if action == "monitor":
+        # 이미 돌고 있는 CDC에 감시만 다시 붙이는 경우다. 커넥터에는 아무 지시도 하지 않는다.
+        print(f"파이프라인 {pipeline_id} monitor - 커넥터를 건드리지 않고 감시만 시작합니다")
+        return
     response = requests.post(
         f"{PIPELINE_API_BASE_URL}/api/pipelines/{pipeline_id}/{action}",
         # 백엔드는 Oracle Debezium Source task가 RUNNING이 될 때까지 최대 60초 검증한다.
@@ -76,6 +88,8 @@ def call_pipeline_action(pipeline_id: int, **context):
 
 def verify_pipeline_action(pipeline_id: int, **context):
     action = context["params"]["action"]
+    if action == "monitor":
+        return
 
     resp = requests.get(f"{PIPELINE_API_BASE_URL}/api/pipelines/{pipeline_id}", timeout=30)
     resp.raise_for_status()
@@ -302,24 +316,48 @@ def build_dag(
     return dag
 
 
+# --- top-level: Variable만 읽는다(pipeline-api 가용성과 무관) ------------------
+#
+# 예전에는 여기서 pipeline-api를 직접 호출했다. 그래서 백엔드가 잠깐만 안 떠 있어도
+# 그 파싱 주기에 CDC DAG가 통째로 사라졌고, 대기 중이던 monitor_cdc_runtime 센서가
+# 깨어나 자기 DAG를 못 찾고 죽었다("Dag not found during start up" ->
+# "Startup reschedule limit exceeded"). CDC는 멀쩡히 도는데 화면에는 «실패»만 남았다
+# (2026-08-24 실측). 백엔드는 CdcDagSpecPublisher가 이 Variable을 주기적으로 맞춘다.
 try:
-    _resp = requests.get(f"{PIPELINE_API_BASE_URL}/api/pipelines", timeout=10)
-    _resp.raise_for_status()
-    _pipelines = _resp.json().get("data", [])
-except Exception as exc:  # pipeline-api가 잠시 안 뜬 상태라도 DAG 파싱 전체가 죽지 않게
-    print(f"pipeline-api 조회 실패, 이번 파싱 주기엔 Kafka 파이프라인 DAG를 생성하지 않음: {exc}")
-    _pipelines = []
+    _index_raw = Variable.get(CDC_INDEX_VARIABLE, default_var="[]")
+except Exception as _exc:
+    print(f"{CDC_INDEX_VARIABLE} 접근 불가 - CDC DAG를 만들지 않습니다: {_exc}")
+    _index_raw = "[]"
+try:
+    _ids = json.loads(_index_raw) if isinstance(_index_raw, str) else (_index_raw or [])
+except json.JSONDecodeError:
+    print(f"{CDC_INDEX_VARIABLE} 파싱 실패 - CDC DAG를 만들지 않습니다: {_index_raw!r}")
+    _ids = []
 
 # LOG_FILE도 포함한다. 예전에는 TABLE_CDC만 DAG를 만들어서 로그 파이프라인은
 # Airflow에서 제어할 수단이 아예 없었고, 그래서 화면에만 "배포" 버튼이 따로 남아
 # 있었다 - 실행 계통을 Airflow로 일원화하려면 여기부터 열어야 한다.
-for _pipeline in _pipelines:
-    if _pipeline.get("pipelineType") not in ("TABLE_CDC", "LOG_FILE"):
+for _pipeline_id in _ids:
+    try:
+        _spec_raw = Variable.get(f"{CDC_SPEC_PREFIX}{_pipeline_id}", default_var=None)
+    except Exception as exc:
+        # 태스크 실행 컨텍스트에서 이 파일이 다시 파싱될 때, Airflow 3은 그 태스크가
+        # 쓰지 않는 Variable 접근을 Execution API에서 막는다
+        # ("Access denied for variable ... refusing to fall back"). 남의 spec을 못 읽는
+        # 것뿐이니 그 파이프라인만 건너뛰고, 자기 DAG는 계속 만든다.
+        print(f"CDC spec 접근 불가, 건너뜀: pipeline={_pipeline_id} ({exc})")
         continue
-    globals()[f"kafka_pipeline_{_pipeline['id']}_control_dag"] = build_dag(
-        _pipeline["id"],
-        _pipeline["name"],
-        _pipeline.get("pipelineType"),
-        _pipeline.get("targetSchema"),
-        _pipeline.get("targetTable"),
+    if not _spec_raw:
+        # 인덱스에는 있는데 spec이 아직 안 실렸다. 다음 주기에 붙는다.
+        print(f"CDC spec 없음, 이번 주기엔 건너뜀: pipeline={_pipeline_id}")
+        continue
+    _spec = json.loads(_spec_raw) if isinstance(_spec_raw, str) else _spec_raw
+    if _spec.get("pipeline_type") not in ("TABLE_CDC", "LOG_FILE"):
+        continue
+    globals()[f"kafka_pipeline_{_spec['id']}_control_dag"] = build_dag(
+        _spec["id"],
+        _spec["name"],
+        _spec.get("pipeline_type"),
+        _spec.get("target_schema"),
+        _spec.get("target_table"),
     )

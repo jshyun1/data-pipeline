@@ -85,6 +85,13 @@ public class AirflowDagCatalogController {
      */
     @PutMapping("/{dagId}/schedule")
     public ApiResponse<Void> saveSchedule(@PathVariable String dagId, @RequestBody ScheduleRequest request) {
+        // 워크플로우 DAG의 스케줄은 캔버스(etl_workflow.schedule_cron)가 단일 소스다.
+        // 여기서 Variable을 덮어쓰면 게시할 때마다 되돌아가 두 값이 싸운다.
+        if (dagId.startsWith("etl_wf_")) {
+            throw new com.company.pipeline.common.BusinessException(
+                    com.company.pipeline.common.ErrorCode.VALIDATION_ERROR,
+                    "워크플로우 DAG의 스케줄은 워크플로우 > 설계 화면에서 변경해주세요.");
+        }
         if (!dagId.matches("(?i)nifi_pipeline_[a-z0-9]{8}_control")) {
             throw new com.company.pipeline.common.BusinessException(
                     com.company.pipeline.common.ErrorCode.VALIDATION_ERROR,
@@ -131,7 +138,9 @@ public class AirflowDagCatalogController {
             int consecutiveFailureThreshold,
             int staleDaysThreshold,
             BigDecimal durationMultiplier,
-            Integer slaMinutes) {
+            Integer slaMinutes,
+            /** 카탈로그에 처음 잡힌 시각. 실행 현황이 "오늘 새로 생긴 DAG"를 세는 근거다. */
+            java.time.LocalDateTime createdAt) {
 
         static Response from(AirflowDagCatalog catalog) {
             return new Response(
@@ -144,7 +153,8 @@ public class AirflowDagCatalogController {
                     catalog.getConsecutiveFailureThreshold(),
                     catalog.getStaleDaysThreshold(),
                     catalog.getDurationMultiplier(),
-                    catalog.getSlaMinutes());
+                    catalog.getSlaMinutes(),
+                    catalog.getCreatedAt());
         }
     }
 

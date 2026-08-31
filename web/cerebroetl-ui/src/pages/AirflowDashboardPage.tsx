@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Descriptions, Dropdown, Empty, Input, InputNumber, message, Modal, Radio, Select, Spin, Switch, Tag } from "antd";
+import { Button, DatePicker, Descriptions, Dropdown, Empty, Input, message, Modal, Radio, Select, Space, Spin, Table, Tag } from "antd";
+import type { Dayjs } from "dayjs";
 import {
-  ApartmentOutlined,
   CheckCircleFilled,
+  PlusCircleFilled,
   ClockCircleFilled,
   CloseCircleFilled,
   DeploymentUnitOutlined,
@@ -29,9 +30,7 @@ import {
   listAirflowDags,
   listAirflowTaskInstances,
   listAllAirflowDagRuns,
-  retryAirflowTaskFrom,
-  saveAirflowDagSchedule,
-  saveAirflowMonitoringSettings,
+  retryAirflowTasks,
   syncAirflowDagCatalog,
   triggerAirflowDag,
   type AirflowDag,
@@ -39,8 +38,22 @@ import {
   type AirflowDagRun,
 } from "../api/platform";
 import { getProcessHealth, type ProcessGroup, type ProcessStatus } from "../api/infra";
+import { getWorkflow, listWorkflows, type WorkflowSummary } from "../api/workflows";
+import { getAlertRulesWatching } from "../api/config";
+import { listConnections } from "../api/connections";
+import { getRealtimePipelineMetrics, type RealtimePipelineMetricResponse } from "../api/dashboard";
+import { listPipelineRuntimeStatuses, listPipelines } from "../api/pipelines";
+import type { PipelineResponse, PipelineRuntimeStatusResponse } from "../types/pipeline";
+import {
+  cdcPipelineColumns,
+  renderRuntimeStatus,
+  sourceLabel,
+  targetLabel,
+} from "../utils/cdcPresentation";
+import { getNifiProcessGroupTree, type NifiProcessGroupTreeNode } from "../api/platform";
 import { getEtlJob, listEtlJobs } from "../api/etlJobs";
 import { categorizeDag, type DagCategory } from "../utils/dagHistory";
+import { scheduleDescription } from "../utils/schedulePreset";
 
 type BusinessCategory = Exclude<DagCategory, "기타">;
 
@@ -61,6 +74,8 @@ interface DashboardDag extends AirflowDag {
   sla_minutes?: number | null;
   etl_job_id?: number;
   nifi_process_group_id?: string;
+  /** 카탈로그에 처음 잡힌 시각. "오늘 신규" 판정에 쓴다. */
+  created_at?: string;
 }
 
 interface DashboardData {
@@ -78,10 +93,7 @@ const REFRESH_OPTIONS = [
   { label: "1분", value: 60 },
 ];
 
-type DetailTab = "tasks" | "history";
-type ScheduleMode = "manual" | "recurring";
-type SchedulePreset = "hourly" | "daily" | "weekly";
-type ExecutionAction = "deploy" | "start" | "stop";
+type ExecutionAction = "deploy" | "start" | "stop" | "monitor";
 
 function runAt(run?: AirflowDagRun) {
   return run?.start_date ?? run?.execution_date;
@@ -199,6 +211,7 @@ async function loadDashboard(): Promise<DashboardData> {
         monitoring_enabled: entry.monitoringEnabled,
         consecutive_failure_threshold: entry.consecutiveFailureThreshold,
         stale_days_threshold: entry.staleDaysThreshold,
+        created_at: entry.createdAt,
         duration_multiplier: entry.durationMultiplier,
         sla_minutes: entry.slaMinutes,
       };
@@ -220,79 +233,136 @@ function DagIcon() {
   return <DeploymentUnitOutlined className="airflow-dashboard-dag-icon" />;
 }
 
+/** 상단 카드에서 고른 지표. 가운데 목록이 이 조건으로 좁혀진다. */
+type StatusMetric = "all" | "running" | "success" | "failed" | "waiting" | "new";
+
+/**
+ * 가운데 목록이 무엇을 보여줄지. 트리에서 고르거나 상단 지표를 누르면 바뀐다.
+ *
+ * CDC는 파이프라인이, ETL은 워크플로우가 실행 단위라 목록의 성격이 다르다.
+ * 하나의 선택값으로 묶어 두면 "지금 무엇을 보고 있는지"가 한 군데에만 있게 된다.
+ */
+const STATUS_METRIC_LABEL: Record<StatusMetric, string> = {
+  all: "전체 작업",
+  running: "실행 중",
+  success: "성공",
+  failed: "실패",
+  waiting: "대기",
+  new: "신규",
+};
+
+type ListScope =
+  | { kind: "cdc"; scope: "all" }
+  | { kind: "cdc"; scope: "connection"; connectionId: number }
+  | { kind: "cdc"; scope: "schema"; connectionId: number; schema: string }
+  | { kind: "cdc"; scope: "logfile" }
+  | { kind: "cdc"; scope: "pipeline"; pipelineId: number }
+  | { kind: "etl"; groupPgId: string; groupName: string }
+  | { kind: "dag"; dagId: string }
+  | { kind: "metric"; category: BusinessCategory; metric: StatusMetric };
+
+/**
+ * 업무별 상태 카드.
+ *
+ * <p>모든 숫자가 <b>당일 · 작업(DAG) 기준</b>이다. «전체 작업»이 DAG 수인데 나머지만 실행
+ * 건수면 단위가 섞여 읽히지 않는다. 그래서 각 DAG의 <b>오늘 마지막 실행</b>이 어떤 상태인지로
+ * 한 번씩만 센다 - 한 작업이 오늘 세 번 실패해도 «실패 1»이다.
+ *
+ * <p>«실행 중»만 날짜와 무관하게 지금 돌고 있는 작업을 센다(어제 시작해 아직 도는 것도 포함).
+ *
+ * <p>숫자를 누르면 가운데 목록이 그 대상으로 좁혀진다.
+ */
 function StatusCard({
   category,
   dags,
   runsByDag,
-  alerts,
-  onActionClick,
+  activeMetric,
+  onMetricClick,
 }: {
   category: BusinessCategory;
   dags: DashboardDag[];
   runsByDag: Map<string, AirflowDagRun[]>;
-  alerts: AirflowDagAlert[];
-  onActionClick: () => void;
+  activeMetric?: StatusMetric;
+  onMetricClick: (metric: StatusMetric) => void;
 }) {
-  const dagIds = new Set(dags.map((dag) => dag.dag_id));
   const today = dayjs().startOf("day");
-  const runs = [...runsByDag.values()].flat().filter((run) => run.dag_id && dagIds.has(run.dag_id));
-  const active = new Set(runs.filter((run) => run.state === "running").map((run) => run.dag_id)).size;
-  const waiting = new Set(runs.filter((run) => run.state === "queued").map((run) => run.dag_id)).size;
-  const todayRuns = runs.filter((run) => {
-    const startedAt = runAt(run);
-    return Boolean(startedAt && dayjs(startedAt).isAfter(today));
-  });
-  const success = todayRuns.filter((run) => run.state === "success").length;
-  const failed = todayRuns.filter((run) => run.state === "failed").length;
-  const categoryAlerts = alerts.filter((alert) => dagIds.has(alert.dagId));
-  const actionCount = categoryAlerts.length;
-  const severityCounts = Object.fromEntries(["DANGER", "WARNING", "INFO"].map((severity) => [
-    severity,
-    categoryAlerts.filter((alert) => alert.severity === severity).length,
-  ]));
+  let active = 0;
+  let waiting = 0;
+  let success = 0;
+  let failed = 0;
+  let fresh = 0;
+  for (const dag of dags) {
+    const runs = runsByDag.get(dag.dag_id) ?? [];
+    if (runs.some((run) => run.state === "running")) {
+      active += 1;
+    }
+    // runsByDag는 최신순이므로 첫 항목이 오늘의 마지막 실행이다.
+    const latestToday = runs.find((run) => {
+      const startedAt = runAt(run);
+      return Boolean(startedAt && dayjs(startedAt).isAfter(today));
+    });
+    if (latestToday?.state === "success") success += 1;
+    else if (latestToday?.state === "failed") failed += 1;
+    else if (latestToday?.state === "queued" || latestToday?.state === "scheduled") waiting += 1;
+    if (dag.created_at && dayjs(dag.created_at).isAfter(today)) {
+      fresh += 1;
+    }
+  }
+
+  const metric = (key: StatusMetric, icon: React.ReactNode | null, label: string, value: number, modifier = "") => (
+    <button
+      type="button"
+      className={`airflow-business-metric${modifier}${activeMetric === key ? " active" : ""}`}
+      onClick={() => onMetricClick(key)}
+    >
+      {icon}
+      <span>{label}<strong>{value}</strong></span>
+    </button>
+  );
 
   return (
     <section className="airflow-business-card">
       <strong className="airflow-business-name">{category}</strong>
-      <div className="airflow-business-metric">
-        <ApartmentOutlined />
-        <span>전체 작업<strong>{dags.length}</strong></span>
-      </div>
-      <div className="airflow-business-metric">
-        <RightOutlined />
-        <span>실행 중<strong>{active}</strong></span>
-      </div>
-      {category === "ETL" && <div className="airflow-business-metric airflow-business-metric--success">
-        <CheckCircleFilled />
-        <span>오늘 성공<strong>{success}</strong></span>
-      </div>}
-      <div className="airflow-business-metric airflow-business-metric--danger">
-        <CloseCircleFilled />
-        <span>실패<strong>{failed}</strong></span>
-      </div>
-      {category === "CDC" && <div className="airflow-business-metric airflow-business-metric--waiting">
-        <ClockCircleFilled />
-        <span>대기<strong>{waiting}</strong></span>
-      </div>}
-      <Button danger={actionCount > 0} disabled={actionCount === 0} onClick={onActionClick}>
-        조치 필요 {actionCount}건{actionCount > 0 ? ` · 위험 ${severityCounts.DANGER} · 경고 ${severityCounts.WARNING} · 정보 ${severityCounts.INFO}` : ""}
-      </Button>
+      {metric("all", null, "전체 작업", dags.length)}
+      {metric("running", <RightOutlined />, "실행 중", active)}
+      {category === "ETL" && metric("success", <CheckCircleFilled />, "성공", success, " airflow-business-metric--success")}
+      {metric("failed", <CloseCircleFilled />, "실패", failed, " airflow-business-metric--danger")}
+      {category === "CDC" && metric("waiting", <ClockCircleFilled />, "대기", waiting, " airflow-business-metric--waiting")}
+      {metric("new", <PlusCircleFilled />, "신규", fresh, " airflow-business-metric--new")}
     </section>
   );
 }
 
 function BusinessTree({
   dags,
+  groupTree,
   selectedDagId,
   search,
   alertsByDag,
   onSearch,
+  workflows,
+  pipelines,
+  connectionNames,
+  selectedPipelineId,
+  scope,
+  onScope,
   onSelect,
   onDetail,
   onExecution,
   onDelete,
 }: {
   dags: DashboardDag[];
+  /** NiFi 프로세스 그룹 계층. ETL은 이 구조 그대로 보여준다(ETL 관리 화면과 동일). */
+  groupTree?: NifiProcessGroupTreeNode | null;
+  /** 워크플로우 목록. DAG를 어느 그룹에 붙일지는 여기의 nifiGroupPgId가 정한다. */
+  workflows: WorkflowSummary[];
+  /** CDC 가지는 CDC 관리 화면과 같은 계층(연결 → 스키마 → 파이프라인)으로 그린다. */
+  pipelines: PipelineResponse[];
+  connectionNames: Map<number, string>;
+  /** 가운데 목록에서 고른 파이프라인. 트리 범위를 바꾸지 않고 행만 고를 수 있어 따로 받는다. */
+  selectedPipelineId?: number;
+  scope?: ListScope;
+  onScope: (scope: ListScope) => void;
   selectedDagId?: string;
   search: string;
   alertsByDag: Map<string, AirflowDagAlert[]>;
@@ -303,6 +373,93 @@ function BusinessTree({
   onDelete: (dag: DashboardDag) => void;
 }) {
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
+  const seeded = useRef(false);
+
+  /**
+   * 처음 열었을 때의 트리 모양.
+   *
+   * <p>기본값이 «전부 펼침»이라 들어오자마자 파이프라인·워크플로우가 다 쏟아졌다.
+   * CDC는 «전체 파이프라인», ETL은 «ETL Root»까지만 보이게 접어두고, 필요한 가지를
+   * 사용자가 펼치게 한다.
+   */
+  useEffect(() => {
+    if (seeded.current || !groupTree) {
+      return;
+    }
+    seeded.current = true;
+    const initial = new Set<string>(["cdc:all", "cdc:logfile"]);
+    pipelines.forEach((pipeline) => {
+      if (pipeline.sourceConnectionId != null) {
+        initial.add(`cdc:connection:${pipeline.sourceConnectionId}`);
+        initial.add(`cdc:schema:${pipeline.sourceConnectionId}:${pipeline.sourceSchema ?? "스키마 없음"}`);
+      }
+    });
+    const collapseChildren = (node: NifiProcessGroupTreeNode) => {
+      (node.children ?? []).forEach((child) => {
+        initial.add(`group:${child.id}`);
+        collapseChildren(child);
+      });
+    };
+    initial.add(`group:${groupTree.id}`);
+    collapseChildren(groupTree);
+    setCollapsedNodes(initial);
+  }, [groupTree, pipelines]);
+  /**
+   * 가운데 목록에서 고른 항목이 트리에서 보이도록 조상 가지를 편다.
+   *
+   * 트리를 «전체 파이프라인 / ETL Root»까지만 펼쳐 두다 보니, 목록에서 워크플로우를 눌러도
+   * 왼쪽에서는 어디에 있는 것인지 보이지 않았다. 고른 항목까지의 길만 열어준다.
+   */
+  const revealPipelineId = selectedPipelineId
+    ?? (scope?.kind === "cdc" && scope.scope === "pipeline" ? scope.pipelineId : undefined);
+  useEffect(() => {
+    const open = new Set<string>();
+    if (selectedDagId) {
+      const groupPgId = groupOfWorkflowDag.get(selectedDagId)
+        // 아직 워크플로우로 안 옮긴 옛 DAG는 잡 카탈로그의 프로세스 그룹으로 찾는다.
+        ?? dags.find((dag) => dag.dag_id === selectedDagId)?.nifi_process_group_id;
+      if (groupPgId && groupTree) {
+        const path: string[] = [];
+        const find = (node: NifiProcessGroupTreeNode, trail: string[]): boolean => {
+          const next = [...trail, node.id];
+          if (node.id === groupPgId) {
+            path.push(...next);
+            return true;
+          }
+          return (node.children ?? []).some((child) => find(child, next));
+        };
+        if (find(groupTree, [])) {
+          open.add("category:ETL");
+          path.forEach((id) => open.add(`group:${id}`));
+        }
+      }
+    }
+    if (revealPipelineId != null) {
+      const pipeline = pipelines.find((row) => row.id === revealPipelineId);
+      if (pipeline) {
+        open.add("category:CDC");
+        open.add("cdc:all");
+        if (pipeline.pipelineType === "LOG_FILE" || pipeline.sourceConnectionId == null) {
+          open.add("cdc:logfile");
+        } else {
+          open.add(`cdc:connection:${pipeline.sourceConnectionId}`);
+          open.add(`cdc:schema:${pipeline.sourceConnectionId}:${pipeline.sourceSchema ?? "스키마 없음"}`);
+        }
+      }
+    }
+    if (open.size === 0) {
+      return;
+    }
+    setCollapsedNodes((current) => {
+      if (![...open].some((key) => current.has(key))) {
+        return current;      // 이미 다 열려 있으면 상태를 건드리지 않는다
+      }
+      const next = new Set(current);
+      open.forEach((key) => next.delete(key));
+      return next;
+    });
+  }, [selectedDagId, revealPipelineId, groupTree, pipelines, dags]);
+
   const toggleNode = (node: string) => {
     setCollapsedNodes((current) => {
       const next = new Set(current);
@@ -312,6 +469,248 @@ function BusinessTree({
     });
   };
 
+  /** DAG 하나를 트리 항목으로. 우클릭 메뉴(상세/실행설정/삭제)는 기존과 동일하다. */
+  const renderDagButton = (dag: DashboardDag, depth = 0) => (
+    <Dropdown
+      key={dag.dag_id}
+      trigger={["contextMenu"]}
+      menu={{
+        items: [
+          { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
+          { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
+          { key: "delete", icon: <DeleteOutlined />, label: "삭제", danger: true },
+        ],
+        onClick: ({ key }) => {
+          if (key === "detail") onDetail(dag);
+          else if (key === "execution") onExecution(dag);
+          else onDelete(dag);
+        },
+      }}
+    >
+      <button
+        type="button"
+        className={selectedDagId === dag.dag_id ? "airflow-tree-dag active" : "airflow-tree-dag"}
+        style={{ paddingLeft: 12 + depth * 14 }}
+        onClick={() => { onSelect(dag.dag_id); onScope({ kind: "dag", dagId: dag.dag_id }); }}
+        onContextMenu={() => onSelect(dag.dag_id)}
+      >
+        <span>{displayName(dag)}</span>
+        {alertsByDag.has(dag.dag_id) && <Tag color="error">조치</Tag>}
+      </button>
+    </Dropdown>
+  );
+
+  /**
+   * NiFi 그룹 계층을 그대로 그린다(ETL 관리 화면과 같은 모양).
+   *
+   * 그룹에 대응하는 DAG가 있으면 그 자리에서 바로 선택할 수 있고, DAG가 없는 그룹
+   * (예: 체인을 담고 있는 DW/DZ, 템플릿 보관용 그룹)은 위치만 보여준다.
+   */
+  const groupOfWorkflowDag = new Map<string, string>();
+  workflows.forEach((workflow) => {
+    if (workflow.nifiGroupPgId) {
+      groupOfWorkflowDag.set(workflow.dagId, workflow.nifiGroupPgId);
+    }
+  });
+  /** 이 그룹과 하위 전체에 걸린 워크플로우 수. 트리 오른쪽 숫자로 쓴다. */
+  const countWorkflowsUnder = (node: NifiProcessGroupTreeNode): number => {
+    const own = workflows.filter((w) => w.nifiGroupPgId === node.id).length;
+    return own + (node.children ?? []).reduce((sum, child) => sum + countWorkflowsUnder(child), 0);
+  };
+
+  /** 이 그룹이나 하위에 돌릴 것(워크플로우 또는 아직 안 옮긴 옛 DAG)이 있는지. */
+  const hasRunnable = (node: NifiProcessGroupTreeNode): boolean => {
+    const own = dags.some((d) =>
+      groupOfWorkflowDag.get(d.dag_id) === node.id
+      || d.nifi_process_group_id === node.id
+      || d.dag_id === `nifi_pipeline_${node.id.slice(0, 8)}_control`);
+    return own || (node.children ?? []).some(hasRunnable);
+  };
+
+  /**
+   * CDC 가지. CDC 관리 화면과 같은 계층으로 그린다 - 연결 → 스키마 → 파이프라인.
+   * 예전에는 DAG(kafka_pipeline_N_control)를 평평하게 늘어놓아서 어느 원천인지 알 수 없었다.
+   */
+  const renderCdcTree = () => {
+    const byConnection = new Map<number, Map<string, PipelineResponse[]>>();
+    const logFiles: PipelineResponse[] = [];
+    const needle = search.trim().toLowerCase();
+    for (const pipeline of pipelines) {
+      const matches = !needle
+        || pipeline.name.toLowerCase().includes(needle)
+        || (pipeline.sourceTable ?? "").toLowerCase().includes(needle)
+        || (pipeline.targetTable ?? "").toLowerCase().includes(needle);
+      if (!matches) {
+        continue;
+      }
+      if (pipeline.pipelineType === "LOG_FILE" || pipeline.sourceConnectionId == null) {
+        logFiles.push(pipeline);
+        continue;
+      }
+      const schemas = byConnection.get(pipeline.sourceConnectionId) ?? new Map<string, PipelineResponse[]>();
+      const schema = pipeline.sourceSchema ?? "스키마 없음";
+      schemas.set(schema, [...(schemas.get(schema) ?? []), pipeline]);
+      byConnection.set(pipeline.sourceConnectionId, schemas);
+    }
+
+    const folder = (
+      key: string, label: string, count: number, depth: number,
+      selected: boolean, onClick: () => void, children: React.ReactNode,
+    ) => {
+      const collapsed = collapsedNodes.has(key);
+      return (
+        <div key={key}>
+          <button type="button"
+                  className={selected ? "airflow-tree-label active" : "airflow-tree-label"}
+                  style={{ paddingLeft: 8 + depth * 14 }}
+                  aria-expanded={!collapsed}
+                  onClick={() => { toggleNode(key); onClick(); }}>
+            {collapsed ? <RightOutlined /> : <DownOutlined />}
+            {collapsed ? <FolderOutlined /> : <FolderOpenOutlined />}
+            {label}
+            <span style={{ color: "#888" }}> ({count})</span>
+          </button>
+          {!collapsed && children}
+        </div>
+      );
+    };
+
+    const total = pipelines.length;
+    return folder(
+      "cdc:all", "전체 파이프라인", total, 0,
+      scope?.kind === "cdc" && scope.scope === "all",
+      () => onScope({ kind: "cdc", scope: "all" }),
+      <>
+        {[...byConnection.entries()].map(([connectionId, schemas]) => {
+          const count = [...schemas.values()].reduce((sum, rows) => sum + rows.length, 0);
+          return folder(
+            `cdc:connection:${connectionId}`, connectionNames.get(connectionId) ?? `연결 ${connectionId}`,
+            count, 1,
+            scope?.kind === "cdc" && scope.scope === "connection" && scope.connectionId === connectionId,
+            () => onScope({ kind: "cdc", scope: "connection", connectionId }),
+            <>
+              {[...schemas.entries()].map(([schema, rows]) => folder(
+                `cdc:schema:${connectionId}:${schema}`, schema, rows.length, 2,
+                scope?.kind === "cdc" && scope.scope === "schema"
+                  && scope.connectionId === connectionId && scope.schema === schema,
+                () => onScope({ kind: "cdc", scope: "schema", connectionId, schema }),
+                <>
+                  {rows.map((pipeline) => (
+                    <button key={pipeline.id} type="button"
+                            className={revealPipelineId === pipeline.id
+                              ? "airflow-tree-dag active" : "airflow-tree-dag"}
+                            style={{ paddingLeft: 12 + 3 * 14 }}
+                            onClick={() => onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id })}>
+                      <span>{pipeline.name}</span>
+                    </button>
+                  ))}
+                </>,
+              ))}
+            </>,
+          );
+        })}
+        {logFiles.length > 0 && folder(
+          "cdc:logfile", "로그파일", logFiles.length, 1,
+          scope?.kind === "cdc" && scope.scope === "logfile",
+          () => onScope({ kind: "cdc", scope: "logfile" }),
+          <>
+            {logFiles.map((pipeline) => (
+              <button key={pipeline.id} type="button"
+                      className={revealPipelineId === pipeline.id
+                        ? "airflow-tree-dag active" : "airflow-tree-dag"}
+                      style={{ paddingLeft: 12 + 2 * 14 }}
+                      onClick={() => onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id })}>
+                <span>{pipeline.name}</span>
+              </button>
+            ))}
+          </>,
+        )}
+      </>,
+    );
+  };
+
+  /**
+   * 트리 어딘가에 자리를 갖는 DAG. 접기와 무관하게 원본 트리 전체를 훑는다.
+   *
+   * 그려진 노드에서만 모으면, 접힌 가지에 속한 워크플로우가 «아직 배치 안 됨»으로 남아
+   * 트리 맨 아래 고아 목록에 뜬다 - 그룹을 접었는데 DAG만 그룹 밖에 나와 보이는 증상.
+   */
+  const placedDagIds = new Set<string>();
+  const collectPlaced = (node: NifiProcessGroupTreeNode, etlDags: DashboardDag[]) => {
+    const own = etlDags.filter((d) => groupOfWorkflowDag.get(d.dag_id) === node.id);
+    own.forEach((d) => placedDagIds.add(d.dag_id));
+    if (own.length === 0) {
+      const legacy = etlDags.find((d) =>
+        d.nifi_process_group_id === node.id
+        || d.dag_id === `nifi_pipeline_${node.id.slice(0, 8)}_control`);
+      if (legacy) {
+        placedDagIds.add(legacy.dag_id);
+      }
+    }
+    (node.children ?? []).forEach((child) => collectPlaced(child, etlDags));
+  };
+
+  const renderGroupTree = (node: NifiProcessGroupTreeNode, etlDags: DashboardDag[], depth: number): React.ReactNode => {
+    // 실행 단위는 워크플로우(DAG)다. job 그룹은 워크플로우 안의 작업이라 트리에 두지 않는다
+    // - 눌러도 아무 일이 없는 항목이 절반을 차지했다. job은 DAG 내 하위 작업 탭에서 본다.
+    if (node.groupType === "JOB") {
+      return null;
+    }
+    // 이 그룹에 속한 워크플로우 DAG들. 워크플로우는 nifi_group_pg_id로 그룹을 안다.
+    const workflowDags = etlDags.filter((d) => groupOfWorkflowDag.get(d.dag_id) === node.id);
+    // 아직 워크플로우로 옮기지 않은 그룹은 옛 팩토리 DAG가 그 자리를 지킨다(점진 컷오버).
+    // dag_id 자체가 프로세스 그룹 id의 앞 8자를 담고 있다(nifi_pipeline_{8자}_control).
+    const dag = workflowDags.length ? undefined : etlDags.find((d) =>
+      d.nifi_process_group_id === node.id
+      || d.dag_id === `nifi_pipeline_${node.id.slice(0, 8)}_control`);
+    const children = node.children ?? [];
+    const nodeKey = `group:${node.id}`;
+    const collapsed = collapsedNodes.has(nodeKey);
+    const needle = search.trim().toLowerCase();
+    // 검색 중이면 자신 또는 자손이 걸리는 가지만 남긴다.
+    const selfMatches = !needle || node.name.toLowerCase().includes(needle);
+    const renderedChildren = collapsed ? [] : children
+      .map((child) => renderGroupTree(child, etlDags, depth + 1))
+      .filter(Boolean);
+    if (needle && !selfMatches && renderedChildren.length === 0 && workflowDags.length === 0) {
+      return null;
+    }
+    // 실행할 것이 하나도 없는 그룹(워크플로우도, 아직 안 옮긴 옛 DAG도 없음)은 감춘다.
+    // 실행 현황은 "무엇을 돌릴 수 있나"를 보는 화면이라 빈 폴더는 잡음이다.
+    // 접힘 여부와 무관해야 하므로 renderedChildren이 아니라 원본 트리를 본다.
+    if (!hasRunnable(node)) {
+      return null;
+    }
+    const workflowCount = countWorkflowsUnder(node);
+
+    return (
+      <div key={node.id}>
+        {dag ? renderDagButton(dag, depth) : (
+          <button type="button"
+                  className={scope?.kind === "etl" && scope.groupPgId === node.id
+                    ? "airflow-tree-label active" : "airflow-tree-label"}
+                  style={{ paddingLeft: 8 + depth * 14, opacity: children.length ? 1 : 0.5 }}
+                  aria-expanded={!collapsed}
+                  onClick={() => {
+                    // 그룹을 누르면 접히면서 그 그룹의 워크플로우 목록이 가운데에 뜬다.
+                    if (children.length) {
+                      toggleNode(nodeKey);
+                    }
+                    onScope({ kind: "etl", groupPgId: node.id, groupName: node.name });
+                  }}>
+            {children.length ? (collapsed ? <RightOutlined /> : <DownOutlined />) : null}
+            {children.length ? (collapsed ? <FolderOutlined /> : <FolderOpenOutlined />) : null}
+            {node.name}
+            {/* 숫자는 이 그룹과 하위에 있는 워크플로우 수다(실행할 게 몇 개인지). */}
+            {workflowCount ? <span style={{ color: "#888" }}> ({workflowCount})</span> : null}
+          </button>
+        )}
+        {!collapsed && workflowDags.map((workflowDag) => renderDagButton(workflowDag, depth + 1))}
+        {renderedChildren}
+      </div>
+    );
+  };
+
   return (
     <aside className="airflow-dashboard-panel airflow-business-tree">
       <h3>업무별 트리</h3>
@@ -319,6 +718,10 @@ function BusinessTree({
       <div className="airflow-tree-body">
         {CATEGORY_ORDER.map((category) => {
           const categoryDags = dags.filter((dag) => categoryOf(dag) === category);
+          // 접힘과 무관하게 «트리에 자리가 있는 DAG»를 먼저 모은다(고아 목록 판정용).
+          if (category === "ETL" && groupTree) {
+            collectPlaced(groupTree, categoryDags);
+          }
           const categoryNode = `category:${category}`;
           const categoryCollapsed = collapsedNodes.has(categoryNode);
           return (
@@ -328,7 +731,11 @@ function BusinessTree({
                 {categoryCollapsed ? <FolderOutlined /> : <FolderOpenOutlined />}
                 {category}
               </button>
-              {!categoryCollapsed && categoryDags.map((dag) => (
+              {!categoryCollapsed && category === "CDC" && renderCdcTree()}
+              {!categoryCollapsed && category === "ETL" && groupTree
+                ? renderGroupTree(groupTree, categoryDags, 0)
+                : null}
+              {!categoryCollapsed && category === "ETL" && !groupTree && categoryDags.map((dag) => (
                 <Dropdown
                   key={dag.dag_id}
                   trigger={["contextMenu"]}
@@ -351,12 +758,17 @@ function BusinessTree({
                     onClick={() => onSelect(dag.dag_id)}
                     onContextMenu={() => onSelect(dag.dag_id)}
                   >
-                    <DagIcon />
                     <span>{displayName(dag)}</span>
                     {alertsByDag.has(dag.dag_id) && <Tag color="error">조치</Tag>}
                   </button>
                 </Dropdown>
               ))}
+              {!categoryCollapsed && category === "ETL" && groupTree
+                ? categoryDags
+                    // 트리 어딘가에 이미 붙은 DAG는 여기서 또 보여주지 않는다.
+                    .filter((dag) => !placedDagIds.has(dag.dag_id))
+                    .map((dag) => renderDagButton(dag))
+                : null}
             </section>
           );
         })}
@@ -377,6 +789,7 @@ function TaskRows({
   configured?: boolean;
 }) {
   const [retryingTaskId, setRetryingTaskId] = useState<string>();
+  const [expandedJobKey, setExpandedJobKey] = useState<string>();
   const tasksQuery = useQuery({
     queryKey: ["airflow-dashboard-tasks", dag.dag_id, run?.dag_run_id],
     queryFn: () => listAirflowTaskInstances(dag.dag_id, run!.dag_run_id),
@@ -403,24 +816,49 @@ function TaskRows({
   const outcomeDetail = (taskId: string, state?: string) => {
     const log = logsQuery.data?.[taskId] ?? "";
     if (state === "success") {
-      const counts = [...log.matchAll(/([\d,]+)\s*건/g)];
-      return `${counts.at(-1)?.[1] ?? "0"}건`;
+      // await 로그의 "이번 실행 적재 건수 (총 99,594행)"에서 합계를 읽는다.
+      // 뒤따르는 프로세서별 줄도 같은 모양이라 «마지막»을 집으면 합계가 아닌 한 줄이 잡힌다.
+      const total = log.match(/총\s*([\d,]+)\s*행/);
+      if (total) {
+        return `${total[1]}행`;
+      }
+      if (/적재 건수: 없음/.test(log)) {
+        return "0행";
+      }
+      const counts = [...log.matchAll(/([\d,]+)\s*(?:행|건)/g)];
+      return counts.at(-1) ? `${counts.at(-1)![1]}행` : "-";
     }
     if (state === "upstream_failed") return "선행 작업 실패로 미실행";
     if (state !== "failed") return "-";
     const lines = log.split("\n").map((line) => line.trim()).filter(Boolean);
-    const reason = [...lines].reverse().find((line) => /(?:ORA-\d+|(?:Error|Exception):|실패)/i.test(line)) ?? lines.at(-1);
-    return reason?.replace(/^\[[^\]]+\]\s*/, "").slice(0, 180) || "실패 사유를 확인할 수 없습니다.";
+    // 도움말 URL(https://docs.oracle.com/error-help/db/ora-12170/)만 있는 줄은 사유가 아니다.
+    // 예전 규칙은 대소문자 무시로 "ora-12170"을 원인 코드로 착각해 URL을 사유로 띄웠다.
+    const meaningful = lines.filter((line) => !/^https?:\/\//.test(line));
+    // 1순위: 원인 코드가 붙은 줄(ORA-01234: …). 2순위: Exception/Error 줄. 3순위: 마지막 줄.
+    // Airflow 로그는 JSON 한 줄에 메시지 전체가 담긴다. 줄 단위로 고르면 원인 코드가
+    // 180자 뒤로 밀려 잘린다. 코드가 있으면 그 지점부터 잘라 원인이 앞에 오게 한다.
+    const code = meaningful.map((line) => {
+      const hit = line.match(/\b[A-Z]{2,5}-\d{3,5}:.*/);
+      return hit ? hit[0] : "";
+    }).find(Boolean);
+    const reason = code
+      ?? [...meaningful].reverse().find((line) => /(?:Exception|Error):|실패/.test(line))
+      ?? meaningful.at(-1);
+    return reason?.replace(/^\[[^\]]+\]\s*/, "").replace(/^-\s*Caused by:\s*/, "").slice(0, 180)
+      || "실패 사유를 확인할 수 없습니다.";
   };
-  const retryFrom = async (taskId: string) => {
+  const rerunJob = async (jobKey: string, taskIds: string[], withDownstream: boolean) => {
     if (!run) return;
-    setRetryingTaskId(taskId);
+    setRetryingTaskId(jobKey);
     try {
-      await retryAirflowTaskFrom(dag.dag_id, run.dag_run_id, taskId);
-      message.success(`${taskId}부터 재시작했습니다.`);
+      // job 안의 단계를 한꺼번에 지운다. 한 단계만 지우면 그 job이 반쪽만 다시 돈다.
+      await retryAirflowTasks(dag.dag_id, run.dag_run_id, taskIds, withDownstream);
+      message.success(withDownstream
+        ? `${jobKey}부터 후행까지 재실행했습니다.`
+        : `${jobKey}만 재실행했습니다.`);
       await tasksQuery.refetch();
     } catch (error) {
-      message.error(error instanceof Error ? error.message : "실패 작업 재시작에 실패했습니다.");
+      message.error(error instanceof Error ? error.message : "작업 재실행에 실패했습니다.");
     } finally {
       setRetryingTaskId(undefined);
     }
@@ -475,33 +913,249 @@ function TaskRows({
   if (!run || !tasksQuery.data?.length) {
     return <tr className="airflow-task-loading"><td colSpan={8}>실행 단계가 없습니다.</td></tr>;
   }
-  return tasksQuery.data.map((task, index) => {
-    const detail = outcomeDetail(task.task_id, task.state);
-    const retryCount = Math.max(0, (task.try_number ?? 1) - 1);
-    return <tr key={task.task_id} className="airflow-task-row">
-      <td>
-        <span className="airflow-task-name">{String(index + 1).padStart(2, "0")} {task.task_id}</span>
-      </td>
-      <td><ProfileOutlined /> TASK</td>
-      <td>{task.start_date ? dayjs(task.start_date).format("YYYY-MM-DD HH:mm") : "-"}</td>
-      <td><Tag color={stateColor(task.state)}>{stateLabel(task.state)}</Tag></td>
-      <td>{task.state === "failed" ? <small title={detail}>{detail}</small> : detail}</td>
-      <td>{duration(task.start_date, task.end_date)}</td>
-      <td>-</td>
-      <td>
-        {retryCount}회{" "}
-        <Button
-          type={task.state === "failed" ? "primary" : "default"}
-          size="small"
-          loading={retryingTaskId === task.task_id}
-          disabled={Boolean(retryingTaskId && retryingTaskId !== task.task_id)}
-          onClick={() => void retryFrom(task.task_id)}
-        >
-          이 지점부터 재시작
-        </Button>
-      </td>
-    </tr>;
+  /**
+   * job 1개 = 한 줄. TaskGroup(=job) 안의 단계(open_run/start_pg/await/stop_pg/verify)를
+   * 하나로 접는다. 5개 job이면 21줄이 아니라 5줄이다 - 사용자가 보고 싶은 단위는 job이다.
+   * 줄을 누르면 단계별로 펼쳐지고, 실패 단계의 사유가 거기서 보인다.
+   */
+  const order: string[] = [];
+  const byJob = new Map<string, typeof tasksQuery.data>();
+  for (const task of tasksQuery.data) {
+    // TaskGroup의 태스크 id는 "그룹키.단계"다. 점이 없으면 그룹 밖 태스크(workflow_done).
+    const dot = task.task_id.lastIndexOf(".");
+    const key = dot > 0 ? task.task_id.slice(0, dot) : task.task_id;
+    if (!byJob.has(key)) {
+      byJob.set(key, []);
+      order.push(key);
+    }
+    byJob.get(key)!.push(task);
+  }
+
+  /** 단계 상태를 job 하나의 상태로 접는다. 하나라도 실패면 실패다. */
+  const rollUpState = (steps: NonNullable<typeof tasksQuery.data>) => {
+    const states = steps.map((step) => step.state);
+    if (states.includes("failed")) return "failed";
+    if (states.includes("running")) return "running";
+    if (states.includes("upstream_failed")) return "upstream_failed";
+    if (states.every((state) => state === "success")) return "success";
+    return states.find(Boolean) ?? undefined;
+  };
+
+  return order.flatMap((key, index) => {
+    const steps = byJob.get(key)!;
+    const state = rollUpState(steps);
+    const failed = steps.find((step) => step.state === "failed");
+    const starts = steps.map((step) => step.start_date).filter(Boolean) as string[];
+    const ends = steps.map((step) => step.end_date).filter(Boolean) as string[];
+    const startedAt = starts.sort()[0];
+    const endedAt = ends.sort().at(-1);
+    const retryCount = steps.reduce((sum, step) => sum + Math.max(0, (step.try_number ?? 1) - 1), 0);
+    // 적재 건수는 await 단계 로그에 찍힌다("이번 실행 적재 건수 (총 N건)").
+    // 마지막 단계(verify/stop_pg) 로그를 보면 건수가 없어 늘 0건으로 나온다.
+    const counted = steps.find((step) => step.task_id.endsWith(".await")) ?? steps.at(-1)!;
+    const detail = failed ? outcomeDetail(failed.task_id, "failed")
+      : state === "upstream_failed" ? "선행 작업 실패로 미실행"
+      : state === "success" ? outcomeDetail(counted.task_id, "success")
+      : "-";
+    const expanded = expandedJobKey === key;
+    const busy = Boolean(retryingTaskId && retryingTaskId !== key);
+    // 그룹 밖 태스크(workflow_done)는 job이 아니라 워크플로우 종단 신호다.
+    const isJob = steps.length > 1 || steps[0].task_id.includes(".");
+
+    const jobRow = (
+      <tr key={key} className={`airflow-task-row${expanded ? " selected" : ""}`}>
+        <td>
+          {isJob ? (
+            <button type="button" className="airflow-task-name"
+                    onClick={() => setExpandedJobKey(expanded ? undefined : key)}>
+              {expanded ? <DownOutlined /> : <RightOutlined />} {String(index + 1).padStart(2, "0")} {key}
+            </button>
+          ) : (
+            <span className="airflow-task-name">{String(index + 1).padStart(2, "0")} {key}</span>
+          )}
+        </td>
+        <td><ProfileOutlined /> {isJob ? `JOB (${steps.length}단계)` : "워크플로우 종단"}</td>
+        <td>{startedAt ? dayjs(startedAt).format("YYYY-MM-DD HH:mm") : "-"}</td>
+        <td><Tag color={stateColor(state)}>{stateLabel(state)}</Tag></td>
+        <td>{state === "failed" ? <small title={detail}>{detail}</small> : detail}</td>
+        <td>{duration(startedAt, endedAt)}</td>
+        <td>-</td>
+        <td>
+          {retryCount}회{" "}
+          {/* job 통째로 다시 돌린다. 값 하나만 고쳐 다시 넣을 때와, 중간이 막혀
+              뒤까지 다시 돌려야 할 때가 다르다. */}
+          {isJob && (
+            <Space size={4}>
+              <Button size="small" loading={retryingTaskId === key} disabled={busy}
+                      onClick={() => void rerunJob(key, steps.map((step) => step.task_id), false)}>
+                이 작업만 실행
+              </Button>
+              <Button type={state === "failed" ? "primary" : "default"} size="small"
+                      loading={retryingTaskId === key} disabled={busy}
+                      onClick={() => void rerunJob(key, steps.map((step) => step.task_id), true)}>
+                이 작업부터 실행
+              </Button>
+            </Space>
+          )}
+        </td>
+      </tr>
+    );
+    if (!expanded || !isJob) {
+      return [jobRow];
+    }
+    return [jobRow, ...steps.map((step) => {
+      const stepDetail = outcomeDetail(step.task_id, step.state);
+      return (
+        <tr key={`${key}::${step.task_id}`} className="airflow-task-row airflow-task-step">
+          <td style={{ paddingLeft: 32 }}>{step.task_id.split(".").at(-1)}</td>
+          <td>단계</td>
+          <td>{step.start_date ? dayjs(step.start_date).format("HH:mm:ss") : "-"}</td>
+          <td><Tag color={stateColor(step.state)}>{stateLabel(step.state)}</Tag></td>
+          <td>{step.state === "failed" ? <small title={stepDetail}>{stepDetail}</small> : stepDetail}</td>
+          <td>{duration(step.start_date, step.end_date)}</td>
+          <td>-</td>
+          <td>{Math.max(0, (step.try_number ?? 1) - 1)}회</td>
+        </tr>
+      );
+    })];
   });
+}
+
+function ScopeList({
+  scope,
+  dags,
+  runsByDag,
+  pipelines,
+  runtimeByPipeline,
+  metricByPipeline,
+  workflowsByGroup,
+  selectedDagId,
+  selectedPipelineId,
+  onSelectDag,
+  onSelectPipeline,
+}: {
+  scope: ListScope;
+  dags: DashboardDag[];
+  runsByDag: Map<string, AirflowDagRun[]>;
+  pipelines: PipelineResponse[];
+  runtimeByPipeline: Map<number, PipelineRuntimeStatusResponse>;
+  metricByPipeline: Map<number, RealtimePipelineMetricResponse>;
+  workflowsByGroup: Map<string, Set<string>>;
+  selectedDagId?: string;
+  selectedPipelineId?: number;
+  onSelectDag: (dagId: string) => void;
+  onSelectPipeline: (pipelineId: number) => void;
+}) {
+  if (scope.kind === "cdc") {
+    const rows = pipelines.filter((pipeline) => {
+      if (scope.scope === "all") return true;
+      if (scope.scope === "logfile") return pipeline.pipelineType === "LOG_FILE" || pipeline.sourceConnectionId == null;
+      if (scope.scope === "connection") return pipeline.sourceConnectionId === scope.connectionId;
+      if (scope.scope === "schema") {
+        return pipeline.sourceConnectionId === scope.connectionId
+          && (pipeline.sourceSchema ?? "스키마 없음") === scope.schema;
+      }
+      return pipeline.id === scope.pipelineId;
+    });
+    return (
+      <Table<PipelineResponse>
+        rowKey="id"
+        size="small"
+        dataSource={rows}
+        scroll={{ x: 1000 }}
+        columns={cdcPipelineColumns(runtimeByPipeline, metricByPipeline)}
+        pagination={{ pageSize: 20, hideOnSinglePage: true, showTotal: (total) => `전체 ${total}건` }}
+        rowClassName={(row) => row.id === selectedPipelineId ? "airflow-row-selected" : ""}
+        onRow={(row) => ({ onClick: () => onSelectPipeline(row.id) })}
+        locale={{ emptyText: <Empty description="이 범위에 파이프라인이 없습니다." /> }}
+      />
+    );
+  }
+
+  // ETL 그룹 / 지표 선택 -> DAG(워크플로우) 목록
+  const today = dayjs().startOf("day");
+  const latestRun = (dagId: string) => (runsByDag.get(dagId) ?? [])[0];
+  let rows: DashboardDag[];
+  if (scope.kind === "etl") {
+    const dagIds = workflowsByGroup.get(scope.groupPgId) ?? new Set<string>();
+    rows = dags.filter((dag) => dagIds.has(dag.dag_id));
+  } else if (scope.kind === "metric") {
+    const inCategory = dags.filter((dag) => categoryOf(dag) === scope.category);
+    rows = scope.metric === "all" ? inCategory : inCategory.filter((dag) => {
+      if (scope.metric === "new") {
+        return Boolean(dag.created_at && dayjs(dag.created_at).isAfter(today));
+      }
+      const runs = runsByDag.get(dag.dag_id) ?? [];
+      if (scope.metric === "running") return runs.some((run) => run.state === "running");
+      // 카드와 같은 기준: 오늘 마지막 실행이 무엇이었나(최신순이므로 첫 항목).
+      const latestToday = runs.find((run) => {
+        const startedAt = runAt(run);
+        return Boolean(startedAt && dayjs(startedAt).isAfter(today));
+      });
+      if (scope.metric === "success") return latestToday?.state === "success";
+      if (scope.metric === "failed") return latestToday?.state === "failed";
+      return latestToday?.state === "queued" || latestToday?.state === "scheduled";
+    });
+  } else {
+    // kind === "dag": 그 DAG 한 줄만.
+    rows = dags.filter((dag) => dag.dag_id === scope.dagId);
+  }
+
+  return (
+    <Table<DashboardDag>
+      rowKey="dag_id"
+      size="small"
+      dataSource={rows}
+      scroll={{ x: 820 }}
+      pagination={{ pageSize: 20, hideOnSinglePage: true, showTotal: (total) => `전체 ${total}건` }}
+      rowClassName={(row) => row.dag_id === selectedDagId ? "airflow-row-selected" : ""}
+      onRow={(row) => ({ onClick: () => onSelectDag(row.dag_id) })}
+      locale={{ emptyText: <Empty description="이 범위에 워크플로우가 없습니다." /> }}
+      columns={[
+        {
+          title: "워크플로우",
+          render: (_, row) => (
+            <Space direction="vertical" size={0}>
+              <strong>{displayName(row)}</strong>
+              <span style={{ color: "#888", fontSize: 12 }}>{row.dag_id}</span>
+            </Space>
+          ),
+        },
+        {
+          title: "시작 시간",
+          width: 150,
+          render: (_, row) => {
+            const at = runAt(latestRun(row.dag_id));
+            return at ? dayjs(at).format("YYYY-MM-DD HH:mm") : "-";
+          },
+        },
+        {
+          title: "종료 시간",
+          width: 150,
+          render: (_, row) => {
+            const end = latestRun(row.dag_id)?.end_date;
+            return end ? dayjs(end).format("YYYY-MM-DD HH:mm") : "-";
+          },
+        },
+        {
+          title: "소요 시간",
+          width: 100,
+          render: (_, row) => {
+            const run = latestRun(row.dag_id);
+            return duration(runAt(run), run?.end_date);
+          },
+        },
+        {
+          title: "상태",
+          width: 100,
+          render: (_, row) => {
+            const run = latestRun(row.dag_id);
+            return <Tag color={stateColor(run?.state)}>{stateLabel(run?.state)}</Tag>;
+          },
+        },
+      ]}
+    />
+  );
 }
 
 function JobsTable({
@@ -590,257 +1244,128 @@ function RunHistoryTable({ dag, runs, refreshSeconds }: { dag?: DashboardDag; ru
   );
 }
 
-function AlertHistory({ alerts }: { alerts: AirflowDagAlert[] }) {
-  if (!alerts.length) return null;
+/**
+ * 실행 이력 창. 기본은 오늘 하루만 본다.
+ *
+ * 예전에는 가운데 탭에서 전체 이력을 늘 펼쳐 보여줬는데, 며칠치가 섞여 "오늘 뭐가
+ * 돌았나"를 세기 어려웠다. 기본을 당일로 두고 기간은 직접 넓히게 한다.
+ */
+function RunHistoryModal({
+  open,
+  dag,
+  runs,
+  refreshSeconds,
+  onClose,
+}: {
+  open: boolean;
+  dag?: DashboardDag;
+  runs: AirflowDagRun[];
+  refreshSeconds: number;
+  onClose: () => void;
+}) {
+  const [range, setRange] = useState<[Dayjs, Dayjs]>([dayjs().startOf("day"), dayjs().endOf("day")]);
+  useEffect(() => {
+    if (open) {
+      setRange([dayjs().startOf("day"), dayjs().endOf("day")]);
+    }
+  }, [open, dag?.dag_id]);
+
+  const visible = runs.filter((run) => {
+    const at = runAt(run);
+    if (!at) return false;
+    const moment = dayjs(at);
+    return !moment.isBefore(range[0]) && !moment.isAfter(range[1]);
+  });
+
   return (
-    <section className="airflow-alert-history">
-      <strong>감지 이력</strong>
-      <table className="airflow-job-table">
-        <thead><tr><th>감지 시각</th><th>규칙</th><th>심각도</th><th>상태</th><th>감지 근거</th><th>해소 시각</th></tr></thead>
-        <tbody>{alerts.map((alert) => (
-          <tr key={alert.id}>
-            <td>{dayjs(alert.detectedAt).format("YYYY-MM-DD HH:mm:ss")}</td>
-            <td>{ALERT_RULE_LABEL[alert.ruleType]}</td>
-            <td><Tag color={alertColor(alert.severity)}>{ALERT_SEVERITY_LABEL[alert.severity]}</Tag></td>
-            <td>{alert.status === "OPEN" ? "조치 필요" : alert.status === "ACKNOWLEDGED" ? "확인" : "해소"}</td>
-            <td>{alert.message}</td>
-            <td>{alert.resolvedAt ? dayjs(alert.resolvedAt).format("YYYY-MM-DD HH:mm:ss") : "-"}</td>
-          </tr>
-        ))}</tbody>
-      </table>
+    <Modal title={`${dag ? displayName(dag) : "작업"} 실행 이력`} open={open} onCancel={onClose}
+           footer={null} width={1080} destroyOnHidden>
+      <Space style={{ marginBottom: 12 }} wrap>
+        <span>기간</span>
+        <DatePicker.RangePicker
+          value={range}
+          allowClear={false}
+          onChange={(value) => {
+            if (value?.[0] && value?.[1]) {
+              setRange([value[0].startOf("day"), value[1].endOf("day")]);
+            }
+          }}
+        />
+        <Button size="small" onClick={() => setRange([dayjs().startOf("day"), dayjs().endOf("day")])}>오늘</Button>
+        <Button size="small" onClick={() => setRange([dayjs().subtract(6, "day").startOf("day"), dayjs().endOf("day")])}>최근 7일</Button>
+        <Button size="small" onClick={() => setRange([dayjs().subtract(29, "day").startOf("day"), dayjs().endOf("day")])}>최근 30일</Button>
+        <span style={{ color: "#888" }}>{visible.length}건</span>
+      </Space>
+      <RunHistoryTable dag={dag} runs={visible} refreshSeconds={refreshSeconds} />
+    </Modal>
+  );
+}
+
+/** 이 대상을 감시하는 알림 규칙 목록. 예전의 «이상 감지 설정»을 대신한다. */
+function WatchingRules({ target, ids }: { target: "CDC" | "ETL"; ids: Array<number | string> }) {
+  const query = useQuery({
+    queryKey: ["alert-rules-watching", target, ids.join(",")],
+    queryFn: () => getAlertRulesWatching(target, ids),
+    enabled: ids.length > 0,
+  });
+  const rules = query.data ?? [];
+  return (
+    <section>
+      <strong>알림 규칙 {rules.length}건</strong>
+      {query.isLoading ? <Spin size="small" /> : rules.length === 0 ? (
+        <p>이 작업을 감시하는 규칙이 없습니다.</p>
+      ) : (
+        <div className="airflow-alert-list">
+          {rules.map((rule) => (
+            <article key={rule.id}>
+              <div>
+                <Tag color={rule.enabled ? "blue" : "default"}>{rule.type_label}</Tag>
+                <b>{rule.name}</b>
+              </div>
+              <p>
+                {rule.enabled ? "사용" : "미사용"} · 심각도 {rule.severity}
+                {rule.schedule_enabled && rule.schedule_time ? ` · 매일 ${rule.schedule_time.slice(0, 5)}` : ""}
+              </p>
+              {rule.last_eval_error && <small style={{ color: "#dc2626" }}>{rule.last_eval_error}</small>}
+            </article>
+          ))}
+        </div>
+      )}
+      <Link to="/settings?tab=rules">알림 규칙 관리 바로가기</Link>
     </section>
   );
 }
 
-function presetCron(preset: SchedulePreset, hour: number, minute: number, weekday: number) {
-  if (preset === "hourly") return `${minute} * * * *`;
-  if (preset === "weekly") return `${minute} ${hour} * * ${weekday}`;
-  return `${minute} ${hour} * * *`;
-}
-
-function presetDescription(preset: SchedulePreset, hour: number, minute: number, weekday: number) {
-  const time = `${String(hour).padStart(2, "0")}시 ${String(minute).padStart(2, "0")}분`;
-  if (preset === "hourly") return `매시간 ${String(minute).padStart(2, "0")}분`;
-  if (preset === "weekly") return `매주 ${["일", "월", "화", "수", "목", "금", "토"][weekday]}요일 ${time}`;
-  return `매일 ${time}`;
-}
-
-function nextPresetRuns(preset: SchedulePreset, hour: number, minute: number, weekday: number) {
-  const now = dayjs();
-  let next = now.second(0).millisecond(0);
-  if (preset === "hourly") {
-    next = next.minute(minute);
-    if (!next.isAfter(now)) next = next.add(1, "hour");
-    return Array.from({ length: 5 }, (_, index) => next.add(index, "hour"));
-  }
-  next = next.hour(hour).minute(minute);
-  if (preset === "daily") {
-    if (!next.isAfter(now)) next = next.add(1, "day");
-    return Array.from({ length: 5 }, (_, index) => next.add(index, "day"));
-  }
-  next = next.day(weekday);
-  if (!next.isAfter(now)) next = next.add(1, "week");
-  return Array.from({ length: 5 }, (_, index) => next.add(index, "week"));
-}
-
-function validCronField(field: string, min: number, max: number) {
-  return field.split(",").every((part) => {
-    const match = part.match(/^(\*|\d+|\d+-\d+)(?:\/(\d+))?$/);
-    if (!match || (match[2] && Number(match[2]) < 1)) return false;
-    if (match[1] === "*") return true;
-    const values = match[1].split("-").map(Number);
-    return values.every((value) => value >= min && value <= max) && (values.length === 1 || values[0] <= values[1]);
-  });
-}
-
-function validCron(cron: string) {
-  const ranges = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]] as const;
-  const fields = cron.trim().split(/\s+/);
-  return fields.length === 5 && fields.every((field, index) => {
-    const [min, max] = ranges[index];
-    return validCronField(field, min, max);
-  });
-}
-
-function scheduleDescription(cron?: string) {
-  if (!cron) return "수동 실행 전용";
-  const [minute, hour, day, month, weekday, ...rest] = cron.trim().split(/\s+/);
-  if (rest.length || month !== "*" || !/^\d+$/.test(minute) || !/^\d+$/.test(hour)) return cron;
-  const time = `${Number(hour)}:${minute.padStart(2, "0")}`;
-  if (/^\d+$/.test(day) && weekday === "*") return `매월 ${Number(day)}일 ${time}`;
-  if (day === "*" && weekday === "*") return `매일 ${time}`;
-  if (day === "*" && /^[0-7]$/.test(weekday)) {
-    return `매주 ${["일", "월", "화", "수", "목", "금", "토", "일"][Number(weekday)]}요일 ${time}`;
-  }
-  return cron;
-}
-
-function ScheduleWizard({
-  open,
-  dag,
-  onClose,
-  onSaved,
-}: {
-  open: boolean;
-  dag?: DashboardDag;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [mode, setMode] = useState<ScheduleMode>("manual");
-  const [preset, setPreset] = useState<SchedulePreset>("daily");
-  const [hour, setHour] = useState(12);
-  const [minute, setMinute] = useState(56);
-  const [weekday, setWeekday] = useState(1);
-  const [customCron, setCustomCron] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (open) {
-      setMode(dag?.timetable_summary ? "recurring" : "manual");
-      setPreset("daily");
-      setHour(12);
-      setMinute(56);
-      setWeekday(1);
-      setCustomCron(dag?.timetable_summary ?? "");
-    }
-  }, [dag?.dag_id, dag?.timetable_summary, open]);
-
-  const generatedCron = presetCron(preset, hour, minute, weekday);
-  const cron = customCron.trim() || generatedCron;
-  const upcoming = customCron.trim() ? [] : nextPresetRuns(preset, hour, minute, weekday);
-  const save = async () => {
-    if (!dag) return;
-    if (mode === "recurring" && !validCron(cron)) {
-      message.error("올바른 5개 항목 크론 표현식을 입력해 주세요.");
-      return;
-    }
-    setSaving(true);
-    try {
-      await saveAirflowDagSchedule(dag.dag_id, mode === "recurring" ? cron : undefined);
-      message.success(mode === "recurring" ? "스케줄을 저장했습니다." : "수동 실행 전용으로 변경했습니다.");
-      onSaved();
-      onClose();
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "스케줄 저장에 실패했습니다.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal title={`${dag ? displayName(dag) : "DAG"} 실행 주기`} open={open} onCancel={onClose} onOk={save} okText="저장" cancelText="취소" confirmLoading={saving} width={680} destroyOnHidden>
-      <div className="airflow-schedule-wizard">
-        <Radio.Group value={mode} onChange={(event) => setMode(event.target.value)}>
-          <Radio value="manual">수동 실행 전용</Radio>
-          <Radio value="recurring">정기 실행</Radio>
-        </Radio.Group>
-        {mode === "recurring" && (
-          <>
-            <div className="airflow-schedule-row">
-              <span>프리셋</span>
-              <Select value={preset} onChange={setPreset} options={[{ label: "매시간", value: "hourly" }, { label: "매일", value: "daily" }, { label: "매주", value: "weekly" }]} />
-              {preset === "weekly" && <Select value={weekday} onChange={setWeekday} options={["일", "월", "화", "수", "목", "금", "토"].map((label, value) => ({ label: `${label}요일`, value }))} />}
-              {preset !== "hourly" && <><span>시각</span><InputNumber min={0} max={23} value={hour} onChange={(value) => setHour(value ?? 0)} /></>}
-              <InputNumber min={0} max={59} value={minute} onChange={(value) => setMinute(value ?? 0)} addonAfter="분" />
-            </div>
-            <div className="airflow-schedule-row"><span>또는 직접 입력</span><Input value={customCron} onChange={(event) => setCustomCron(event.target.value)} placeholder={generatedCron} /></div>
-            <div className="airflow-schedule-preview">▶ {customCron.trim() ? `${cron} (Asia/Seoul)` : `${presetDescription(preset, hour, minute, weekday)} (Asia/Seoul)`}</div>
-            <div className="airflow-schedule-next"><strong>다음 5회 실행</strong>{upcoming.length ? upcoming.map((date) => <span key={date.valueOf()}>{date.format("YYYY-MM-DD HH:mm")}</span>) : <span>직접 입력한 일정은 저장 후 Airflow에서 계산됩니다.</span>}</div>
-            <p className="airflow-schedule-note">저장 후 Airflow DAG 재파싱에 최대 5분이 걸릴 수 있습니다.</p>
-          </>
-        )}
-      </div>
-    </Modal>
-  );
-}
-
-function MonitoringSettingsModal({
-  open,
-  dag,
-  onClose,
-  onSaved,
-}: {
-  open: boolean;
-  dag?: DashboardDag;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [monitoringEnabled, setMonitoringEnabled] = useState(true);
-  const [failureThreshold, setFailureThreshold] = useState(3);
-  const [staleDays, setStaleDays] = useState(7);
-  const [durationMultiplier, setDurationMultiplier] = useState(3);
-  const [slaMinutes, setSlaMinutes] = useState<number | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    setMonitoringEnabled(dag?.monitoring_enabled ?? true);
-    setFailureThreshold(dag?.consecutive_failure_threshold ?? 3);
-    setStaleDays(dag?.stale_days_threshold ?? 7);
-    setDurationMultiplier(dag?.duration_multiplier ?? 3);
-    setSlaMinutes(dag?.sla_minutes ?? null);
-  }, [dag, open]);
-
-  const save = async () => {
-    if (!dag || dag.monitoring_enabled === undefined) return;
-    setSaving(true);
-    try {
-      await saveAirflowMonitoringSettings(dag.dag_id, {
-        monitoringEnabled,
-        consecutiveFailureThreshold: failureThreshold,
-        staleDaysThreshold: staleDays,
-        durationMultiplier,
-        slaMinutes,
-      });
-      message.success("감지 설정을 저장했습니다.");
-      onSaved();
-      onClose();
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "감지 설정 저장에 실패했습니다.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal title={`${dag ? displayName(dag) : "DAG"} 이상 감지 설정`} open={open} onCancel={onClose} onOk={save} okText="저장" cancelText="취소" confirmLoading={saving} width={480} destroyOnHidden>
-      <div className="airflow-monitoring-form">
-        <label><span>감지 사용</span><Switch checked={monitoringEnabled} onChange={setMonitoringEnabled} /></label>
-        <label><span>연속 실패</span><InputNumber min={1} value={failureThreshold} onChange={(value) => setFailureThreshold(value ?? 1)} addonAfter="회" /></label>
-        <label><span>미실행 정체</span><InputNumber min={1} value={staleDays} onChange={(value) => setStaleDays(value ?? 1)} addonAfter="일" /></label>
-        <label><span>실행시간 이상</span><InputNumber min={1} step={0.1} value={durationMultiplier} onChange={(value) => setDurationMultiplier(value ?? 1)} addonAfter="배" /></label>
-        <label><span>SLA</span><InputNumber min={1} value={slaMinutes} onChange={(value) => setSlaMinutes(value)} placeholder="미설정" addonAfter="분" /></label>
-      </div>
-    </Modal>
-  );
-}
-
+/**
+ * 오른쪽 속성창.
+ *
+ * <p>기본정보 + 바로가기 + 실행 설정/실행 이력 버튼 + 이 작업을 감시하는 알림 규칙.
+ * 스케줄 현황과 «이상 감지 설정»은 뺐다 - 스케줄은 실행 설정에서 다루고, 이상 감지는
+ * 알림 규칙과 판정 기준이 두 벌이 되어 어느 쪽이 실제로 울리는지 알 수 없었다.
+ */
 function PropertyPanel({
   dag,
+  pipeline,
+  runtime,
+  etlJobIds,
   alerts = [],
   inline = false,
   onOpenExecution,
-  onOpenSchedule,
-  onOpenMonitoring,
+  onOpenHistory,
   onChanged,
 }: {
   dag?: DashboardDag;
+  pipeline?: PipelineResponse;
+  runtime?: PipelineRuntimeStatusResponse;
+  etlJobIds?: number[];
   alerts?: AirflowDagAlert[];
   inline?: boolean;
   onOpenExecution?: () => void;
-  onOpenSchedule?: () => void;
-  onOpenMonitoring?: () => void;
+  onOpenHistory?: () => void;
   onChanged?: () => void;
 }) {
   const [acknowledgingId, setAcknowledgingId] = useState<number>();
 
-  if (!dag) {
-    return <aside className="airflow-dashboard-panel airflow-property-panel"><Empty description="작업을 선택하세요." /></aside>;
-  }
-  const monitorable = dag.monitoring_enabled !== undefined;
-  const category = categoryOf(dag);
-  const scheduleStatus = dag.is_paused ? "일시 중지" : dag.is_active === false ? "비활성" : "활성";
-  const nextRun = dag.next_dagrun ?? dag.next_dagrun_run_after;
   const acknowledge = async (alert: AirflowDagAlert) => {
     setAcknowledgingId(alert.id);
     try {
@@ -853,23 +1378,70 @@ function PropertyPanel({
       setAcknowledgingId(undefined);
     }
   };
+
+  // CDC 파이프라인을 골랐을 때. CDC 관리 화면의 «기본정보»와 같은 항목을 보여준다.
+  if (!inline && pipeline) {
+    return (
+      <aside className="airflow-dashboard-panel airflow-property-panel">
+        <h3>속성</h3><h2>{pipeline.name}</h2>
+        <section>
+          <strong>기본정보</strong>
+          <dl>
+            <dt>이름</dt><dd>{pipeline.name}</dd>
+            <dt>유형</dt><dd>{pipeline.pipelineType}</dd>
+            <dt>소스</dt><dd>{sourceLabel(pipeline)}</dd>
+            <dt>타겟</dt><dd>{targetLabel(pipeline)}</dd>
+            <dt>Topic</dt><dd>{pipeline.topicName}</dd>
+            {pipeline.pipelineType === "TABLE_CDC" && <>
+              <dt>스냅샷 모드</dt>
+              <dd>{pipeline.snapshotMode === "NO_DATA" ? "기존 데이터 미적재 · 이후 CDC" : "초기 적재 후 CDC"}</dd>
+            </>}
+            <dt>상태</dt><dd>{renderRuntimeStatus(pipeline, runtime)}</dd>
+            <dt>설명</dt><dd>{pipeline.description ?? "-"}</dd>
+            <dt>생성 시각</dt><dd>{pipeline.createdAt}</dd>
+            <dt>수정 시각</dt><dd>{pipeline.updatedAt}</dd>
+          </dl>
+          <div className="airflow-schedule-actions">
+            <Button type="primary" disabled={!dag} onClick={onOpenExecution}>실행 설정</Button>
+            <Button disabled={!dag} onClick={onOpenHistory}>실행 이력</Button>
+          </div>
+        </section>
+        <WatchingRules target="CDC" ids={[pipeline.id]} />
+        <section>
+          <strong>바로가기</strong>
+          <div className="airflow-resource-links">
+            {dag && <Link to={`/airflow/manage?dagId=${encodeURIComponent(dag.dag_id)}`}>상세보기</Link>}
+            <Link to="/cdc/pipelines">CDC 파이프라인</Link>
+          </div>
+        </section>
+      </aside>
+    );
+  }
+
+  if (!dag) {
+    return <aside className="airflow-dashboard-panel airflow-property-panel"><Empty description="작업을 선택하세요." /></aside>;
+  }
+  const category = categoryOf(dag);
   return (
     <aside className={`airflow-dashboard-panel airflow-property-panel${inline ? " airflow-property-panel--inline" : ""}`}>
       {!inline && <><h3>속성</h3><h2>{displayName(dag)}</h2></>}
-      {/* 스케줄 현황은 우측 속성 패널에만 둔다 - 하단 인라인 패널에 같은 값을 한 번 더
-          보여주던 것을 제거했다(동일 필드·동일 출처, 버튼만 없는 완전 중복이었음). */}
       {!inline && <section>
-        <strong>스케줄 현황</strong>
-        <dl><dt>상태</dt><dd>{scheduleStatus}</dd><dt>스케줄</dt><dd title={dag.timetable_summary}>{scheduleDescription(dag.timetable_summary)}</dd><dt>다음 실행</dt><dd>{nextRun ? dayjs(nextRun).format("YYYY-MM-DD HH:mm") : "-"}</dd><dt>시간대</dt><dd>Asia/Seoul</dd></dl>
-        <div className="airflow-schedule-actions"><Button type="primary" onClick={onOpenExecution}>실행 설정</Button><Button disabled={!dag.dag_id.startsWith("nifi_pipeline_")} onClick={onOpenSchedule}>스케줄 설정</Button></div>
+        <strong>기본정보</strong>
+        <dl>
+          <dt>이름</dt><dd>{displayName(dag)}</dd>
+          <dt>DAG ID</dt><dd>{dag.dag_id}</dd>
+          <dt>업무 구분</dt><dd>{category}</dd>
+          <dt>업무 폴더</dt><dd>{folderName(dag)}</dd>
+          <dt>스케줄</dt><dd title={dag.timetable_summary}>{scheduleDescription(dag.timetable_summary)}</dd>
+          <dt>상태</dt><dd>{dag.is_paused ? "일시 중지" : dag.is_active === false ? "비활성" : "활성"}</dd>
+          <dt>설명</dt><dd>{dag.description || "-"}</dd>
+        </dl>
+        <div className="airflow-schedule-actions">
+          <Button type="primary" onClick={onOpenExecution}>실행 설정</Button>
+          <Button onClick={onOpenHistory}>실행 이력</Button>
+        </div>
       </section>}
-      {!inline && <section>
-        <strong>이상 감지 설정</strong>
-        {monitorable
-          ? <dl><dt>감지 사용</dt><dd>{dag.monitoring_enabled ? "사용" : "미사용"}</dd><dt>연속 실패</dt><dd>{dag.consecutive_failure_threshold ?? 3}회</dd><dt>미실행 정체</dt><dd>{dag.stale_days_threshold ?? 7}일</dd><dt>실행시간 이상</dt><dd>{Number(dag.duration_multiplier ?? 3).toFixed(1)}배</dd><dt>SLA</dt><dd>{dag.sla_minutes == null ? "미설정" : `${dag.sla_minutes}분`}</dd></dl>
-          : <p>DB에 등록된 DAG만 감지 설정을 변경할 수 있습니다.</p>}
-        <Button block disabled={!monitorable} onClick={onOpenMonitoring}>이상 감지 설정</Button>
-      </section>}
+      {!inline && category === "ETL" && <WatchingRules target="ETL" ids={etlJobIds ?? []} />}
       {inline && <section>
         <strong>조치 필요 {alerts.length}건</strong>
         {alerts.length ? <div className="airflow-alert-list">{alerts.map((alert) => (
@@ -881,7 +1453,7 @@ function PropertyPanel({
           </article>
         ))}</div> : <p>현재 감지된 이상이 없습니다.</p>}
       </section>}
-      {!inline && <section><strong>연결 리소스</strong><div className="airflow-resource-links"><Link to={`/airflow/manage?dagId=${encodeURIComponent(dag.dag_id)}`}>DAG 보기</Link>{category === "ETL" ? <Link to={dag.nifi_process_group_id ? `/etl/manage?processGroupId=${encodeURIComponent(dag.nifi_process_group_id)}` : "/etl/manage"}>ETL 캔버스</Link> : <Link to="/cdc/pipelines">CDC 파이프라인</Link>}</div></section>}
+      {!inline && <section><strong>바로가기</strong><div className="airflow-resource-links"><Link to={`/airflow/manage?dagId=${encodeURIComponent(dag.dag_id)}`}>상세보기</Link>{category === "ETL" ? <Link to={dag.nifi_process_group_id ? `/etl/manage?processGroupId=${encodeURIComponent(dag.nifi_process_group_id)}` : "/etl/manage"}>ETL 캔버스</Link> : <Link to="/cdc/pipelines">CDC 파이프라인</Link>}</div></section>}
     </aside>
   );
 }
@@ -909,6 +1481,9 @@ function ExecutionSettingsModal({
         { label: "배포 (Deploy)", value: "deploy" },
         { label: "시작 (Start)", value: "start" },
         { label: "중지 (Stop)", value: "stop" },
+        // 이미 돌고 있는 CDC의 감시 Run만 잃었을 때. 커넥터에는 아무 지시도 하지 않는다.
+        // 예전에는 이걸 되살리려면 stop -> start 밖에 없어서 Sink를 한 번 멈춰야 했다.
+        { label: "감시 재개 (Monitor)", value: "monitor" },
       ]
     : [
         { label: "시작 (Start)", value: "start" },
@@ -982,10 +1557,16 @@ export function AirflowDashboardPage() {
   const [refreshSeconds, setRefreshSeconds] = useState(30);
   const [selectedDagId, setSelectedDagId] = useState<string | undefined>(initialDagId);
   const [search, setSearch] = useState("");
-  const [actionCategory, setActionCategory] = useState<BusinessCategory>();
-  const [activeDetailTab, setActiveDetailTab] = useState<DetailTab>("tasks");
-  const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [monitoringOpen, setMonitoringOpen] = useState(false);
+  // 처음 열면 무엇을 보여줄지. 마지막으로 고른 DAG가 덩그러니 뜨는 것보다
+  // "CDC 전체"에서 시작하는 편이 화면의 성격에 맞는다.
+  const [scope, setScope] = useState<ListScope | undefined>(
+    initialDagId ? { kind: "dag", dagId: initialDagId } : { kind: "cdc", scope: "all" });
+  const [selectedPipelineId, setSelectedPipelineId] = useState<number>();
+  // 실행 이력(하단 task 표)을 펼쳐 둔 DAG. 같은 DAG를 다시 누르면 접히고,
+  // 다른 것을 고르면(그룹·지표·다른 DAG·CDC) 닫힌다 - 이전 선택의 이력이 남아 있으면
+  // 지금 보고 있는 게 무엇인지 헷갈린다.
+  const [expandedDagId, setExpandedDagId] = useState<string>();
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [executionOpen, setExecutionOpen] = useState(false);
   const [synchronizing, setSynchronizing] = useState(false);
@@ -1002,6 +1583,32 @@ export function AirflowDashboardPage() {
     refetchInterval: refreshSeconds * 1000,
     enabled: initialSyncQuery.isFetched,
   });
+  // ETL 트리를 NiFi 그룹 계층으로 보여주기 위해(ETL 관리 화면과 동일한 구조)
+  const groupTreeQuery = useQuery({ queryKey: ["nifi-pg-tree"], queryFn: getNifiProcessGroupTree });
+  // 트리에 워크플로우를 그룹별로 붙이려면 dag_id -> 그룹 매핑이 필요하다.
+  const workflowsQuery = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
+  // 알림 규칙은 etl_job.id를 감시 대상으로 갖는다. 선택한 워크플로우가 어떤 job을
+  // 참조하는지 알아야 "이 작업을 감시하는 규칙"을 찾을 수 있다.
+  const selectedWorkflowId = (workflowsQuery.data ?? [])
+    .find((workflow) => workflow.dagId === selectedDagId)?.id;
+  const workflowDetailQuery = useQuery({
+    queryKey: ["workflow-detail", selectedWorkflowId],
+    queryFn: () => getWorkflow(selectedWorkflowId!),
+    enabled: Boolean(selectedWorkflowId),
+  });
+  // CDC 가지는 CDC 관리 화면과 같은 원본을 읽는다(파이프라인·연결·커넥터 상태·지연).
+  const pipelinesQuery = useQuery({ queryKey: ["pipelines"], queryFn: listPipelines });
+  const connectionsQuery = useQuery({ queryKey: ["connections"], queryFn: listConnections });
+  const runtimeQuery = useQuery({
+    queryKey: ["pipeline-runtime-statuses"],
+    queryFn: listPipelineRuntimeStatuses,
+    refetchInterval: refreshSeconds * 1000,
+  });
+  const cdcMetricsQuery = useQuery({
+    queryKey: ["realtime-pipeline-metrics"],
+    queryFn: getRealtimePipelineMetrics,
+    refetchInterval: refreshSeconds * 1000,
+  });
   const runsByDag = useMemo(() => groupRuns(dashboardQuery.data?.runs ?? []), [dashboardQuery.data?.runs]);
   const alertsByDag = useMemo(() => {
     const grouped = new Map<string, AirflowDagAlert[]>();
@@ -1015,12 +1622,9 @@ export function AirflowDashboardPage() {
   const filteredDags = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return businessDags.filter((dag) => {
-      const category = categoryOf(dag) as BusinessCategory;
-      if (actionCategory && category !== actionCategory) return false;
-      if (actionCategory && !alertsByDag.has(dag.dag_id)) return false;
       return !needle || `${displayName(dag)} ${dag.dag_id} ${folderName(dag)}`.toLowerCase().includes(needle);
     });
-  }, [actionCategory, alertsByDag, businessDags, search]);
+  }, [businessDags, search]);
 
   useEffect(() => {
     if (initialDagId && filteredDags.some((dag) => dag.dag_id === initialDagId)) {
@@ -1044,12 +1648,81 @@ export function AirflowDashboardPage() {
     }
   }, [initialSyncQuery.isError]);
 
+  const pipelines = pipelinesQuery.data ?? [];
+  const connectionNames = new Map((connectionsQuery.data ?? []).map((c) => [c.id, c.name] as const));
+  const runtimeByPipeline = new Map((runtimeQuery.data ?? []).map((r) => [r.pipelineId, r] as const));
+  const metricByPipeline = new Map((cdcMetricsQuery.data ?? []).map((m) => [m.pipelineId, m] as const));
+  const selectedPipeline = pipelines.find((pipeline) => pipeline.id === selectedPipelineId);
+  // CDC 파이프라인 하나가 DAG 하나에 대응한다(kafka_pipeline_{id}_control).
+  const pipelineDag = selectedPipeline
+    ? businessDags.find((dag) => dag.dag_id === `kafka_pipeline_${selectedPipeline.id}_control`)
+    : undefined;
+
+  // ETL 그룹 -> 그 그룹(하위 포함)에 속한 워크플로우 DAG id.
+  const workflowsByGroup = new Map<string, Set<string>>();
+  (workflowsQuery.data ?? []).forEach((workflow) => {
+    if (!workflow.nifiGroupPgId) {
+      return;
+    }
+    const bucket = workflowsByGroup.get(workflow.nifiGroupPgId) ?? new Set<string>();
+    bucket.add(workflow.dagId);
+    workflowsByGroup.set(workflow.nifiGroupPgId, bucket);
+  });
+  // 상위 그룹을 고르면 하위 그룹 워크플로우까지 함께 보여준다.
+  const rollUp = (node: NifiProcessGroupTreeNode): Set<string> => {
+    const own = new Set(workflowsByGroup.get(node.id) ?? []);
+    (node.children ?? []).forEach((child) => rollUp(child).forEach((id) => own.add(id)));
+    workflowsByGroup.set(node.id, own);
+    return own;
+  };
+  if (groupTreeQuery.data) {
+    rollUp(groupTreeQuery.data);
+  }
+
+  /** DAG를 고른다. 같은 DAG를 다시 고르면 이력이 접힌다. */
+  const selectDag = (dagId: string) => {
+    setSelectedDagId(dagId);
+    setSelectedPipelineId(undefined);
+    setExpandedDagId((current) => (current === dagId ? undefined : dagId));
+  };
+
+  /** 트리·지표에서 목록 범위를 바꾼다. DAG를 고른 게 아니면 열려 있던 이력을 닫는다. */
+  const changeScope = (next: ListScope | undefined) => {
+    setScope(next);
+    if (next?.kind !== "dag") {
+      setExpandedDagId(undefined);
+    }
+    if (next?.kind === "cdc" && next.scope === "pipeline") {
+      setSelectedPipelineId(next.pipelineId);
+      setSelectedDagId(undefined);
+    }
+  };
+
   const selectedDag = businessDags.find((dag) => dag.dag_id === selectedDagId);
+
+  /** 가운데 목록의 제목. 지금 무엇을 보고 있는지 한 줄로 말해준다. */
+  const scopeTitle = !scope
+    ? (selectedDag ? displayName(selectedDag) : "선택 작업")
+    : scope.kind === "cdc"
+      ? scope.scope === "all" ? "전체 파이프라인"
+        : scope.scope === "connection" ? `${connectionNames.get(scope.connectionId) ?? "연결"} 파이프라인`
+        : scope.scope === "schema" ? `${scope.schema} 파이프라인`
+        : scope.scope === "logfile" ? "로그파일 파이프라인"
+        : selectedPipeline?.name ?? "파이프라인"
+      : scope.kind === "etl" ? `${scope.groupName} 워크플로우`
+      : scope.kind === "dag" ? (selectedDag ? displayName(selectedDag) : scope.dagId)
+      : `${scope.category} · ${STATUS_METRIC_LABEL[scope.metric]}`;
+
+  /** 선택한 ETL 워크플로우가 참조하는 job id들. 감시 중인 알림 규칙을 찾는 열쇠다. */
+  const etlJobIdsOfSelected = selectedDag
+    ? (workflowDetailQuery.data?.nodes ?? [])
+        .map((node) => node.jobId)
+        .filter((id): id is number => typeof id === "number")
+    : [];
   const selectedRuns = selectedDagId ? (runsByDag.get(selectedDagId) ?? []) : [];
   const selectedAlerts = selectedDagId ? (alertsByDag.get(selectedDagId) ?? []) : [];
-  const selectedAlertHistory = selectedDagId
-    ? (dashboardQuery.data?.alertHistory ?? []).filter((alert) => alert.dagId === selectedDagId)
-    : [];
+  const historyDagId = selectedPipeline ? pipelineDag?.dag_id : selectedDagId;
+  const historyRuns = historyDagId ? (runsByDag.get(historyDagId) ?? []) : [];
   const showExecutionSettings = (dag: DashboardDag) => {
     setSelectedDagId(dag.dag_id);
     setExecutionOpen(true);
@@ -1096,7 +1769,7 @@ export function AirflowDashboardPage() {
   return (
     <div className="airflow-dashboard-page">
       <header className="airflow-dashboard-heading">
-        <div><h1>실행 현황</h1><p>작업 상태와 실행 이력을 한 화면에서 확인하고 조치합니다.</p></div>
+        <div><h1>실시간 모니터링</h1><p>작업 상태와 실행 이력을 한 화면에서 확인하고 조치합니다.</p></div>
         <div className="airflow-refresh-controls"><Button icon={<SyncOutlined />} loading={synchronizing || initialSyncQuery.isFetching} onClick={() => void synchronizeDags()}>동기화</Button><span>갱신 주기</span><Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} /><span>마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}</span></div>
       </header>
 
@@ -1109,26 +1782,61 @@ export function AirflowDashboardPage() {
                 category={category}
                 dags={businessDags.filter((dag) => categoryOf(dag) === category)}
                 runsByDag={runsByDag}
-                alerts={dashboardQuery.data?.alerts ?? []}
-                onActionClick={() => setActionCategory((current) => current === category ? undefined : category)}
+                activeMetric={scope?.kind === "metric" && scope.category === category ? scope.metric : undefined}
+                onMetricClick={(metric) => changeScope(
+                  scope?.kind === "metric" && scope.category === category && scope.metric === metric
+                    ? { kind: "cdc", scope: "all" }
+                    : { kind: "metric", category, metric })}
               />
             ))}
           </div>
           <div className="airflow-dashboard-workspace">
-            <BusinessTree dags={filteredDags} selectedDagId={selectedDagId} search={search} alertsByDag={alertsByDag} onSearch={setSearch} onSelect={setSelectedDagId} onDetail={showDagDetail} onExecution={showExecutionSettings} onDelete={confirmDeleteDag} />
+            <BusinessTree dags={filteredDags} groupTree={groupTreeQuery.data} workflows={workflowsQuery.data ?? []}
+                          pipelines={pipelines} connectionNames={connectionNames} selectedPipelineId={selectedPipelineId}
+                          scope={scope} onScope={changeScope}
+                          selectedDagId={selectedDagId} search={search} alertsByDag={alertsByDag} onSearch={setSearch}
+                          onSelect={selectDag} onDetail={showDagDetail} onExecution={showExecutionSettings} onDelete={confirmDeleteDag} />
             <main className="airflow-dashboard-panel airflow-jobs-panel">
-              <div className="airflow-jobs-heading"><div><h3>{selectedDag ? displayName(selectedDag) : "선택 작업"}</h3><button type="button" className={`airflow-jobs-tab${activeDetailTab === "tasks" ? " active" : ""}`} onClick={() => setActiveDetailTab("tasks")}>DAG 내 하위 작업</button><button type="button" className={`airflow-jobs-tab${activeDetailTab === "history" ? " active" : ""}`} onClick={() => setActiveDetailTab("history")}>실행 이력</button></div>{actionCategory ? <Button size="small" onClick={() => setActionCategory(undefined)}>{actionCategory} 조치 필터 해제</Button> : null}</div>
-              {activeDetailTab === "tasks"
-                ? <JobsTable dags={selectedDag ? [selectedDag] : []} runsByDag={runsByDag} alertsByDag={alertsByDag} selectedDagId={selectedDagId} refreshSeconds={refreshSeconds} onSelect={setSelectedDagId} />
-                : <><RunHistoryTable dag={selectedDag} runs={selectedRuns} refreshSeconds={refreshSeconds} /><AlertHistory alerts={selectedAlertHistory} /></>}
-              <PropertyPanel dag={selectedDag} alerts={selectedAlerts} inline onChanged={() => void dashboardQuery.refetch()} />
+              <div className="airflow-jobs-heading">
+                <div>
+                  <h3>{scopeTitle}</h3>
+                </div>
+              </div>
+              {scope
+                ? <ScopeList scope={scope} dags={businessDags} runsByDag={runsByDag} pipelines={pipelines}
+                             runtimeByPipeline={runtimeByPipeline} metricByPipeline={metricByPipeline}
+                             workflowsByGroup={workflowsByGroup} selectedDagId={selectedDagId}
+                             selectedPipelineId={selectedPipelineId}
+                             onSelectDag={selectDag}
+                             onSelectPipeline={(id) => {
+                               setSelectedPipelineId(id);
+                               setSelectedDagId(undefined);
+                               setExpandedDagId(undefined);
+                             }} />
+                : <JobsTable dags={selectedDag ? [selectedDag] : []} runsByDag={runsByDag} alertsByDag={alertsByDag} selectedDagId={selectedDagId} refreshSeconds={refreshSeconds} onSelect={setSelectedDagId} />}
+              {/* ETL은 각 task(job)이 중요하다. DAG를 고르면 최근 실행의 task를 바로 펼친다. */}
+              {selectedDag && expandedDagId === selectedDag.dag_id && categoryOf(selectedDag) === "ETL" && (
+                <div className="airflow-job-table-wrap" style={{ marginTop: 12 }}>
+                  <table className="airflow-job-table">
+                    <thead><tr><th>작업(Task)</th><th>유형</th><th>시작</th><th>상태</th><th>적재/실패 사유</th><th>소요</th><th>스케줄</th><th>재실행</th></tr></thead>
+                    <tbody>
+                      <TaskRows dag={selectedDag} run={selectedRuns[0]} refreshSeconds={refreshSeconds} />
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </main>
-            <PropertyPanel dag={selectedDag} alerts={selectedAlerts} onOpenExecution={() => setExecutionOpen(true)} onOpenSchedule={() => setScheduleOpen(true)} onOpenMonitoring={() => setMonitoringOpen(true)} onChanged={() => void dashboardQuery.refetch()} />
+            <PropertyPanel dag={selectedPipeline ? pipelineDag : selectedDag} pipeline={selectedPipeline}
+                           runtime={selectedPipeline ? runtimeByPipeline.get(selectedPipeline.id) : undefined}
+                           etlJobIds={etlJobIdsOfSelected} alerts={selectedAlerts}
+                           onOpenExecution={() => setExecutionOpen(true)}
+                           onOpenHistory={() => setHistoryOpen(true)}
+                           onChanged={() => void dashboardQuery.refetch()} />
           </div>
           <InfrastructureBar groups={dashboardQuery.data?.processGroups ?? []} />
-          <ScheduleWizard open={scheduleOpen} dag={selectedDag} onClose={() => setScheduleOpen(false)} onSaved={() => void dashboardQuery.refetch()} />
-          <ExecutionSettingsModal open={executionOpen} dag={selectedDag} onClose={() => setExecutionOpen(false)} onExecuted={() => { setActiveDetailTab("history"); void dashboardQuery.refetch(); }} />
-          <MonitoringSettingsModal open={monitoringOpen} dag={selectedDag} onClose={() => setMonitoringOpen(false)} onSaved={() => void dashboardQuery.refetch()} />
+          <ExecutionSettingsModal open={executionOpen} dag={selectedDag} onClose={() => setExecutionOpen(false)} onExecuted={() => { setHistoryOpen(true); void dashboardQuery.refetch(); }} />
+          <RunHistoryModal open={historyOpen} dag={selectedPipeline ? pipelineDag : selectedDag}
+                           runs={historyRuns} refreshSeconds={refreshSeconds} onClose={() => setHistoryOpen(false)} />
           <Modal title="DAG 상세" open={detailOpen} footer={null} onCancel={() => setDetailOpen(false)}>
             {selectedDag && <Descriptions column={1} size="small" bordered>
               <Descriptions.Item label="작업명">{displayName(selectedDag)}</Descriptions.Item>

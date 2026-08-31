@@ -4,8 +4,10 @@ import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.common.BusinessException;
 import com.company.pipeline.common.ErrorCode;
 import com.company.pipeline.user.AppUser;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javax.sql.DataSource;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -26,6 +28,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.ADMIN)
 public class AlertAdminController {
+
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(AlertAdminController.class);
 
     private final JdbcTemplate jdbc;
 
@@ -53,6 +58,104 @@ public class AlertAdminController {
                        r.created_by, r.updated_by, r.created_at, r.updated_at
                 FROM alert_rule r JOIN alert_rule_type rt ON r.rule_type_code = rt.code
                 WHERE r.deleted_at IS NULL ORDER BY rt.eval_priority, r.name"""));
+    }
+
+    /**
+     * 이 대상(job/파이프라인)을 감시하고 있는 규칙들.
+     *
+     * <p>실행 현황 화면이 "이 작업에 어떤 알림이 걸려 있나"를 보여주는 데 쓴다. 예전에는
+     * DAG마다 따로 «이상 감지 설정»을 두었는데, 알림 규칙과 판정 기준이 두 벌이 되어
+     * 어느 쪽이 실제로 울리는지 알 수 없었다. 규칙 하나로 합치고 여기서 읽기만 한다.
+     *
+     * @param target CDC(=pipeline_definition.id) 또는 ETL(=etl_job.id)
+     * @param ids    쉼표로 구분한 대상 id. ETL이면 그 job의 스텝(적재 체인)까지 함께 본다.
+     */
+    @GetMapping("/api/admin/alert-rules/watching")
+    public ApiResponse<List<Map<String, Object>>> rulesWatching(
+            @RequestParam(defaultValue = "ETL") String target,
+            @RequestParam(required = false) String ids) {
+        Set<Long> targetIds = parseIds(ids);
+        if (targetIds.isEmpty()) {
+            return ApiResponse.success(List.of());
+        }
+        // 규칙 유형마다 감시 대상이 다르다. CDC 쪽 규칙에 ETL job id를 맞춰보면 엉뚱한 규칙이 걸린다.
+        List<String> types = "CDC".equalsIgnoreCase(target)
+                ? List.of("CDC_LAG", "DATA_FRESHNESS", "CONNECTOR_FAILED")
+                : List.of("JOB_FAILURE", "JOB_CONSECUTIVE_FAILURE", "JOB_NOT_RUN");
+        // idKind=CHAIN 규칙은 etl_job이 아니라 etl_job_step을 가리킨다.
+        Set<Long> chainIds = new HashSet<>();
+        if (!"CDC".equalsIgnoreCase(target)) {
+            jdbc.queryForList("""
+                    SELECT s.id FROM etl_job_step s
+                    WHERE s.deleted_at IS NULL AND s.job_id IN (%s)"""
+                            .formatted(placeholders(targetIds)), targetIds.toArray())
+                    .forEach(row -> chainIds.add(((Number) row.get("id")).longValue()));
+        }
+
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT r.id, r.rule_type_code, rt.label AS type_label, rt.category, r.name,
+                       r.enabled, r.severity, r.scope_json::text AS scope_json,
+                       r.schedule_enabled, r.schedule_time, r.last_evaluated_at, r.last_eval_error
+                FROM alert_rule r JOIN alert_rule_type rt ON r.rule_type_code = rt.code
+                WHERE r.deleted_at IS NULL AND r.rule_type_code IN (%s)
+                ORDER BY rt.eval_priority, r.name""".formatted(placeholders(types)), types.toArray());
+
+        List<Map<String, Object>> matched = new java.util.ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            if (scopeCovers(String.valueOf(row.get("scope_json")), targetIds, chainIds)) {
+                matched.add(row);
+            }
+        }
+        return ApiResponse.success(matched);
+    }
+
+    private static String placeholders(java.util.Collection<?> values) {
+        return values.stream().map(v -> "?").collect(java.util.stream.Collectors.joining(","));
+    }
+
+    private static Set<Long> parseIds(String raw) {
+        Set<Long> out = new java.util.LinkedHashSet<>();
+        if (raw == null || raw.isBlank()) {
+            return out;
+        }
+        for (String part : raw.split(",")) {
+            try {
+                out.add(Long.parseLong(part.trim()));
+            } catch (NumberFormatException ignored) {
+                // 화면이 보낸 값이 깨져도 나머지 id는 살린다.
+            }
+        }
+        return out;
+    }
+
+    /** scope_json이 이 대상들을 포함하는지. AlertEngine.ScopeFilter와 같은 규칙이다. */
+    private boolean scopeCovers(String scopeJson, Set<Long> targetIds, Set<Long> chainIds) {
+        if (scopeJson == null || scopeJson.isBlank() || "null".equals(scopeJson)) {
+            return true;
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode node =
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(scopeJson);
+            String kind = node.path("kind").asText("ALL");
+            if ("ALL".equals(kind)) {
+                return true;
+            }
+            Set<Long> scopeIds = new HashSet<>();
+            if (node.has("ids") && node.get("ids").isArray()) {
+                node.get("ids").forEach(x -> scopeIds.add(x.asLong()));
+            }
+            Set<Long> compare = "CHAIN".equals(node.path("idKind").asText("JOB")) ? chainIds : targetIds;
+            if ("INCLUDE".equals(kind)) {
+                // 지정이 비어 있으면 사실상 전체다(미설정 방어). AlertEngine과 같은 판정.
+                return scopeIds.isEmpty() || scopeIds.stream().anyMatch(compare::contains);
+            }
+            if ("EXCLUDE".equals(kind)) {
+                return compare.stream().anyMatch(id -> !scopeIds.contains(id));
+            }
+            return true;
+        } catch (Exception ex) {
+            return true;
+        }
     }
 
     /**
@@ -396,17 +499,19 @@ public class AlertAdminController {
                         clear_seconds    = COALESCE(?, clear_seconds),
                         renotify_seconds = COALESCE(?, renotify_seconds),
                         schedule_enabled = COALESCE(?, schedule_enabled),
-                        schedule_time    = CASE WHEN ? IS NULL THEN schedule_time ELSE ?::time END,
+                        -- 맨 물음표에 캐스팅이 없으면, 값을 안 보낸 부분 수정(예: 사용여부 토글만)에서
+                        -- NULL의 타입을 정하지 못해 «could not determine data type» 으로 통째로 실패한다.
+                        schedule_time    = CASE WHEN ?::time IS NULL THEN schedule_time ELSE ?::time END,
                         -- 시각을 바꿨는데 그게 오늘 이미 지났으면 오늘 몫은 끝난 것으로 본다
                         -- (저장하자마자 발화하는 것을 막는다). 시각이 아직 안 지났으면 빗장을 푼다.
                         schedule_last_fired_on = CASE
-                            WHEN ? IS NULL THEN schedule_last_fired_on
+                            WHEN ?::time IS NULL THEN schedule_last_fired_on
                             WHEN ?::time <= localtime THEN current_date
                             ELSE NULL END,
                         -- 시각을 바꾸면 오늘 돈 회차는 무효다. 되돌려 두지 않으면
                         -- "오늘 이미 3회 다 돌았다"로 남아 새 시각이 오늘 안 돈다.
-                        schedule_run_count  = CASE WHEN ? IS NULL THEN schedule_run_count ELSE 0 END,
-                        schedule_last_run_at = CASE WHEN ? IS NULL THEN schedule_last_run_at ELSE NULL END,
+                        schedule_run_count  = CASE WHEN ?::time IS NULL THEN schedule_run_count ELSE 0 END,
+                        schedule_last_run_at = CASE WHEN ?::time IS NULL THEN schedule_last_run_at ELSE NULL END,
                         updated_by = ?, updated_at = now()
                     WHERE id = ? AND deleted_at IS NULL
                     """, req.name(), req.enabled(), req.severity(), req.paramsJson(),
@@ -418,6 +523,8 @@ public class AlertAdminController {
                 throw new BusinessException(ErrorCode.VALIDATION_ERROR, "규칙을 찾을 수 없습니다: " + id);
             }
         } catch (DataAccessException ex) {
+            // 원인을 삼키면 화면에는 «값이 올바르지 않습니다»만 남아 무엇이 문제인지 알 수 없다.
+            log.warn("알림 규칙 수정 실패 - id={} : {}", id, ex.getMostSpecificCause().getMessage());
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "규칙 값이 올바르지 않습니다(params_json 등 확인).");
         }
         return ApiResponse.success(null);

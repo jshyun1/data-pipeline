@@ -74,7 +74,8 @@ const NAV_ITEMS: NavItem[] = [
     label: "워크플로우",
     icon: <DeploymentUnitOutlined />,
     children: [
-      { path: "/airflow/dashboard", label: "실행 현황", system: "AIRFLOW", action: "READ" },
+      { path: "/workflows/design", label: "스케줄링", system: "NIFI", action: "READ" },
+      { path: "/airflow/dashboard", label: "실시간 모니터링", system: "AIRFLOW", action: "READ" },
       { path: "/airflow/manage", label: "관리", system: "AIRFLOW", action: "READ" },
     ],
   },

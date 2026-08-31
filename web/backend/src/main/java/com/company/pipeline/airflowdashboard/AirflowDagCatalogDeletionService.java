@@ -38,6 +38,12 @@ public class AirflowDagCatalogDeletionService {
         AirflowDagCatalog catalog = repository.findByDagId(dagId)
                 .orElseThrow(() -> new BusinessException(
                         ErrorCode.VALIDATION_ERROR, "DAG를 찾을 수 없습니다: " + dagId));
+        // 워크플로우 DAG는 "job들의 조합"이지 NiFi 그룹이 아니다. 여기서 지우면 조합만
+        // 없애려다 실제 NiFi 자산을 건드리게 되므로, 캔버스의 게시 취소로 유도한다.
+        if (dagId.startsWith("etl_wf_")) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "워크플로우 DAG는 여기서 삭제할 수 없습니다. 워크플로우 > 설계에서 게시를 내려주세요.");
+        }
         Matcher cdc = CDC_DAG.matcher(dagId);
         Matcher etl = ETL_DAG.matcher(dagId);
         if (cdc.matches()) {

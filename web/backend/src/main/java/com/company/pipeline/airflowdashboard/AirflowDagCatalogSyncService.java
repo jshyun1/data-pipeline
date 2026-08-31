@@ -101,7 +101,12 @@ public class AirflowDagCatalogSyncService {
     private static Candidate candidate(Dag dag) {
         String group;
         String folder;
-        if (dag.dagId().startsWith("nifi_pipeline_") && dag.dagId().endsWith("_control")) {
+        // etl_wf_*는 워크플로우 캔버스가 게시한 DAG다. 카탈로그에 넣어야 실행 현황 화면과
+        // 이상 감지(AirflowDagAlert)가 이 워크플로우를 자기 대상으로 인식한다.
+        if (dag.dagId().startsWith("etl_wf_")) {
+            group = "ETL";
+            folder = folder(dag, "워크플로우");
+        } else if (dag.dagId().startsWith("nifi_pipeline_") && dag.dagId().endsWith("_control")) {
             group = "ETL";
             folder = folder(dag, "ETL");
         } else if (dag.dagId().startsWith("kafka_pipeline_") && dag.dagId().endsWith("_control")) {

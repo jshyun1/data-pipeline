@@ -31,6 +31,10 @@ public class EtlJobRun {
     public static final String STATUS_SUCCESS = "SUCCESS";
     public static final String STATUS_FAILED = "FAILED";
     public static final String TRIGGER_OBSERVED = "OBSERVED";
+    public static final String TRIGGER_WORKFLOW = "WORKFLOW";
+    /** 완료를 어떻게 알았는가. CALLBACK=확정, OBSERVED=추정, TIMEOUT=포기. */
+    public static final String SOURCE_CALLBACK = "CALLBACK";
+    public static final String SOURCE_OBSERVED = "OBSERVED";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -56,6 +60,27 @@ public class EtlJobRun {
 
     @Column(name = "status", length = 20, nullable = false)
     private String status;
+
+    @Column(name = "run_token", length = 64)
+    private String runToken;
+
+    @Column(name = "workflow_key", length = 80)
+    private String workflowKey;
+
+    @Column(name = "node_key", length = 80)
+    private String nodeKey;
+
+    @Column(name = "airflow_task_id", length = 250)
+    private String airflowTaskId;
+
+    @Column(name = "completion_source", length = 20)
+    private String completionSource;
+
+    @Column(name = "rows_processed")
+    private Long rowsProcessed;
+
+    @Column(name = "error_message")
+    private String errorMessage;
 
     @Column(name = "step_run_count", nullable = false)
     private int stepRunCount;
@@ -105,5 +130,43 @@ public class EtlJobRun {
         this.failedStepCount = failedStepCount;
         this.status = failedStepCount > 0 ? STATUS_FAILED : STATUS_SUCCESS;
         this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * Airflow가 이 실행을 지시했음을 표시한다(입양 포함).
+     *
+     * <p>관측기가 먼저 열어둔 run일 수도 있어서 새로 만들지 않고 표시만 덧붙인다 -
+     * 그래야 한 실행이 두 행으로 갈라지지 않는다.
+     */
+    public void adoptByWorkflow(String runToken, String workflowKey, String nodeKey,
+                                String dagRunId, String taskId) {
+        this.runToken = runToken;
+        this.workflowKey = workflowKey;
+        this.nodeKey = nodeKey;
+        this.airflowDagRunId = dagRunId;
+        this.airflowTaskId = taskId;
+        this.triggerSource = TRIGGER_WORKFLOW;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    /** 완료 보고로 실행을 닫는다. 이미 닫혔으면 아무것도 하지 않는다(콜백 멱등). */
+    public void completeBy(String source, String status, Long rows, String errorMessage,
+                           LocalDateTime at) {
+        // 이미 «판정»이 있으면 덮어쓰지 않는다(콜백 재전송 대비).
+        //
+        // 다만 유휴 정리(EtlJobRunService.closeIdleRuns)가 닫은 행은 결과를 아는 주체가 아니라
+        // completion_source가 비어 있다. 그 위에는 실제 판정을 덮어써야 한다. 실제로 NiFi
+        // 접속 실패로 끝난 실행을 유휴 정리가 먼저 SUCCESS로 닫아서, 뒤늦게 온 실패 보고가
+        // 이 가드에 막혀 원장에 성공으로 남아 있었다(2026-08-31).
+        if (this.endedAt != null && this.completionSource != null) {
+            return;
+        }
+        this.endedAt = at;
+        this.lastSeenAt = at;
+        this.status = status;
+        this.completionSource = source;
+        this.rowsProcessed = rows;
+        this.errorMessage = errorMessage;
+        this.updatedAt = at;
     }
 }

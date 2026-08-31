@@ -581,7 +581,7 @@ services:
       # airflow-init의 db migrate만으로 별도 `airflow connections add` 없이 바로 쓸 수 있다.
       # TARGET_DB_PASSWORD에 !/@/# 같은 URI 예약 문자가 들어있어 postgresql://user:pass@host
       # 형태로 조합하면 파싱이 깨진다(# 뒤가 URI fragment로 잘림) - JSON 형식으로 우회.
-      AIRFLOW_CONN_TARGET_DB_POSTGRES: '{"conn_type": "postgres", "login": "${TARGET_DB_USER}", "password": "${TARGET_DB_PASSWORD}", "host": "target-db", "port": ${TARGET_DB_PORT}, "schema": "${TARGET_DB_NAME}"}'
+      AIRFLOW_CONN_TARGET_DB_POSTGRES: '{"conn_type": "postgres", "login": "${TARGET_DB_USER}", "password": "${TARGET_DB_PASSWORD}", "host": "${TARGET_DB_HOST}", "port": ${TARGET_DB_PORT}, "schema": "${TARGET_DB_NAME}"}'
       TARGET_DB_NAME: ${TARGET_DB_NAME}
     entrypoint: ["/bin/bash", "-c"]
     command:

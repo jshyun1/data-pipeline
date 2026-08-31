@@ -33,25 +33,35 @@ public class EtlJobController {
     private final EtlJobParamRepository paramRepository;
     private final EtlJobRunRepository runRepository;
     private final NifiJobMirrorService mirrorService;
+    private final com.company.pipeline.nifi.NifiProcessGroupMetadataRepository pgRepository;
 
     public EtlJobController(EtlJobRepository jobRepository,
                             EtlJobStepRepository stepRepository,
                             EtlJobLinkRepository linkRepository,
                             EtlJobParamRepository paramRepository,
                             EtlJobRunRepository runRepository,
-                            NifiJobMirrorService mirrorService) {
+                            NifiJobMirrorService mirrorService,
+                            com.company.pipeline.nifi.NifiProcessGroupMetadataRepository pgRepository) {
         this.jobRepository = jobRepository;
         this.stepRepository = stepRepository;
         this.linkRepository = linkRepository;
         this.paramRepository = paramRepository;
         this.runRepository = runRepository;
         this.mirrorService = mirrorService;
+        this.pgRepository = pgRepository;
     }
 
     @GetMapping
     public ApiResponse<List<EtlJobResponse>> list() {
+        // 체인을 자식 PG로 나누면 잡 이름이 겹친다(DW/DZ 아래 COM001M 등). 부모 그룹은
+        // 프로세서가 없어 잡 목록에서 빠지므로, 이름을 미러 테이블에서 따로 채워준다.
+        java.util.Map<String, String> groupNames = pgRepository.findAll().stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        com.company.pipeline.nifi.NifiProcessGroupMetadata::getProcessGroupId,
+                        com.company.pipeline.nifi.NifiProcessGroupMetadata::getProcessGroupName,
+                        (a, b) -> a));
         return ApiResponse.success(jobRepository.findByDeletedAtIsNullOrderByJobNameAsc().stream()
-                .map(EtlJobResponse::from)
+                .map(job -> EtlJobResponse.from(job, groupNames.get(job.getParentPgId())))
                 .toList());
     }
 

@@ -66,6 +66,7 @@ Admin > Variables의 "{dag_id}__target_schema"/"{dag_id}__target_table"/
 자동 발행된다 - skipped인 경우엔 Asset 이벤트가 발행되지 않는다(Airflow의
 표준 동작: outlets는 태스크가 success로 끝났을 때만 이벤트를 만든다).
 """
+import json
 import os
 import re
 import time
@@ -756,6 +757,28 @@ except Exception as exc:  # NiFi가 잠시 안 뜬 상태라도 DAG 파싱 전�
         f" (스케줄 누락 방지, 그룹 추가/삭제는 NiFi 복구 후 반영): {exc}"
     )
 
+# --- 워크플로우 캔버스로 넘어간 그룹은 여기서 만들지 않는다(컷오버 공존 필터) ---
+#
+# 새 팩토리(etl_workflows_dynamic.py)가 게시된 워크플로우 spec으로 DAG를 만든다.
+# 같은 프로세스 그룹에 두 팩토리가 각자 DAG를 만들면, 사람이 어느 쪽을 눌러야 할지
+# 알 수 없고 둘 다 스케줄을 갖게 되면 하루에 두 번 도는 사고가 난다.
+#
+# 그래서 spec의 governed_root_pg_ids(= 그 워크플로우가 건드리는 root 직하 그룹)에
+# 든 그룹은 이 낡은 팩토리가 건너뛴다. 워크플로우를 하나씩 게시하면서 도메인 단위로
+# 안전하게 넘어갈 수 있고, 전부 넘어가면 이 파일은 지워도 된다.
+_governed_root_pg_ids: set = set()
+try:
+    _wf_index_raw = Variable.get("etl_wf_index", default_var="[]")
+    _wf_keys = json.loads(_wf_index_raw) if isinstance(_wf_index_raw, str) else (_wf_index_raw or [])
+    for _wf_key in _wf_keys:
+        _wf_spec_raw = Variable.get(f"etl_wf_spec__{_wf_key}", default_var=None)
+        if not _wf_spec_raw:
+            continue
+        _wf_spec = json.loads(_wf_spec_raw) if isinstance(_wf_spec_raw, str) else _wf_spec_raw
+        _governed_root_pg_ids.update(_wf_spec.get("governed_root_pg_ids") or [])
+except Exception as exc:  # 읽기 실패 시엔 아무것도 넘기지 않는다(기존 동작 유지)
+    print(f"워크플로우 spec 조회 실패, 공존 필터 없이 진행: {exc}")
+
 _group_names = {pg["id"]: pg["name"] for pg in _process_groups}
 # 하류 그룹은 상류 DAG가 통째로 제어하므로 자기 이름의 DAG를 따로 만들지 않는다.
 # (DW용 DAG를 남겨두면 DZ가 이미 켠 그룹을 다시 켜려 하거나, 사람이 DW만 단독
@@ -764,6 +787,9 @@ _chains = {pg["id"]: build_group_chain(pg["id"], _connections) for pg in _proces
 _downstream_only = {m for head, ch in _chains.items() for m in ch[1:]}
 
 for _pg in _process_groups:
+    if _pg["id"] in _governed_root_pg_ids:
+        print(f"프로세스 그룹 {_pg['name']}({_pg['id'][:8]})은 워크플로우 캔버스가 관리하므로 건너뜀")
+        continue
     if _pg["id"] in _downstream_only:
         print(f"프로세스 그룹 {_pg['name']}({_pg['id'][:8]})은 상류 DAG가 함께 제어하므로 단독 DAG를 만들지 않음")
         continue

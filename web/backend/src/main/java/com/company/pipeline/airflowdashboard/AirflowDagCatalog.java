@@ -57,6 +57,10 @@ public class AirflowDagCatalog {
     @Column(name = "sla_minutes")
     private Integer slaMinutes;
 
+    /** 카탈로그에 처음 잡힌 시각. 실행 현황이 "오늘 새로 생긴 DAG"를 세는 근거다. */
+    @Column(name = "created_at", insertable = false, updatable = false)
+    private java.time.LocalDateTime createdAt;
+
     public void updateMonitoring(
             boolean monitoringEnabled,
             int consecutiveFailureThreshold,

@@ -3,6 +3,8 @@ import { apiClient, unwrap, type ApiResponse } from "./client";
 export interface EtlJobResponse {
   id: number;
   nifiPgId: string;
+  parentPgId?: string | null;
+  parentGroupName?: string | null;
   jobName: string;
   engine: string;
   comments?: string | null;

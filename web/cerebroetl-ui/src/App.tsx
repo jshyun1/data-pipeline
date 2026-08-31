@@ -13,6 +13,8 @@ import { RolePermissionPage } from "./pages/admin/RolePermissionPage";
 import { AuditLogPage } from "./pages/admin/AuditLogPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { RequirePermissionRoute } from "./auth/RequirePermissionRoute";
+import { WorkflowCanvasPage } from "./pages/WorkflowCanvasPage";
+import { WorkflowDesignPage } from "./pages/WorkflowDesignPage";
 import { SelfCheckPage } from "./pages/SelfCheckPage";
 import { EtlCreatePage } from "./pages/EtlCreatePage";
 import { EtlLogsPage } from "./pages/EtlLogsPage";
@@ -54,6 +56,8 @@ export function App() {
         </Route>
         <Route path="/self-check" element={<SelfCheckPage />} />
         <Route path="/airflow" element={<Navigate to="/airflow/dashboard" replace />} />
+        <Route path="/workflows/design" element={<WorkflowDesignPage />} />
+        <Route path="/workflows/design/:id" element={<WorkflowCanvasPage />} />
         <Route path="/airflow/dashboard" element={<AirflowDashboardPage />} />
         <Route
           path="/airflow/manage"

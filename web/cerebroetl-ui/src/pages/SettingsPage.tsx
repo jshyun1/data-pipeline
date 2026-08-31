@@ -230,9 +230,14 @@ function RulesTab() {
   );
 
   async function toggle(rule: AlertRule, enabled: boolean) {
-    await updateAlertRule(rule.id, { enabled });
-    message.success(`${rule.name} ${enabled ? "활성화" : "비활성화"}`);
-    qc.invalidateQueries({ queryKey: ["alert-rules"] });
+    // 실패를 그냥 두면 스위치만 슬쩍 되돌아가고 사용자는 «왜 안 되지»만 남는다.
+    try {
+      await updateAlertRule(rule.id, { enabled });
+      message.success(`${rule.name} ${enabled ? "활성화" : "비활성화"}`);
+      qc.invalidateQueries({ queryKey: ["alert-rules"] });
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "사용여부 변경에 실패했습니다.");
+    }
   }
 
   async function remove(rule: AlertRule) {
