@@ -35,6 +35,7 @@ const CANVAS_ROUTE_SYNC_ATTRIBUTE = "data-cerebro-canvas-route-sync";
 const KOREAN_TOOLTIP_PATCH_ATTRIBUTE = "data-cerebro-korean-tooltip-patch";
 const KOREAN_TOOLTIP_INTERVAL_ATTRIBUTE = "data-cerebro-korean-tooltip-interval";
 const NIFI_STATUS_HIDDEN_ATTRIBUTE = "data-cerebro-status-hidden";
+const NIFI_STATUS_BAR_HIDDEN_ATTRIBUTE = "data-cerebro-status-bar-hidden";
 const NIFI_PANEL_LAYOUT_ATTRIBUTE = "data-cerebro-nifi-panel-layout";
 const NIFI_PANEL_ATTRIBUTE = "data-cerebro-nifi-panel";
 const NIFI_PANEL_EXPANDED_ATTRIBUTE = "data-cerebro-nifi-panel-expanded";
@@ -68,6 +69,7 @@ const HIDE_TOOL_CHROME_CSS = `
   :has(> img[alt="NiFi Logo"]) { display: none !important; }
   .current-user, .current-user ~ a { display: none !important; }
   [${NIFI_STATUS_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
+  [${NIFI_STATUS_BAR_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
   [title="Connected nodes / Total number of nodes in the cluster"],
   [title="연결된 노드 / 클러스터 전체 노드"],
   [title="Total queued data"],
@@ -76,6 +78,20 @@ const HIDE_TOOL_CHROME_CSS = `
   [title="전송 중인 원격 프로세스 그룹"],
   [title="Not Transmitting Remote Process Groups"],
   [title="전송 중이 아닌 원격 프로세스 그룹"],
+  [title="Running Components"],
+  [title="실행 중 컴포넌트"],
+  [title="Stopped Components"],
+  [title="중지된 컴포넌트"],
+  [title="Invalid Components"],
+  [title="유효하지 않은 컴포넌트"],
+  [title="Disabled Components"],
+  [title="비활성 컴포넌트"],
+  [title="Valid Components"],
+  [title="Up to date Versioned Process Groups"],
+  [title="유효한 컴포넌트"],
+  [title="Last refresh"],
+  [title="Last Refresh"],
+  [title="마지막 새로고침"],
   [title="Locally modified Versioned Process Groups"],
   [title="로컬 수정된 버전 프로세스 그룹"],
   [title="Stale Versioned Process Groups"],
@@ -213,6 +229,20 @@ const HIDDEN_NIFI_STATUS_TITLES = new Set([
   "전송 중인 원격 프로세스 그룹",
   "Not Transmitting Remote Process Groups",
   "전송 중이 아닌 원격 프로세스 그룹",
+  "Running Components",
+  "실행 중 컴포넌트",
+  "Stopped Components",
+  "중지된 컴포넌트",
+  "Invalid Components",
+  "유효하지 않은 컴포넌트",
+  "Disabled Components",
+  "비활성 컴포넌트",
+  "Valid Components",
+  "Up to date Versioned Process Groups",
+  "유효한 컴포넌트",
+  "Last refresh",
+  "Last Refresh",
+  "마지막 새로고침",
   "Locally modified Versioned Process Groups",
   "로컬 수정된 버전 프로세스 그룹",
   "Stale Versioned Process Groups",
@@ -378,6 +408,43 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     return null;
   };
 
+  const patchStatusBarVisibility = (element: Element) => {
+    let current: Element | null = element;
+    for (let depth = 0; depth < 8 && current; depth += 1) {
+      const classNames = elementClassName(current).split(/\s+/);
+      const text = current.textContent ?? "";
+      const hasRefresh =
+        classNames.includes("fa-refresh") ||
+        Boolean(current.querySelector(".fa-refresh")) ||
+        /\bKST\b/.test(text);
+      const hasComponentStatus =
+        classNames.some((className) => ["fa-play", "fa-stop", "fa-warning", "icon-enable-false", "fa-check"].includes(className)) ||
+        Boolean(current.querySelector(".fa-play, .fa-stop, .fa-warning, .icon-enable-false, .fa-check"));
+      const hasPrimaryToolbar =
+        current.querySelector(
+          [
+            '[title="Processor"]',
+            '[title="프로세서"]',
+            '[title="Input Port"]',
+            '[title="입력 포트"]',
+            '[title="Output Port"]',
+            '[title="출력 포트"]',
+            '[title="Process Group"]',
+            '[title="프로세스 그룹"]',
+            '[title="Funnel"]',
+            '[title="퍼널"]',
+          ].join(", "),
+        ) !== null;
+      const rect = current.getBoundingClientRect();
+      const looksLikeStatusBar = rect.height > 0 && rect.height <= 48 && rect.width >= 240;
+      if (hasRefresh && hasComponentStatus && looksLikeStatusBar && !hasPrimaryToolbar) {
+        current.setAttribute(NIFI_STATUS_BAR_HIDDEN_ATTRIBUTE, "true");
+        return;
+      }
+      current = current.parentElement;
+    }
+  };
+
   const patchStatusTooltipText = (element: Element) => {
     const classNames = elementClassName(element).split(/\s+/);
     const translated = NIFI_STATUS_TOOLTIP_ICON_TEXT.find(([iconClass]) => classNames.includes(iconClass))?.[1];
@@ -388,6 +455,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     if (statusItem) {
       statusItem.setAttribute("title", translated);
       statusItem.setAttribute("aria-label", translated);
+      patchStatusVisibility(statusItem, translated);
     }
   };
 
@@ -409,6 +477,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     patchExactTextElement(element);
     patchStatusIconVisibility(element);
     patchStatusTooltipText(element);
+    patchStatusBarVisibility(element);
   };
 
   const patchDocument = () => {
@@ -422,6 +491,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     NIFI_STATUS_TOOLTIP_ICON_TEXT.forEach(([iconClass]) => {
       doc.querySelectorAll(`.${iconClass}`).forEach(patchStatusTooltipText);
     });
+    doc.querySelectorAll(".fa-refresh, .fa-play, .fa-stop, .fa-warning, .icon-enable-false, .fa-check").forEach(patchStatusBarVisibility);
   };
 
   patchDocument();
@@ -465,6 +535,9 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
         NIFI_STATUS_TOOLTIP_ICON_TEXT.forEach(([iconClass]) => {
           node.querySelectorAll(`.${iconClass}`).forEach(patchStatusTooltipText);
         });
+        node
+          .querySelectorAll(".fa-refresh, .fa-play, .fa-stop, .fa-warning, .icon-enable-false, .fa-check")
+          .forEach(patchStatusBarVisibility);
       });
     }
   });
