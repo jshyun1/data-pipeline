@@ -210,8 +210,99 @@ const NIFI_TOOLTIP_TEXT: Record<string, string> = {
   About: "정보",
   Appearance: "화면 표시",
   Animations: "애니메이션",
+  Refresh: "새로고침",
+  "Leave Group": "상위 그룹으로 이동",
+  Configure: "설정",
+  "Controller Services": "컨트롤러 서비스",
+  Start: "시작",
+  Stop: "중지",
+  Enable: "활성화",
+  Disable: "비활성화",
+  "Enable All Controller Services": "모든 컨트롤러 서비스 활성화",
+  "Disable All Controller Services": "모든 컨트롤러 서비스 비활성화",
+  "View Status History": "상태 기록 조회",
+  "Manage Access Policies": "접근 권한 관리",
+  "Download Flow Definition": "플로우 정의 다운로드",
+  "Without External Services": "외부 서비스 제외",
+  "With External Services": "외부 서비스 포함",
+  "Without Externel Services": "외부 서비스 제외",
+  "With Externel Services": "외부 서비스 포함",
+  "Empty All Queues": "모든 대기열 비우기",
+  Navigation: "탐색",
+  Operation: "작업",
+  "NiFi Counters": "ETL 카운터",
+  "NiFi Counter": "ETL 카운터",
+  Counters: "ETL 카운터",
+  Filter: "검색어 입력",
+  "Filter By": "필터 기준",
+  Context: "영역",
+  Name: "이름",
+  name: "이름",
+  Value: "값",
+  "NiFi Summary": "요약",
+  "Nifi Summary": "요약",
+  Processors: "프로세서",
+  "Input Ports": "입력 포트",
+  "Output Ports": "출력 포트",
+  "Remote Process Groups": "원격 프로세스 그룹",
+  Connections: "연결",
+  "Process Groups": "프로세스 그룹",
+  Status: "상태",
+  "All Statuses": "전체 상태",
+  "Primary Node": "대표 노드",
+  Type: "유형",
+  "Run Status": "실행 상태",
+  "Process Gro...": "프로세스 그룹",
+  "Process Gro…": "프로세스 그룹",
+  "Read | Write...": "읽기 | 쓰기",
+  "Read | Write…": "읽기 | 쓰기",
+  "Tasks | Tim...": "작업 수 | 시간",
+  "Tasks | Tim…": "작업 수 | 시간",
+  "NiFi Bulletin Board": "ETL 알림판",
+  "Nifi Bulletin Board": "ETL 알림판",
+  message: "메시지",
+  Message: "메시지",
+  Provenance: "계보",
+  "Showing the most recent events.": "최신 이벤트를 표시 중입니다.",
+  "component name": "컴포넌트 이름",
+  "Component Name": "컴포넌트 이름",
+  "Component Type": "컴포넌트 유형",
+  "Event Time": "발생 시각",
+  "FlowFile UUID": "FlowFile UUID",
+  "File Size": "파일 크기",
+  "NiFi Settings": "ETL 설정",
+  "Nifi Settings": "ETL 설정",
+  General: "일반",
+  "Management Controller Services": "관리 컨트롤러 서비스",
+  "Reporting Tasks": "리포팅 태스크",
+  "Flow Analysis Rules": "플로우 분석 규칙",
+  "Registry Clients": "레지스트리 클라이언트",
+  "Parameter Providers": "파라미터 제공자",
+  "Maximum Timer Driven Thread Count": "최대 타이머 기반 스레드 수",
+  Provider: "제공자",
+  Description: "설명",
+  id: "ID",
+  Id: "ID",
+  ID: "ID",
+  "Date Range": "기간",
+  "Start Time (KST)*": "시작 시간 (KST)*",
+  "End Time (KST)*": "종료 시간 (KST)*",
+  "Clear Filter": "필터 초기화",
+  "Date/Time": "일시",
+  User: "사용자",
+  user: "사용자",
+  "NiFi Users": "사용자",
+  "Nifi Users": "사용자",
+  "Add User": "사용자 추가",
+  Individual: "개인",
+  Group: "그룹",
+  "Identity*": "식별 정보*",
+  Membership: "멤버십",
+  Cancel: "취소",
+  Add: "추가",
+  Apply: "적용",
 };
-const NIFI_TOOLTIP_ATTRIBUTES = ["title", "aria-label", "data-tooltip", "matTooltip", "mattooltip", "tooltip"];
+const NIFI_TOOLTIP_ATTRIBUTES = ["title", "aria-label", "data-tooltip", "matTooltip", "mattooltip", "tooltip", "placeholder"];
 const NIFI_STATUS_TOOLTIP_ICON_TEXT: Array<[string, string]> = [
   ["fa-play", "실행 중 컴포넌트"],
   ["fa-stop", "중지된 컴포넌트"],
@@ -271,6 +362,61 @@ function translateNifiTooltip(value: string) {
   }
   if (trimmed.startsWith("Active Threads")) {
     return trimmed.replace("Active Threads", NIFI_TOOLTIP_TEXT["Active Threads"]);
+  }
+  const displayingMatch = trimmed.match(/^Displaying\s+(\d+)\s+of\s+(\d+)$/i);
+  if (displayingMatch) {
+    return `전체 ${displayingMatch[2]}개 중 ${displayingMatch[1]}개 표시 중`;
+  }
+  const filterMatchedMatch = trimmed.match(/^Filter\s+matched\s+(\d+)\s+of\s+(\d+)$/i);
+  if (filterMatchedMatch) {
+    return `필터 조건 일치: ${filterMatchedMatch[1]} / ${filterMatchedMatch[2]}개`;
+  }
+  const oldestEventMatch = trimmed.match(/^Oldest\s+event\s+available:\s*(.+)$/i);
+  if (oldestEventMatch) {
+    return `가장 오래된 이벤트: ${oldestEventMatch[1]}`;
+  }
+  if (/^Maximum\s+Timer\s+Driven\s+Thread\s+Count\b/i.test(trimmed)) {
+    return "최대 타이머 기반 스레드 수";
+  }
+  const sortableNameMatch = trimmed.match(/^Name\s*([↑↓])?$/);
+  if (sortableNameMatch) {
+    return `이름${sortableNameMatch[1] ? ` ${sortableNameMatch[1]}` : ""}`;
+  }
+  const sortableProviderMatch = trimmed.match(/^Provider\s*([↑↓])?$/);
+  if (sortableProviderMatch) {
+    return `제공자${sortableProviderMatch[1] ? ` ${sortableProviderMatch[1]}` : ""}`;
+  }
+  const sortableDescriptionMatch = trimmed.match(/^Description\s*([↑↓])?$/);
+  if (sortableDescriptionMatch) {
+    return `설명${sortableDescriptionMatch[1] ? ` ${sortableDescriptionMatch[1]}` : ""}`;
+  }
+  const sortableIdMatch = trimmed.match(/^Id\s*([↑↓])?$/i);
+  if (sortableIdMatch) {
+    return `ID${sortableIdMatch[1] ? ` ${sortableIdMatch[1]}` : ""}`;
+  }
+  const sortableDateTimeMatch = trimmed.match(/^Date\/Time\s*([↑↓])?$/);
+  if (sortableDateTimeMatch) {
+    return `일시${sortableDateTimeMatch[1] ? ` ${sortableDateTimeMatch[1]}` : ""}`;
+  }
+  const sortableOperationMatch = trimmed.match(/^Operation\s*([↑↓])?$/);
+  if (sortableOperationMatch) {
+    return `작업${sortableOperationMatch[1] ? ` ${sortableOperationMatch[1]}` : ""}`;
+  }
+  const sortableUserMatch = trimmed.match(/^User\s*([↑↓])?$/);
+  if (sortableUserMatch) {
+    return `사용자${sortableUserMatch[1] ? ` ${sortableUserMatch[1]}` : ""}`;
+  }
+  if (/^In\s+\(Size\)/i.test(trimmed)) {
+    return "In";
+  }
+  if (/^Out\s+\(Size\)/i.test(trimmed)) {
+    return "Out";
+  }
+  if (/^Read\s*\|\s*Write/i.test(trimmed)) {
+    return "읽기 | 쓰기";
+  }
+  if (/^Tasks\s*\|\s*Tim/i.test(trimmed)) {
+    return "작업 수 | 시간";
   }
   return undefined;
 }
@@ -484,7 +630,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
 
   const patchDocument = () => {
     doc
-      .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], title")
+      .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], [placeholder], title")
       .forEach(patchElement);
     patchTextNodes(doc);
     HIDDEN_NIFI_STATUS_ICON_CLASSES.forEach((iconClass) => {
@@ -528,7 +674,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
         patchElement(node);
         patchTextNodes(node);
         node
-          .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], title")
+          .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], [placeholder], title")
           .forEach(patchElement);
         node.querySelectorAll("*").forEach(patchExactTextElement);
         HIDDEN_NIFI_STATUS_ICON_CLASSES.forEach((iconClass) => {
@@ -748,12 +894,12 @@ function readProcessGroupIdFromElement(element: Element | null) {
 
 function readProcessGroupIdFromOperationPanel(doc: Document) {
   const panels = Array.from(doc.querySelectorAll("aside, section, div")).filter((element) =>
-    /operation/i.test(elementClassName(element)) || /Operation/.test(element.textContent ?? ""),
+    /operation/i.test(elementClassName(element)) || /(Operation|작업)/.test(element.textContent ?? ""),
   );
 
   for (const panel of panels) {
     const text = panel.textContent ?? "";
-    if (!/Process\s+Group/i.test(text)) {
+    if (!/Process\s+Group/i.test(text) && !/프로세스\s*그룹/.test(text)) {
       continue;
     }
     const id = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
@@ -796,7 +942,7 @@ type CanvasSelection =
 
 function readSelectionFromOperationPanel(doc: Document): CanvasSelection | null {
   const panels = Array.from(doc.querySelectorAll("aside, section, div")).filter((element) =>
-    /operation/i.test(elementClassName(element)) || /Operation/.test(element.textContent ?? ""),
+    /operation/i.test(elementClassName(element)) || /(Operation|작업)/.test(element.textContent ?? ""),
   );
 
   for (const panel of panels) {
