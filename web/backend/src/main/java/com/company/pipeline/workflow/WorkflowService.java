@@ -12,6 +12,7 @@ import com.company.pipeline.workflow.dto.WorkflowRequests.UpdateWorkflow;
 import com.company.pipeline.workflow.dto.WorkflowResponses.EdgeView;
 import com.company.pipeline.workflow.dto.WorkflowResponses.NodeView;
 import com.company.pipeline.workflow.dto.WorkflowResponses.WorkflowDetail;
+import com.company.pipeline.workflow.dto.WorkflowResponses;
 import com.company.pipeline.workflow.dto.WorkflowResponses.WorkflowSummary;
 import java.util.HashSet;
 import java.util.List;
@@ -94,7 +95,7 @@ public class WorkflowService {
         }).toList();
 
         return WorkflowDetail.of(workflow, nodeViews, edges.stream().map(EdgeView::from).toList(),
-                isDirty(workflow), upstreamIds(workflow));
+                isDirty(workflow), upstreamIds(workflow), parentsOf(id));
     }
 
     @Transactional
@@ -165,13 +166,34 @@ public class WorkflowService {
         return cleaned.length() > 40 ? cleaned.substring(0, 40) : cleaned;
     }
 
+    /**
+     * 이 워크플로우를 노드로 품고 있는 상위 워크플로우들.
+     *
+     * <p>상위가 있으면 자체 스케줄은 돌지 않는다(상위가 지시할 때만 돈다). 화면이 그 사실을
+     * 보여줘야 «분명히 2시로 걸어뒀는데 왜 안 도나»를 겪지 않는다.
+     */
+    @Transactional(readOnly = true)
+    public List<WorkflowResponses.ParentRef> parentsOf(Long id) {
+        List<EtlWorkflowNode> refs = nodeRepository.findBySubWorkflowIdAndDeletedAtIsNull(id);
+        return refs.stream()
+                .map(EtlWorkflowNode::getWorkflowId)
+                .distinct()
+                .map(workflowRepository::findById)
+                .flatMap(java.util.Optional::stream)
+                .filter(parent -> parent.getDeletedAt() == null)
+                .map(parent -> new WorkflowResponses.ParentRef(
+                        parent.getId(), parent.getWorkflowKey(), parent.getName(), parent.dagId(),
+                        parent.getScheduleCron(), parent.isPublished()))
+                .toList();
+    }
+
     @Transactional
     public WorkflowSummary update(Long id, UpdateWorkflow request) {
         EtlWorkflow workflow = require(id);
         workflow.updateSettings(request.name(), request.description(), request.nifiGroupPgId(),
                 request.scheduleCron(), request.timezone(), request.catchup(),
                 request.maxActiveRuns(), request.suspendOnError(),
-                writeIds(request.upstreamWorkflowIds()), request.upstreamMode());
+                writeIds(request.upstreamWorkflowIds()), request.upstreamMode(), request.memo());
         workflowRepository.save(workflow);
         return WorkflowSummary.from(workflow,
                 nodeRepository.findByWorkflowIdAndDeletedAtIsNull(id).size(),

@@ -46,7 +46,9 @@ public final class WorkflowRequests {
             /** 선행 워크플로우 id 목록. 지정하면 스케줄 대신 선행 완료로 실행된다. */
             List<Long> upstreamWorkflowIds,
             /** ALL=모두 완료 후, ANY=하나라도 완료되면. */
-            String upstreamMode) {
+            String upstreamMode,
+            /** 캔버스·속성창 공용 메모. */
+            String memo) {
     }
 
     /** 캔버스 통째 저장(draft). 노드·엣지를 전량 교체한다. */

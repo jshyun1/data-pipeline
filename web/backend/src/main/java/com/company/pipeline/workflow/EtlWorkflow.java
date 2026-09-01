@@ -57,6 +57,10 @@ public class EtlWorkflow {
     @Column(name = "max_active_runs", nullable = false)
     private int maxActiveRuns;
 
+    /** 캔버스·속성창에서 같이 고치는 메모. 그림만으로는 안 남는 맥락을 적어둔다. */
+    @Column(name = "memo")
+    private String memo;
+
     @Column(name = "suspend_on_error", nullable = false)
     private boolean suspendOnError;
 
@@ -120,6 +124,17 @@ public class EtlWorkflow {
                                String scheduleCron, String timezone, Boolean catchup,
                                Integer maxActiveRuns, Boolean suspendOnError,
                                String upstreamWorkflowIds, String upstreamMode) {
+        updateSettings(name, description, nifiGroupPgId, scheduleCron, timezone, catchup,
+                maxActiveRuns, suspendOnError, upstreamWorkflowIds, upstreamMode, null);
+    }
+
+    public void updateSettings(String name, String description, String nifiGroupPgId,
+                               String scheduleCron, String timezone, Boolean catchup,
+                               Integer maxActiveRuns, Boolean suspendOnError,
+                               String upstreamWorkflowIds, String upstreamMode, String memo) {
+        if (memo != null) {
+            this.memo = memo;
+        }
         this.upstreamWorkflowIds = upstreamWorkflowIds;
         if (upstreamMode != null && !upstreamMode.isBlank()) {
             this.upstreamMode = upstreamMode;

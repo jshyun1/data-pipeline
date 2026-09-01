@@ -38,6 +38,11 @@ public final class WorkflowResponses {
         }
     }
 
+    /** 이 워크플로우를 품고 있는 상위 워크플로우 한 줄. */
+    public record ParentRef(Long id, String workflowKey, String name, String dagId,
+                            String scheduleCron, boolean published) {
+    }
+
     /** 캔버스 로드용 상세. */
     public record WorkflowDetail(
             Long id,
@@ -54,6 +59,15 @@ public final class WorkflowResponses {
             /** 선행 워크플로우 id 목록. 있으면 스케줄 대신 선행 완료로 실행된다. */
             List<Long> upstreamWorkflowIds,
             String upstreamMode,
+            /** 캔버스·속성창 공용 메모. */
+            String memo,
+            /**
+             * 이 워크플로우를 «노드로 품고 있는» 워크플로우들.
+             *
+             * 상위가 있으면 자체 스케줄은 돌지 않는다(상위가 지시할 때만 돈다). 화면이 그
+             * 사실과 «누가 상위인지»를 같이 보여줘야 사용자가 스케줄을 헛설정하지 않는다.
+             */
+            List<ParentRef> parents,
             boolean published,
             LocalDateTime publishedAt,
             String publishedBy,
@@ -64,12 +78,13 @@ public final class WorkflowResponses {
             LocalDateTime updatedAt) {
 
         public static WorkflowDetail of(EtlWorkflow w, List<NodeView> nodes, List<EdgeView> edges,
-                                        boolean dirty, List<Long> upstreamWorkflowIds) {
+                                        boolean dirty, List<Long> upstreamWorkflowIds,
+                                        List<ParentRef> parents) {
             return new WorkflowDetail(
                     w.getId(), w.getWorkflowKey(), w.dagId(), w.getName(), w.getDescription(),
                     w.getNifiGroupPgId(), w.getScheduleCron(), w.getTimezone(),
                     w.isCatchup(), w.getMaxActiveRuns(), w.isSuspendOnError(),
-                    upstreamWorkflowIds, w.getUpstreamMode(),
+                    upstreamWorkflowIds, w.getUpstreamMode(), w.getMemo(), parents,
                     w.isPublished(), w.getPublishedAt(), w.getPublishedBy(), dirty,
                     nodes, edges, w.getUpdatedAt());
         }
