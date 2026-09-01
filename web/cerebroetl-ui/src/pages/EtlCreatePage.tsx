@@ -103,7 +103,7 @@ interface ProcessGroupOption {
 interface ControllerServiceOption {
   id: string;
   name: string;
-  properties: Record<string, string | null | undefined>;
+  displayName: string;
 }
 
 interface BasicInfo {
@@ -154,7 +154,7 @@ function toControllerServiceOption(service: NifiControllerServiceEntity): Contro
   return {
     id,
     name,
-    properties: service.component?.properties ?? {},
+    displayName: stripCdcControllerServicePrefix(name),
   };
 }
 
@@ -162,32 +162,12 @@ function normalizeName(value: string) {
   return value.trim().toLowerCase();
 }
 
-function normalizeJdbcUrl(value: string) {
-  return value.trim().replace(/\s+/g, "").toLowerCase();
+function stripCdcControllerServicePrefix(value: string) {
+  return value.trim().replace(/^cdc-\d+-/i, "");
 }
 
-function propertyValue(properties: Record<string, string | null | undefined>, keys: string[]) {
-  const entries = Object.entries(properties);
-  for (const key of keys) {
-    const matched = entries.find(([entryKey]) => normalizeName(entryKey) === normalizeName(key));
-    if (matched?.[1]?.trim()) {
-      return matched[1].trim();
-    }
-  }
-  return null;
-}
-
-function connectionJdbcUrl(connection: ConnectionResponse) {
-  if (connection.dbType === "POSTGRESQL" && connection.databaseName) {
-    return `jdbc:postgresql://${connection.host}:${connection.port}/${connection.databaseName}`;
-  }
-  if (connection.dbType === "ORACLE" && connection.serviceName) {
-    return `jdbc:oracle:thin:@${connection.host}:${connection.port}/${connection.serviceName}`;
-  }
-  if (connection.dbType === "MYSQL" && connection.databaseName) {
-    return `jdbc:mysql://${connection.host}:${connection.port}/${connection.databaseName}`;
-  }
-  return null;
+function normalizeControllerServiceName(value: string) {
+  return normalizeName(stripCdcControllerServicePrefix(value));
 }
 
 function nifiDatabaseTypeFromConnection(connection: ConnectionResponse | null) {
@@ -423,6 +403,7 @@ function ConnectionStep({
 }) {
   const [services, setServices] = useState<ControllerServiceOption[]>([]);
   const [connections, setConnections] = useState<ConnectionResponse[]>([]);
+  const [connectionsLoaded, setConnectionsLoaded] = useState(false);
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [sourceSchemas, setSourceSchemas] = useState<string[]>([]);
   const [sourceTables, setSourceTables] = useState<string[]>([]);
@@ -470,11 +451,13 @@ function ConnectionStep({
       .then((result) => {
         if (!cancelled) {
           setConnections(result);
+          setConnectionsLoaded(true);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setConnections([]);
+          setConnectionsLoaded(true);
         }
       });
 
@@ -483,47 +466,30 @@ function ConnectionStep({
     };
   }, []);
 
+  const connectionMatchesControllerService = (connection: ConnectionResponse, service: ControllerServiceOption) => {
+    const serviceName = normalizeControllerServiceName(service.name);
+    const connectionName = normalizeControllerServiceName(connection.name);
+    return serviceName === connectionName;
+  };
+
+  const matchedServices = services.filter((service) =>
+    connections.some((connection) => connectionMatchesControllerService(connection, service)),
+  );
+
   const servicePlaceholder = serviceError
     ? "Controller Service 조회 실패"
-    : services.length > 0
+    : !connectionsLoaded || services.length === 0
+      ? "Controller Service 조회 중"
+      : matchedServices.length > 0
       ? "Controller Service를 선택하세요"
-      : "Controller Service 조회 중";
+      : "연결정보와 일치하는 Controller Service가 없습니다";
 
   const connectionByServiceId = (serviceId: string) => {
-    const service = services.find((entry) => entry.id === serviceId);
+    const service = matchedServices.find((entry) => entry.id === serviceId);
     if (!service) {
       return null;
     }
-    const serviceUrl = propertyValue(service.properties, [
-      "Database Connection URL",
-      "Connection URL",
-      "JDBC URL",
-      "database.connection.url",
-    ]);
-    const serviceUser = propertyValue(service.properties, [
-      "Database User",
-      "Database User Name",
-      "User",
-      "Username",
-      "database.user",
-    ]);
-
-    return connections.find((connection) => {
-      if (connection.nifiControllerServiceId === service.id) {
-        return true;
-      }
-      if (connection.nifiControllerServiceName && normalizeName(connection.nifiControllerServiceName) === normalizeName(service.name)) {
-        return true;
-      }
-      if (normalizeName(connection.name) === normalizeName(service.name)) {
-        return true;
-      }
-
-      const appUrl = connectionJdbcUrl(connection);
-      const urlMatches = !!serviceUrl && !!appUrl && normalizeJdbcUrl(serviceUrl) === normalizeJdbcUrl(appUrl);
-      const userMatches = !serviceUser || normalizeName(connection.username) === normalizeName(serviceUser);
-      return urlMatches && userMatches;
-    }) ?? null;
+    return connections.find((connection) => connectionMatchesControllerService(connection, service)) ?? null;
   };
 
   const sourceConnection = connectionByServiceId(value.sourceServiceId);
@@ -820,15 +786,15 @@ function ConnectionStep({
             <label>소스 연결</label>
             <select
               value={value.sourceServiceId}
-              disabled={services.length === 0 || !!serviceError}
+              disabled={!connectionsLoaded || matchedServices.length === 0 || !!serviceError}
               onChange={(event) => handleSourceServiceChange(event.target.value)}
             >
               <option value="" disabled>
                 {servicePlaceholder}
               </option>
-              {services.map((service) => (
+              {matchedServices.map((service) => (
                 <option key={service.id} value={service.id}>
-                  {service.name}
+                  {service.displayName}
                 </option>
               ))}
             </select>
@@ -837,15 +803,15 @@ function ConnectionStep({
         <label>타깃 연결</label>
         <select
           value={value.targetServiceId}
-          disabled={services.length === 0 || !!serviceError}
+          disabled={!connectionsLoaded || matchedServices.length === 0 || !!serviceError}
           onChange={(event) => handleTargetServiceChange(event.target.value)}
         >
           <option value="" disabled>
             {servicePlaceholder}
           </option>
-          {services.map((service) => (
+          {matchedServices.map((service) => (
             <option key={service.id} value={service.id}>
-              {service.name}
+              {service.displayName}
             </option>
           ))}
         </select>

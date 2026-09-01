@@ -391,31 +391,6 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     }
   };
 
-  const patchCanvasStatusLabel = (element: Element) => {
-    const text = element.textContent?.trim();
-    if (!text || !text.includes("마지막 실행") || !/^●\s*(실행|완료|실패|대기|중지|중단)/m.test(text)) {
-      return;
-    }
-
-    let current: Element = element;
-    for (let depth = 0; depth < 6 && current.parentElement; depth += 1) {
-      const rect = current.getBoundingClientRect();
-      const candidateText = current.textContent?.trim() ?? "";
-      if (
-        candidateText.includes("마지막 실행")
-        && rect.width >= 60
-        && rect.width <= 320
-        && rect.height >= 24
-        && rect.height <= 180
-      ) {
-        current.setAttribute(NIFI_STATUS_HIDDEN_ATTRIBUTE, "true");
-        return;
-      }
-      current = current.parentElement;
-    }
-    element.setAttribute(NIFI_STATUS_HIDDEN_ATTRIBUTE, "true");
-  };
-
   const patchElement = (element: Element) => {
     NIFI_TOOLTIP_ATTRIBUTES.forEach((attributeName) => {
       const value = element.getAttribute(attributeName);
@@ -434,7 +409,6 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     patchExactTextElement(element);
     patchStatusIconVisibility(element);
     patchStatusTooltipText(element);
-    patchCanvasStatusLabel(element);
   };
 
   const patchDocument = () => {
@@ -448,7 +422,6 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     NIFI_STATUS_TOOLTIP_ICON_TEXT.forEach(([iconClass]) => {
       doc.querySelectorAll(`.${iconClass}`).forEach(patchStatusTooltipText);
     });
-    doc.querySelectorAll("div, span, p, label, text, textarea").forEach(patchCanvasStatusLabel);
   };
 
   patchDocument();
@@ -486,7 +459,6 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
           .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], title")
           .forEach(patchElement);
         node.querySelectorAll("*").forEach(patchExactTextElement);
-        node.querySelectorAll("div, span, p, label, text, textarea").forEach(patchCanvasStatusLabel);
         HIDDEN_NIFI_STATUS_ICON_CLASSES.forEach((iconClass) => {
           node.querySelectorAll(`.${iconClass}`).forEach(patchStatusIconVisibility);
         });
