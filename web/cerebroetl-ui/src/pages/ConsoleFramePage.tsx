@@ -420,9 +420,26 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
       const hasComponentStatus =
         classNames.some((className) => ["fa-play", "fa-stop", "fa-warning", "icon-enable-false", "fa-check"].includes(className)) ||
         Boolean(current.querySelector(".fa-play, .fa-stop, .fa-warning, .icon-enable-false, .fa-check"));
+      const hasPrimaryToolbar =
+        current.querySelector(
+          [
+            '[title="Processor"]',
+            '[title="프로세서"]',
+            '[title="Input Port"]',
+            '[title="입력 포트"]',
+            '[title="Output Port"]',
+            '[title="출력 포트"]',
+            '[title="Process Group"]',
+            '[title="프로세스 그룹"]',
+            '[title="Funnel"]',
+            '[title="퍼널"]',
+            '[title="Label"]',
+            '[title="라벨"]',
+          ].join(", "),
+        ) !== null;
       const rect = current.getBoundingClientRect();
-      const looksLikeStatusBar = rect.height > 0 && rect.height <= 96 && rect.width >= 240;
-      if (hasRefresh && hasComponentStatus && looksLikeStatusBar) {
+      const looksLikeStatusBar = rect.height > 0 && rect.height <= 48 && rect.width >= 240;
+      if (hasRefresh && hasComponentStatus && looksLikeStatusBar && !hasPrimaryToolbar) {
         current.setAttribute(NIFI_STATUS_BAR_HIDDEN_ATTRIBUTE, "true");
         return;
       }
