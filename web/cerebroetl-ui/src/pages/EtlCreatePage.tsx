@@ -190,7 +190,6 @@ function defaultLoadSql(
   sourceSchema: string,
   sourceTable: string,
   databaseType: NifiDatabaseType,
-  changeKeyColumn = "",
 ) {
   const schema = sourceSchema.trim() || "소스스키마";
   const table = sourceTable.trim() || "소스테이블";
@@ -199,7 +198,7 @@ function defaultLoadSql(
     return baseSql;
   }
 
-  return `${baseSql}\nWHERE ${changeKeyColumn.trim() || "[UPDATE기준컬럼]"} ${defaultUpdateWhereExpression(databaseType)}`;
+  return `${baseSql}\nWHERE [UPDATE기준컬럼] ${defaultUpdateWhereExpression(databaseType)}`;
 }
 
 function defaultUpdateWhereExpression(databaseType: NifiDatabaseType) {
@@ -924,15 +923,12 @@ function TargetStep({
   loadMode,
   truncateSql,
   loadSql,
-  changeKeyColumn,
   primaryKeys,
-  sourceColumns,
   targetColumns,
   showTruncateSql,
   onLoadModeChange,
   onTruncateSqlChange,
   onLoadSqlChange,
-  onChangeKeyColumnChange,
   onPrimaryKeysChange,
   onShowTruncateSqlChange,
 }: {
@@ -940,18 +936,14 @@ function TargetStep({
   onLoadModeChange: (loadMode: LoadMode) => void;
   truncateSql: string;
   loadSql: string;
-  changeKeyColumn: string;
   primaryKeys: string;
-  sourceColumns: ColumnMetadataResponse[];
   targetColumns: ColumnMetadataResponse[];
   showTruncateSql: boolean;
   onTruncateSqlChange: (truncateSql: string) => void;
   onLoadSqlChange: (loadSql: string) => void;
-  onChangeKeyColumnChange: (changeKeyColumn: string) => void;
   onPrimaryKeysChange: (primaryKeys: string) => void;
   onShowTruncateSqlChange: (show: boolean) => void;
 }) {
-  const sourceColumnOptions = columnOptions(sourceColumns);
   const targetColumnOptions = columnOptions(targetColumns);
 
   return (
@@ -1002,22 +994,6 @@ function TargetStep({
               placeholder="예: TRUNCATE TABLE public.target_table"
             />
           ) : null}
-        </div>
-      ) : null}
-
-      {loadMode === "UPSERT" ? (
-        <div className="etl-change-key-column">
-          <label>UPDATE 기준 컬럼</label>
-          <Select
-            showSearch
-            allowClear
-            value={changeKeyColumn || undefined}
-            disabled={sourceColumns.length === 0}
-            options={sourceColumnOptions}
-            filterOption={matchesSelectOption}
-            placeholder="예: UPD_DTTM"
-            onChange={(nextColumn) => onChangeKeyColumnChange(nextColumn ?? "")}
-          />
         </div>
       ) : null}
 
@@ -1165,9 +1141,8 @@ export function EtlCreatePage() {
   const [showTruncateSql, setShowTruncateSql] = useState(false);
   const [truncateSql, setTruncateSql] = useState("");
   const [loadSql, setLoadSql] = useState(defaultLoadSql("INSERT", "", "", "PostgreSQL"));
-  const [changeKeyColumn, setChangeKeyColumn] = useState("");
   const [primaryKeys, setPrimaryKeys] = useState("");
-  const [sourceColumns, setSourceColumns] = useState<ColumnMetadataResponse[]>([]);
+  const [, setSourceColumns] = useState<ColumnMetadataResponse[]>([]);
   const [targetColumns, setTargetColumns] = useState<ColumnMetadataResponse[]>([]);
 
   const isUnlocked = (stepId: WizardStepId) => {
@@ -1210,10 +1185,8 @@ export function EtlCreatePage() {
       connectionInfo.sourceSchema,
       connectionInfo.sourceTable,
       connectionInfo.sourceDatabaseType,
-      changeKeyColumn,
     ));
   }, [
-    changeKeyColumn,
     connectionInfo.sourceDatabaseType,
     connectionInfo.sourceSchema,
     connectionInfo.sourceTable,
@@ -1246,10 +1219,6 @@ export function EtlCreatePage() {
     }
     if (!isFileLoad && (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()) {
       message.warning("적재로직 SQL문을 입력해야 합니다.");
-      return;
-    }
-    if (!isFileLoad && loadMode === "UPSERT" && !changeKeyColumn.trim()) {
-      message.warning("UPSERT 적재 방식은 UPDATE 기준 컬럼을 입력해야 합니다.");
       return;
     }
     if (!isFileLoad && loadMode === "UPSERT" && !primaryKeys.trim()) {
@@ -1355,13 +1324,6 @@ export function EtlCreatePage() {
             return { ...current, ...nextValue };
           });
           if (
-            nextValue.sourceServiceId !== undefined ||
-            nextValue.sourceSchema !== undefined ||
-            nextValue.sourceTable !== undefined
-          ) {
-            setChangeKeyColumn("");
-          }
-          if (
             nextValue.targetServiceId !== undefined ||
             nextValue.targetSchema !== undefined ||
             nextValue.targetTable !== undefined
@@ -1381,9 +1343,7 @@ export function EtlCreatePage() {
         loadMode={loadMode}
         truncateSql={truncateSql}
         loadSql={loadSql}
-        changeKeyColumn={changeKeyColumn}
         primaryKeys={primaryKeys}
-        sourceColumns={sourceColumns}
         targetColumns={targetColumns}
         showTruncateSql={showTruncateSql}
         onLoadModeChange={(nextLoadMode) => {
@@ -1394,7 +1354,6 @@ export function EtlCreatePage() {
         }}
         onTruncateSqlChange={setTruncateSql}
         onLoadSqlChange={setLoadSql}
-        onChangeKeyColumnChange={setChangeKeyColumn}
         onPrimaryKeysChange={setPrimaryKeys}
         onShowTruncateSqlChange={setShowTruncateSql}
       />
@@ -1473,7 +1432,7 @@ export function EtlCreatePage() {
                       loading={isCreating}
                       disabled={!isFileLoad && (
                         ((loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()) ||
-                        (loadMode === "UPSERT" && (!changeKeyColumn.trim() || !primaryKeys.trim()))
+                        (loadMode === "UPSERT" && !primaryKeys.trim())
                       )}
                       onClick={completeWizard}
                     >
