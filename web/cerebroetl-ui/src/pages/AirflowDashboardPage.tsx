@@ -1634,9 +1634,17 @@ export function AirflowDashboardPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [executionOpen, setExecutionOpen] = useState(false);
   const [synchronizing, setSynchronizing] = useState(false);
+  // 이 화면의 «쓰기» 동작(카탈로그 동기화·실행 설정)은 Airflow 쓰기 권한이 있어야 한다.
+  const { can: canTop, permissionsLoaded: permsLoadedTop } = useAuth();
+  const canRunTop = !permsLoadedTop || canTop("AIRFLOW", "WRITE");
+  // 진입 시 카탈로그 동기화는 POST 라 AIRFLOW 쓰기를 요구한다. 조회자가 화면을 열기만 해도
+  // 403 이 나면서 «동기화 실패» 경고가 떴다. 백엔드에 30초 주기 자동 동기화
+  // (AirflowDagCatalogSyncService)가 이미 돌고 있으므로, 쓰기 권한이 없으면 그냥 건너뛰고
+  // DB 에 있는 현황을 보여준다 - 조회자는 «조회만» 되면 된다.
   const initialSyncQuery = useQuery({
     queryKey: ["airflow-dag-catalog-sync"],
     queryFn: syncAirflowDagCatalog,
+    enabled: canRunTop,
     retry: 1,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
@@ -1645,7 +1653,8 @@ export function AirflowDashboardPage() {
     queryKey: ["airflow-dashboard"],
     queryFn: loadDashboard,
     refetchInterval: refreshSeconds * 1000,
-    enabled: initialSyncQuery.isFetched,
+    // 동기화를 건너뛴 조회자도 대시보드는 봐야 한다.
+    enabled: !canRunTop || initialSyncQuery.isFetched,
   });
   // ETL 트리를 NiFi 그룹 계층으로 보여주기 위해(ETL 관리 화면과 동일한 구조)
   const groupTreeQuery = useQuery({ queryKey: ["nifi-pg-tree"], queryFn: getNifiProcessGroupTree });
@@ -1707,7 +1716,7 @@ export function AirflowDashboardPage() {
   }, [initialDagId, openInitialDetail, selectedDagId]);
 
   useEffect(() => {
-    if (initialSyncQuery.isError) {
+    if (canRunTop && initialSyncQuery.isError) {
       message.warning("DAG 자동 동기화에 실패해 기존 DB 정보로 대시보드를 표시합니다.");
     }
   }, [initialSyncQuery.isError]);
@@ -1817,10 +1826,10 @@ export function AirflowDashboardPage() {
     <div className="airflow-dashboard-page">
       <header className="airflow-dashboard-heading">
         <div><h1>실시간 모니터링</h1><p>작업 상태와 실행 이력을 한 화면에서 확인하고 조치합니다.</p></div>
-        <div className="airflow-refresh-controls"><Button icon={<SyncOutlined />} loading={synchronizing || initialSyncQuery.isFetching} onClick={() => void synchronizeDags()}>동기화</Button><span>갱신 주기</span><Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} /><span>마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}</span></div>
+        <div className="airflow-refresh-controls">{canRunTop && <Button icon={<SyncOutlined />} loading={synchronizing || initialSyncQuery.isFetching} onClick={() => void synchronizeDags()}>동기화</Button>}<span>갱신 주기</span><Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} /><span>마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}</span></div>
       </header>
 
-      {initialLoading ? <div className="airflow-dashboard-loading"><Spin size="large" /><span>{!initialSyncQuery.isFetched ? "DAG 동기화 중..." : "대시보드 로딩 중..."}</span></div> : dashboardQuery.isError ? <Empty description="Airflow 현황을 불러올 수 없습니다." /> : (
+      {initialLoading ? <div className="airflow-dashboard-loading"><Spin size="large" /><span>{canRunTop && !initialSyncQuery.isFetched ? "DAG 동기화 중..." : "대시보드 로딩 중..."}</span></div> : dashboardQuery.isError ? <Empty description="Airflow 현황을 불러올 수 없습니다." /> : (
         <>
           <div className="airflow-business-status">
             {CATEGORY_ORDER.map((category) => (
