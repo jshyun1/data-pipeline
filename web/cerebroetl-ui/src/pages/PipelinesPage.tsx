@@ -390,21 +390,20 @@ export function PipelinesPage() {
             />
           </Space>
           <Space wrap>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => navigate("/cdc/create")}
-              disabled={!canWrite || !connections || connections.length < 1}
-              title={
-                !canWrite
-                  ? "CDC 쓰기 권한이 없습니다"
-                  : !connections || connections.length < 1
-                    ? "연결정보가 최소 1개는 있어야 합니다"
-                    : undefined
-              }
-            >
-              파이프라인 신규 생성
-            </Button>
+            {/* 쓰기 권한이 없으면 버튼을 비활성이 아니라 아예 감춘다 - 사이드바에서 «생성»
+                메뉴가 사라지는 것과 같은 규칙이라, 할 수 없는 동작을 화면에 남기지 않는다.
+                (연결정보 부족처럼 «권한은 있는데 조건이 아직» 인 경우는 그대로 비활성+안내) */}
+            {canWrite && (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => navigate("/cdc/create")}
+                disabled={!connections || connections.length < 1}
+                title={!connections || connections.length < 1 ? "연결정보가 최소 1개는 있어야 합니다" : undefined}
+              >
+                파이프라인 신규 생성
+              </Button>
+            )}
           </Space>
         </div>
 

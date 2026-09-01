@@ -31,7 +31,9 @@ export function WorkflowDesignPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { can, permissionsLoaded } = useAuth();
+  // 생성·삭제는 설계(NIFI 쓰기), 게시 취소는 DAG 를 없애는 운영 동작(AIRFLOW 쓰기).
   const canWrite = !permissionsLoaded || can("NIFI", "WRITE");
+  const canPublish = !permissionsLoaded || can("AIRFLOW", "WRITE");
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<string>();
   const [form] = Form.useForm();
@@ -241,7 +243,8 @@ export function WorkflowDesignPage() {
           {row.published && (
             <Popconfirm title="게시를 내릴까요?" description="Airflow에서 DAG가 사라집니다."
                         onConfirm={() => unpublishMutation.mutate(row.id)}>
-              <Button size="small" disabled={!canWrite}>게시 취소</Button>
+              <Button size="small" disabled={!canPublish}
+                      title={canPublish ? undefined : "Airflow 쓰기 권한이 없습니다"}>게시 취소</Button>
             </Popconfirm>
           )}
           <Popconfirm title="이 워크플로우를 삭제할까요?"

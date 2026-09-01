@@ -86,8 +86,10 @@ public class WorkflowController {
      *
      * <p>검증 오류가 있으면 게시하지 않고 결과를 그대로 돌려준다(화면이 문제 노드를 표시).
      */
+    // 게시는 «설계»가 아니라 «운영 반영»이다 - Airflow Variable 을 갱신해 DAG 를 만들고
+    // 스케줄을 켠다. 그래서 그래프 편집(NIFI)과 달리 AIRFLOW 쓰기를 요구한다.
     @PostMapping("/{id}/publish")
-    @RequirePermission(system = SystemCode.NIFI, bits = AccessBits.WRITE)
+    @RequirePermission(system = SystemCode.AIRFLOW, bits = AccessBits.WRITE)
     public ApiResponse<WorkflowValidationResult> publish(@PathVariable Long id,
                                                         @AuthenticationPrincipal AppUser actor) {
         return ApiResponse.success(
@@ -95,8 +97,9 @@ public class WorkflowController {
     }
 
     /** 게시를 내린다. 다음 파싱 주기에 DAG가 사라진다. */
+    // 게시 취소도 DAG 를 없애는 운영 동작이라 게시와 같은 권한을 요구한다.
     @PostMapping("/{id}/unpublish")
-    @RequirePermission(system = SystemCode.NIFI, bits = AccessBits.WRITE)
+    @RequirePermission(system = SystemCode.AIRFLOW, bits = AccessBits.WRITE)
     public ApiResponse<Void> unpublish(@PathVariable Long id) {
         publishService.unpublish(id);
         return ApiResponse.success(null);

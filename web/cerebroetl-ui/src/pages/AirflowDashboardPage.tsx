@@ -52,6 +52,7 @@ import { getNifiProcessGroupTree, type NifiProcessGroupTreeNode } from "../api/p
 import { getEtlJob, listEtlJobs } from "../api/etlJobs";
 import { categorizeDag, extractKafkaPipelineId, type DagCategory } from "../utils/dagHistory";
 import { scheduleDescription } from "../utils/schedulePreset";
+import { useAuth } from "../auth/AuthContext";
 
 type BusinessCategory = Exclude<DagCategory, "기타">;
 
@@ -388,6 +389,10 @@ function BusinessTree({
 }) {
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
   const seeded = useRef(false);
+  // 실행(트리거)은 Airflow 쓰기 권한이 있어야 한다. 권한이 아직 안 실렸으면 사이드바와
+  // 같은 규칙으로 fail-open 한다(실제 차단은 백엔드가 한다).
+  const { can, permissionsLoaded } = useAuth();
+  const canRun = !permissionsLoaded || can("AIRFLOW", "WRITE");
 
   /**
    * 처음 열었을 때의 트리 모양.
@@ -493,7 +498,8 @@ function BusinessTree({
         // 되돌릴 수 없는 동작이라, 트리 우클릭처럼 스치듯 눌리는 자리에 둘 것이 아니다.
         items: [
           { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
-          { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
+          // 쓰기 권한이 없으면 실행 항목 자체를 빼서 «눌렀더니 403» 을 만들지 않는다.
+          ...(canRun ? [{ key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" }] : []),
         ],
         onClick: ({ key }) => {
           if (key === "detail") onDetail(dag);
@@ -568,7 +574,7 @@ function BusinessTree({
         menu={{
           items: [
             { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
-            { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
+            ...(canRun ? [{ key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" }] : []),
           ],
           onClick: ({ key }) => {
             onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id });
@@ -781,7 +787,7 @@ function BusinessTree({
                   menu={{
                     items: [
                       { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
-                      { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
+                      ...(canRun ? [{ key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" }] : []),
                     ],
                     onClick: ({ key }) => {
                       if (key === "detail") onDetail(dag);
@@ -1415,6 +1421,9 @@ function PropertyPanel({
   onOpenHistory?: () => void;
   onChanged?: () => void;
 }) {
+  // 실행 설정(트리거·스케줄 변경)은 Airflow 쓰기 권한이 있어야 한다.
+  const { can, permissionsLoaded } = useAuth();
+  const canRun = !permissionsLoaded || can("AIRFLOW", "WRITE");
   const [acknowledgingId, setAcknowledgingId] = useState<number>();
 
   const acknowledge = async (alert: AirflowDagAlert) => {
@@ -1453,7 +1462,8 @@ function PropertyPanel({
             <dt>수정 시각</dt><dd>{pipeline.updatedAt}</dd>
           </dl>
           <div className="airflow-schedule-actions">
-            <Button type="primary" disabled={!dag} onClick={onOpenExecution}>실행 설정</Button>
+            <Button type="primary" disabled={!dag || !canRun} onClick={onOpenExecution}
+              title={canRun ? undefined : "Airflow 쓰기 권한이 없습니다"}>실행 설정</Button>
             <Button disabled={!dag} onClick={onOpenHistory}>실행 이력</Button>
           </div>
         </section>
@@ -1488,7 +1498,8 @@ function PropertyPanel({
           <dt>설명</dt><dd>{dag.description || "-"}</dd>
         </dl>
         <div className="airflow-schedule-actions">
-          <Button type="primary" onClick={onOpenExecution}>실행 설정</Button>
+          <Button type="primary" disabled={!canRun} onClick={onOpenExecution}
+            title={canRun ? undefined : "Airflow 쓰기 권한이 없습니다"}>실행 설정</Button>
           <Button onClick={onOpenHistory}>실행 이력</Button>
         </div>
       </section>}

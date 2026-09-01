@@ -24,6 +24,12 @@ interface NavLeaf {
   label: string;
   system?: SystemCode;
   action?: AccessAction;
+  /**
+   * 여러 시스템이 공유하는 화면. 나열한 시스템 중 **하나라도** 권한이 있으면 보인다.
+   * 예: 연결정보는 CDC(KAFKA)와 ETL(NIFI) 양쪽이 쓰는 공용 정보라 한쪽만 있어도 필요하다.
+   * system 과 함께 쓰지 않는다(anySystems 가 있으면 그쪽이 우선).
+   */
+  anySystems?: SystemCode[];
 }
 
 interface NavItem {
@@ -33,6 +39,12 @@ interface NavItem {
   system?: SystemCode;
   action?: AccessAction;
   children?: NavLeaf[];
+  /**
+   * 그룹 자체의 최소 요건. 기본 규칙("자식이 하나라도 보이면 그룹도 보임")만으로는
+   * 그룹을 숨길 수 없는 경우에 쓴다 - 지정하면 이 권한이 **먼저** 검사되고,
+   * 통과하지 못하면 보이는 자식이 있어도 그룹을 숨긴다.
+   */
+  requireAny?: SystemCode[];
 }
 
 /**
@@ -104,8 +116,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "설정",
     icon: <SettingOutlined />,
     children: [
-      { path: "/settings", label: "알림/발송 관리", system: "COMMON", action: "READ" },
-      { path: "/settings/connections", label: "연결정보", system: "KAFKA", action: "READ" },
+      // 알림/발송 관리의 API(AlertAdminController·NotificationAdminController)는 ADMIN 이다.
+      // 여기가 COMMON 이면 모든 역할이 COMMON=1 을 갖고 있어 «설정» 그룹이 절대 안 숨겨지고,
+      // 조회자가 눌러도 API 가 403 을 주는 불일치가 생긴다.
+      { path: "/settings", label: "알림/발송 관리", system: "ADMIN", action: "READ" },
+      // 연결정보는 CDC(KAFKA)와 ETL(NIFI)이 함께 쓰는 공용 정보라 한쪽 권한만 있어도 필요하다.
+      { path: "/settings/connections", label: "연결정보", anySystems: ["KAFKA", "NIFI"], action: "READ" },
       { path: "/admin/users", label: "계정 관리", system: "ADMIN", action: "READ" },
       { path: "/admin/roles", label: "역할 및 권한", system: "ADMIN", action: "READ" },
       { path: "/admin/audit", label: "감사 로그", system: "ADMIN", action: "READ" },
@@ -125,14 +141,29 @@ export function AppLayout() {
   };
 
   // 권한이 아직 안 실렸으면(fail-open) 전부 보여준다. 실린 뒤엔 시스템 권한으로 게이팅.
-  const leafVisible = (leaf: NavLeaf) =>
-    !permissionsLoaded || !leaf.system || can(leaf.system, leaf.action ?? "READ");
+  const leafVisible = (leaf: NavLeaf) => {
+    if (!permissionsLoaded) {
+      return true;
+    }
+    const action = leaf.action ?? "READ";
+    if (leaf.anySystems?.length) {
+      return leaf.anySystems.some((system) => can(system, action));
+    }
+    return !leaf.system || can(leaf.system, action);
+  };
   const itemChildren = (item: NavItem) => (item.children ?? []).filter(leafVisible);
   const itemVisible = (item: NavItem) => {
+    if (!permissionsLoaded) {
+      return true;
+    }
+    // 그룹 자체 요건이 있으면 먼저 본다 - 보이는 자식이 있어도 여기서 막힌다.
+    if (item.requireAny?.length && !item.requireAny.some((system) => can(system, "READ"))) {
+      return false;
+    }
     if (item.children) {
       return itemChildren(item).length > 0;
     }
-    return !permissionsLoaded || !item.system || can(item.system, item.action ?? "READ");
+    return !item.system || can(item.system, item.action ?? "READ");
   };
 
   const visibleItems = NAV_ITEMS.filter(itemVisible);
