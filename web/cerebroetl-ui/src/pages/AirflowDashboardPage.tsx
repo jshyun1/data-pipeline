@@ -8,7 +8,6 @@ import {
   ClockCircleFilled,
   CloseCircleFilled,
   DeploymentUnitOutlined,
-  DeleteOutlined,
   DownOutlined,
   FolderOpenOutlined,
   FolderOutlined,
@@ -23,7 +22,6 @@ import { Link, useSearchParams } from "react-router-dom";
 import {
   getAirflowTaskLog,
   acknowledgeAirflowDagAlert,
-  deleteAirflowDagCatalog,
   listAirflowDagAlertHistory,
   listAirflowDagAlerts,
   listAirflowDagCatalog,
@@ -37,7 +35,7 @@ import {
   type AirflowDagAlert,
   type AirflowDagRun,
 } from "../api/platform";
-import { getProcessHealth, type ProcessGroup, type ProcessStatus } from "../api/infra";
+import { getProcessHealth, type ProcessGroup } from "../api/infra";
 import { getWorkflow, listWorkflows, type WorkflowSummary } from "../api/workflows";
 import { getAlertRulesWatching } from "../api/config";
 import { listConnections } from "../api/connections";
@@ -367,7 +365,6 @@ function BusinessTree({
   onSelect,
   onDetail,
   onExecution,
-  onDelete,
 }: {
   dags: DashboardDag[];
   /** NiFi 프로세스 그룹 계층. ETL은 이 구조 그대로 보여준다(ETL 관리 화면과 동일). */
@@ -388,7 +385,6 @@ function BusinessTree({
   onSelect: (dagId: string) => void;
   onDetail: (dag: DashboardDag) => void;
   onExecution: (dag: DashboardDag) => void;
-  onDelete: (dag: DashboardDag) => void;
 }) {
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
   const seeded = useRef(false);
@@ -493,15 +489,15 @@ function BusinessTree({
       key={dag.dag_id}
       trigger={["contextMenu"]}
       menu={{
+        // 삭제는 여기서 뺐다. nifi_pipeline_* 삭제는 NiFi 프로세스 그룹까지 지우는
+        // 되돌릴 수 없는 동작이라, 트리 우클릭처럼 스치듯 눌리는 자리에 둘 것이 아니다.
         items: [
           { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
           { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
-          { key: "delete", icon: <DeleteOutlined />, label: "삭제", danger: true },
         ],
         onClick: ({ key }) => {
           if (key === "detail") onDetail(dag);
-          else if (key === "execution") onExecution(dag);
-          else onDelete(dag);
+          else onExecution(dag);
         },
       }}
     >
@@ -543,6 +539,47 @@ function BusinessTree({
       || d.nifi_process_group_id === node.id
       || d.dag_id === `nifi_pipeline_${node.id.slice(0, 8)}_control`);
     return own || (node.children ?? []).some(hasRunnable);
+  };
+
+  /**
+   * CDC 파이프라인 트리 항목. ETL DAG 항목과 같은 우클릭 메뉴(상세·실행 설정)를 준다.
+   *
+   * 예전에는 ETL 항목에만 메뉴가 있어서, 같은 트리인데 CDC만 우클릭이 안 됐다.
+   * 대상은 그 파이프라인의 제어 DAG(kafka_pipeline_{id}_control)다.
+   */
+  const renderPipelineButton = (pipeline: PipelineResponse, depth: number) => {
+    const controlDag = dags.find((d) => d.dag_id === `kafka_pipeline_${pipeline.id}_control`);
+    const button = (
+      <button type="button"
+              className={revealPipelineId === pipeline.id
+                ? "airflow-tree-dag active" : "airflow-tree-dag"}
+              style={{ paddingLeft: 12 + depth * 14 }}
+              onClick={() => onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id })}>
+        <span>{pipeline.name}</span>
+      </button>
+    );
+    if (!controlDag) {
+      return <div key={pipeline.id}>{button}</div>;   // 제어 DAG가 없으면 메뉴도 의미가 없다
+    }
+    return (
+      <Dropdown
+        key={pipeline.id}
+        trigger={["contextMenu"]}
+        menu={{
+          items: [
+            { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
+            { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
+          ],
+          onClick: ({ key }) => {
+            onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id });
+            if (key === "detail") onDetail(controlDag);
+            else onExecution(controlDag);
+          },
+        }}
+      >
+        {button}
+      </Dropdown>
+    );
   };
 
   /**
@@ -613,15 +650,7 @@ function BusinessTree({
                   && scope.connectionId === connectionId && scope.schema === schema,
                 () => onScope({ kind: "cdc", scope: "schema", connectionId, schema }),
                 <>
-                  {rows.map((pipeline) => (
-                    <button key={pipeline.id} type="button"
-                            className={revealPipelineId === pipeline.id
-                              ? "airflow-tree-dag active" : "airflow-tree-dag"}
-                            style={{ paddingLeft: 12 + 3 * 14 }}
-                            onClick={() => onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id })}>
-                      <span>{pipeline.name}</span>
-                    </button>
-                  ))}
+                  {rows.map((pipeline) => renderPipelineButton(pipeline, 3))}
                 </>,
               ))}
             </>,
@@ -632,15 +661,7 @@ function BusinessTree({
           scope?.kind === "cdc" && scope.scope === "logfile",
           () => onScope({ kind: "cdc", scope: "logfile" }),
           <>
-            {logFiles.map((pipeline) => (
-              <button key={pipeline.id} type="button"
-                      className={revealPipelineId === pipeline.id
-                        ? "airflow-tree-dag active" : "airflow-tree-dag"}
-                      style={{ paddingLeft: 12 + 2 * 14 }}
-                      onClick={() => onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id })}>
-                <span>{pipeline.name}</span>
-              </button>
-            ))}
+            {logFiles.map((pipeline) => renderPipelineButton(pipeline, 2))}
           </>,
         )}
       </>,
@@ -761,12 +782,10 @@ function BusinessTree({
                     items: [
                       { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
                       { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
-                      { key: "delete", icon: <DeleteOutlined />, label: "삭제", danger: true },
                     ],
                     onClick: ({ key }) => {
                       if (key === "detail") onDetail(dag);
-                      else if (key === "execution") onExecution(dag);
-                      else onDelete(dag);
+                      else onExecution(dag);
                     },
                   }}
                 >
@@ -1584,27 +1603,6 @@ function ExecutionSettingsModal({
   );
 }
 
-const PROCESS_STATUS: Record<ProcessStatus, { label: string; className: string }> = {
-  UP: { label: "정상", className: "ok" },
-  STOPPED: { label: "미사용", className: "unused" },
-  DEGRADED: { label: "경고", className: "warn" },
-  DOWN: { label: "이상", className: "danger" },
-  UNKNOWN: { label: "확인 불가", className: "unused" },
-};
-
-function InfrastructureBar({ groups }: { groups: ProcessGroup[] }) {
-  const airflow = groups.find((group) => group.key.toLowerCase().includes("airflow") || group.label.toLowerCase().includes("airflow"));
-  return (
-    <footer className="airflow-infra-bar">
-      <strong>인프라 상태</strong>
-      {airflow?.processes.length ? airflow.processes.map((process) => {
-        const status = PROCESS_STATUS[process.status];
-        return <span key={process.name}><i className={status.className} />{process.name} {status.label}</span>;
-      }) : <span><i className="unused" />Airflow 상태 확인 불가</span>}
-    </footer>
-  );
-}
-
 export function AirflowDashboardPage() {
   const [searchParams] = useSearchParams();
   const initialDagId = searchParams.get("dagId") ?? undefined;
@@ -1802,23 +1800,6 @@ export function AirflowDashboardPage() {
     setSelectedDagId(dag.dag_id);
     setDetailOpen(true);
   };
-  const confirmDeleteDag = (dag: DashboardDag) => {
-    Modal.confirm({
-      title: `${displayName(dag)} 삭제`,
-      content: "원본 파이프라인과 Airflow DAG, 실행 이력 및 대시보드 등록정보가 함께 삭제됩니다.",
-      okText: "삭제",
-      cancelText: "취소",
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        await deleteAirflowDagCatalog(dag.dag_id);
-        message.success(`${displayName(dag)}을(를) 삭제했습니다.`);
-        setDetailOpen(false);
-        setSelectedDagId(undefined);
-        await dashboardQuery.refetch();
-      },
-    });
-  };
-
   const initialLoading = !initialSyncQuery.isFetched || dashboardQuery.isLoading;
 
   return (
@@ -1850,7 +1831,7 @@ export function AirflowDashboardPage() {
                           pipelines={pipelines} connectionNames={connectionNames} selectedPipelineId={selectedPipelineId}
                           scope={scope} onScope={changeScope}
                           selectedDagId={selectedDagId} search={search} alertsByDag={alertsByDag} onSearch={setSearch}
-                          onSelect={selectDag} onDetail={showDagDetail} onExecution={showExecutionSettings} onDelete={confirmDeleteDag} />
+                          onSelect={selectDag} onDetail={showDagDetail} onExecution={showExecutionSettings} />
             <main className="airflow-dashboard-panel airflow-jobs-panel">
               <div className="airflow-jobs-heading">
                 <div>
@@ -1888,8 +1869,10 @@ export function AirflowDashboardPage() {
                            onOpenHistory={() => setHistoryOpen(true)}
                            onChanged={() => void dashboardQuery.refetch()} />
           </div>
-          <InfrastructureBar groups={dashboardQuery.data?.processGroups ?? []} />
-          <ExecutionSettingsModal open={executionOpen} dag={selectedDag}
+          {/* 파이프라인을 골랐으면 그 파이프라인의 제어 DAG를 넘긴다. 속성창·이력창은
+              이미 그렇게 하는데 여기만 selectedDag를 쓰고 있어서, CDC 파이프라인을 고른
+              뒤 «실행 설정»을 누르면 직전에 고른 다른 DAG가 열리고 그게 트리거됐다. */}
+          <ExecutionSettingsModal open={executionOpen} dag={selectedPipeline ? pipelineDag : selectedDag}
                                   runs={selectedDag ? runsByDag.get(selectedDag.dag_id) ?? [] : []}
                                   onClose={() => setExecutionOpen(false)} onExecuted={() => { setHistoryOpen(true); void dashboardQuery.refetch(); }} />
           <RunHistoryModal open={historyOpen} dag={selectedPipeline ? pipelineDag : selectedDag}

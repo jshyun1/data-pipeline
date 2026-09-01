@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addEdge,
   Background,
   Handle,
+  Panel,
   Position,
   Controls,
   MiniMap,
@@ -113,6 +114,8 @@ export function WorkflowCanvasPage() {
   const [jobSearch, setJobSearch] = useState("");
   // 소속 그룹 밖 job이 필요할 때만 켠다(교차 그룹 워크플로우).
   const [showAllJobs, setShowAllJobs] = useState(false);
+  // 캔버스 위 메모. 속성창과 같은 값을 보므로 서버 값이 바뀌면 따라간다.
+  const [canvasMemo, setCanvasMemo] = useState("");
   const [dirty, setDirty] = useState(false);
 
   const workflowQuery = useQuery({
@@ -137,36 +140,33 @@ export function WorkflowCanvasPage() {
       id: node.nodeKey,
       position: { x: node.displayX ?? 80 + index * 220, y: node.displayY ?? 120 },
       data: {
-        label: node.parentGroupName && node.jobName
-          ? `${node.parentGroupName} / ${node.jobName}`
-          : (node.jobName ?? node.nodeKey),
+        // SUBWF는 job 이름이 없다. 가리키는 워크플로우 이름을 보여준다(키가 아니라).
+        label: node.nodeType === "SUBWF"
+          ? `▷ ${node.subWorkflowName ?? node.nodeKey}`
+          : (node.parentGroupName && node.jobName
+            ? `${node.parentGroupName} / ${node.jobName}`
+            : (node.jobName ?? node.nodeKey)),
         jobId: node.jobId,
         nodeType: node.nodeType,
         triggerRule: node.triggerRule,
         retries: node.retries,
         retryDelaySec: node.retryDelaySec,
         jobMissing: node.jobMissing,
+        nifiPgId: node.nifiPgId,
+        subWorkflowId: node.subWorkflowId,
       },
       type: "job",
-      className: nodeClass(node.jobMissing),
+      className: nodeClass(node.jobMissing, node.nodeType),
     })));
-    // 엣지에는 어느 변에서 나가는지가 저장돼 있지 않다. 두 노드의 상대 위치로 정해
-    // 가로로 늘어놓으면 오른쪽→왼쪽, 세로로 쌓으면 아래→위로 그린다.
-    const placeOf = new Map(detail.nodes.map((node, index) => [
-      node.nodeKey,
-      { x: node.displayX ?? 80 + index * 220, y: node.displayY ?? 120 },
-    ]));
+    // 흐름은 항상 왼쪽에서 오른쪽이다. 연결점이 좌우 하나씩뿐이라 어느 변인지 추정할 것이 없다.
+    setCanvasMemo(detail.memo ?? "");
     setEdges(detail.edges.map((edge) => {
-      const from = placeOf.get(edge.fromNodeKey);
-      const to = placeOf.get(edge.toNodeKey);
-      const horizontal = from && to
-        && Math.abs(to.x - from.x) > Math.abs(to.y - from.y) && to.x > from.x;
       return {
         id: `${edge.fromNodeKey}->${edge.toNodeKey}`,
         source: edge.fromNodeKey,
         target: edge.toNodeKey,
-        sourceHandle: horizontal ? "s-right" : "s-bottom",
-        targetHandle: horizontal ? "t-left" : "t-top",
+        sourceHandle: "s-right",
+        targetHandle: "t-left",
         label: edgeLabel(edge.conditionType),
         data: { conditionType: edge.conditionType },
         animated: edge.conditionType === "FAILURE",
@@ -226,9 +226,10 @@ export function WorkflowCanvasPage() {
           retries: 0,
           retryDelaySec: 60,
           jobMissing: false,
+          nifiPgId: job.nifiPgId,
         },
         type: "job",
-        className: nodeClass(false),
+        className: nodeClass(false, "JOB"),
       }];
     });
     markDirty();
@@ -236,12 +237,101 @@ export function WorkflowCanvasPage() {
     window.setTimeout(() => flow?.fitView({ padding: 0.2, duration: 200 }), 60);
   }, [setNodes, markDirty, flow]);
 
+  /** 팔레트의 워크플로우를 클릭하면 «그 워크플로우를 통째로 실행하는 노드»를 얹는다. */
+  const addSubWorkflowNode = useCallback((target: WorkflowSummary) => {
+    setNodes((current) => {
+      const taken = new Set(current.map((node) => node.id));
+      const key = toNodeKey(`wf_${target.workflowKey}`, taken);
+      return [...current, {
+        id: key,
+        position: { x: 60 + (current.length % 3) * 200, y: 40 + Math.floor(current.length / 3) * 120 },
+        data: {
+          label: `▷ ${target.name}`,
+          nodeType: "SUBWF",
+          subWorkflowId: target.id,
+          triggerRule: "ALL_SUCCESS",
+          retries: 0,
+          retryDelaySec: 60,
+          jobMissing: false,
+        },
+        type: "job",
+        className: nodeClass(false, "SUBWF"),
+      }];
+    });
+    markDirty();
+    window.setTimeout(() => flow?.fitView({ padding: 0.2, duration: 200 }), 60);
+  }, [setNodes, markDirty, flow]);
+
+  /**
+   * 연결된 노드들을 첫 노드 기준으로 가로 한 줄로 편다.
+   *
+   * 손으로 끌어다 놓으면 금세 삐뚤어져 읽기 어려워진다. 흐름이 왼쪽→오른쪽 한 방향이라
+   * 위상 순서대로 늘어놓기만 하면 된다. 연결이 없는 노드는 그 아래 줄에 모은다.
+   */
+  const alignHorizontally = useCallback(() => {
+    setNodes((current) => {
+      if (current.length === 0) {
+        return current;
+      }
+      const outgoing = new Map<string, string[]>();
+      const indegree = new Map<string, number>();
+      current.forEach((node) => indegree.set(node.id, 0));
+      edges.forEach((edge) => {
+        outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target]);
+        indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1);
+      });
+      const connected = new Set<string>();
+      edges.forEach((edge) => { connected.add(edge.source); connected.add(edge.target); });
+
+      // 위상 정렬로 «몇 번째 칸»인지 정한다. 갈래가 갈리면 같은 칸에 위아래로 쌓는다.
+      const column = new Map<string, number>();
+      const queue = current.filter((node) => connected.has(node.id) && !indegree.get(node.id))
+        .map((node) => node.id);
+      queue.forEach((id) => column.set(id, 0));
+      const pending = new Map(indegree);
+      while (queue.length) {
+        const id = queue.shift()!;
+        for (const next of outgoing.get(id) ?? []) {
+          column.set(next, Math.max(column.get(next) ?? 0, (column.get(id) ?? 0) + 1));
+          pending.set(next, (pending.get(next) ?? 1) - 1);
+          if ((pending.get(next) ?? 0) === 0) {
+            queue.push(next);
+          }
+        }
+      }
+
+      const base = current.find((node) => connected.has(node.id)) ?? current[0];
+      const rowOf = new Map<number, number>();
+      const loose: string[] = [];
+      const placed = current.map((node) => {
+        if (!column.has(node.id)) {
+          loose.push(node.id);
+          return node;
+        }
+        const col = column.get(node.id)!;
+        const row = rowOf.get(col) ?? 0;
+        rowOf.set(col, row + 1);
+        return { ...node, position: { x: base.position.x + col * 260, y: base.position.y + row * 110 } };
+      });
+      // 연결 없는 노드는 아래 줄에 나란히.
+      const looseY = base.position.y + (Math.max(...[...rowOf.values(), 1])) * 110 + 90;
+      return placed.map((node) => {
+        const index = loose.indexOf(node.id);
+        return index < 0 ? node
+          : { ...node, position: { x: base.position.x + index * 260, y: looseY } };
+      });
+    });
+    markDirty();
+    window.setTimeout(() => flow?.fitView({ padding: 0.35, maxZoom: 0.85, duration: 250 }), 80);
+  }, [setNodes, edges, markDirty, flow]);
+
   const saveMutation = useMutation({
     mutationFn: () => saveWorkflowGraph(workflowId, {
       nodes: nodes.map((node) => ({
         nodeKey: node.id,
         nodeType: String(node.data.nodeType ?? "JOB"),
         jobId: (node.data.jobId as number | undefined) ?? null,
+        subWorkflowId: (node.data.subWorkflowId as number | undefined) ?? null,
         triggerRule: String(node.data.triggerRule ?? "ALL_SUCCESS"),
         retries: Number(node.data.retries ?? 0),
         retryDelaySec: Number(node.data.retryDelaySec ?? 60),
@@ -334,7 +424,8 @@ export function WorkflowCanvasPage() {
   useEffect(() => {
     setNodes((current) => current.map((node) => ({
       ...node,
-      className: nodeClass(Boolean(node.data.jobMissing) || problemNodeKeys.has(node.id)),
+      className: nodeClass(Boolean(node.data.jobMissing) || problemNodeKeys.has(node.id),
+                           String(node.data.nodeType ?? "JOB")),
     })));
   }, [problemNodeKeys, setNodes]);
 
@@ -406,6 +497,69 @@ export function WorkflowCanvasPage() {
   const paletteRoot = showAllJobs ? treeQuery.data : (ownGroup ?? treeQuery.data);
   const paletteTree = paletteRoot ? [buildPaletteTree(paletteRoot)].filter(Boolean) : [];
 
+  /**
+   * 얹을 수 있는 워크플로우. 자기 자신은 뺀다(자기 안에 자기를 넣을 수 없다).
+   * ETL 그룹 계층 그대로 묶어서, job 트리와 같은 방식으로 찾게 한다.
+   */
+  const selectableWorkflows = (workflowsQuery.data ?? []).filter((w) => w.id !== workflowId);
+  const workflowsByGroup = new Map<string, WorkflowSummary[]>();
+  selectableWorkflows.forEach((workflow) => {
+    const key = workflow.nifiGroupPgId ?? UNGROUPED_KEY;
+    workflowsByGroup.set(key, [...(workflowsByGroup.get(key) ?? []), workflow]);
+  });
+
+  const buildWorkflowTree = (node: NifiProcessGroupTreeNode): {
+    key: string; title: React.ReactNode; children?: unknown[]; selectable: boolean; count: number;
+  } | null => {
+    if (node.groupType === "JOB") {
+      return null;
+    }
+    const children = (node.children ?? []).map(buildWorkflowTree).filter(Boolean) as Array<{
+      key: string; title: React.ReactNode; children?: unknown[]; selectable: boolean; count: number;
+    }>;
+    const own = (workflowsByGroup.get(node.id) ?? []).map((workflow) => ({
+      key: `wf:${workflow.id}`,
+      selectable: true,
+      count: 1,
+      title: <span>▷ {workflow.name}{workflow.published ? "" : " (미게시)"}</span>,
+    }));
+    const count = own.length + children.reduce((sum, child) => sum + child.count, 0);
+    if (count === 0) {
+      return null;      // 워크플로우가 하나도 없는 가지는 접어둘 것도 없다
+    }
+    return {
+      key: node.id,
+      selectable: false,
+      count,
+      title: <span>{node.name}<span style={{ color: "#888" }}> ({count})</span></span>,
+      children: [...own, ...children],
+    };
+  };
+
+  const ungrouped = (workflowsByGroup.get(UNGROUPED_KEY) ?? []).map((workflow) => ({
+    key: `wf:${workflow.id}`,
+    selectable: true,
+    count: 1,
+    title: <span>▷ {workflow.name}{workflow.published ? "" : " (미게시)"}</span>,
+  }));
+  const subWorkflowTree = [
+    ...(treeQuery.data ? [buildWorkflowTree(treeQuery.data)].filter(Boolean) : []),
+    ...(ungrouped.length
+      ? [{ key: "wf-ungrouped", selectable: false, count: ungrouped.length,
+           title: <span>그룹 미지정<span style={{ color: "#888" }}> ({ungrouped.length})</span></span>,
+           children: ungrouped }]
+      : []),
+  ];
+  const subWorkflowOpenKeys = treeQuery.data ? [treeQuery.data.id] : [];
+
+  /**
+   * 처음 펼쳐둘 가지. 최상단 하나만 연다(그 바로 아래 계층까지 «보이는» 상태).
+   *
+   * 전부 펼치면 job이 수십 개 쏟아져 어디를 봐야 할지 알 수 없다. 검색 중일 때는
+   * 걸린 가지가 보여야 하므로 antd의 자동 펼침에 맡긴다.
+   */
+  const defaultOpenKeys = paletteRoot ? [paletteRoot.id] : [];
+
   if (workflowQuery.isLoading) {
     return <Card><Spin /> 워크플로우를 불러오는 중입니다.</Card>;
   }
@@ -475,13 +629,15 @@ export function WorkflowCanvasPage() {
                  } />
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "260px 1fr 300px", gap: 12, minHeight: 560 }}>
+        <div className="wf-canvas-grid"
+             style={{ display: "grid", gridTemplateColumns: "260px 1fr 300px", gap: 12 }}>
           {/* 좌: job 팔레트 - ETL(NiFi)에서 만들어 둔 job 목록 */}
           <Card size="small" title="job 팔레트"
                 extra={<Button size="small" icon={<SyncOutlined />} title="NiFi에서 다시 읽어옵니다"
                                loading={syncMutation.isPending}
                                onClick={() => syncMutation.mutate()} />}
-                styles={{ body: { maxHeight: 520, overflowY: "auto" } }}>
+                styles={{ body: { maxHeight: "100%", overflowY: "auto" } }}
+                style={{ height: "100%", display: "flex", flexDirection: "column" }}>
             {ownGroup && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
                             marginBottom: 8, gap: 6 }}>
@@ -501,7 +657,7 @@ export function WorkflowCanvasPage() {
             ) : (
               <Tree
                 blockNode
-                defaultExpandAll
+                defaultExpandedKeys={defaultOpenKeys}
                 autoExpandParent={Boolean(jobSearch.trim())}
                 selectedKeys={[]}
                 treeData={paletteTree as never}
@@ -517,10 +673,38 @@ export function WorkflowCanvasPage() {
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               클릭하면 캔버스에 추가됩니다. ● 는 이미 배치된 job입니다.
             </Typography.Text>
+
+            {/* 워크플로우도 하나의 노드로 얹을 수 있다. 그래야 «daily = monthly 끝나면
+                years» 같은 조립이 가능하다. 자기 자신은 넣을 수 없다(무한 중첩). */}
+            <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>워크플로우</div>
+              {subWorkflowTree.length === 0 ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  얹을 수 있는 다른 워크플로우가 없습니다.
+                </Typography.Text>
+              ) : (
+                <Tree
+                  blockNode
+                  defaultExpandedKeys={subWorkflowOpenKeys}
+                  selectedKeys={[]}
+                  treeData={subWorkflowTree as never}
+                  onSelect={(_, info) => {
+                    const picked = selectableWorkflows.find(
+                      (workflow) => `wf:${workflow.id}` === String(info.node.key));
+                    if (picked && canWrite) {
+                      addSubWorkflowNode(picked);
+                    }
+                  }}
+                />
+              )}
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                워크플로우를 얹으면 그 워크플로우가 끝날 때까지 기다린 뒤 다음으로 넘어갑니다.
+              </Typography.Text>
+            </div>
           </Card>
 
           {/* 중: 캔버스 - 노드를 잇는 선이 곧 실행 순서다 */}
-          <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, height: 560 }}>
+          <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, height: "100%" }}>
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -530,15 +714,54 @@ export function WorkflowCanvasPage() {
               onNodeClick={(_, node) => { setSelectedNodeId(node.id); setSelectedEdgeId(undefined); }}
               onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedNodeId(undefined); }}
               onPaneClick={() => { setSelectedNodeId(undefined); setSelectedEdgeId(undefined); }}
+              className="wf-flow"
               fitView
+              // 처음 열면 노드가 코앞에 있는 것처럼 크게 잡혀 부담스러웠다.
+              // 한 화면에 전체가 여유 있게 들어오도록 확대 상한과 여백을 준다.
+              fitViewOptions={{ padding: 0.35, maxZoom: 0.85 }}
+              minZoom={0.15}
               nodeTypes={NODE_TYPES}
               onInit={(instance) => setFlow(instance)}
-              minZoom={0.2}
               deleteKeyCode={["Backspace", "Delete"]}
             >
               <Background />
               <Controls />
               <MiniMap pannable zoomable />
+              {/* 그림 옆에 맥락을 적어두는 자리. 속성창의 메모와 같은 값이라
+                  어느 쪽에서 고쳐도 같이 바뀐다. */}
+              <Panel position="bottom-center">
+                <Button size="small" disabled={!canWrite} onClick={alignHorizontally}>
+                  수평 정렬
+                </Button>
+              </Panel>
+              <Panel position="top-left">
+                <div className="wf-memo">
+                  <div className="wf-memo-title">메모</div>
+                  <Input.TextArea
+                    variant="borderless"
+                    autoSize={{ minRows: 2, maxRows: 8 }}
+                    placeholder="이 워크플로우에 대한 메모"
+                    value={canvasMemo}
+                    disabled={!canWrite}
+                    onChange={(event) => setCanvasMemo(event.target.value)}
+                    onBlur={() => {
+                      if (detail && canvasMemo !== (detail.memo ?? "")) {
+                        settingsMutation.mutate({
+                          name: detail.name,
+                          description: detail.description,
+                          nifiGroupPgId: detail.nifiGroupPgId,
+                          scheduleCron: detail.scheduleCron,
+                          timezone: detail.timezone,
+                          catchup: detail.catchup,
+                          maxActiveRuns: detail.maxActiveRuns,
+                          suspendOnError: detail.suspendOnError,
+                          memo: canvasMemo,
+                        });
+                      }
+                    }}
+                  />
+                </div>
+              </Panel>
             </ReactFlow>
           </div>
 
@@ -547,11 +770,14 @@ export function WorkflowCanvasPage() {
             selectedNode ? `노드: ${selectedNode.id}`
               : selectedEdge ? "연결 조건"
               : "워크플로우 속성"}
-                styles={{ body: { maxHeight: 520, overflowY: "auto" } }}>
+                styles={{ body: { maxHeight: "100%", overflowY: "auto" } }}
+                style={{ height: "100%", display: "flex", flexDirection: "column" }}>
             {selectedNode ? (
               <Space direction="vertical" style={{ width: "100%" }} size={10}>
                 <div>
-                  <div style={{ fontSize: 12, color: "#888" }}>job</div>
+                  <div style={{ fontSize: 12, color: "#888" }}>
+                    {selectedNode.data.subWorkflowId ? "워크플로우" : "job"}
+                  </div>
                   <div>{String(selectedNode.data.label)}</div>
                 </div>
                 <div>
@@ -579,6 +805,22 @@ export function WorkflowCanvasPage() {
                                  markDirty();
                                }} />
                 </div>
+                {/* 워크플로우 노드면 그 워크플로우 캔버스로 바로 넘어간다. */}
+                {selectedNode.data.subWorkflowId ? (
+                  <Button size="small" block
+                          onClick={() => navigate(
+                            `/workflows/design/${Number(selectedNode.data.subWorkflowId)}`)}>
+                    워크플로우 바로가기
+                  </Button>
+                ) : null}
+                {/* 이 job이 NiFi에서 실제로 어떻게 생겼는지 바로 열어본다. */}
+                {selectedNode.data.nifiPgId ? (
+                  <Button size="small" block
+                          onClick={() => navigate(
+                            `/etl/manage?processGroupId=${encodeURIComponent(String(selectedNode.data.nifiPgId))}`)}>
+                    ETL job 바로가기
+                  </Button>
+                ) : null}
                 <Button size="small" onClick={() => setSelectedNodeId(undefined)}>워크플로우 속성 보기</Button>
               </Space>
             ) : selectedEdge ? (
@@ -605,7 +847,6 @@ export function WorkflowCanvasPage() {
               </Space>
             ) : (
               <WorkflowSettings detail={detail} disabled={!canWrite}
-                                candidates={(workflowsQuery.data ?? []).filter((w) => w.id !== workflowId)}
                                 onSave={(body) => settingsMutation.mutate(body)}
                                 saving={settingsMutation.isPending} />
             )}
@@ -617,20 +858,20 @@ export function WorkflowCanvasPage() {
 }
 
 /**
- * job 노드. 상·하·좌·우 네 곳에 연결 점을 둔다.
+ * 캔버스 노드. 연결점은 <b>오른쪽(나가는 곳)과 왼쪽(들어오는 곳)</b> 둘뿐이다.
  *
- * 기본 노드는 위/아래에만 점이 있어 좌우로 늘어놓으면 선이 크게 돌아가고 조준도 어려웠다.
- * 들어오는 쪽(위·왼쪽)과 나가는 쪽(아래·오른쪽)을 나눠 배치한다. 같은 자리에 source와
- * target을 겹쳐 두면 React Flow가 어느 점을 잡았는지 가려내지 못해 연결이 성립하지 않으므로
- * 한 변에는 한 종류만 둔다. 위→아래, 왼쪽→오른쪽 두 방향으로 그릴 수 있다.
+ * 네 방향을 다 열어 두니 어느 점을 잡았는지 헷갈리고 선이 사방으로 뻗어 그림이 어지러웠다.
+ * 흐름을 «왼쪽에서 오른쪽»으로 고정하면 읽기도 쉽고 조준도 한 곳이면 된다.
+ * 점은 평소 숨어 있다가 노드에 마우스를 올리면 나타난다(CSS).
  */
-function JobNode({ data, isConnectable }: { data: { label?: string }; isConnectable?: boolean }) {
+function JobNode({ data, isConnectable }: {
+  data: { label?: string; nodeType?: string };
+  isConnectable?: boolean;
+}) {
   return (
     <>
-      <Handle type="target" position={Position.Top} id="t-top" isConnectable={isConnectable} />
       <Handle type="target" position={Position.Left} id="t-left" isConnectable={isConnectable} />
       <span>{String(data?.label ?? "")}</span>
-      <Handle type="source" position={Position.Bottom} id="s-bottom" isConnectable={isConnectable} />
       <Handle type="source" position={Position.Right} id="s-right" isConnectable={isConnectable} />
     </>
   );
@@ -638,16 +879,20 @@ function JobNode({ data, isConnectable }: { data: { label?: string }; isConnecta
 
 const NODE_TYPES = { job: JobNode };
 
-function nodeClass(problem: boolean): string {
-  return problem ? "wf-node wf-node--problem" : "wf-node";
+/** 그룹을 안 정한 워크플로우를 담는 자리. */
+const UNGROUPED_KEY = "__ungrouped__";
+
+/** 노드 겉모습. 워크플로우 노드는 job과 한눈에 구분돼야 한다(보라 계열 + 왼쪽 굵은 띠). */
+function nodeClass(problem: boolean, nodeType?: string): string {
+  const kind = nodeType === "SUBWF" ? " wf-node--subwf" : " wf-node--job";
+  return problem ? `wf-node${kind} wf-node--problem` : `wf-node${kind}`;
 }
 
-function WorkflowSettings({ detail, disabled, onSave, saving, candidates }: {
+function WorkflowSettings({ detail, disabled, onSave, saving }: {
   detail: WorkflowDetail;
   disabled: boolean;
   onSave: (body: Parameters<typeof updateWorkflow>[1]) => void;
   saving: boolean;
-  candidates: WorkflowSummary[];
 }) {
   const [name, setName] = useState(detail.name);
   // 저장된 크론을 프리셋으로 되돌려 채운다. 프리셋으로 표현 안 되는 식이면 직접 입력에만 남는다.
@@ -660,8 +905,8 @@ function WorkflowSettings({ detail, disabled, onSave, saving, candidates }: {
   const [weekday, setWeekday] = useState(parsed.weekday);
   const [customCron, setCustomCron] = useState(parsed.matched ? "" : (detail.scheduleCron ?? ""));
   const [maxRuns, setMaxRuns] = useState(detail.maxActiveRuns);
-  const [upstream, setUpstream] = useState<number[]>(detail.upstreamWorkflowIds ?? []);
-  const [upstreamMode, setUpstreamMode] = useState(detail.upstreamMode ?? "ALL");
+  const [memo, setMemo] = useState(detail.memo ?? "");
+  const parents = detail.parents ?? [];
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size={10}>
@@ -671,6 +916,11 @@ function WorkflowSettings({ detail, disabled, onSave, saving, candidates }: {
       </div>
       <div>
         <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>스케줄</div>
+        {parents.length > 0 && (
+          <Alert type="info" showIcon style={{ marginBottom: 8 }}
+                 message="상위 워크플로우가 있어 이 스케줄은 동작하지 않습니다."
+                 description="상위가 지시할 때만 실행됩니다. 같은 적재가 두 번 돌지 않도록 자체 스케줄을 끕니다." />
+        )}
         <Radio.Group size="small" value={scheduleMode} style={{ marginBottom: 8 }}
                      onChange={(event) => setScheduleMode(event.target.value)}>
           <Radio value="manual">수동 실행</Radio>
@@ -717,27 +967,29 @@ function WorkflowSettings({ detail, disabled, onSave, saving, candidates }: {
         )}
       </div>
       <div>
-        <div style={{ fontSize: 12, color: "#888" }}>선행 워크플로우</div>
-        <Select size="small" mode="multiple" allowClear style={{ width: "100%" }}
-                placeholder="없음 (스케줄/수동으로 실행)"
-                value={upstream}
-                onChange={(value) => setUpstream(value)}
-                options={candidates.map((w) => ({ value: w.id, label: w.name }))} />
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          지정하면 그 워크플로우가 끝날 때 이 워크플로우가 자동 실행됩니다.
-        </Typography.Text>
+        <div style={{ fontSize: 12, color: "#888" }}>상위 워크플로우</div>
+        {parents.length === 0 ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            없음 (위 스케줄대로 단독 실행)
+          </Typography.Text>
+        ) : (
+          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+            {parents.map((parent) => (
+              <div key={parent.id}>
+                <Link to={`/workflows/design/${parent.id}`}>{parent.name}</Link>
+                <span style={{ color: "#888", fontSize: 12 }}>
+                  {" "}{parent.scheduleCron ? `· ${parent.scheduleCron}` : "· 수동"}
+                </span>
+              </div>
+            ))}
+          </Space>
+        )}
       </div>
-      {upstream.length > 1 && (
-        <div>
-          <div style={{ fontSize: 12, color: "#888" }}>선행 조건</div>
-          <Select size="small" style={{ width: "100%" }} value={upstreamMode}
-                  onChange={(value) => setUpstreamMode(value)}
-                  options={[
-                    { value: "ALL", label: "모두 완료되면 실행" },
-                    { value: "ANY", label: "하나라도 완료되면 실행" },
-                  ]} />
-        </div>
-      )}
+      <div>
+        <div style={{ fontSize: 12, color: "#888" }}>메모</div>
+        <Input.TextArea size="small" rows={3} value={memo} placeholder="담당자·주의사항·재실행 절차 등"
+                        onChange={(event) => setMemo(event.target.value)} />
+      </div>
       <div>
         <div style={{ fontSize: 12, color: "#888" }}>동시 실행 수</div>
         <InputNumber size="small" min={1} max={5} style={{ width: "100%" }}
@@ -757,8 +1009,7 @@ function WorkflowSettings({ detail, disabled, onSave, saving, candidates }: {
                 catchup: detail.catchup,
                 maxActiveRuns: maxRuns,
                 suspendOnError: detail.suspendOnError,
-                upstreamWorkflowIds: upstream,
-                upstreamMode,
+                memo,
               })}>
         속성 저장
       </Button>

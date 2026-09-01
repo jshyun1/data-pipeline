@@ -38,13 +38,17 @@ public class WorkflowCompiler {
     private final EtlJobRepository jobRepository;
     private final EtlJobStepRepository stepRepository;
     private final NifiProcessGroupMetadataRepository pgRepository;
+    /** SUBWF 노드가 «어느 DAG를 띄울지» 알아야 해서 워크플로우 자체도 조회한다. */
+    private final EtlWorkflowRepository workflowRepository;
 
     public WorkflowCompiler(EtlJobRepository jobRepository,
                             EtlJobStepRepository stepRepository,
-                            NifiProcessGroupMetadataRepository pgRepository) {
+                            NifiProcessGroupMetadataRepository pgRepository,
+                            EtlWorkflowRepository workflowRepository) {
         this.jobRepository = jobRepository;
         this.stepRepository = stepRepository;
         this.pgRepository = pgRepository;
+        this.workflowRepository = workflowRepository;
     }
 
     public Map<String, Object> compile(EtlWorkflow workflow,
@@ -89,6 +93,13 @@ public class WorkflowCompiler {
                 spec.put("name", node.getNodeKey());
                 if (node.getSubWorkflowId() != null) {
                     spec.put("sub_workflow_id", node.getSubWorkflowId());
+                    // 팩토리는 워크플로우 id가 아니라 «어느 DAG를 띄울지»를 알아야 한다.
+                    // 이름도 같이 실어 화면·로그에서 키가 아닌 사람 말로 보이게 한다.
+                    workflowRepository.findById(node.getSubWorkflowId()).ifPresent(sub -> {
+                        spec.put("sub_dag_id", sub.dagId());
+                        spec.put("name", sub.getName());
+                        spec.put("sub_workflow_key", sub.getWorkflowKey());
+                    });
                 }
                 if (node.getBranchExpr() != null) {
                     spec.put("branch_expr", node.getBranchExpr());

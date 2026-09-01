@@ -52,6 +52,13 @@ export interface WorkflowDetail extends Omit<WorkflowSummary, "nodeCount"> {
   suspendOnError: boolean;
   upstreamWorkflowIds?: number[] | null;
   upstreamMode?: string | null;
+  /** 캔버스·속성창 공용 메모. */
+  memo?: string | null;
+  /** 이 워크플로우를 노드로 품고 있는 상위들. 있으면 자체 스케줄은 돌지 않는다. */
+  parents?: Array<{
+    id: number; workflowKey: string; name: string; dagId: string;
+    scheduleCron?: string | null; published: boolean;
+  }>;
   /** 게시 후 캔버스를 고쳤는지. "게시본과 다름" 배지의 근거다. */
   dirty: boolean;
   nodes: WorkflowNodeView[];
@@ -123,6 +130,7 @@ export async function updateWorkflow(id: number, body: {
   suspendOnError?: boolean;
   upstreamWorkflowIds?: number[];
   upstreamMode?: string;
+  memo?: string | null;
 }): Promise<WorkflowSummary> {
   return unwrap((await apiClient.put<ApiResponse<WorkflowSummary>>(`/etl/workflows/${id}`, body)).data);
 }

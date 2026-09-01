@@ -221,8 +221,7 @@ body {
 .airflow-dashboard-heading,
 .airflow-refresh-controls,
 .airflow-business-card,
-.airflow-jobs-heading,
-.airflow-infra-bar {
+.airflow-jobs-heading {
   display: flex;
   align-items: center;
 }
@@ -339,11 +338,18 @@ body {
   font-weight: 700;
 }
 
+/* 하단 «인프라 상태» 줄을 없앤 자리를 이 영역이 가져간다. 헤더·상태카드 높이만 빼고
+   뷰포트 끝까지 내려온다 - 빈 띠를 남기느니 목록·캔버스를 더 보여주는 편이 낫다. */
 .airflow-dashboard-workspace {
   display: grid;
   grid-template-columns: 220px minmax(650px, 1fr) 280px;
   gap: 12px;
+  height: calc(100vh - 330px);
   min-height: 455px;
+}
+
+.airflow-dashboard-workspace > * {
+  overflow-y: auto;
 }
 
 .airflow-dashboard-panel {
@@ -3414,30 +3420,23 @@ button.airflow-tree-label:hover {
 /* 연결 핸들. 기본 6px 점은 너무 작아 사용자가 "두 job을 어떻게 잇느냐"고 물을 만큼
    눈에 띄지 않았다. 크기를 키우고 색을 넣어 잡는 지점임을 드러낸다. */
 .react-flow__node.wf-node .react-flow__handle {
-  width: 11px;
-  height: 11px;
+  width: 8px;
+  height: 8px;
   background: #ffffff;
   border: 2px solid #2563eb;
-  opacity: 0.85;
-  transition: transform 0.12s ease, opacity 0.12s ease, background 0.12s ease;
+  opacity: 0.9;
 }
 
-.react-flow__node.wf-node .react-flow__handle-top { top: -6px; }
-.react-flow__node.wf-node .react-flow__handle-bottom { bottom: -6px; }
-.react-flow__node.wf-node .react-flow__handle-left { left: -6px; }
-.react-flow__node.wf-node .react-flow__handle-right { right: -6px; }
+.react-flow__node.wf-node .react-flow__handle-top { top: -5px; }
+.react-flow__node.wf-node .react-flow__handle-bottom { bottom: -5px; }
+.react-flow__node.wf-node .react-flow__handle-left { left: -5px; }
+.react-flow__node.wf-node .react-flow__handle-right { right: -5px; }
 
-/* 노드에 올리면 네 점이 커져서 어느 방향으로든 끌 수 있음을 보여준다. */
-.react-flow__node.wf-node:hover .react-flow__handle {
-  opacity: 1;
-  transform: scale(1.25);
-  background: #2563eb;
-}
-
+/* 마우스를 올려도 크기·색을 바꾸지 않는다. 커지면서 위치가 밀려 조준이 어긋났다.
+   («여기를 잡는다»는 신호는 커서만으로 충분하다.) */
 .react-flow__node.wf-node .react-flow__handle:hover {
-  background: #1d4ed8;
-  border-color: #1d4ed8;
-  transform: scale(1.5);
+  opacity: 1;
+  cursor: crosshair;
 }
 
 /* 들어오는 점(위·왼쪽)과 나가는 점(아래·오른쪽)을 색으로 구분한다. */
@@ -3449,4 +3448,83 @@ button.airflow-tree-label:hover {
   background: #f8fafc;
   color: #475569;
   font-size: 12px;
+}
+
+
+/* 캔버스 위 메모. 그림을 가리지 않게 좁고 반투명하게 얹는다. */
+.wf-memo {
+  width: 230px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.wf-memo-title {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 2px;
+}
+
+
+/* 캔버스 3분할. 화면 아래에 빈 공간이 남지 않도록 뷰포트 높이를 채운다
+   (헤더·툴바·알림 영역만큼만 빼고 나머지를 캔버스가 가져간다). */
+.wf-canvas-grid {
+  height: calc(100vh - 232px);
+  min-height: 420px;
+}
+
+/* 캔버스 바탕은 화살표가 기본. 손바닥은 «잡을 수 있는 것» 위에서만 나온다.
+   React Flow가 `.react-flow__pane.draggable{cursor:grab}`을 같은 특이도로 걸고 뒤에
+   실려서, 컨테이너 클래스를 하나 더 얹어 이긴다. */
+.wf-flow .react-flow__pane.draggable {
+  cursor: default;
+}
+
+.wf-flow .react-flow__pane.dragging {
+  cursor: grabbing;
+}
+
+.react-flow__node.wf-node {
+  cursor: grab;
+}
+
+.react-flow__node.wf-node:active {
+  cursor: grabbing;
+}
+
+/* 연결점은 평소 숨기고, 노드에 마우스를 올렸을 때만 보여준다.
+   늘 떠 있으면 그림이 점으로 뒤덮인다. */
+.react-flow__node.wf-node .react-flow__handle {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.react-flow__node.wf-node:hover .react-flow__handle,
+.react-flow__node.wf-node.selected .react-flow__handle {
+  opacity: 1;
+}
+
+/* 연결선: 올리거나 고르면 빨갛게. 어느 선을 만지는지 분명히 보이게 한다. */
+.react-flow__edge:hover .react-flow__edge-path,
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #dc2626 !important;
+  stroke-width: 2.5;
+}
+
+/* 고른 노드는 사면에 테두리를 둘러 표시한다. */
+.react-flow__node.wf-node.selected {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.25);
+}
+
+/* job과 워크플로우를 겉모습으로 가른다 - 워크플로우는 «다른 그림을 통째로 부르는» 것이라
+   같은 상자로 보이면 그래프를 잘못 읽는다. */
+.react-flow__node.wf-node--job {
+  border-left: 4px solid #2563eb;
+}
+
+.react-flow__node.wf-node--subwf {
+  border-left: 4px solid #7c3aed;
+  background: #faf5ff;
 }

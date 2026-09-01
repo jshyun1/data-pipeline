@@ -21,6 +21,7 @@ import _pipeline_svc_auth  # noqa: F401  # import 만으로 pipeline-api 서비�
 from airflow import DAG
 from airflow.models import Variable
 from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.sdk import Asset, Param, TaskGroup
 
 INDEX_VARIABLE = "etl_wf_index"
@@ -105,11 +106,49 @@ def _build_job_group(node: dict, spec: dict) -> TaskGroup:
     return group
 
 
-def _build_marker(node: dict, spec: dict) -> TaskGroup:
-    """JOB이 아닌 노드(START/END/JOIN 등)는 자리만 잡는 빈 그룹으로 둔다.
+def _build_subworkflow(node: dict, spec: dict) -> TaskGroup:
+    """워크플로우 노드. 자식 워크플로우 DAG를 띄우고 <b>끝날 때까지 기다린다</b>.
 
-    BRANCH/SUBWF의 실제 동작은 후속 단계(플랜 C)에서 붙인다 - 지금 반쪽으로
-    만들어두면 "그린 대로 안 도는" 그래프가 생겨서 오히려 위험하다.
+    이게 있어야 «daily = monthly 끝나면 years» 같은 조립이 성립한다. 기다리지 않으면
+    자식이 아직 도는데 뒤 노드가 시작해버려서 그린 그림과 실제가 어긋난다.
+
+    자식이 실패하면 이 노드도 실패한다(failed_states). 그래야 상위 워크플로우가
+    «다 됐다»고 완료 신호를 내보내지 않는다.
+    """
+    sub_dag_id = node.get("sub_dag_id")
+    with TaskGroup(group_id=node["key"]) as group:
+        if not sub_dag_id:
+            # 참조가 끊긴 노드(대상 워크플로우 삭제 등). 조용히 통과시키면 «돌았다»가
+            # 되어버리므로 실패로 세운다.
+            PythonOperator(
+                task_id="missing",
+                python_callable=lambda **_: (_ for _ in ()).throw(
+                    RuntimeError(f"[{node['key']}] 가리키는 워크플로우가 없습니다")),
+                trigger_rule=_trigger_rule(node, spec),
+            )
+            return group
+        TriggerDagRunOperator(
+            task_id="run",
+            trigger_dag_id=sub_dag_id,
+            # 부모 실행마다 자식 run_id가 달라야 한다(같으면 두 번째 실행이 충돌한다).
+            trigger_run_id="{{ dag_run.run_id }}__" + node["key"],
+            wait_for_completion=True,
+            poke_interval=30,
+            allowed_states=["success"],
+            failed_states=["failed"],
+            # 자식이 이미 같은 run_id로 있으면 그걸 기다린다(재실행 대비).
+            reset_dag_run=True,
+            deferrable=False,
+            trigger_rule=_trigger_rule(node, spec),
+        )
+    return group
+
+
+def _build_marker(node: dict, spec: dict) -> TaskGroup:
+    """JOB/SUBWF가 아닌 노드(START/END/JOIN 등)는 자리만 잡는 빈 그룹으로 둔다.
+
+    BRANCH의 실제 동작은 후속 단계에서 붙인다 - 지금 반쪽으로 만들어두면
+    "그린 대로 안 도는" 그래프가 생겨서 오히려 위험하다.
     """
     with TaskGroup(group_id=node["key"]) as group:
         PythonOperator(
@@ -158,6 +197,8 @@ def build_workflow_dag(spec: dict) -> DAG:
         for node in spec.get("nodes", []):
             if node.get("type") == "JOB" and node.get("nifi_pg_id"):
                 groups[node["key"]] = _build_job_group(node, spec)
+            elif node.get("type") == "SUBWF":
+                groups[node["key"]] = _build_subworkflow(node, spec)
             else:
                 groups[node["key"]] = _build_marker(node, spec)
         for edge in spec.get("edges", []):
@@ -195,10 +236,28 @@ except json.JSONDecodeError:
     print(f"{INDEX_VARIABLE} 파싱 실패 - 워크플로우 DAG를 만들지 않습니다: {_index_raw!r}")
     _keys = []
 
+# 먼저 모든 spec을 읽어 «누가 누구의 자식인지»를 모은다.
+#
+# 상위 워크플로우가 품고 있는 워크플로우는 <b>자체 스케줄이 돌면 안 된다</b>.
+# 예: AA(매일 1시)가 BB(매일 2시) -> CC(매일 3시)를 품고 있으면, BB·CC가 각자
+# 2시·3시에 또 도는 순간 같은 적재가 하루 두 번 일어난다. 상위가 지시할 때만 돈다.
+_specs = {}
 for _key in _keys:
-    _spec = _load_spec(_key)
-    if not _spec or not _spec.get("dag_id"):
-        continue
+    _loaded = _load_spec(_key)
+    if _loaded and _loaded.get("dag_id"):
+        _specs[_key] = _loaded
+
+_child_dag_ids = set()
+for _loaded in _specs.values():
+    for _node in _loaded.get("nodes", []):
+        if _node.get("type") == "SUBWF" and _node.get("sub_dag_id"):
+            _child_dag_ids.add(_node["sub_dag_id"])
+
+for _key, _spec in _specs.items():
+    if _spec["dag_id"] in _child_dag_ids and _spec.get("schedule"):
+        print(f"[{_key}] 상위 워크플로우가 있어 자체 스케줄({_spec['schedule']})은 끕니다 "
+              f"- 상위가 지시할 때만 돕니다")
+        _spec = {**_spec, "schedule": None, "schedule_suppressed_by_parent": True}
     # 파싱은 워크플로우 단위로 격리한다 - 하나가 깨져도 나머지는 살아야 한다.
     try:
         globals()[_spec["dag_id"]] = build_workflow_dag(_spec)
