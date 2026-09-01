@@ -349,7 +349,7 @@ public class NifiClient {
             String password
     ) {
         String token = getToken();
-        String serviceName = "cdc-%d-%s".formatted(connectionId, connectionName);
+        String serviceName = connectionName.trim();
         Map<String, Object> body = Map.of(
                 "revision", Map.of(
                         "clientId", UUID.randomUUID().toString(),
