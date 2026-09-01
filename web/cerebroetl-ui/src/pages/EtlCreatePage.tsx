@@ -103,7 +103,7 @@ interface ProcessGroupOption {
 interface ControllerServiceOption {
   id: string;
   name: string;
-  displayName: string;
+  properties: Record<string, string | null | undefined>;
 }
 
 interface BasicInfo {
@@ -154,7 +154,7 @@ function toControllerServiceOption(service: NifiControllerServiceEntity): Contro
   return {
     id,
     name,
-    displayName: stripCdcControllerServicePrefix(name),
+    properties: service.component?.properties ?? {},
   };
 }
 
@@ -162,12 +162,32 @@ function normalizeName(value: string) {
   return value.trim().toLowerCase();
 }
 
-function stripCdcControllerServicePrefix(value: string) {
-  return value.trim().replace(/^cdc-\d+-/i, "");
+function normalizeJdbcUrl(value: string) {
+  return value.trim().replace(/\s+/g, "").toLowerCase();
 }
 
-function normalizeControllerServiceName(value: string) {
-  return normalizeName(stripCdcControllerServicePrefix(value));
+function propertyValue(properties: Record<string, string | null | undefined>, keys: string[]) {
+  const entries = Object.entries(properties);
+  for (const key of keys) {
+    const matched = entries.find(([entryKey]) => normalizeName(entryKey) === normalizeName(key));
+    if (matched?.[1]?.trim()) {
+      return matched[1].trim();
+    }
+  }
+  return null;
+}
+
+function connectionJdbcUrl(connection: ConnectionResponse) {
+  if (connection.dbType === "POSTGRESQL" && connection.databaseName) {
+    return `jdbc:postgresql://${connection.host}:${connection.port}/${connection.databaseName}`;
+  }
+  if (connection.dbType === "ORACLE" && connection.serviceName) {
+    return `jdbc:oracle:thin:@${connection.host}:${connection.port}/${connection.serviceName}`;
+  }
+  if (connection.dbType === "MYSQL" && connection.databaseName) {
+    return `jdbc:mysql://${connection.host}:${connection.port}/${connection.databaseName}`;
+  }
+  return null;
 }
 
 function nifiDatabaseTypeFromConnection(connection: ConnectionResponse | null) {
@@ -185,34 +205,17 @@ function commaSeparatedValues(value: string) {
     .filter(Boolean);
 }
 
-function defaultLoadSql(
-  loadMode: LoadMode,
-  sourceSchema: string,
-  sourceTable: string,
-  databaseType: NifiDatabaseType,
-  changeKeyColumn = "",
-) {
-  const schema = sourceSchema.trim() || "소스스키마";
-  const table = sourceTable.trim() || "소스테이블";
-  const baseSql = `SELECT *\nFROM ${schema}.${table}`;
-  if (loadMode !== "UPSERT") {
-    return baseSql;
-  }
-
-  return `${baseSql}\nWHERE ${changeKeyColumn.trim() || "[UPDATE기준컬럼]"} ${defaultUpdateWhereExpression(databaseType)}`;
-}
-
-function defaultUpdateWhereExpression(databaseType: NifiDatabaseType) {
+function defaultUpdateExtractQuery(databaseType: NifiDatabaseType) {
   if (databaseType === "MySQL") {
-    return "BETWEEN CONCAT(DATE_FORMAT(CURDATE() - INTERVAL #{Day} DAY, '%Y%m%d'), '000000')\n"
-      + "      AND CONCAT(DATE_FORMAT(CURDATE() - INTERVAL #{Day} DAY, '%Y%m%d'), '235959')";
+    return "upd_dttm BETWEEN CONCAT(DATE_FORMAT(CURDATE() - INTERVAL 1 DAY, '%Y%m%d'), '000000')\n"
+      + "                   AND CONCAT(DATE_FORMAT(CURDATE() - INTERVAL 1 DAY, '%Y%m%d'), '235959')";
   }
   if (databaseType === "Oracle 12+") {
-    return "BETWEEN TO_CHAR(SYSDATE - #{Day}, 'YYYYMMDD') || '000000'\n"
-      + "      AND TO_CHAR(SYSDATE - #{Day}, 'YYYYMMDD') || '235959'";
+    return "upd_dttm BETWEEN TO_CHAR(SYSDATE - 1, 'YYYYMMDD') || '000000'\n"
+      + "                   AND TO_CHAR(SYSDATE - 1, 'YYYYMMDD') || '235959'";
   }
-  return "BETWEEN TO_CHAR(CURRENT_DATE - #{Day}, 'YYYYMMDD') || '000000'\n"
-    + "      AND TO_CHAR(CURRENT_DATE - #{Day}, 'YYYYMMDD') || '235959'";
+  return "upd_dttm BETWEEN TO_CHAR(CURRENT_DATE - 1, 'YYYYMMDD') || '000000'\n"
+    + "                   AND TO_CHAR(CURRENT_DATE - 1, 'YYYYMMDD') || '235959'";
 }
 
 function defaultTruncateSql(targetSchema: string, targetTable: string) {
@@ -420,7 +423,6 @@ function ConnectionStep({
 }) {
   const [services, setServices] = useState<ControllerServiceOption[]>([]);
   const [connections, setConnections] = useState<ConnectionResponse[]>([]);
-  const [connectionsLoaded, setConnectionsLoaded] = useState(false);
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [sourceSchemas, setSourceSchemas] = useState<string[]>([]);
   const [sourceTables, setSourceTables] = useState<string[]>([]);
@@ -468,13 +470,11 @@ function ConnectionStep({
       .then((result) => {
         if (!cancelled) {
           setConnections(result);
-          setConnectionsLoaded(true);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setConnections([]);
-          setConnectionsLoaded(true);
         }
       });
 
@@ -483,30 +483,47 @@ function ConnectionStep({
     };
   }, []);
 
-  const connectionMatchesControllerService = (connection: ConnectionResponse, service: ControllerServiceOption) => {
-    const serviceName = normalizeControllerServiceName(service.name);
-    const connectionName = normalizeControllerServiceName(connection.name);
-    return serviceName === connectionName;
-  };
-
-  const matchedServices = services.filter((service) =>
-    connections.some((connection) => connectionMatchesControllerService(connection, service)),
-  );
-
   const servicePlaceholder = serviceError
     ? "Controller Service 조회 실패"
-    : !connectionsLoaded || services.length === 0
-      ? "Controller Service 조회 중"
-      : matchedServices.length > 0
+    : services.length > 0
       ? "Controller Service를 선택하세요"
-      : "연결정보와 일치하는 Controller Service가 없습니다";
+      : "Controller Service 조회 중";
 
   const connectionByServiceId = (serviceId: string) => {
-    const service = matchedServices.find((entry) => entry.id === serviceId);
+    const service = services.find((entry) => entry.id === serviceId);
     if (!service) {
       return null;
     }
-    return connections.find((connection) => connectionMatchesControllerService(connection, service)) ?? null;
+    const serviceUrl = propertyValue(service.properties, [
+      "Database Connection URL",
+      "Connection URL",
+      "JDBC URL",
+      "database.connection.url",
+    ]);
+    const serviceUser = propertyValue(service.properties, [
+      "Database User",
+      "Database User Name",
+      "User",
+      "Username",
+      "database.user",
+    ]);
+
+    return connections.find((connection) => {
+      if (connection.nifiControllerServiceId === service.id) {
+        return true;
+      }
+      if (connection.nifiControllerServiceName && normalizeName(connection.nifiControllerServiceName) === normalizeName(service.name)) {
+        return true;
+      }
+      if (normalizeName(connection.name) === normalizeName(service.name)) {
+        return true;
+      }
+
+      const appUrl = connectionJdbcUrl(connection);
+      const urlMatches = !!serviceUrl && !!appUrl && normalizeJdbcUrl(serviceUrl) === normalizeJdbcUrl(appUrl);
+      const userMatches = !serviceUser || normalizeName(connection.username) === normalizeName(serviceUser);
+      return urlMatches && userMatches;
+    }) ?? null;
   };
 
   const sourceConnection = connectionByServiceId(value.sourceServiceId);
@@ -803,15 +820,15 @@ function ConnectionStep({
             <label>소스 연결</label>
             <select
               value={value.sourceServiceId}
-              disabled={!connectionsLoaded || matchedServices.length === 0 || !!serviceError}
+              disabled={services.length === 0 || !!serviceError}
               onChange={(event) => handleSourceServiceChange(event.target.value)}
             >
               <option value="" disabled>
                 {servicePlaceholder}
               </option>
-              {matchedServices.map((service) => (
+              {services.map((service) => (
                 <option key={service.id} value={service.id}>
-                  {service.displayName}
+                  {service.name}
                 </option>
               ))}
             </select>
@@ -820,15 +837,15 @@ function ConnectionStep({
         <label>타깃 연결</label>
         <select
           value={value.targetServiceId}
-          disabled={!connectionsLoaded || matchedServices.length === 0 || !!serviceError}
+          disabled={services.length === 0 || !!serviceError}
           onChange={(event) => handleTargetServiceChange(event.target.value)}
         >
           <option value="" disabled>
             {servicePlaceholder}
           </option>
-          {matchedServices.map((service) => (
+          {services.map((service) => (
             <option key={service.id} value={service.id}>
-              {service.displayName}
+              {service.name}
             </option>
           ))}
         </select>
@@ -926,35 +943,28 @@ function ConnectionStep({
 function TargetStep({
   loadMode,
   truncateSql,
-  loadSql,
-  changeKeyColumn,
+  updateExtractQuery,
   primaryKeys,
-  sourceColumns,
   targetColumns,
   showTruncateSql,
   onLoadModeChange,
   onTruncateSqlChange,
-  onLoadSqlChange,
-  onChangeKeyColumnChange,
+  onUpdateExtractQueryChange,
   onPrimaryKeysChange,
   onShowTruncateSqlChange,
 }: {
   loadMode: LoadMode;
   onLoadModeChange: (loadMode: LoadMode) => void;
   truncateSql: string;
-  loadSql: string;
-  changeKeyColumn: string;
+  updateExtractQuery: string;
   primaryKeys: string;
-  sourceColumns: ColumnMetadataResponse[];
   targetColumns: ColumnMetadataResponse[];
   showTruncateSql: boolean;
   onTruncateSqlChange: (truncateSql: string) => void;
-  onLoadSqlChange: (loadSql: string) => void;
-  onChangeKeyColumnChange: (changeKeyColumn: string) => void;
+  onUpdateExtractQueryChange: (updateExtractQuery: string) => void;
   onPrimaryKeysChange: (primaryKeys: string) => void;
   onShowTruncateSqlChange: (show: boolean) => void;
 }) {
-  const sourceColumnOptions = columnOptions(sourceColumns);
   const targetColumnOptions = columnOptions(targetColumns);
 
   return (
@@ -1010,27 +1020,11 @@ function TargetStep({
 
       {loadMode === "UPSERT" ? (
         <div className="etl-change-key-column">
-          <label>UPDATE 기준 컬럼</label>
-          <Select
-            showSearch
-            allowClear
-            value={changeKeyColumn || undefined}
-            disabled={sourceColumns.length === 0}
-            options={sourceColumnOptions}
-            filterOption={matchesSelectOption}
-            placeholder="예: UPD_DTTM"
-            onChange={(nextColumn) => onChangeKeyColumnChange(nextColumn ?? "")}
-          />
-        </div>
-      ) : null}
-
-      {(loadMode === "INSERT" || loadMode === "UPSERT") ? (
-        <div className="etl-change-key-column">
-          <label>적재로직 SQL문</label>
+          <label>UPDATE행 추출 쿼리</label>
           <textarea
-            value={loadSql}
-            onChange={(event) => onLoadSqlChange(event.target.value)}
-            placeholder={"예: SELECT *\nFROM source_schema.source_table"}
+            value={updateExtractQuery}
+            onChange={(event) => onUpdateExtractQueryChange(event.target.value)}
+            placeholder="예: upd_dttm BETWEEN ..."
           />
         </div>
       ) : null}
@@ -1167,10 +1161,9 @@ export function EtlCreatePage() {
   const [loadMode, setLoadMode] = useState<LoadMode>("INSERT");
   const [showTruncateSql, setShowTruncateSql] = useState(false);
   const [truncateSql, setTruncateSql] = useState("");
-  const [loadSql, setLoadSql] = useState(defaultLoadSql("INSERT", "", "", "PostgreSQL"));
-  const [changeKeyColumn, setChangeKeyColumn] = useState("");
+  const [updateExtractQuery, setUpdateExtractQuery] = useState(defaultUpdateExtractQuery("PostgreSQL"));
   const [primaryKeys, setPrimaryKeys] = useState("");
-  const [sourceColumns, setSourceColumns] = useState<ColumnMetadataResponse[]>([]);
+  const [, setSourceColumns] = useState<ColumnMetadataResponse[]>([]);
   const [targetColumns, setTargetColumns] = useState<ColumnMetadataResponse[]>([]);
 
   const isUnlocked = (stepId: WizardStepId) => {
@@ -1204,26 +1197,6 @@ export function EtlCreatePage() {
     (isFileLoad || !!connectionInfo.sourceTable.trim()) &&
     !!connectionInfo.targetTable.trim();
 
-  useEffect(() => {
-    if (isFileLoad || loadMode === "TRUNCATE") {
-      return;
-    }
-    setLoadSql(defaultLoadSql(
-      loadMode,
-      connectionInfo.sourceSchema,
-      connectionInfo.sourceTable,
-      connectionInfo.sourceDatabaseType,
-      changeKeyColumn,
-    ));
-  }, [
-    changeKeyColumn,
-    connectionInfo.sourceDatabaseType,
-    connectionInfo.sourceSchema,
-    connectionInfo.sourceTable,
-    isFileLoad,
-    loadMode,
-  ]);
-
   const completeWizard = async () => {
     if (!basicInfo.jobName.trim() || !basicInfo.parentGroupId) {
       message.warning("기본 정보의 작업명과 상위 그룹을 입력하세요.");
@@ -1247,12 +1220,8 @@ export function EtlCreatePage() {
       moveStep("connection");
       return;
     }
-    if (!isFileLoad && (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()) {
-      message.warning("적재로직 SQL문을 입력해야 합니다.");
-      return;
-    }
-    if (!isFileLoad && loadMode === "UPSERT" && !changeKeyColumn.trim()) {
-      message.warning("UPSERT 적재 방식은 UPDATE 기준 컬럼을 입력해야 합니다.");
+    if (!isFileLoad && loadMode === "UPSERT" && !updateExtractQuery.trim()) {
+      message.warning("UPSERT 적재 방식은 UPDATE행 추출 쿼리를 입력해야 합니다.");
       return;
     }
     if (!isFileLoad && loadMode === "UPSERT" && !primaryKeys.trim()) {
@@ -1301,7 +1270,7 @@ export function EtlCreatePage() {
           truncateSql: loadMode === "TRUNCATE"
             ? truncateSql.trim() || defaultTruncateSql(connectionInfo.targetSchema, connectionInfo.targetTable)
             : undefined,
-          loadSql: (loadMode === "INSERT" || loadMode === "UPSERT") ? loadSql.trim() : undefined,
+          updateExtractQuery: loadMode === "UPSERT" ? updateExtractQuery.trim() : undefined,
           primaryKeys: loadMode === "UPSERT" ? primaryKeys.trim() : undefined,
         });
       }
@@ -1354,16 +1323,15 @@ export function EtlCreatePage() {
         value={connectionInfo}
         etlType={etlType}
         onChange={(nextValue) => {
+          const shouldResetUpdateQuery = nextValue.sourceServiceId !== undefined ||
+            nextValue.sourceDatabaseType !== undefined;
           setConnectionInfo((current) => {
-            return { ...current, ...nextValue };
+            const merged = { ...current, ...nextValue };
+            if (shouldResetUpdateQuery) {
+              setUpdateExtractQuery(defaultUpdateExtractQuery(merged.sourceDatabaseType));
+            }
+            return merged;
           });
-          if (
-            nextValue.sourceServiceId !== undefined ||
-            nextValue.sourceSchema !== undefined ||
-            nextValue.sourceTable !== undefined
-          ) {
-            setChangeKeyColumn("");
-          }
           if (
             nextValue.targetServiceId !== undefined ||
             nextValue.targetSchema !== undefined ||
@@ -1383,10 +1351,8 @@ export function EtlCreatePage() {
       <TargetStep
         loadMode={loadMode}
         truncateSql={truncateSql}
-        loadSql={loadSql}
-        changeKeyColumn={changeKeyColumn}
+        updateExtractQuery={updateExtractQuery}
         primaryKeys={primaryKeys}
-        sourceColumns={sourceColumns}
         targetColumns={targetColumns}
         showTruncateSql={showTruncateSql}
         onLoadModeChange={(nextLoadMode) => {
@@ -1394,10 +1360,12 @@ export function EtlCreatePage() {
           if (nextLoadMode !== "TRUNCATE") {
             setShowTruncateSql(false);
           }
+          if (nextLoadMode === "UPSERT" && !updateExtractQuery.trim()) {
+            setUpdateExtractQuery(defaultUpdateExtractQuery(connectionInfo.sourceDatabaseType));
+          }
         }}
         onTruncateSqlChange={setTruncateSql}
-        onLoadSqlChange={setLoadSql}
-        onChangeKeyColumnChange={setChangeKeyColumn}
+        onUpdateExtractQueryChange={setUpdateExtractQuery}
         onPrimaryKeysChange={setPrimaryKeys}
         onShowTruncateSqlChange={setShowTruncateSql}
       />
@@ -1474,10 +1442,7 @@ export function EtlCreatePage() {
                     <Button
                       type="primary"
                       loading={isCreating}
-                      disabled={!isFileLoad && (
-                        ((loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()) ||
-                        (loadMode === "UPSERT" && (!changeKeyColumn.trim() || !primaryKeys.trim()))
-                      )}
+                      disabled={!isFileLoad && loadMode === "UPSERT" && (!updateExtractQuery.trim() || !primaryKeys.trim())}
                       onClick={completeWizard}
                     >
                       완료

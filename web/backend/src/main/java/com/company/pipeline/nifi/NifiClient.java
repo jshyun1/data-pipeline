@@ -64,6 +64,23 @@ public class NifiClient {
     private static final List<String> QUERY_RECORD_SQL_KEYS = List.of(
             "DB_DATA"
     );
+    private static final List<String> QUERY_DBCP_KEYS = List.of(
+            "Database Connection Pooling Service",
+            "dbcp-service"
+    );
+    private static final List<String> QUERY_DATABASE_TYPE_KEYS = List.of(
+            "db-type",
+            "Database Type"
+    );
+    private static final List<String> QUERY_TABLE_KEYS = List.of(
+            "Table Name",
+            "table-name"
+    );
+    private static final List<String> QUERY_ADDITIONAL_WHERE_KEYS = List.of(
+            "Additional WHERE clause",
+            "Additional Where Clause",
+            "additional-where-clause"
+    );
     private static final List<String> PUT_DBCP_KEYS = List.of(
             "put-db-record-dcbp-service",
             "Database Connection Pooling Service"
@@ -183,8 +200,8 @@ public class NifiClient {
         if (!"INSERT".equals(loadMode) && !"TRUNCATE".equals(loadMode) && !"UPSERT".equals(loadMode)) {
             throw new NifiClientException("DB -> DB 템플릿은 INSERT, TRUNCATE, UPSERT 적재 방식만 지원합니다.", null);
         }
-        if (("INSERT".equals(loadMode) || "UPSERT".equals(loadMode)) && !StringUtils.hasText(loadSql(request))) {
-            throw new NifiClientException("DB -> DB 적재 방식은 적재로직 SQL문이 필요합니다.", null);
+        if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.updateExtractQuery())) {
+            throw new NifiClientException("UPSERT 적재 방식은 UPDATE행 추출 쿼리가 필요합니다.", null);
         }
         if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.primaryKeys())) {
             throw new NifiClientException("UPSERT 적재 방식은 Target Primary Keys가 필요합니다.", null);
@@ -332,7 +349,7 @@ public class NifiClient {
             String password
     ) {
         String token = getToken();
-        String serviceName = connectionName.trim();
+        String serviceName = "cdc-%d-%s".formatted(connectionId, connectionName);
         Map<String, Object> body = Map.of(
                 "revision", Map.of(
                         "clientId", UUID.randomUUID().toString(),
@@ -800,12 +817,14 @@ public class NifiClient {
             return;
         }
 
-        NifiFlowResponse.ProcessorEntity query = findProcessor(processors, "ExecuteSQLRecord");
+        NifiFlowResponse.ProcessorEntity query = findProcessor(processors, "QueryDatabaseTableRecord");
         NifiFlowResponse.ProcessorEntity put = findProcessor(processors, "PutDatabaseRecord");
 
         Map<String, String> queryProperties = mergedProperties(query);
-        putProperty(queryProperties, SELECT_DBCP_KEYS, request.sourceServiceId().trim());
-        putProperty(queryProperties, SELECT_SQL_KEYS, loadSql(request));
+        putProperty(queryProperties, QUERY_DBCP_KEYS, request.sourceServiceId().trim());
+        putProperty(queryProperties, QUERY_DATABASE_TYPE_KEYS, request.sourceDatabaseType().trim());
+        putProperty(queryProperties, QUERY_TABLE_KEYS, "%s.%s".formatted(
+                request.sourceSchema().trim(), request.sourceTable().trim()));
         updateProcessorProperties(token, query, queryProperties);
 
         Map<String, String> putProperties = mergedProperties(put);
@@ -819,15 +838,22 @@ public class NifiClient {
 
     private void updateUpsertDbToDbProcessors(String token, List<NifiFlowResponse.ProcessorEntity> processors,
             NifiInitialDbToDbCreateRequest request) {
-        NifiFlowResponse.ProcessorEntity source = findProcessor(processors, "ExecuteSQLRecord");
-        NifiFlowResponse.ProcessorEntity upsert = findProcessor(processors, "PutDatabaseRecord");
+        NifiFlowResponse.ProcessorEntity source = findProcessorByName(processors, "incremental_sourceDB");
+        NifiFlowResponse.ProcessorEntity upsert = findProcessorByName(processors, "targetDB_UPSERT");
+        NifiFlowResponse.ProcessorEntity delete = findOptionalProcessorByName(processors, "targetDB_DELETE");
 
         Map<String, String> sourceProperties = mergedProperties(source);
-        putProperty(sourceProperties, SELECT_DBCP_KEYS, request.sourceServiceId().trim());
-        putProperty(sourceProperties, SELECT_SQL_KEYS, loadSql(request));
+        putProperty(sourceProperties, QUERY_DBCP_KEYS, request.sourceServiceId().trim());
+        putProperty(sourceProperties, QUERY_DATABASE_TYPE_KEYS, request.sourceDatabaseType().trim());
+        putProperty(sourceProperties, QUERY_TABLE_KEYS, "%s.%s".formatted(
+                request.sourceSchema().trim(), request.sourceTable().trim()));
+        putProperty(sourceProperties, QUERY_ADDITIONAL_WHERE_KEYS, request.updateExtractQuery().trim());
         updateProcessorProperties(token, source, sourceProperties);
 
         updateTargetDbRecordProcessor(token, upsert, request, "UPSERT");
+        if (delete != null) {
+            updateTargetDbRecordProcessor(token, delete, request, null);
+        }
     }
 
     private void updateTargetDbRecordProcessor(String token, NifiFlowResponse.ProcessorEntity processor,
@@ -880,16 +906,6 @@ public class NifiClient {
             return request.truncateSql().trim();
         }
         return "TRUNCATE TABLE %s.%s".formatted(request.targetSchema().trim(), request.targetTable().trim());
-    }
-
-    private String loadSql(NifiInitialDbToDbCreateRequest request) {
-        if (StringUtils.hasText(request.loadSql())) {
-            return request.loadSql().trim();
-        }
-        if (StringUtils.hasText(request.updateExtractQuery())) {
-            return request.updateExtractQuery().trim();
-        }
-        return "";
     }
 
     private int directProcessorCount(String groupId) {
