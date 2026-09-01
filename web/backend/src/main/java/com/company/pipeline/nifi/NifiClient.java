@@ -7,7 +7,6 @@ import com.company.pipeline.nifi.dto.NifiFileLoadCreateRequest;
 import com.company.pipeline.nifi.dto.NifiFlowResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
 import com.company.pipeline.nifi.dto.NifiInitialDbToDbCreateRequest;
-import com.company.pipeline.nifi.dto.NifiLabelEntity;
 import com.company.pipeline.nifi.dto.NifiParameterContextResponse;
 import com.company.pipeline.nifi.dto.NifiProcessGroupEntity;
 import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
@@ -350,7 +349,7 @@ public class NifiClient {
             String password
     ) {
         String token = getToken();
-        String serviceName = "cdc-%d-%s".formatted(connectionId, connectionName);
+        String serviceName = connectionName.trim();
         Map<String, Object> body = Map.of(
                 "revision", Map.of(
                         "clientId", UUID.randomUUID().toString(),
@@ -505,78 +504,6 @@ public class NifiClient {
                     .body(NifiFlowResponse.class);
         } catch (RestClientException ex) {
             throw new NifiClientException("NiFi 프로세스 그룹 구성 조회 실패: " + ex.getMessage(), ex);
-        }
-    }
-
-    public NifiLabelEntity createLabel(String parentGroupId, String label,
-            double x, double y, Map<String, String> style) {
-        String token = getToken();
-        Map<String, Object> body = Map.of(
-                "revision", Map.of(
-                        "clientId", UUID.randomUUID().toString(),
-                        "version", 0
-                ),
-                "component", Map.of(
-                        "label", label,
-                        "position", Map.of("x", x, "y", y),
-                        "style", style == null ? Map.of() : style
-                )
-        );
-
-        try {
-            return restClient.post()
-                    .uri("/nifi-api/process-groups/{groupId}/labels", parentGroupId)
-                    .header("Authorization", "Bearer " + token)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(body)
-                    .retrieve()
-                    .body(NifiLabelEntity.class);
-        } catch (RestClientException ex) {
-            throw new NifiClientException("NiFi 라벨 생성 실패: " + ex.getMessage(), ex);
-        }
-    }
-
-    public NifiLabelEntity updateLabel(String labelId, long version, String label,
-            double x, double y, Map<String, String> style) {
-        String token = getToken();
-        Map<String, Object> body = Map.of(
-                "revision", Map.of(
-                        "clientId", UUID.randomUUID().toString(),
-                        "version", version
-                ),
-                "component", Map.of(
-                        "id", labelId,
-                        "label", label,
-                        "position", Map.of("x", x, "y", y),
-                        "style", style == null ? Map.of() : style
-                )
-        );
-
-        try {
-            return restClient.put()
-                    .uri("/nifi-api/labels/{id}", labelId)
-                    .header("Authorization", "Bearer " + token)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(body)
-                    .retrieve()
-                    .body(NifiLabelEntity.class);
-        } catch (RestClientException ex) {
-            throw new NifiClientException("NiFi 라벨 수정 실패: " + ex.getMessage(), ex);
-        }
-    }
-
-    public void deleteLabel(String labelId, long version) {
-        String token = getToken();
-        try {
-            restClient.delete()
-                    .uri(uri -> uri.path("/nifi-api/labels/{id}")
-                            .queryParam("version", version)
-                            .build(labelId))
-                    .header("Authorization", "Bearer " + token)
-                    .retrieve()
-                    .toBodilessEntity();
-        } catch (RestClientException ex) {
-            throw new NifiClientException("NiFi 라벨 삭제 실패: " + ex.getMessage(), ex);
         }
     }
 
@@ -952,11 +879,9 @@ public class NifiClient {
         NifiFlowResponse.ProcessorEntity select = findProcessorByName(processors, "04_SELECT");
         NifiFlowResponse.ProcessorEntity insert = findProcessorByName(processors, "05_INSERT");
 
-        if (StringUtils.hasText(request.truncateSql())) {
-            Map<String, String> replaceProperties = mergedProperties(replaceText);
-            putProperty(replaceProperties, REPLACE_TEXT_VALUE_KEYS, request.truncateSql().trim());
-            updateProcessorProperties(token, replaceText, replaceProperties);
-        }
+        Map<String, String> replaceProperties = mergedProperties(replaceText);
+        putProperty(replaceProperties, REPLACE_TEXT_VALUE_KEYS, truncateSql(request));
+        updateProcessorProperties(token, replaceText, replaceProperties);
 
         Map<String, String> truncateProperties = mergedProperties(truncate);
         putProperty(truncateProperties, TRUNCATE_DBCP_KEYS, request.targetServiceId().trim());
@@ -974,6 +899,13 @@ public class NifiClient {
         putProperty(insertProperties, PUT_SCHEMA_KEYS, request.targetSchema().trim());
         putProperty(insertProperties, PUT_TABLE_KEYS, request.targetTable().trim());
         updateProcessorProperties(token, insert, insertProperties);
+    }
+
+    private String truncateSql(NifiInitialDbToDbCreateRequest request) {
+        if (StringUtils.hasText(request.truncateSql())) {
+            return request.truncateSql().trim();
+        }
+        return "TRUNCATE TABLE %s.%s".formatted(request.targetSchema().trim(), request.targetTable().trim());
     }
 
     private int directProcessorCount(String groupId) {

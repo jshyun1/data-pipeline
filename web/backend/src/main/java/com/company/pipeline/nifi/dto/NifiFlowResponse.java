@@ -34,8 +34,7 @@ public record NifiFlowResponse(ProcessGroupFlowEntity processGroupFlow) {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Flow(List<ProcessGroupEntity> processGroups,
                        List<ProcessorEntity> processors,
-                       List<ConnectionEntity> connections,
-                       List<LabelEntity> labels) {
+                       List<ConnectionEntity> connections) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -87,15 +86,7 @@ public record NifiFlowResponse(ProcessGroupFlowEntity processGroupFlow) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record LabelEntity(String id, Revision revision, LabelComponent component) {
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
     public record Revision(String clientId, Long version) {
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public record LabelComponent(String id, String label, Position position, Map<String, String> style) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

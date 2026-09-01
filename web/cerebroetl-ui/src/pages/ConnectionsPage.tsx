@@ -191,7 +191,7 @@ export function ConnectionsPage() {
 
   return (
     <div>
-      <Card title="CDC 연결정보">
+      <Card title="연결정보">
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
             신규 등록
@@ -403,8 +403,8 @@ export function ConnectionsPage() {
             extra={
               dbType === "ORACLE"
                 ? "CDC 소스로 사용할 계정이라면 반드시 C##으로 시작하는 공통 사용자를 입력하세요 " +
-                  "(예: C##DBZUSER). LogMiner는 CDB 레벨에서 동작해서 appuser 같은 PDB 로컬 사용자는 " +
-                  "비밀번호가 맞아도 인증되지 않습니다. 타겟(싱크)으로만 쓸 계정이라면 일반 사용자로 충분합니다."
+                "(예: C##DBZUSER). LogMiner는 CDB 레벨에서 동작해서 appuser 같은 PDB 로컬 사용자는 " +
+                "비밀번호가 맞아도 인증되지 않습니다. 타겟(싱크)으로만 쓸 계정이라면 일반 사용자로 충분합니다."
                 : undefined
             }
           >

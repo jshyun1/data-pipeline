@@ -164,7 +164,7 @@ class NifiJobMirrorServiceTest {
 
     private void givenEmptyCanvas() {
         when(nifiClient.getFlow("root")).thenReturn(new NifiFlowResponse(
-                new ProcessGroupFlowEntity("root", null, null, new Flow(List.of(), List.of(), List.of(), List.of()))));
+                new ProcessGroupFlowEntity("root", null, null, new Flow(List.of(), List.of(), List.of()))));
     }
 
     /** DZ_UPSERT 레인 하나(extract -> upsert, upsert -> 오류로그)를 흉내낸 캔버스. */
@@ -175,7 +175,7 @@ class NifiJobMirrorServiceTest {
         when(nifiClient.getFlow("root")).thenReturn(new NifiFlowResponse(
                 new ProcessGroupFlowEntity("root", null, null,
                         new Flow(List.of(new ProcessGroupEntity("pg-1", null, groupComponent)),
-                                List.of(), List.of(), List.of()))));
+                                List.of(), List.of()))));
 
         ProcessorEntity extract = new ProcessorEntity("p-extract", null, new ProcessorComponent(
                 "p-extract", "extract-chg-COM001M",
@@ -205,20 +205,20 @@ class NifiJobMirrorServiceTest {
 
         when(nifiClient.getFlow("pg-1")).thenReturn(new NifiFlowResponse(
                 new ProcessGroupFlowEntity("pg-1", "root", null,
-                        new Flow(List.of(), List.of(extract, upsert), List.of(failureLink), List.of()))));
+                        new Flow(List.of(), List.of(extract, upsert), List.of(failureLink)))));
         when(nifiClient.getFlow(anyString())).thenAnswer(invocation -> {
             String groupId = invocation.getArgument(0);
             if ("root".equals(groupId)) {
                 return new NifiFlowResponse(new ProcessGroupFlowEntity("root", null, null,
                         new Flow(List.of(new ProcessGroupEntity("pg-1", null, groupComponent)),
-                                List.of(), List.of(), List.of())));
+                                List.of(), List.of())));
             }
             if ("pg-1".equals(groupId)) {
                 return new NifiFlowResponse(new ProcessGroupFlowEntity("pg-1", "root", null,
-                        new Flow(List.of(), List.of(extract, upsert), List.of(failureLink), List.of())));
+                        new Flow(List.of(), List.of(extract, upsert), List.of(failureLink))));
             }
             return new NifiFlowResponse(new ProcessGroupFlowEntity(groupId, "root", null,
-                    new Flow(List.of(), List.of(), List.of(), List.of())));
+                    new Flow(List.of(), List.of(), List.of())));
         });
         when(jobRepository.findByNifiPgId("pg-1")).thenReturn(Optional.empty());
     }

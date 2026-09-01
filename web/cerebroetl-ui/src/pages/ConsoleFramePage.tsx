@@ -391,31 +391,6 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     }
   };
 
-  const patchCanvasStatusLabel = (element: Element) => {
-    const text = element.textContent?.trim();
-    if (!text || !text.includes("마지막 실행") || !/^●\s*(실행|완료|실패|대기|중지|중단)/m.test(text)) {
-      return;
-    }
-
-    let current: Element = element;
-    for (let depth = 0; depth < 6 && current.parentElement; depth += 1) {
-      const rect = current.getBoundingClientRect();
-      const candidateText = current.textContent?.trim() ?? "";
-      if (
-        candidateText.includes("마지막 실행")
-        && rect.width >= 60
-        && rect.width <= 320
-        && rect.height >= 24
-        && rect.height <= 180
-      ) {
-        current.setAttribute(NIFI_STATUS_HIDDEN_ATTRIBUTE, "true");
-        return;
-      }
-      current = current.parentElement;
-    }
-    element.setAttribute(NIFI_STATUS_HIDDEN_ATTRIBUTE, "true");
-  };
-
   const patchElement = (element: Element) => {
     NIFI_TOOLTIP_ATTRIBUTES.forEach((attributeName) => {
       const value = element.getAttribute(attributeName);
@@ -434,7 +409,6 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     patchExactTextElement(element);
     patchStatusIconVisibility(element);
     patchStatusTooltipText(element);
-    patchCanvasStatusLabel(element);
   };
 
   const patchDocument = () => {
@@ -448,7 +422,6 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     NIFI_STATUS_TOOLTIP_ICON_TEXT.forEach(([iconClass]) => {
       doc.querySelectorAll(`.${iconClass}`).forEach(patchStatusTooltipText);
     });
-    doc.querySelectorAll("div, span, p, label, text, textarea").forEach(patchCanvasStatusLabel);
   };
 
   patchDocument();
@@ -486,7 +459,6 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
           .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], title")
           .forEach(patchElement);
         node.querySelectorAll("*").forEach(patchExactTextElement);
-        node.querySelectorAll("div, span, p, label, text, textarea").forEach(patchCanvasStatusLabel);
         HIDDEN_NIFI_STATUS_ICON_CLASSES.forEach((iconClass) => {
           node.querySelectorAll(`.${iconClass}`).forEach(patchStatusIconVisibility);
         });
@@ -1094,13 +1066,6 @@ function flattenTree(node: NifiProcessGroupTreeNode | null): NifiProcessGroupTre
   return [node, ...node.children.flatMap((child) => flattenTree(child))];
 }
 
-function collectJobNodes(node: NifiProcessGroupTreeNode | null): NifiProcessGroupTreeNode[] {
-  if (!node) {
-    return [];
-  }
-  return flattenTree(node).filter((entry) => entry.id !== node.id && entry.groupType === "JOB");
-}
-
 function processGroupTextCandidates(element: Element | null) {
   const values: string[] = [];
   let current = element;
@@ -1210,6 +1175,13 @@ function jobStatusText(status: NifiProcessGroupTreeNode["jobStatus"]) {
 
 function formatCount(value?: number | null) {
   return value == null ? "0" : value.toLocaleString("ko-KR");
+}
+
+function waitingCount(node: NifiProcessGroupTreeNode) {
+  return Math.max(
+    (node.processorCount ?? 0) - (node.runningCount ?? 0) - (node.invalidCount ?? 0) - (node.stoppedCount ?? 0),
+    0,
+  );
 }
 
 function localDateString(date: Date) {
@@ -2093,12 +2065,26 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const targetStep = lastTerminalProcessor(jobSteps, jobLinks);
   const listFileStep = jobSteps.find((step) => processorTypeIncludes(step, "ListFile")) ?? null;
   const inputDirectory = listFileInputDirectory(listFileStep);
+  const sourceText = sourceTargetText(sourceStep, "source");
+  const targetText = sourceTargetText(targetStep, "target");
   const dagId = relatedJob?.airflowDagId ?? airflowDags[0] ?? null;
-  const groupedJobs = displayNode?.groupType === "GROUPING" ? collectJobNodes(displayNode) : [];
+  const directGroupingGroups = isGroupingGroup
+    ? (displayNode?.children ?? []).filter((entry) => entry.groupType === "GROUPING")
+    : [];
+  const directJobGroups = isGroupingGroup
+    ? (displayNode?.children ?? []).filter((entry) => entry.groupType === "JOB")
+    : [];
+  const hasDirectJobStatus = directGroupingGroups.length > 0 || directJobGroups.length > 0;
   const showHeaderStatus = isJobGroup;
   const lastRunTime = formatDateTime(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
   const lastRunCount = formatCount(latestRun?.totalInserted ?? 0);
   const logKeyword = detailLogKeyword(displayJob, displayNode);
+  const titleName = displayJob?.jobName ?? displayNode?.name ?? "선택 없음";
+  const headerTitle = isJobGroup
+    ? `Job 명: ${titleName}`
+    : isGroupingGroup
+      ? `그룹명 : ${titleName}`
+      : titleName;
 
   useEffect(() => {
     let cancelled = false;
@@ -2157,8 +2143,8 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   return (
     <aside className="nifi-detail-panel" aria-label="선택한 프로세스 그룹 상세">
       <div className="nifi-detail-header">
-        <div className="nifi-detail-title" title={displayJob?.jobName ?? displayNode?.name ?? "선택 없음"}>
-          {displayJob?.jobName ?? displayNode?.name ?? "선택 없음"}
+        <div className="nifi-detail-title" title={headerTitle}>
+          {headerTitle}
         </div>
         {showHeaderStatus ? (
           <div className={`nifi-detail-status stacked ${statusClass(displayJob, displayNode)}`}>
@@ -2169,36 +2155,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
             <span>마지막 실행 {lastRunTime} · {lastRunCount}건</span>
           </div>
         ) : null}
-      </div>
-
-      {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
-      {!isLoading && error ? <div className="nifi-detail-message error">조회 실패</div> : null}
-
-      {groupedJobs.length > 0 ? (
-        <section className="nifi-detail-section">
-          <h3>JOB 상태</h3>
-          <div className="nifi-job-status-list">
-            {groupedJobs.map((entry) => (
-              <button
-                key={entry.id}
-                type="button"
-                className="nifi-job-status-row"
-                onClick={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(entry.id)}`)}
-              >
-                <span className="nifi-job-status-name" title={entry.name}>{entry.name}</span>
-                <span className={`nifi-job-status-badge ${jobStatusClass(entry.jobStatus)}`}>
-                  <span className="nifi-detail-dot" aria-hidden="true" />
-                  {jobStatusText(entry.jobStatus)}
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <section className="nifi-detail-section">
-        <h3>기본 정보</h3>
-        <dl>
+        <dl className="nifi-detail-header-info">
           <div>
             <dt>상위 경로</dt>
             <dd>{directParent}</dd>
@@ -2241,20 +2198,78 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
             </div>
           ) : null}
         </dl>
-      </section>
+      </div>
+
+      {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
+      {!isLoading && error ? <div className="nifi-detail-message error">조회 실패</div> : null}
+
+      {hasDirectJobStatus ? (
+        <section className="nifi-detail-section">
+          <h3>JOB 상태</h3>
+          <div className="nifi-direct-status-list">
+            {directGroupingGroups.length > 0 ? (
+              <div className="nifi-grouping-status-table">
+                <div className="nifi-grouping-status-row heading">
+                  <span />
+                  <span>중지</span>
+                  <span>대기</span>
+                  <span>성공</span>
+                  <span>실패</span>
+                </div>
+                {directGroupingGroups.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className="nifi-grouping-status-row"
+                    onClick={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(entry.id)}`)}
+                  >
+                    <span className="nifi-grouping-status-name" title={entry.name}>{entry.name}</span>
+                    <span className="nifi-grouping-status-cell">{formatCount(entry.stoppedCount)}</span>
+                    <span className="nifi-grouping-status-cell">{formatCount(waitingCount(entry))}</span>
+                    <span className="nifi-grouping-status-cell">{formatCount(entry.runningCount)}</span>
+                    <span className="nifi-grouping-status-cell">{formatCount(entry.invalidCount)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {directJobGroups.length > 0 ? (
+              <div className="nifi-job-status-list">
+                {directJobGroups.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className="nifi-job-status-row"
+                    onClick={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(entry.id)}`)}
+                  >
+                    <span className="nifi-job-status-name" title={entry.name}>{entry.name}</span>
+                    <span className={`nifi-job-status-badge ${jobStatusClass(entry.jobStatus)}`}>
+                      <span className="nifi-detail-dot" aria-hidden="true" />
+                      {jobStatusText(entry.jobStatus)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {isJobGroup ? (
         <>
           <section className="nifi-detail-section">
             <h3>대상</h3>
-            <dl>
+            <dl className="nifi-detail-target-list">
               <div>
                 <dt>소스</dt>
-                <dd>{sourceTargetText(sourceStep, "source")}</dd>
+                <dd className="nifi-detail-inline-value" title={sourceText}>
+                  {sourceText}
+                </dd>
               </div>
               <div>
                 <dt>타깃</dt>
-                <dd>{sourceTargetText(targetStep, "target")}</dd>
+                <dd className="nifi-detail-inline-value" title={targetText}>
+                  {targetText}
+                </dd>
               </div>
             </dl>
           </section>
