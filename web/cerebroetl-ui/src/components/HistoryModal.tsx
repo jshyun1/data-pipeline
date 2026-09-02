@@ -63,9 +63,13 @@ export function HistoryModal({ open, onClose, title, loading, rows }: HistoryMod
 
   return (
     <Modal open={open} onCancel={onClose} onOk={onClose} title={title} width={860} footer={null} destroyOnHidden>
+      {/* 오류 메시지가 공백 없는 한 줄(SQL·스택트레이스)이라 기본 레이아웃에서는 열이 계속
+          넓어져 표가 모달 밖으로 삐져나갔다. tableLayout=fixed 로 폭을 못박고 셀 안에서
+          줄바꿈시킨다. */}
       <Table<HistoryEntry>
         rowKey="id"
         size="small"
+        tableLayout="fixed"
         loading={loading}
         dataSource={rows}
         pagination={{ pageSize: 10 }}
@@ -87,7 +91,15 @@ export function HistoryModal({ open, onClose, title, loading, rows }: HistoryMod
             ) : null,
         }}
         columns={[
-          { title: "기본 내용", dataIndex: "basicContent" },
+          {
+            title: "기본 내용",
+            dataIndex: "basicContent",
+            render: (value: string) => (
+              <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                {value}
+              </div>
+            ),
+          },
           {
             title: "구분",
             dataIndex: "category",

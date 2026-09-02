@@ -20,24 +20,30 @@ export function presetDescription(preset: SchedulePreset, hour: number, minute: 
   return `매일 ${time}`;
 }
 
-/** 다음 5회 실행 시각. 사용자가 저장 전에 "정말 이 시각이 맞나"를 눈으로 확인하게 한다. */
-export function nextPresetRuns(preset: SchedulePreset, hour: number, minute: number, weekday: number) {
+/**
+ * 다음 실행 시각 미리보기. 저장 전에 "정말 이 시각이 맞나"를 눈으로 확인하게 한다.
+ *
+ * 기본 2회다. 좁은 속성창에 5줄을 깔면 패널이 늘어져 아래가 잘렸다 - 맞는지 보는 데는
+ * 두 줄이면 충분하다.
+ */
+export function nextPresetRuns(preset: SchedulePreset, hour: number, minute: number,
+                               weekday: number, count = 2) {
   const now = dayjs();
   let next = now.second(0).millisecond(0);
   if (preset === "hourly") {
     next = next.minute(minute);
     if (!next.isAfter(now)) next = next.add(1, "hour");
-    return Array.from({ length: 5 }, (_, index) => next.add(index, "hour"));
+    return Array.from({ length: count }, (_, index) => next.add(index, "hour"));
   }
   next = next.hour(hour).minute(minute);
   if (preset === "weekly") {
     while (next.day() !== weekday || !next.isAfter(now)) {
       next = next.add(1, "day");
     }
-    return Array.from({ length: 5 }, (_, index) => next.add(index * 7, "day"));
+    return Array.from({ length: count }, (_, index) => next.add(index * 7, "day"));
   }
   if (!next.isAfter(now)) next = next.add(1, "day");
-  return Array.from({ length: 5 }, (_, index) => next.add(index, "day"));
+  return Array.from({ length: count }, (_, index) => next.add(index, "day"));
 }
 
 function validCronField(field: string, min: number, max: number) {

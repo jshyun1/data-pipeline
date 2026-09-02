@@ -563,10 +563,13 @@ export function PipelinesPage() {
                         label: `${c.connectorName} · 설정/실행상태`,
                         children: (
                           <>
+                            {/* Connector 설정/상태는 공백 없는 JSON 한 줄이라 pre-wrap 만으로는
+                                안 접힌다(줄바꿈할 공백이 없다). break-word 로 강제 개행하고
+                                길면 세로 스크롤을 준다. */}
                             <div style={{ fontWeight: 600, marginBottom: 4 }}>Connector 설정</div>
-                            <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{c.connectorConfigJson}</pre>
+                            <pre className="connector-json-block">{c.connectorConfigJson}</pre>
                             <div style={{ fontWeight: 600, margin: "12px 0 4px" }}>실행상태</div>
-                            <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>
+                            <pre className="connector-json-block">
                               {c.lastStatusJson ?? "아직 조회된 상태가 없습니다."}
                             </pre>
                           </>
