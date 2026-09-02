@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -25,15 +25,17 @@ import {
   Input,
   InputNumber,
   message,
+  Modal,
   Radio,
   Select,
   Space,
   Spin,
+  Tooltip,
   Tree,
   Tag,
   Typography,
 } from "antd";
-import { ArrowLeftOutlined, SyncOutlined } from "@ant-design/icons";
+import { ArrowLeftOutlined, InfoCircleFilled, SyncOutlined } from "@ant-design/icons";
 import { useAuth } from "../auth/AuthContext";
 import { listEtlJobs, syncEtlJobs, type EtlJobResponse } from "../api/etlJobs";
 import { getNifiProcessGroupTree, type NifiProcessGroupTreeNode } from "../api/platform";
@@ -101,9 +103,13 @@ export function WorkflowCanvasPage() {
   const { id } = useParams();
   const workflowId = Number(id);
   const navigate = useNavigate();
+
   const queryClient = useQueryClient();
   const { can, permissionsLoaded } = useAuth();
+  // 그래프 편집(저장·노드 추가)은 ETL 설계라 NIFI 쓰기,
+  // 게시/게시취소는 DAG 를 만들고 스케줄을 켜는 운영 동작이라 AIRFLOW 쓰기를 본다.
   const canWrite = !permissionsLoaded || can("NIFI", "WRITE");
+  const canPublish = !permissionsLoaded || can("AIRFLOW", "WRITE");
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -118,6 +124,21 @@ export function WorkflowCanvasPage() {
   const [canvasMemo, setCanvasMemo] = useState("");
   const [dirty, setDirty] = useState(false);
 
+  /** 캔버스를 떠나기 전 확인. 저장 안 한 변경을 말없이 버리지 않는다. */
+  const leaveTo = (path: string) => {
+    if (!dirty) {
+      navigate(path);
+      return;
+    }
+    Modal.confirm({
+      title: "저장하지 않은 변경이 있습니다",
+      content: "이동하면 이 캔버스의 변경 내용이 사라집니다. 이동할까요?",
+      okText: "이동",
+      cancelText: "취소",
+      onOk: () => navigate(path),
+    });
+  };
+
   const workflowQuery = useQuery({
     queryKey: ["workflow", workflowId],
     queryFn: () => getWorkflow(workflowId),
@@ -130,6 +151,24 @@ export function WorkflowCanvasPage() {
   const treeQuery = useQuery({ queryKey: ["nifi-pg-tree"], queryFn: getNifiProcessGroupTree });
 
   // 서버에서 받은 그래프를 캔버스로 옮긴다. 저장하지 않은 편집을 덮어쓰지 않도록
+  /**
+   * 다른 워크플로우로 옮겨가면 화면을 비운다.
+   *
+   * 캔버스 로드는 «손대지 않았을 때만» 반영하는데(dirty 가드), 이동해도 dirty가 남아
+   * 있으면 그 가드에 걸려 <b>이전 워크플로우의 그래프가 그대로 남는다</b>. 제목만 바뀌고
+   * 그림은 그대로여서 «반응이 없다»로 보였다.
+   */
+  useEffect(() => {
+    setDirty(false);
+    setNodes([]);
+    setEdges([]);
+    setSelectedNodeId(undefined);
+    setSelectedEdgeId(undefined);
+    setValidation(undefined);
+    setCanvasMemo("");
+    setShowAllJobs(false);
+  }, [workflowId, setNodes, setEdges]);
+
   // 아직 손대지 않았을 때만(dirty=false) 반영한다.
   useEffect(() => {
     const detail = workflowQuery.data;
@@ -325,8 +364,27 @@ export function WorkflowCanvasPage() {
     window.setTimeout(() => flow?.fitView({ padding: 0.35, maxZoom: 0.85, duration: 250 }), 80);
   }, [setNodes, edges, markDirty, flow]);
 
+  /**
+   * 속성 패널의 «현재 입력값». 상단 «저장» 이 그래프와 속성을 함께 저장하기 위해 들고 있는다.
+   *
+   * <p>패널은 노드/연결을 선택하면 언마운트되므로(그때는 노드 속성이 대신 뜬다) 패널 안의
+   * state 만으로는 저장 시점에 값을 못 읽는다. 그래서 입력이 바뀔 때마다 여기로 올려둔다.
+   * 워크플로우를 바꾸면 남은 초안이 새 워크플로우에 섞이지 않게 비운다.
+   */
+  const settingsDraftRef = useRef<Parameters<typeof updateWorkflow>[1] | null>(null);
+  useEffect(() => {
+    settingsDraftRef.current = null;
+  }, [workflowId]);
+
   const saveMutation = useMutation({
-    mutationFn: () => saveWorkflowGraph(workflowId, {
+    // 예전에는 그래프만 저장해서, 스케줄을 바꾸고 «저장»을 눌러도 조용히 버려졌다
+    // (스케줄은 «속성 저장» 버튼에만 있었다). 화면의 변경은 «저장» 하나로 다 저장한다.
+    mutationFn: async () => {
+      const draft = settingsDraftRef.current;
+      if (draft) {
+        await updateWorkflow(workflowId, draft);
+      }
+      return saveWorkflowGraph(workflowId, {
       nodes: nodes.map((node) => ({
         nodeKey: node.id,
         nodeType: String(node.data.nodeType ?? "JOB"),
@@ -343,7 +401,8 @@ export function WorkflowCanvasPage() {
         toNodeKey: edge.target,
         conditionType: String((edge.data as { conditionType?: string } | undefined)?.conditionType ?? "SUCCESS"),
       })),
-    }),
+      });
+    },
     onSuccess: () => {
       message.success("저장했습니다. (게시해야 Airflow에 반영됩니다)");
       setDirty(false);
@@ -590,12 +649,14 @@ export function WorkflowCanvasPage() {
               검증
             </Button>
             <Button type="primary" onClick={() => publishMutation.mutate()}
-                    loading={publishMutation.isPending} disabled={!canWrite || dirty}>
+                    loading={publishMutation.isPending} disabled={!canPublish || dirty}
+                    title={canPublish ? undefined : "Airflow 쓰기 권한이 없습니다"}>
               게시
             </Button>
             {detail.published && (
               <Button danger onClick={() => unpublishMutation.mutate()}
-                      loading={unpublishMutation.isPending} disabled={!canWrite}>
+                      loading={unpublishMutation.isPending} disabled={!canPublish}
+                      title={canPublish ? undefined : "Airflow 쓰기 권한이 없습니다"}>
                 게시 취소
               </Button>
             )}
@@ -636,8 +697,7 @@ export function WorkflowCanvasPage() {
                 extra={<Button size="small" icon={<SyncOutlined />} title="NiFi에서 다시 읽어옵니다"
                                loading={syncMutation.isPending}
                                onClick={() => syncMutation.mutate()} />}
-                styles={{ body: { maxHeight: "100%", overflowY: "auto" } }}
-                style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+                className="wf-side-card">
             {ownGroup && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
                             marginBottom: 8, gap: 6 }}>
@@ -769,9 +829,28 @@ export function WorkflowCanvasPage() {
           <Card size="small" title={
             selectedNode ? `노드: ${selectedNode.id}`
               : selectedEdge ? "연결 조건"
-              : "워크플로우 속성"}
-                styles={{ body: { maxHeight: "100%", overflowY: "auto" } }}
-                style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+              : (
+                <Space size={6}>
+                  <span>워크플로우 속성</span>
+                  {/* 상위가 있으면 자체 스케줄이 안 돈다. 예전엔 이 설명을 스케줄 위에
+                      큰 알림으로 깔아 패널을 절반이나 잡아먹었다. 아이콘 하나로 줄이고
+                      필요할 때만 펴 본다. */}
+                  {(detail?.parents?.length ?? 0) > 0 && (
+                    <Tooltip
+                      title={
+                        <span>
+                          상위 워크플로우가 있어 이 스케줄은 동작하지 않습니다.<br />
+                          상위가 지시할 때만 실행됩니다. 같은 적재가 두 번 돌지 않도록
+                          자체 스케줄을 끕니다.
+                        </span>
+                      }
+                    >
+                      <InfoCircleFilled style={{ color: "#1677ff" }} />
+                    </Tooltip>
+                  )}
+                </Space>
+              )}
+                className="wf-side-card">
             {selectedNode ? (
               <Space direction="vertical" style={{ width: "100%" }} size={10}>
                 <div>
@@ -808,7 +887,7 @@ export function WorkflowCanvasPage() {
                 {/* 워크플로우 노드면 그 워크플로우 캔버스로 바로 넘어간다. */}
                 {selectedNode.data.subWorkflowId ? (
                   <Button size="small" block
-                          onClick={() => navigate(
+                          onClick={() => leaveTo(
                             `/workflows/design/${Number(selectedNode.data.subWorkflowId)}`)}>
                     워크플로우 바로가기
                   </Button>
@@ -816,7 +895,7 @@ export function WorkflowCanvasPage() {
                 {/* 이 job이 NiFi에서 실제로 어떻게 생겼는지 바로 열어본다. */}
                 {selectedNode.data.nifiPgId ? (
                   <Button size="small" block
-                          onClick={() => navigate(
+                          onClick={() => leaveTo(
                             `/etl/manage?processGroupId=${encodeURIComponent(String(selectedNode.data.nifiPgId))}`)}>
                     ETL job 바로가기
                   </Button>
@@ -848,7 +927,8 @@ export function WorkflowCanvasPage() {
             ) : (
               <WorkflowSettings detail={detail} disabled={!canWrite}
                                 onSave={(body) => settingsMutation.mutate(body)}
-                                saving={settingsMutation.isPending} />
+                                saving={settingsMutation.isPending}
+                                onDraftChange={(body) => { settingsDraftRef.current = body; }} />
             )}
           </Card>
         </div>
@@ -888,11 +968,13 @@ function nodeClass(problem: boolean, nodeType?: string): string {
   return problem ? `wf-node${kind} wf-node--problem` : `wf-node${kind}`;
 }
 
-function WorkflowSettings({ detail, disabled, onSave, saving }: {
+function WorkflowSettings({ detail, disabled, onSave, saving, onDraftChange }: {
   detail: WorkflowDetail;
   disabled: boolean;
   onSave: (body: Parameters<typeof updateWorkflow>[1]) => void;
   saving: boolean;
+  /** 입력이 바뀔 때마다 상단 «저장»이 쓸 수 있도록 현재 값을 올려보낸다. */
+  onDraftChange?: (body: Parameters<typeof updateWorkflow>[1]) => void;
 }) {
   const [name, setName] = useState(detail.name);
   // 저장된 크론을 프리셋으로 되돌려 채운다. 프리셋으로 표현 안 되는 식이면 직접 입력에만 남는다.
@@ -908,6 +990,24 @@ function WorkflowSettings({ detail, disabled, onSave, saving }: {
   const [memo, setMemo] = useState(detail.memo ?? "");
   const parents = detail.parents ?? [];
 
+  // 저장 본문은 한 곳에서 만든다 - «속성 저장» 버튼과 상단 «저장» 이 같은 값을 쓰게 한다.
+  const settingsBody = {
+    name,
+    description: detail.description,
+    nifiGroupPgId: detail.nifiGroupPgId,
+    scheduleCron: scheduleMode === "manual" ? null
+      : (customCron.trim() || presetCron(preset, hour, minute, weekday)),
+    timezone: detail.timezone,
+    catchup: detail.catchup,
+    maxActiveRuns: maxRuns,
+    suspendOnError: detail.suspendOnError,
+    memo,
+  };
+  // ref 에 쓰기만 하므로 렌더를 유발하지 않는다. 매 렌더 갱신해야 «마지막 입력»이 남는다.
+  useEffect(() => {
+    onDraftChange?.(settingsBody);
+  });
+
   return (
     <Space direction="vertical" style={{ width: "100%" }} size={10}>
       <div>
@@ -916,11 +1016,6 @@ function WorkflowSettings({ detail, disabled, onSave, saving }: {
       </div>
       <div>
         <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>스케줄</div>
-        {parents.length > 0 && (
-          <Alert type="info" showIcon style={{ marginBottom: 8 }}
-                 message="상위 워크플로우가 있어 이 스케줄은 동작하지 않습니다."
-                 description="상위가 지시할 때만 실행됩니다. 같은 적재가 두 번 돌지 않도록 자체 스케줄을 끕니다." />
-        )}
         <Radio.Group size="small" value={scheduleMode} style={{ marginBottom: 8 }}
                      onChange={(event) => setScheduleMode(event.target.value)}>
           <Radio value="manual">수동 실행</Radio>
@@ -957,7 +1052,7 @@ function WorkflowSettings({ detail, disabled, onSave, saving }: {
             {/* 저장 전에 "정말 이 시각이 맞나"를 눈으로 확인하게 한다. */}
             {!customCron.trim() && (
               <div style={{ fontSize: 12, color: "#888", lineHeight: 1.7 }}>
-                <strong style={{ color: "#555" }}>다음 5회 실행</strong>
+                <strong style={{ color: "#555" }}>다음 2회 실행</strong>
                 {nextPresetRuns(preset, hour, minute, weekday).map((d) => (
                   <div key={d.valueOf()}>{d.format("YYYY-MM-DD HH:mm")}</div>
                 ))}
@@ -999,18 +1094,7 @@ function WorkflowSettings({ detail, disabled, onSave, saving }: {
         시간대 {detail.timezone} · DAG {detail.dagId}
       </div>
       <Button size="small" type="primary" block disabled={disabled} loading={saving}
-              onClick={() => onSave({
-                name,
-                description: detail.description,
-                nifiGroupPgId: detail.nifiGroupPgId,
-                scheduleCron: scheduleMode === "manual" ? null
-                  : (customCron.trim() || presetCron(preset, hour, minute, weekday)),
-                timezone: detail.timezone,
-                catchup: detail.catchup,
-                maxActiveRuns: maxRuns,
-                suspendOnError: detail.suspendOnError,
-                memo,
-              })}>
+              onClick={() => onSave(settingsBody)}>
         속성 저장
       </Button>
     </Space>

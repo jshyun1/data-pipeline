@@ -346,9 +346,12 @@ body {
   gap: 12px;
   height: calc(100vh - 330px);
   min-height: 455px;
+  /* 위 캔버스 그리드와 같은 이유로 행을 못박는다. */
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .airflow-dashboard-workspace > * {
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -1616,6 +1619,25 @@ button.airflow-tree-label:hover {
   height: 220px;
   color: #9ca3af;
   font-size: 13px;
+}
+
+/* CDC 파이프라인 상세 > Connector 탭의 설정/실행상태 JSON.
+   Debezium 커넥터 설정은 공백 없는 한 줄이라 white-space: pre-wrap 만으로는 줄바꿈이
+   일어나지 않는다(끊을 공백이 없다). overflow-wrap: anywhere 로 강제로 접고, 그래도
+   긴 값(예: connection.url) 때문에 넘칠 때를 대비해 가로 스크롤도 허용한다. */
+.connector-json-block {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  background: #f6f7f9;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .history-log-panel {
@@ -3807,6 +3829,14 @@ button.airflow-tree-label:hover {
 .wf-canvas-grid {
   height: calc(100vh - 232px);
   min-height: 420px;
+  /* 행을 «내용대로»로 두면 카드가 길어질 때 행이 같이 늘어나 컨테이너를 넘어간다.
+     그러면 height:100%가 늘어난 행을 따라가 스크롤이 영영 안 걸린다.
+     행을 칸 높이로 못박고(minmax(0,1fr)) 자식이 줄어들 수 있게 min-height:0 을 준다. */
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.wf-canvas-grid > * {
+  min-height: 0;
 }
 
 /* 캔버스 바탕은 화살표가 기본. 손바닥은 «잡을 수 있는 것» 위에서만 나온다.
@@ -3862,4 +3892,20 @@ button.airflow-tree-label:hover {
 .react-flow__node.wf-node--subwf {
   border-left: 4px solid #7c3aed;
   background: #faf5ff;
+}
+
+
+/* 캔버스 양옆 카드(job 팔레트 · 워크플로우 속성).
+   내용이 길어지면 패널이 아래로 늘어져 화면 밖으로 잘렸다. 카드 높이를 칸에 맞추고
+   본문만 스크롤시킨다 - flex 자식은 min-height:0 을 줘야 실제로 줄어든다. */
+.wf-side-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.wf-side-card > .ant-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }

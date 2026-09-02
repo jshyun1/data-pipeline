@@ -52,6 +52,7 @@ import { getNifiProcessGroupTree, type NifiProcessGroupTreeNode } from "../api/p
 import { getEtlJob, listEtlJobs } from "../api/etlJobs";
 import { categorizeDag, extractKafkaPipelineId, type DagCategory } from "../utils/dagHistory";
 import { scheduleDescription } from "../utils/schedulePreset";
+import { useAuth } from "../auth/AuthContext";
 
 type BusinessCategory = Exclude<DagCategory, "기타">;
 
@@ -388,6 +389,10 @@ function BusinessTree({
 }) {
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
   const seeded = useRef(false);
+  // 실행(트리거)은 Airflow 쓰기 권한이 있어야 한다. 권한이 아직 안 실렸으면 사이드바와
+  // 같은 규칙으로 fail-open 한다(실제 차단은 백엔드가 한다).
+  const { can, permissionsLoaded } = useAuth();
+  const canRun = !permissionsLoaded || can("AIRFLOW", "WRITE");
 
   /**
    * 처음 열었을 때의 트리 모양.
@@ -493,7 +498,8 @@ function BusinessTree({
         // 되돌릴 수 없는 동작이라, 트리 우클릭처럼 스치듯 눌리는 자리에 둘 것이 아니다.
         items: [
           { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
-          { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
+          // 쓰기 권한이 없으면 실행 항목 자체를 빼서 «눌렀더니 403» 을 만들지 않는다.
+          ...(canRun ? [{ key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" }] : []),
         ],
         onClick: ({ key }) => {
           if (key === "detail") onDetail(dag);
@@ -527,11 +533,6 @@ function BusinessTree({
     }
   });
   /** 이 그룹과 하위 전체에 걸린 워크플로우 수. 트리 오른쪽 숫자로 쓴다. */
-  const countWorkflowsUnder = (node: NifiProcessGroupTreeNode): number => {
-    const own = workflows.filter((w) => w.nifiGroupPgId === node.id).length;
-    return own + (node.children ?? []).reduce((sum, child) => sum + countWorkflowsUnder(child), 0);
-  };
-
   /** 이 그룹이나 하위에 돌릴 것(워크플로우 또는 아직 안 옮긴 옛 DAG)이 있는지. */
   const hasRunnable = (node: NifiProcessGroupTreeNode): boolean => {
     const own = dags.some((d) =>
@@ -568,7 +569,7 @@ function BusinessTree({
         menu={{
           items: [
             { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
-            { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
+            ...(canRun ? [{ key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" }] : []),
           ],
           onClick: ({ key }) => {
             onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id });
@@ -696,6 +697,7 @@ function BusinessTree({
       return null;
     }
     // 이 그룹에 속한 워크플로우 DAG들. 워크플로우는 nifi_group_pg_id로 그룹을 안다.
+    // 그룹 미지정(nifi_group_pg_id = null)은 여기에 안 붙고 트리 맨 아래 목록으로 간다.
     const workflowDags = etlDags.filter((d) => groupOfWorkflowDag.get(d.dag_id) === node.id);
     // 아직 워크플로우로 옮기지 않은 그룹은 옛 팩토리 DAG가 그 자리를 지킨다(점진 컷오버).
     // dag_id 자체가 프로세스 그룹 id의 앞 8자를 담고 있다(nifi_pipeline_{8자}_control).
@@ -720,8 +722,6 @@ function BusinessTree({
     if (!hasRunnable(node)) {
       return null;
     }
-    const workflowCount = countWorkflowsUnder(node);
-
     return (
       <div key={node.id}>
         {dag ? renderDagButton(dag, depth) : (
@@ -740,8 +740,6 @@ function BusinessTree({
             {children.length ? (collapsed ? <RightOutlined /> : <DownOutlined />) : null}
             {children.length ? (collapsed ? <FolderOutlined /> : <FolderOpenOutlined />) : null}
             {node.name}
-            {/* 숫자는 이 그룹과 하위에 있는 워크플로우 수다(실행할 게 몇 개인지). */}
-            {workflowCount ? <span style={{ color: "#888" }}> ({workflowCount})</span> : null}
           </button>
         )}
         {!collapsed && workflowDags.map((workflowDag) => renderDagButton(workflowDag, depth + 1))}
@@ -781,7 +779,7 @@ function BusinessTree({
                   menu={{
                     items: [
                       { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
-                      { key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" },
+                      ...(canRun ? [{ key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" }] : []),
                     ],
                     onClick: ({ key }) => {
                       if (key === "detail") onDetail(dag);
@@ -1364,17 +1362,19 @@ function WatchingRules({ target, ids }: { target: "CDC" | "ETL"; ids: Array<numb
     <section>
       <strong>알림 규칙 {rules.length}건</strong>
       {query.isLoading ? <Spin size="small" /> : rules.length === 0 ? (
-        <p>이 작업을 감시하는 규칙이 없습니다.</p>
+        <p>이 작업을 감시 중인 규칙이 없습니다.</p>
       ) : (
         <div className="airflow-alert-list">
           {rules.map((rule) => (
             <article key={rule.id}>
               <div>
-                <Tag color={rule.enabled ? "blue" : "default"}>{rule.type_label}</Tag>
+                <Tag color="blue">{rule.type_label}</Tag>
                 <b>{rule.name}</b>
               </div>
+              {/* 백엔드가 «사용 중 + 이 대상을 감시»하는 규칙만 준다. 전부 사용 중이므로
+                  «사용/미사용» 문구는 더 이상 정보가 아니다. */}
               <p>
-                {rule.enabled ? "사용" : "미사용"} · 심각도 {rule.severity}
+                심각도 {rule.severity}
                 {rule.schedule_enabled && rule.schedule_time ? ` · 매일 ${rule.schedule_time.slice(0, 5)}` : ""}
               </p>
               {rule.last_eval_error && <small style={{ color: "#dc2626" }}>{rule.last_eval_error}</small>}
@@ -1415,6 +1415,9 @@ function PropertyPanel({
   onOpenHistory?: () => void;
   onChanged?: () => void;
 }) {
+  // 실행 설정(트리거·스케줄 변경)은 Airflow 쓰기 권한이 있어야 한다.
+  const { can, permissionsLoaded } = useAuth();
+  const canRun = !permissionsLoaded || can("AIRFLOW", "WRITE");
   const [acknowledgingId, setAcknowledgingId] = useState<number>();
 
   const acknowledge = async (alert: AirflowDagAlert) => {
@@ -1453,7 +1456,8 @@ function PropertyPanel({
             <dt>수정 시각</dt><dd>{pipeline.updatedAt}</dd>
           </dl>
           <div className="airflow-schedule-actions">
-            <Button type="primary" disabled={!dag} onClick={onOpenExecution}>실행 설정</Button>
+            <Button type="primary" disabled={!dag || !canRun} onClick={onOpenExecution}
+              title={canRun ? undefined : "Airflow 쓰기 권한이 없습니다"}>실행 설정</Button>
             <Button disabled={!dag} onClick={onOpenHistory}>실행 이력</Button>
           </div>
         </section>
@@ -1488,7 +1492,8 @@ function PropertyPanel({
           <dt>설명</dt><dd>{dag.description || "-"}</dd>
         </dl>
         <div className="airflow-schedule-actions">
-          <Button type="primary" onClick={onOpenExecution}>실행 설정</Button>
+          <Button type="primary" disabled={!canRun} onClick={onOpenExecution}
+            title={canRun ? undefined : "Airflow 쓰기 권한이 없습니다"}>실행 설정</Button>
           <Button onClick={onOpenHistory}>실행 이력</Button>
         </div>
       </section>}
@@ -1623,9 +1628,17 @@ export function AirflowDashboardPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [executionOpen, setExecutionOpen] = useState(false);
   const [synchronizing, setSynchronizing] = useState(false);
+  // 이 화면의 «쓰기» 동작(카탈로그 동기화·실행 설정)은 Airflow 쓰기 권한이 있어야 한다.
+  const { can: canTop, permissionsLoaded: permsLoadedTop } = useAuth();
+  const canRunTop = !permsLoadedTop || canTop("AIRFLOW", "WRITE");
+  // 진입 시 카탈로그 동기화는 POST 라 AIRFLOW 쓰기를 요구한다. 조회자가 화면을 열기만 해도
+  // 403 이 나면서 «동기화 실패» 경고가 떴다. 백엔드에 30초 주기 자동 동기화
+  // (AirflowDagCatalogSyncService)가 이미 돌고 있으므로, 쓰기 권한이 없으면 그냥 건너뛰고
+  // DB 에 있는 현황을 보여준다 - 조회자는 «조회만» 되면 된다.
   const initialSyncQuery = useQuery({
     queryKey: ["airflow-dag-catalog-sync"],
     queryFn: syncAirflowDagCatalog,
+    enabled: canRunTop,
     retry: 1,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
@@ -1634,7 +1647,8 @@ export function AirflowDashboardPage() {
     queryKey: ["airflow-dashboard"],
     queryFn: loadDashboard,
     refetchInterval: refreshSeconds * 1000,
-    enabled: initialSyncQuery.isFetched,
+    // 동기화를 건너뛴 조회자도 대시보드는 봐야 한다.
+    enabled: !canRunTop || initialSyncQuery.isFetched,
   });
   // ETL 트리를 NiFi 그룹 계층으로 보여주기 위해(ETL 관리 화면과 동일한 구조)
   const groupTreeQuery = useQuery({ queryKey: ["nifi-pg-tree"], queryFn: getNifiProcessGroupTree });
@@ -1696,7 +1710,7 @@ export function AirflowDashboardPage() {
   }, [initialDagId, openInitialDetail, selectedDagId]);
 
   useEffect(() => {
-    if (initialSyncQuery.isError) {
+    if (canRunTop && initialSyncQuery.isError) {
       message.warning("DAG 자동 동기화에 실패해 기존 DB 정보로 대시보드를 표시합니다.");
     }
   }, [initialSyncQuery.isError]);
@@ -1806,10 +1820,10 @@ export function AirflowDashboardPage() {
     <div className="airflow-dashboard-page">
       <header className="airflow-dashboard-heading">
         <div><h1>실시간 모니터링</h1><p>작업 상태와 실행 이력을 한 화면에서 확인하고 조치합니다.</p></div>
-        <div className="airflow-refresh-controls"><Button icon={<SyncOutlined />} loading={synchronizing || initialSyncQuery.isFetching} onClick={() => void synchronizeDags()}>동기화</Button><span>갱신 주기</span><Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} /><span>마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}</span></div>
+        <div className="airflow-refresh-controls">{canRunTop && <Button icon={<SyncOutlined />} loading={synchronizing || initialSyncQuery.isFetching} onClick={() => void synchronizeDags()}>동기화</Button>}<span>갱신 주기</span><Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} /><span>마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}</span></div>
       </header>
 
-      {initialLoading ? <div className="airflow-dashboard-loading"><Spin size="large" /><span>{!initialSyncQuery.isFetched ? "DAG 동기화 중..." : "대시보드 로딩 중..."}</span></div> : dashboardQuery.isError ? <Empty description="Airflow 현황을 불러올 수 없습니다." /> : (
+      {initialLoading ? <div className="airflow-dashboard-loading"><Spin size="large" /><span>{canRunTop && !initialSyncQuery.isFetched ? "DAG 동기화 중..." : "대시보드 로딩 중..."}</span></div> : dashboardQuery.isError ? <Empty description="Airflow 현황을 불러올 수 없습니다." /> : (
         <>
           <div className="airflow-business-status">
             {CATEGORY_ORDER.map((category) => (

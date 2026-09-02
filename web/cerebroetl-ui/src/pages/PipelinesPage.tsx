@@ -390,21 +390,20 @@ export function PipelinesPage() {
             />
           </Space>
           <Space wrap>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => navigate("/cdc/create")}
-              disabled={!canWrite || !connections || connections.length < 1}
-              title={
-                !canWrite
-                  ? "CDC 쓰기 권한이 없습니다"
-                  : !connections || connections.length < 1
-                    ? "연결정보가 최소 1개는 있어야 합니다"
-                    : undefined
-              }
-            >
-              파이프라인 신규 생성
-            </Button>
+            {/* 쓰기 권한이 없으면 버튼을 비활성이 아니라 아예 감춘다 - 사이드바에서 «생성»
+                메뉴가 사라지는 것과 같은 규칙이라, 할 수 없는 동작을 화면에 남기지 않는다.
+                (연결정보 부족처럼 «권한은 있는데 조건이 아직» 인 경우는 그대로 비활성+안내) */}
+            {canWrite && (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => navigate("/cdc/create")}
+                disabled={!connections || connections.length < 1}
+                title={!connections || connections.length < 1 ? "연결정보가 최소 1개는 있어야 합니다" : undefined}
+              >
+                파이프라인 신규 생성
+              </Button>
+            )}
           </Space>
         </div>
 
@@ -564,10 +563,13 @@ export function PipelinesPage() {
                         label: `${c.connectorName} · 설정/실행상태`,
                         children: (
                           <>
+                            {/* Connector 설정/상태는 공백 없는 JSON 한 줄이라 pre-wrap 만으로는
+                                안 접힌다(줄바꿈할 공백이 없다). break-word 로 강제 개행하고
+                                길면 세로 스크롤을 준다. */}
                             <div style={{ fontWeight: 600, marginBottom: 4 }}>Connector 설정</div>
-                            <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{c.connectorConfigJson}</pre>
+                            <pre className="connector-json-block">{c.connectorConfigJson}</pre>
                             <div style={{ fontWeight: 600, margin: "12px 0 4px" }}>실행상태</div>
-                            <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>
+                            <pre className="connector-json-block">
                               {c.lastStatusJson ?? "아직 조회된 상태가 없습니다."}
                             </pre>
                           </>

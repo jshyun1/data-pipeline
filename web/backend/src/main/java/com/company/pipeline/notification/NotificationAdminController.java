@@ -1,6 +1,8 @@
 package com.company.pipeline.notification;
 
 import com.company.pipeline.common.ApiResponse;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.company.pipeline.common.BusinessException;
 import com.company.pipeline.common.ErrorCode;
 import java.util.List;
@@ -24,21 +26,36 @@ import org.springframework.web.bind.annotation.RestController;
 public class NotificationAdminController {
 
     private final JdbcTemplate jdbc;
+    private final NotificationService notificationService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public NotificationAdminController(DataSource dataSource) {
+    public NotificationAdminController(DataSource dataSource, NotificationService notificationService) {
         this.jdbc = new JdbcTemplate(dataSource);
+        this.notificationService = notificationService;
     }
 
     // ---------------------------------------------------------------- 채널
 
+    /**
+     * 채널 목록. {@code relay_configured} 는 «이 채널이 실제로 나갈 수 있는지»(SMTP 호스트·SMS
+     * 게이트웨이가 설정됐는지)다. 토글(enabled)은 DB, 릴레이는 환경변수라 둘이 어긋날 수 있어
+     * 화면에서 «켰는데 왜 안 오지»를 바로 판별하도록 같이 내린다.
+     */
     @GetMapping("/api/admin/notification/channels")
     public ApiResponse<List<Map<String, Object>>> channels() {
-        return ApiResponse.success(jdbc.queryForList("""
+        List<Map<String, Object>> rows = jdbc.queryForList("""
                 SELECT channel_type, enabled, config_json,
                        (encrypted_secret IS NOT NULL) AS secret_set,
                        rate_critical_per_min, rate_other_per_min, hard_limit_per_hour,
                        circuit_state, consecutive_failures, last_success_at, last_failure_reason
-                FROM notification_channel_config ORDER BY id"""));
+                FROM notification_channel_config ORDER BY id""");
+        List<Map<String, Object>> out = new java.util.ArrayList<>(rows.size());
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> copy = new java.util.LinkedHashMap<>(row);
+            copy.put("relay_configured", notificationService.relayConfigured((String) row.get("channel_type")));
+            out.add(copy);
+        }
+        return ApiResponse.success(out);
     }
 
     public record UpdateChannelRequest(Boolean enabled, String configJson, Integer rateCriticalPerMin,
@@ -121,15 +138,34 @@ public class NotificationAdminController {
 
     @GetMapping("/api/admin/notification/recipients")
     public ApiResponse<List<Map<String, Object>>> recipients() {
-        return ApiResponse.success(jdbc.queryForList("""
+        List<Map<String, Object>> rows = jdbc.queryForList("""
                 SELECT r.id, r.user_id, r.display_name, r.email,
                        -- 마스킹하지 않는다. 관리자만 여는 설정 화면이고, 가려진 번호로는
                        -- "이 번호가 맞나"를 확인할 수도 수정할 수도 없다.
                        r.phone,
                        r.enabled,
                        (SELECT json_agg(json_build_object('channel', s.channel_type, 'minSeverity', s.min_severity))
-                        FROM notification_subscription s WHERE s.recipient_id = r.id AND s.enabled) AS subscriptions
-                FROM notification_recipient r WHERE r.deleted_at IS NULL ORDER BY r.id"""));
+                        FROM notification_subscription s WHERE s.recipient_id = r.id AND s.enabled)::text
+                        AS subscriptions
+                FROM notification_recipient r WHERE r.deleted_at IS NULL ORDER BY r.id""");
+        // json 타입을 그대로 두면 드라이버가 PGobject 로 주고 응답이 {"type":"json","value":"[...]"}
+        // 가 된다 - 화면이 배열로 못 읽는다. text 로 받아 여기서 배열로 풀어 준다.
+        for (Map<String, Object> row : rows) {
+            Object raw = row.get("subscriptions");
+            row.put("subscriptions", parseSubscriptions(raw));
+        }
+        return ApiResponse.success(rows);
+    }
+
+    private List<Map<String, Object>> parseSubscriptions(Object raw) {
+        if (raw == null) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(raw.toString(), new TypeReference<List<Map<String, Object>>>() {});
+        } catch (Exception ex) {
+            return List.of();
+        }
     }
 
     public record RecipientRequest(String userId, String displayName, String email, String phone, Boolean enabled) {}
@@ -146,6 +182,14 @@ public class NotificationAdminController {
                 INSERT INTO notification_recipient (user_id, display_name, email, phone)
                 VALUES (?, ?, ?, ?) RETURNING id
                 """, Long.class, req.userId(), req.displayName(), req.email(), req.phone());
+        // 적어 넣은 연락처는 «받겠다»는 뜻으로 본다. 예전엔 등록해도 구독이 없어 한 통도 안 나갔고,
+        // 화면에 구독을 켤 방법조차 없었다. 받기 싫은 채널은 수신자 탭에서 끄면 된다.
+        if (!isBlank(req.email())) {
+            insertSubscription(id, "EMAIL");
+        }
+        if (!isBlank(req.phone())) {
+            insertSubscription(id, "SMS");
+        }
         return ApiResponse.success(Map.of("id", id));
     }
 
@@ -200,17 +244,57 @@ public class NotificationAdminController {
         return ApiResponse.success(null);
     }
 
-    public record SubscriptionRequest(String channelType, String minSeverity) {}
+    public record SubscriptionRequest(String channelType, String minSeverity, Boolean enabled) {}
 
+    /**
+     * 수신자별 채널 구독(이 사람이 이메일로 받을지·문자로 받을지).
+     *
+     * <p>수신자 등록만으로는 알림이 나가지 않는다 - 발송은 이 구독을 보고 대상을 고른다.
+     * 예전에는 이 API 를 부르는 화면이 없어서, 담당자를 등록해 놓고도 실제 알림은 화면에만
+     * 뜨는 상태였다(2026-09-02 발견). 수신자 탭의 «이메일 수신·문자 수신» 스위치가 여기를 부른다.
+     *
+     * <p>연락처가 없는 채널은 켤 수 없다. 켜 두면 발송 시점에 NO_ADDRESS 로 죽을 뿐이라,
+     * 켜지는 순간 막고 이유를 알려 주는 편이 낫다.
+     */
     @PutMapping("/api/admin/notification/recipients/{id}/subscriptions")
     public ApiResponse<Void> upsertSubscription(@PathVariable long id, @RequestBody SubscriptionRequest req) {
+        String channel = req.channelType();
+        boolean enabled = req.enabled() == null || req.enabled();
+        if (enabled) {
+            Map<String, Object> contact;
+            try {
+                contact = jdbc.queryForMap(
+                        "SELECT email, phone FROM notification_recipient WHERE id=? AND deleted_at IS NULL", id);
+            } catch (org.springframework.dao.EmptyResultDataAccessException ex) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR, "수신자를 찾을 수 없습니다: " + id);
+            }
+            if ("EMAIL".equals(channel) && isBlank(contact.get("email"))) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR, "이메일이 등록되지 않아 이메일 수신을 켤 수 없습니다.");
+            }
+            if ("SMS".equals(channel) && isBlank(contact.get("phone"))) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR, "전화번호가 등록되지 않아 문자 수신을 켤 수 없습니다.");
+            }
+        }
         jdbc.update("""
-                INSERT INTO notification_subscription (recipient_id, channel_type, min_severity)
-                VALUES (?, ?, ?)
+                INSERT INTO notification_subscription (recipient_id, channel_type, min_severity, enabled)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT (recipient_id, channel_type) DO UPDATE SET
-                    min_severity = EXCLUDED.min_severity, enabled = true, updated_at = now()
-                """, id, req.channelType(), req.minSeverity() == null ? "WARNING" : req.minSeverity());
+                    min_severity = EXCLUDED.min_severity, enabled = EXCLUDED.enabled, updated_at = now()
+                """, id, channel, req.minSeverity() == null ? "WARNING" : req.minSeverity(), enabled);
         return ApiResponse.success(null);
+    }
+
+    private boolean isBlank(Object value) {
+        return value == null || value.toString().isBlank();
+    }
+
+    /** 신규 수신자의 기본 구독. 이미 있으면(재등록) 켜기만 한다. */
+    private void insertSubscription(long recipientId, String channel) {
+        jdbc.update("""
+                INSERT INTO notification_subscription (recipient_id, channel_type, min_severity, enabled)
+                VALUES (?, ?, 'WARNING', true)
+                ON CONFLICT (recipient_id, channel_type) DO UPDATE SET enabled = true, updated_at = now()
+                """, recipientId, channel);
     }
 
 }

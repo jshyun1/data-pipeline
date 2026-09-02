@@ -34,7 +34,12 @@ export interface ScopeTarget {
 
 /** 감시 범위 선택 트리. id 가 null 인 노드는 «묶음»이라 고를 수 없다. */
 export interface ScopeTreeNode {
+  /** 잎(감시 단위: 적재 테이블 또는 잡). 그룹이면 null. */
   id: number | null;
+  /** ETL 그룹 노드의 NiFi 프로세스 그룹 id. 이걸로 «그룹째» 감시할 수 있다. */
+  groupPgId?: string | null;
+  /** CDC 그룹 노드의 소스 연결정보 id. 그 원천의 파이프라인 전부를 감시한다. */
+  groupConnId?: number | null;
   name: string;
   children: ScopeTreeNode[];
 }
@@ -73,6 +78,11 @@ export async function getScopeTargets(category: string): Promise<ScopeTarget[]> 
 export interface ChannelConfig {
   channel_type: "IN_APP" | "EMAIL" | "SMS";
   enabled: boolean;
+  /**
+   * 서버에 릴레이(SMTP 호스트 / SMS 게이트웨이)가 설정돼 있는지. enabled 는 화면 토글이고
+   * 이건 서버 환경변수라 둘이 어긋날 수 있다 - «켰는데 안 온다»를 화면에서 판별하려고 받는다.
+   */
+  relay_configured: boolean;
   secret_set: boolean;
   rate_critical_per_min: number;
   rate_other_per_min: number;
@@ -87,6 +97,23 @@ export interface Recipient {
   /** 마스킹하지 않는다 — 가려진 번호로는 맞는지 확인할 수도, 고칠 수도 없다. */
   phone: string | null;
   enabled: boolean;
+  /**
+   * 이 사람이 어떤 채널로 받는지. 등록만 해서는 알림이 나가지 않고 이 구독이 있어야 발송된다.
+   * 서버가 «켜진 것만» json_agg 로 내려주므로, 없으면 null 이다.
+   */
+  subscriptions: Array<{ channel: string; minSeverity: string }> | null;
+}
+
+/** 수신자의 채널 구독을 켜고 끈다. 연락처가 없는 채널을 켜면 서버가 이유를 담아 거절한다. */
+export async function setSubscription(
+  recipientId: number,
+  channelType: "EMAIL" | "SMS",
+  enabled: boolean,
+): Promise<void> {
+  await apiClient.put(`/admin/notification/recipients/${recipientId}/subscriptions`, {
+    channelType,
+    enabled,
+  });
 }
 
 /** 조건 입력 폼을 그리기 위한 유형별 파라미터 정의. 서버가 단일 원천이다. */

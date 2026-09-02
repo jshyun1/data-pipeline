@@ -32,9 +32,6 @@ public class NotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
 
-    // 심각도 발송분기(원본 5-7): 경고는 즉시 폭주 대신 배치 창을 두고 지연 발송한다.
-    private static final int WARNING_BATCH_SECONDS = 120;
-
     private final JdbcTemplate jdbc;
     // JavaMailSender 는 spring.mail.host 가 있을 때만 존재한다(ObjectProvider 로 부재 허용).
     private final ObjectProvider<JavaMailSender> mailSenderProvider;
@@ -43,6 +40,13 @@ public class NotificationService {
     // SMS 는 EMAIL 의 SMTP 처럼 외부 게이트웨이가 필요하다. gateway.url 이 있을 때만 실제 발송.
     private final boolean smsEnabled;
     private final String smsGatewayUrl;
+    // 게이트웨이 규격 흡수용(폐쇄망 대비). 사내 문자 서버·사업자 API 는 인증 헤더를 요구하고
+    // 필드명도 제각각인데(to/text, receiver/msg, phone/message …), 그때마다 코드를 고치면
+    // 폐쇄망에서는 이미지 재반입이 필요하다. 아래 4개를 설정으로 열어 두면 .env 만으로 붙는다.
+    private final String smsHeaders;
+    private final String smsContentType;
+    private final String smsBodyTemplate;
+    private final String smsSender;
     private final java.net.http.HttpClient httpClient = java.net.http.HttpClient.newBuilder()
             .connectTimeout(java.time.Duration.ofSeconds(5)).build();
 
@@ -51,13 +55,35 @@ public class NotificationService {
                                @Value("${notification.email.enabled:false}") boolean emailEnabled,
                                @Value("${notification.email.from:alerts@pipeline.local}") String emailFrom,
                                @Value("${notification.sms.enabled:false}") boolean smsEnabled,
-                               @Value("${notification.sms.gateway.url:}") String smsGatewayUrl) {
+                               @Value("${notification.sms.gateway.url:}") String smsGatewayUrl,
+                               @Value("${notification.sms.gateway.headers:}") String smsHeaders,
+                               @Value("${notification.sms.gateway.content-type:application/json}") String smsContentType,
+                               @Value("${notification.sms.gateway.body-template:}") String smsBodyTemplate,
+                               @Value("${notification.sms.sender:}") String smsSender) {
         this.jdbc = new JdbcTemplate(dataSource);
         this.mailSenderProvider = mailSenderProvider;
         this.emailEnabled = emailEnabled;
         this.emailFrom = emailFrom;
         this.smsEnabled = smsEnabled;
         this.smsGatewayUrl = smsGatewayUrl;
+        this.smsHeaders = smsHeaders;
+        this.smsContentType = smsContentType == null || smsContentType.isBlank()
+                ? "application/json" : smsContentType.trim();
+        this.smsBodyTemplate = smsBodyTemplate;
+        this.smsSender = smsSender;
+    }
+
+    /**
+     * 이 채널이 «실제로 나갈 수 있는» 상태인지. 화면(발송 채널)이 «켰는데 왜 안 오지»를
+     * 판별할 수 있도록 노출한다 - 토글은 DB, 릴레이 설정은 환경변수라 둘이 어긋날 수 있다.
+     */
+    public boolean relayConfigured(String channelType) {
+        return switch (channelType) {
+            case "IN_APP" -> true;   // 외부 의존이 없다.
+            case "EMAIL" -> emailEnabled && mailSenderProvider.getIfAvailable() != null;
+            case "SMS" -> smsEnabled && smsGatewayUrl != null && !smsGatewayUrl.isBlank();
+            default -> false;
+        };
     }
 
     /** FIRING 시 호출. 구독한 수신자별 IN_APP/EMAIL 아웃박스 행을 만든다(심각도 필터). */
@@ -97,12 +123,17 @@ public class NotificationService {
                         ((Number) r.get("rid")).longValue(), null, summary, deepLink, 0);
             }
         }
-        // 심각도 발송분기(원본 5-7): 정보(INFO)는 «화면 내에만» — 외부 채널(EMAIL/SMS)로 내보내지 않는다.
-        if (rank >= 2) {
+        // 심각도 발송분기: 외부 발송(EMAIL/SMS)은 «위험(CRITICAL)»만, 즉시 내보낸다.
+        // 경고·정보는 화면 알림(조치 대기열·헤더 배지)으로만 남긴다 - 위 IN_APP 블록에서 이미
+        // 만들었으므로 여기서 끝낸다.
+        //
+        // 예전에는 경고도 120초 모아서 메일·문자로 내보냈는데, 경고는 «봐야 하지만 당장
+        // 뛰어갈 일은 아닌» 등급이라 문자로 오면 곧 무시하게 된다. 그러면 정작 위험이 왔을 때도
+        // 같이 묻힌다. 외부 발송은 «지금 사람이 움직여야 하는» 위험에만 쓴다(2026-09-02 결정).
+        if (rank >= 1) {
             return;
         }
-        // 위험(CRITICAL)=즉시 / 경고(WARNING)=배치 창 지연.
-        int emailDelaySec = rank == 0 ? 0 : WARNING_BATCH_SECONDS;
+        int emailDelaySec = 0;
         // EMAIL: 이메일 구독자. 실제 발송 주소는 원본 이메일을 저장한다(마스킹은 표시 계층에서만).
         List<Map<String, Object>> emailRecips = jdbc.queryForList("""
                 SELECT r.id AS rid, r.email FROM notification_recipient r
@@ -201,11 +232,18 @@ public class NotificationService {
         } catch (Exception ex) {
             return;
         }
+        // 화면(발송 채널)의 on/off 토글. 예전에는 이 값을 아무도 안 봐서 «화면은 켜짐인데 안 감»,
+        // 반대로 «껐는데 계속 감»이 둘 다 가능했다. 운영 중 문자 폭주를 즉시 끊을 수단이기도 하다.
+        Set<String> enabledChannels = enabledChannels();
         for (Map<String, Object> d : batch) {
             long id = ((Number) d.get("id")).longValue();
             String channel = (String) d.get("channel_type");
             try {
-                if ("IN_APP".equals(channel)) {
+                if (!"IN_APP".equals(channel) && enabledChannels != null && !enabledChannels.contains(channel)) {
+                    // 운영자가 일부러 끈 채널이다. 재시도해 봐야 같은 결과라 바로 종료 처리한다
+                    // (화면알림은 계속 쌓이므로 «알림 자체»가 사라지지는 않는다).
+                    markDead(id, "CHANNEL_OFF");
+                } else if ("IN_APP".equals(channel)) {
                     // 화면 알림은 외부 의존이 없다 - 즉시 전송 완료.
                     jdbc.update("UPDATE notification_delivery SET status='SENT', sent_at=now(), "
                             + "attempt_count=attempt_count+1, first_attempt_at=COALESCE(first_attempt_at, now()), "
@@ -222,6 +260,30 @@ public class NotificationService {
                 log.warn("발송 처리 실패(id={}): {}", id, ex.getMessage());
             }
         }
+    }
+
+    /**
+     * 켜져 있는 채널 목록. 표를 못 읽으면 null 을 돌려 «종전 동작(환경변수만 본다)»으로 둔다 -
+     * DB 가 잠깐 흔들렸다고 알림이 통째로 멈추는 쪽이 더 위험하다.
+     */
+    private Set<String> enabledChannels() {
+        try {
+            List<Map<String, Object>> rows = jdbc.queryForList(
+                    "SELECT channel_type FROM notification_channel_config WHERE enabled");
+            Set<String> on = new HashSet<>();
+            for (Map<String, Object> r : rows) {
+                on.add((String) r.get("channel_type"));
+            }
+            return on;
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    /** 재시도해도 결과가 같은 사유(채널 꺼짐 등)는 바로 종료 처리한다. */
+    private void markDead(long id, String reason) {
+        jdbc.update("UPDATE notification_delivery SET status='DEAD', failure_reason=?, "
+                + "attempt_count=attempt_count+1, updated_at=now() WHERE id=?", reason, id);
     }
 
     /** EMAIL 실 릴레이. JavaMailSender 로 발송하고 결과를 아웃박스에 반영한다. */
@@ -269,7 +331,8 @@ public class NotificationService {
     }
 
     /**
-     * SMS 실 릴레이. 설정된 게이트웨이(notification.sms.gateway.url)로 {to,text} JSON 을 POST 한다.
+     * SMS 실 릴레이. 설정된 게이트웨이(notification.sms.gateway.url)로 POST 한다. 본문 형식·
+     * 인증 헤더·Content-Type 은 설정으로 바꿀 수 있다({@link #renderSmsBody}, {@link #applyGatewayHeaders}).
      * EMAIL 의 SMTP 처럼 외부 게이트웨이가 필요하며, 미설정이면 NO_RELAY 로 폴백한다(실제 문자 안 감).
      */
     private void relaySms(long id) {
@@ -287,11 +350,14 @@ public class NotificationService {
         }
         String text = row.get("body") == null ? "" : row.get("body").toString();
         try {
-            String json = "{\"to\":\"" + jsonEsc(to) + "\",\"text\":\"" + jsonEsc(text) + "\"}";
-            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder(java.net.URI.create(smsGatewayUrl))
-                    .timeout(java.time.Duration.ofSeconds(5))
-                    .header("Content-Type", "application/json")
-                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+            java.net.http.HttpRequest.Builder builder =
+                    java.net.http.HttpRequest.newBuilder(java.net.URI.create(smsGatewayUrl))
+                            .timeout(java.time.Duration.ofSeconds(5))
+                            .header("Content-Type", smsContentType);
+            applyGatewayHeaders(builder);
+            java.net.http.HttpRequest req = builder
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
+                            renderSmsBody(to, text), StandardCharsets.UTF_8))
                     .build();
             java.net.http.HttpResponse<String> resp = httpClient.send(
                     req, java.net.http.HttpResponse.BodyHandlers.ofString());
@@ -317,6 +383,69 @@ public class NotificationService {
         jdbc.update("UPDATE notification_delivery SET status='DEAD', updated_at=now() "
                 + "WHERE id=? AND attempt_count >= max_attempts", id);
         log.warn("SMS 발송 실패 id={}: {}", id, reason);
+    }
+
+    /**
+     * 게이트웨이로 보낼 본문. 기본은 예전과 같은 {@code {"to","text"}} JSON 이고,
+     * {@code notification.sms.gateway.body-template} 로 필드명·구조를 바꿀 수 있다.
+     * 치환자는 {@code {to} {text} {sender}} 세 개.
+     *
+     * <pre>
+     * {"receiver":"{to}","msg":"{text}","sender":"{sender}"}   ← JSON 게이트웨이
+     * to={to}&amp;text={text}&amp;from={sender}                        ← form 게이트웨이
+     * </pre>
+     *
+     * <p>{@code ${to}} 형태도 받지만 <b>권장하지 않는다</b> - docker compose 가 자기 변수로 먼저
+     * 치환해 버려서 빈 문자열이 들어온다(실측). 그래서 {@code $} 없는 형태를 기본으로 안내한다.
+     *
+     * <p>이스케이프는 Content-Type 을 따른다 - form 이면 URL 인코딩, 아니면 JSON 이스케이프.
+     * 알림 본문에는 따옴표·개행·한글이 그대로 들어오므로 이걸 빠뜨리면 게이트웨이가 400 을 준다.
+     */
+    private String renderSmsBody(String to, String text) {
+        boolean form = smsContentType.toLowerCase().startsWith("application/x-www-form-urlencoded");
+        String template = smsBodyTemplate == null || smsBodyTemplate.isBlank()
+                ? (form ? "to={to}&text={text}" : "{\"to\":\"{to}\",\"text\":\"{text}\"}")
+                : smsBodyTemplate;
+        String encodedTo = escapeFor(to, form);
+        String encodedText = escapeFor(text, form);
+        String encodedSender = escapeFor(smsSender == null ? "" : smsSender, form);
+        return template
+                .replace("${to}", encodedTo).replace("{to}", encodedTo)
+                .replace("${text}", encodedText).replace("{text}", encodedText)
+                .replace("${sender}", encodedSender).replace("{sender}", encodedSender);
+    }
+
+    private String escapeFor(String value, boolean form) {
+        return form ? java.net.URLEncoder.encode(value, StandardCharsets.UTF_8) : jsonEsc(value);
+    }
+
+    /**
+     * 게이트웨이 인증 헤더. {@code "Authorization: Bearer x; X-API-KEY: y"} 처럼 세미콜론으로 나눈다.
+     * 값에 콜론이 들어갈 수 있으므로(Bearer 토큰) 첫 콜론만 구분자로 쓴다.
+     */
+    private void applyGatewayHeaders(java.net.http.HttpRequest.Builder builder) {
+        if (smsHeaders == null || smsHeaders.isBlank()) {
+            return;
+        }
+        for (String entry : smsHeaders.split(";")) {
+            String pair = entry.trim();
+            int colon = pair.indexOf(':');
+            if (pair.isEmpty() || colon <= 0) {
+                continue;
+            }
+            String name = pair.substring(0, colon).trim();
+            String value = pair.substring(colon + 1).trim();
+            // Content-Type 은 따로 넣는다(여기서 또 넣으면 헤더가 두 번 붙는다).
+            if (name.equalsIgnoreCase("Content-Type")) {
+                continue;
+            }
+            try {
+                builder.header(name, value);
+            } catch (IllegalArgumentException ex) {
+                // Host·Connection 등 JDK 가 막는 헤더. 설정 실수를 조용히 넘기지 않고 남긴다.
+                log.warn("SMS 게이트웨이 헤더 무시({}): {}", name, ex.getMessage());
+            }
+        }
     }
 
     private String jsonEsc(String s) {

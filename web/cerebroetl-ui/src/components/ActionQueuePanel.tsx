@@ -139,6 +139,9 @@ export function ActionQueuePanel() {
             <span className="action-queue-summary-text">{item.summary}</span>
           </div>
           <div className="action-queue-meta">
+            {/* 중요도는 색·아이콘만으로는 «어느 정도인지»가 안 읽힌다. 외부 발송이 위험만
+                나가도록 바뀌어(2026-09-02) 경고·정보는 여기서만 보이므로 글자로도 적는다. */}
+            <Tag color={meta.color}>{meta.label}</Tag>
             {item.target_label ? <span>{item.target_label}</span> : null}
             <span>{formatDuration(item.duration_seconds)}</span>
             {item.acked ? <Tag color="processing">확인됨</Tag> : null}

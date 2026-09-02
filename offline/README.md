@@ -67,6 +67,62 @@ vi .env   # TARGET_DB_HOST 등을 회사 DB로, APP_VERSION을 반입한 버전�
 로컬 Target DB 컨테이너까지 포함해서 반입했다면(`--with-poc`로 저장한 경우) `install.sh --with-poc`로
 그 컨테이너까지 같이 띄울 수 있다.
 
+## 2-1. 알림 발송(이메일 / SMS) 켜기
+
+기본값은 «발송 안 함»이다. 사내에 SMTP 릴레이나 문자 게이트웨이가 있으면 **재빌드 없이
+`.env` 만으로** 켤 수 있다. 폐쇄망에서 게이트웨이 규격을 그때 확인해도 되도록 본문 형식과
+인증 헤더까지 설정으로 받는다.
+
+```env
+# 이메일 - 사내 SMTP 릴레이가 있어야 한다
+NOTIFICATION_EMAIL_ENABLED=true
+SPRING_MAIL_HOST=smtp.company.local
+NOTIFICATION_EMAIL_FROM=alerts@company.local
+
+# SMS - 사내 문자 서버 / 사업자 API
+NOTIFICATION_SMS_ENABLED=true
+NOTIFICATION_SMS_GATEWAY_URL=http://sms.company.local/api/send
+NOTIFICATION_SMS_SENDER=0212345678
+```
+
+게이트웨이가 다른 필드명이나 인증을 요구하면 이 두 줄로 맞춘다(코드 수정 불필요):
+
+```env
+NOTIFICATION_SMS_GATEWAY_HEADERS=Authorization: Bearer <토큰>; X-API-KEY: <키>
+NOTIFICATION_SMS_GATEWAY_BODY_TEMPLATE={"receiver":"{to}","msg":"{text}","sender":"{sender}"}
+# form 방식이면 (본문은 자동으로 to=...&text=... URL 인코딩)
+NOTIFICATION_SMS_GATEWAY_CONTENT_TYPE=application/x-www-form-urlencoded
+```
+
+> 치환자는 `{to} {text} {sender}` 다. **`${to}` 처럼 `$` 를 붙이지 말 것** - docker compose 가
+> 자기 변수로 먼저 치환해 빈 값이 들어간다.
+
+값을 채웠으면 `docker compose up -d pipeline-api` 로 반영하고, 화면에서:
+
+1. **설정 > 알림/발송 관리 > 발송 채널** — «발송 경로»가 `설정됨` 인지 확인하고 «사용»을 켠다.
+   (`미설정` 이면 위 `.env` 가 컨테이너까지 전달되지 않은 것이다.)
+2. **수신자** 탭에서 담당자의 이메일·휴대폰을 등록하고 채널을 구독시킨다. 수신자가 없으면
+   보낼 곳이 없어 한 건도 나가지 않는다.
+3. 발송 채널의 **[발송]** 버튼으로 테스트한다. 결과는 아래에서 확인한다:
+
+```bash
+docker compose exec metadata-db psql -U pipeline_app -d pipeline_meta \
+  -c "select channel_type, status, failure_reason, failure_detail
+      from notification_delivery order by id desc limit 5;"
+```
+
+| failure_reason | 뜻 |
+|---|---|
+| (없음) + `SENT` | 정상 발송 |
+| `NO_RELAY` | `.env` 의 SMTP 호스트 / 게이트웨이 주소가 비어 있다 |
+| `CHANNEL_OFF` | 화면의 «사용» 토글이 꺼져 있다 |
+| `NO_ADDRESS` | 수신자에 이메일·휴대폰이 없다 |
+| `SMTP_ERROR` / `SMS_ERROR` | 릴레이·게이트웨이가 거절했다(`failure_detail` 에 원문) |
+
+발송 규칙: 메일·문자는 **«위험(CRITICAL)»만** 즉시 나간다. 경고·정보는 화면 알림
+(조치 대기열·헤더 배지)에만 표시되고 외부로 보내지 않는다 - 경고까지 문자로 보내면
+곧 무시하게 되고, 정작 위험이 왔을 때 같이 묻힌다.
+
 ## 3. 이후 운영
 
 ```bash

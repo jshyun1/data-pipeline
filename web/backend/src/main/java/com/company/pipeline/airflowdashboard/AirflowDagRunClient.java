@@ -104,6 +104,44 @@ public class AirflowDagRunClient {
                 .toList();
     }
 
+
+    /**
+     * 모든 DAG 의 최근 실행. 워크플로우 알림 규칙이 «어느 워크플로우가 실패했나»를 볼 때 쓴다.
+     *
+     * <p>DAG 마다 따로 부르면 워크플로우 수만큼 호출이 늘어난다. Airflow 는 dagId 자리에 {@code ~}
+     * 를 주면 전체를 한 번에 준다 - 실시간 모니터링 화면이 쓰는 것과 같은 경로라, 화면에 보이는
+     * 것과 알림이 보는 것이 같아진다(우리 DB 에 사본을 두지 않는 이유).
+     */
+    public List<DagRunWithDag> getRecentDagRuns(int limit) {
+        int capped = Math.max(1, Math.min(limit, 500));
+        DagRunWithDagCollection response = withAuth(token -> restClient.get()
+                .uri(uri -> uri.path("/dags/~/dagRuns")
+                        .queryParam("limit", capped)
+                        .queryParam("order_by", "-start_date")
+                        .build())
+                .header("Authorization", "Bearer " + token)
+                .retrieve()
+                .body(DagRunWithDagCollection.class));
+        if (response == null || response.dagRuns() == null) {
+            return List.of();
+        }
+        return response.dagRuns();
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    record DagRunWithDagCollection(@JsonProperty("dag_runs") List<DagRunWithDag> dagRuns) {
+    }
+
+    /** 전체 조회용 - 어느 DAG 의 실행인지가 함께 온다. */
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    public record DagRunWithDag(
+            @JsonProperty("dag_id") String dagId,
+            @JsonProperty("dag_run_id") String dagRunId,
+            String state,
+            @JsonProperty("start_date") OffsetDateTime startDate,
+            @JsonProperty("end_date") OffsetDateTime endDate) {
+    }
+
     public List<Dag> getDags() {
         int limit = 500;
         List<Dag> dags = new ArrayList<>();
