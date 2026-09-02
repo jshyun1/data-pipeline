@@ -1310,28 +1310,22 @@ function QueryStep({
 
 function TargetStep({
   connectionInfo,
-  loadMode,
-  primaryKeys,
   sourceColumns,
   targetColumns,
   columnMappings,
   loadSql,
   onQueryRecordSqlChange,
-  onPrimaryKeysChange,
   onColumnMappingsChange,
   onSourceColumnsChange,
   onLoadSqlColumnsChange,
   onLoadSqlChange,
 }: {
   connectionInfo: ConnectionInfo;
-  loadMode: LoadMode;
-  primaryKeys: string;
   sourceColumns: SourceColumnMetadata[];
   targetColumns: ColumnMetadataResponse[];
   columnMappings: ColumnMapping[];
   loadSql: string;
   onQueryRecordSqlChange: (queryRecordSql: string) => void;
-  onPrimaryKeysChange: (primaryKeys: string) => void;
   onColumnMappingsChange: (mappings: ColumnMapping[]) => void;
   onSourceColumnsChange: (columns: SourceColumnMetadata[]) => void;
   onLoadSqlColumnsChange: (columns: SourceColumnMetadata[]) => void;
@@ -1343,7 +1337,6 @@ function TargetStep({
   const [newSourceColumnValue, setNewSourceColumnValue] = useState("");
   const [newSourceColumnName, setNewSourceColumnName] = useState("");
   const [sourceOrderIds, setSourceOrderIds] = useState<string[]>([]);
-  const targetColumnOptions = columnOptions(targetColumns);
   const selectedSourceTables = commaSeparatedValues(connectionInfo.sourceTable);
   const editingMapping = columnMappings.find((mapping) => mapping.id === editingMappingId) ?? null;
   const mappingDisplayExpression = (mapping: ColumnMapping) => displayMappingExpression(mapping, selectedSourceTables);
@@ -1622,22 +1615,6 @@ function TargetStep({
           </div>
       </div>
 
-      {loadMode === "UPSERT" ? (
-        <div className="etl-change-key-column">
-          <label>Target Primary Keys</label>
-          <Select
-            mode="multiple"
-            showSearch
-            allowClear
-            value={commaSeparatedValues(primaryKeys)}
-            disabled={targetColumns.length === 0}
-            options={targetColumnOptions}
-            filterOption={matchesSelectOption}
-            placeholder="예: ID 또는 ID,SEQ"
-            onChange={(nextColumns) => onPrimaryKeysChange(nextColumns.join(","))}
-          />
-        </div>
-      ) : null}
       <Modal
         title="변환 - 처리 로직"
         open={!!editingMapping}
@@ -1812,7 +1789,6 @@ export function EtlCreatePage() {
   const [truncateSql, setTruncateSql] = useState("");
   const [loadSql, setLoadSql] = useState(defaultLoadSql("INSERT", "", "", "PostgreSQL"));
   const [queryRecordSql, setQueryRecordSql] = useState("");
-  const [primaryKeys, setPrimaryKeys] = useState("");
   const [sourceColumns, setSourceColumns] = useState<SourceColumnMetadata[]>([]);
   const [loadSqlColumns, setLoadSqlColumns] = useState<SourceColumnMetadata[]>([]);
   const [targetColumns, setTargetColumns] = useState<ColumnMetadataResponse[]>([]);
@@ -1820,6 +1796,13 @@ export function EtlCreatePage() {
   const mappingSourceColumns = useMemo(
     () => loadSqlColumns.length > 0 ? loadSqlColumns : sourceColumns,
     [loadSqlColumns, sourceColumns],
+  );
+  const targetPrimaryKeys = useMemo(
+    () => targetColumns
+      .filter((column) => column.primaryKey)
+      .map((column) => column.name)
+      .join(","),
+    [targetColumns],
   );
 
   const isUnlocked = (stepId: WizardStepId) => {
@@ -1924,8 +1907,8 @@ export function EtlCreatePage() {
       message.warning("적재로직 SQL문을 입력해야 합니다.");
       return;
     }
-    if (!isFileLoad && loadMode === "UPSERT" && !primaryKeys.trim()) {
-      message.warning("UPSERT 적재 방식은 Target Primary Keys를 입력해야 합니다.");
+    if (!isFileLoad && loadMode === "UPSERT" && !targetPrimaryKeys.trim()) {
+      message.warning("타깃 테이블의 Primary Key를 찾지 못했습니다.");
       return;
     }
 
@@ -1972,7 +1955,7 @@ export function EtlCreatePage() {
             : undefined,
           loadSql: loadSql.trim() || undefined,
           queryRecordSql: queryRecordSql.trim() || undefined,
-          primaryKeys: loadMode === "UPSERT" ? primaryKeys.trim() : undefined,
+          primaryKeys: loadMode === "UPSERT" ? targetPrimaryKeys : undefined,
         });
       }
       const processGroupId = createdGroup.id;
@@ -2037,7 +2020,6 @@ export function EtlCreatePage() {
             nextValue.targetSchema !== undefined ||
             nextValue.targetTable !== undefined
           ) {
-            setPrimaryKeys("");
             setColumnMappings([]);
           }
           setLoadSqlColumns([]);
@@ -2075,14 +2057,11 @@ export function EtlCreatePage() {
     ) : (
       <TargetStep
         connectionInfo={connectionInfo}
-        loadMode={loadMode}
-        primaryKeys={primaryKeys}
         sourceColumns={mappingSourceColumns}
         targetColumns={targetColumns}
         columnMappings={columnMappings}
         loadSql={loadSql}
         onQueryRecordSqlChange={setQueryRecordSql}
-        onPrimaryKeysChange={setPrimaryKeys}
         onColumnMappingsChange={setColumnMappings}
         onSourceColumnsChange={setSourceColumns}
         onLoadSqlColumnsChange={setLoadSqlColumns}
@@ -2182,8 +2161,7 @@ export function EtlCreatePage() {
                       type="primary"
                       loading={isCreating}
                       disabled={!isFileLoad && (
-                        ((loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()) ||
-                        (loadMode === "UPSERT" && !primaryKeys.trim())
+                        (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()
                       )}
                       onClick={completeWizard}
                     >

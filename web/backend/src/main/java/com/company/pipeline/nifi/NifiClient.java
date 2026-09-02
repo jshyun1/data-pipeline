@@ -191,7 +191,7 @@ public class NifiClient {
             throw new NifiClientException("DB -> DB 적재 방식은 적재로직 SQL문이 필요합니다.", null);
         }
         if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.primaryKeys())) {
-            throw new NifiClientException("UPSERT 적재 방식은 Target Primary Keys가 필요합니다.", null);
+            throw new NifiClientException("타깃 테이블의 Primary Key를 찾지 못했습니다.", null);
         }
 
         String token = getToken();
