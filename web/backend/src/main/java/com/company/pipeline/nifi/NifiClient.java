@@ -64,6 +64,10 @@ public class NifiClient {
     private static final List<String> QUERY_RECORD_SQL_KEYS = List.of(
             "DB_DATA"
     );
+    private static final List<String> DB_TO_DB_QUERY_RECORD_SQL_KEYS = List.of(
+            "query",
+            "DB_DATA"
+    );
     private static final List<String> PUT_DBCP_KEYS = List.of(
             "put-db-record-dcbp-service",
             "Database Connection Pooling Service"
@@ -807,6 +811,7 @@ public class NifiClient {
         putProperty(queryProperties, SELECT_DBCP_KEYS, request.sourceServiceId().trim());
         putProperty(queryProperties, SELECT_SQL_KEYS, loadSql(request));
         updateProcessorProperties(token, query, queryProperties);
+        updateDbToDbQueryRecordProcessor(token, processors, request);
 
         Map<String, String> putProperties = mergedProperties(put);
         putProperty(putProperties, PUT_DBCP_KEYS, request.targetServiceId().trim());
@@ -826,6 +831,7 @@ public class NifiClient {
         putProperty(sourceProperties, SELECT_DBCP_KEYS, request.sourceServiceId().trim());
         putProperty(sourceProperties, SELECT_SQL_KEYS, loadSql(request));
         updateProcessorProperties(token, source, sourceProperties);
+        updateDbToDbQueryRecordProcessor(token, processors, request);
 
         updateTargetDbRecordProcessor(token, upsert, request, "UPSERT");
     }
@@ -867,6 +873,7 @@ public class NifiClient {
                 ? loadSql(request)
                 : "SELECT * FROM %s.%s".formatted(request.sourceSchema().trim(), request.sourceTable().trim()));
         updateProcessorProperties(token, select, selectProperties);
+        updateDbToDbQueryRecordProcessor(token, processors, request);
 
         Map<String, String> insertProperties = mergedProperties(insert);
         putProperty(insertProperties, PUT_DATABASE_TYPE_KEYS, request.targetDatabaseType().trim());
@@ -893,6 +900,21 @@ public class NifiClient {
         return "";
     }
 
+    private void updateDbToDbQueryRecordProcessor(String token,
+            List<NifiFlowResponse.ProcessorEntity> processors,
+            NifiInitialDbToDbCreateRequest request) {
+        if (!StringUtils.hasText(request.queryRecordSql())) {
+            return;
+        }
+        NifiFlowResponse.ProcessorEntity queryRecord = findOptionalProcessor(processors, "QueryRecord");
+        if (queryRecord == null) {
+            return;
+        }
+        Map<String, String> queryProperties = mergedProperties(queryRecord);
+        putProperty(queryProperties, DB_TO_DB_QUERY_RECORD_SQL_KEYS, request.queryRecordSql().trim());
+        updateProcessorProperties(token, queryRecord, queryProperties);
+    }
+
     private int directProcessorCount(String groupId) {
         NifiFlowResponse flow = getFlow(groupId);
         return flow == null
@@ -912,6 +934,15 @@ public class NifiClient {
                 .orElseThrow(() -> new NifiClientException(
                         "복제된 Initial 그룹에서 %s 프로세서를 찾지 못했습니다.".formatted(shortType),
                         null));
+    }
+
+    private NifiFlowResponse.ProcessorEntity findOptionalProcessor(List<NifiFlowResponse.ProcessorEntity> processors,
+            String shortType) {
+        return processors.stream()
+                .filter(processor -> processor.component() != null)
+                .filter(processor -> shortType.equals(processor.component().shortType()))
+                .findFirst()
+                .orElse(null);
     }
 
     private NifiFlowResponse.ProcessorEntity findProcessorByName(List<NifiFlowResponse.ProcessorEntity> processors,

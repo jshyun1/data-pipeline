@@ -5,6 +5,7 @@ import {
   DownOutlined,
   EditOutlined,
   LockOutlined,
+  PlusOutlined,
   UpOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
@@ -36,6 +37,7 @@ const WIZARD_STEPS = [
   { id: "type", label: "유형 선택" },
   { id: "basic", label: "기본 정보" },
   { id: "connection", label: "연결" },
+  { id: "query", label: "적재쿼리" },
   { id: "target", label: "대상" },
 ] as const;
 
@@ -45,12 +47,15 @@ type LoadMode = "INSERT" | "TRUNCATE" | "UPSERT";
 type FileExtension = "csv" | "excel" | "log" | "json";
 type NifiDatabaseType = "Generic" | "Oracle 12+" | "PostgreSQL" | "MySQL" | "MS SQL 2012+";
 type ConnectionDbType = ConnectionResponse["dbType"];
+const COLUMN_MAPPING_ROW_HEIGHT = 40;
+const LOAD_SQL_SOURCE_TABLE = "__LOAD_SQL__";
 
 const STEP_NUMBER: Record<WizardStepId, number> = {
   type: 1,
   basic: 2,
   connection: 3,
-  target: 4,
+  query: 4,
+  target: 5,
 };
 
 const TYPE_OPTIONS = [
@@ -187,6 +192,10 @@ function normalizeName(value: string) {
   return value.trim().toLowerCase();
 }
 
+function normalizeComparableName(value: string) {
+  return normalizeName(value).replace(/[^a-z0-9가-힣]/g, "");
+}
+
 function stripCdcControllerServicePrefix(value: string) {
   return value.trim().replace(/^cdc-\d+-/i, "");
 }
@@ -225,15 +234,129 @@ function sourceColumnKey(table: string, column: string) {
   return `${table}::${column}`;
 }
 
-function splitSourceColumnKey(value: string) {
-  const separatorIndex = value.indexOf("::");
-  if (separatorIndex < 0) {
-    return { table: "", column: value };
-  }
+function sourceColumnFromLoadSqlAlias(name: string): SourceColumnMetadata {
   return {
-    table: value.slice(0, separatorIndex),
-    column: value.slice(separatorIndex + 2),
+    table: LOAD_SQL_SOURCE_TABLE,
+    name,
+    dataType: "",
+    primaryKey: false,
+    maskable: false,
   };
+}
+
+function splitSqlSelectItems(value: string) {
+  const items: string[] = [];
+  let current = "";
+  let quote: "'" | "\"" | "`" | null = null;
+  let depth = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    const nextChar = value[index + 1];
+    if (quote) {
+      current += char;
+      if (char === quote) {
+        if (quote === "'" && nextChar === "'") {
+          current += nextChar;
+          index += 1;
+        } else {
+          quote = null;
+        }
+      }
+      continue;
+    }
+    if (char === "'" || char === "\"" || char === "`") {
+      quote = char;
+      current += char;
+      continue;
+    }
+    if (char === "(") {
+      depth += 1;
+      current += char;
+      continue;
+    }
+    if (char === ")") {
+      depth = Math.max(0, depth - 1);
+      current += char;
+      continue;
+    }
+    if (char === "," && depth === 0) {
+      items.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) {
+    items.push(current.trim());
+  }
+  return items;
+}
+
+function unquoteSqlIdentifier(value: string) {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+    (trimmed.startsWith("`") && trimmed.endsWith("`")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function extractLoadSqlAliasColumns(loadSql: string) {
+  const selectMatch = loadSql.match(/\bselect\b([\s\S]*?)\bfrom\b/i);
+  if (!selectMatch) {
+    return [];
+  }
+  return splitSqlSelectItems(selectMatch[1])
+    .map(loadSqlProjectionAlias)
+    .filter((alias, index, aliases) => !!alias && aliases.findIndex((item) =>
+      normalizeName(item) === normalizeName(alias),
+    ) === index)
+    .map(sourceColumnFromLoadSqlAlias);
+}
+
+function appendLoadSqlAliasColumn(loadSql: string, columnName: string, expression: string) {
+  const trimmedColumnName = columnName.trim();
+  const trimmedExpression = expression.trim();
+  if (!trimmedColumnName) {
+    return loadSql;
+  }
+  if (!loadSql.trim()) {
+    return `select \n${trimmedExpression} as ${trimmedColumnName}\nfrom 소스테이블`;
+  }
+  const fromMatch = loadSql.match(/\bfrom\b/i);
+  if (!fromMatch || fromMatch.index === undefined) {
+    return `${loadSql.trimEnd()}\n,${trimmedExpression} as ${trimmedColumnName}`;
+  }
+  const beforeFrom = loadSql.slice(0, fromMatch.index).trimEnd();
+  const afterFrom = loadSql.slice(fromMatch.index);
+  return `${beforeFrom}\n,${trimmedExpression} as ${trimmedColumnName}\n${afterFrom}`;
+}
+
+function loadSqlProjectionAlias(item: string) {
+  const aliasMatch = item.match(/\bas\s+("[^"]+"|`[^`]+`|\[[^\]]+\]|[a-zA-Z_][\w$]*)\s*$/i);
+  return aliasMatch ? unquoteSqlIdentifier(aliasMatch[1]) : "";
+}
+
+function removeLoadSqlAliasColumn(loadSql: string, columnName: string) {
+  const selectMatch = /\bselect\b([\s\S]*?)\bfrom\b/i.exec(loadSql);
+  const fromMatch = /\bfrom\b/i.exec(loadSql);
+  if (!selectMatch || !fromMatch || selectMatch.index === undefined || fromMatch.index === undefined) {
+    return loadSql;
+  }
+  const items = splitSqlSelectItems(selectMatch[1]);
+  const nextItems = items.filter((item) =>
+    normalizeName(loadSqlProjectionAlias(item)) !== normalizeName(columnName),
+  );
+  if (nextItems.length === items.length) {
+    return loadSql;
+  }
+  const beforeSelect = loadSql.slice(0, selectMatch.index);
+  const afterFrom = loadSql.slice(fromMatch.index);
+  const projectionSql = nextItems.map((item, index) => `${index === 0 ? "" : ","}${item}`).join("\n");
+  return `${beforeSelect}select \n${projectionSql}\n${afterFrom}`;
 }
 
 function buildDefaultColumnMappings(
@@ -246,8 +369,11 @@ function buildDefaultColumnMappings(
     const previousSourceExists = previous && sourceColumns.some((sourceColumn) =>
       sourceColumn.table === previous.sourceTable && sourceColumn.name === previous.sourceColumn,
     );
-    const matchedSource = sourceColumns.find(
-      (sourceColumn) => normalizeName(sourceColumn.name) === normalizeName(targetColumn.name),
+    const targetName = normalizeComparableName(targetColumn.name);
+    const matchedSource = sourceColumns.find((sourceColumn) =>
+      normalizeComparableName(sourceColumn.name) === targetName ||
+      normalizeComparableName(sourceColumn.name).includes(targetName) ||
+      targetName.includes(normalizeComparableName(sourceColumn.name)),
     );
     const sourceTable = previousSourceExists ? previous.sourceTable : matchedSource?.table || "";
     const sourceColumn = previousSourceExists ? previous.sourceColumn : matchedSource?.name || "";
@@ -261,31 +387,15 @@ function buildDefaultColumnMappings(
   });
 }
 
-function autoMatchColumnMappings(
-  mappings: ColumnMapping[],
-  sourceColumns: SourceColumnMetadata[],
-) {
-  return mappings.map((mapping) => {
-    const matchedSource = sourceColumns.find(
-      (sourceColumn) => normalizeName(sourceColumn.name) === normalizeName(mapping.targetColumn),
-    );
-    return {
-      ...mapping,
-      sourceTable: matchedSource?.table ?? "",
-      sourceColumn: matchedSource?.name ?? "",
-      logic: matchedSource ? "" : mapping.logic,
-    };
-  });
-}
-
 function buildMappedLoadSql(
   connectionInfo: ConnectionInfo,
   mappings: ColumnMapping[],
+  loadMode: LoadMode,
 ) {
   const selectedTables = commaSeparatedValues(connectionInfo.sourceTable);
   if (selectedTables.length === 0) {
     return defaultLoadSql(
-      "INSERT",
+      loadMode,
       connectionInfo.sourceSchema,
       connectionInfo.sourceTable,
       connectionInfo.sourceDatabaseType,
@@ -293,29 +403,90 @@ function buildMappedLoadSql(
   }
 
   const aliasByTable = new Map(selectedTables.map((table, index) => [table, tableAlias(index)]));
-  const projectionMappings = mappings.length > 0
-    ? mappings
-    : selectedTables.map((table, index) => ({
-      id: `${table}-${index}`,
-      targetColumn: "*",
-      sourceTable: table,
-      sourceColumn: "*",
-      logic: "",
-    }));
-  const projections = projectionMappings.map((mapping, index) => {
+  const projectionMappings = mappings.filter((mapping) =>
+    mapping.sourceTable && mapping.sourceColumn && aliasByTable.has(mapping.sourceTable),
+  );
+  const uniqueProjectionMappings = projectionMappings.filter((mapping, index, allMappings) =>
+    allMappings.findIndex((item) =>
+      item.sourceTable === mapping.sourceTable && item.sourceColumn === mapping.sourceColumn,
+    ) === index,
+  );
+  const projections = uniqueProjectionMappings.map((mapping, index) => {
     const alias = aliasByTable.get(mapping.sourceTable);
-    const expression = mapping.logic.trim() || (alias && mapping.sourceColumn
-      ? `${alias}.${mapping.sourceColumn}`
-      : "NULL");
+    const expression = alias ? `${alias}.${mapping.sourceColumn}` : mapping.sourceColumn;
     const prefix = index === 0 ? "" : ",";
-    return `${prefix}${expression} as ${mapping.targetColumn}`;
+    return `${prefix}${expression} as ${mapping.sourceColumn}`;
   });
   const schemaPrefix = connectionInfo.sourceSchema.trim() ? `${connectionInfo.sourceSchema.trim()}.` : "";
   const fromClause = selectedTables
     .map((table, index) => `${schemaPrefix}${table} ${tableAlias(index)}`)
     .join(", ");
 
-  return `select \n${projections.join("\n")}\nfrom ${fromClause}`;
+  const projectionSql = projections.length > 0 ? projections.join("\n") : "*";
+  const baseSql = `select \n${projectionSql}\nfrom ${fromClause}`;
+  if (loadMode !== "UPSERT") {
+    return baseSql;
+  }
+  return `${baseSql}\nwhere {update컬럼} ${defaultUpdateWhereExpression(connectionInfo.sourceDatabaseType)}`;
+}
+
+function stripSourceAliases(value: string, selectedTables: string[]) {
+  return selectedTables.reduce((currentValue, _table, index) => {
+    const alias = tableAlias(index);
+    return currentValue.replace(new RegExp(`\\b${alias}\\.`, "gi"), "");
+  }, value);
+}
+
+function buildQueryRecordSql(
+  mappings: ColumnMapping[],
+  selectedTables: string[],
+) {
+  const projections = mappings.map((mapping, index) => {
+    const expression = stripSourceAliases(
+      mapping.logic.trim() || mapping.sourceColumn || "NULL",
+      selectedTables,
+    );
+    const prefix = index === 0 ? "" : ",";
+    return `${prefix}${expression} as ${mapping.targetColumn}`;
+  });
+  return `SELECT\n${projections.join("\n")}\nFROM FLOWFILE`;
+}
+
+function displayMappingExpression(mapping: ColumnMapping, selectedTables: string[]) {
+  return stripSourceAliases(mapping.logic.trim() || mapping.sourceColumn || "", selectedTables);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function mappingReferencedSourceColumns(
+  mapping: ColumnMapping,
+  sourceColumns: SourceColumnMetadata[],
+  selectedTables: string[],
+) {
+  const logic = mapping.logic.trim();
+  if (!logic) {
+    return sourceColumns.filter((sourceColumn) =>
+      sourceColumn.table === mapping.sourceTable && sourceColumn.name === mapping.sourceColumn,
+    );
+  }
+  const unqualifiedExpression = selectedTables.reduce((currentValue, _table, index) => {
+    const alias = tableAlias(index);
+    return currentValue.replace(new RegExp(`\\b${alias}\\.[a-z0-9_]+\\b`, "gi"), " ");
+  }, logic);
+  return sourceColumns.filter((sourceColumn) => {
+    const tableIndex = selectedTables.indexOf(sourceColumn.table);
+    const alias = tableIndex >= 0 ? tableAlias(tableIndex) : "";
+    const qualifiedPattern = alias
+      ? new RegExp(`\\b${alias}\\.${escapeRegExp(sourceColumn.name)}\\b`, "i")
+      : null;
+    if (qualifiedPattern?.test(logic)) {
+      return true;
+    }
+    const unqualifiedPattern = new RegExp(`\\b${escapeRegExp(sourceColumn.name)}\\b`, "i");
+    return unqualifiedPattern.test(unqualifiedExpression);
+  });
 }
 
 function defaultLoadSql(
@@ -1053,121 +1224,27 @@ function ConnectionStep({
   );
 }
 
-function TargetStep({
+function QueryStep({
   connectionInfo,
   loadMode,
   truncateSql,
   loadSql,
-  primaryKeys,
-  sourceColumns,
-  targetColumns,
-  columnMappings,
   showTruncateSql,
   onLoadModeChange,
   onTruncateSqlChange,
   onLoadSqlChange,
-  onPrimaryKeysChange,
-  onColumnMappingsChange,
-  onSourceColumnsChange,
   onShowTruncateSqlChange,
 }: {
   connectionInfo: ConnectionInfo;
   loadMode: LoadMode;
-  onLoadModeChange: (loadMode: LoadMode) => void;
   truncateSql: string;
   loadSql: string;
-  primaryKeys: string;
-  sourceColumns: SourceColumnMetadata[];
-  targetColumns: ColumnMetadataResponse[];
-  columnMappings: ColumnMapping[];
   showTruncateSql: boolean;
+  onLoadModeChange: (loadMode: LoadMode) => void;
   onTruncateSqlChange: (truncateSql: string) => void;
   onLoadSqlChange: (loadSql: string) => void;
-  onPrimaryKeysChange: (primaryKeys: string) => void;
-  onColumnMappingsChange: (mappings: ColumnMapping[]) => void;
-  onSourceColumnsChange: (columns: SourceColumnMetadata[]) => void;
   onShowTruncateSqlChange: (show: boolean) => void;
 }) {
-  const [editingMappingId, setEditingMappingId] = useState<string | null>(null);
-  const [editingLogic, setEditingLogic] = useState("");
-  const targetColumnOptions = columnOptions(targetColumns);
-  const selectedSourceTables = commaSeparatedValues(connectionInfo.sourceTable);
-  const aliasByTable = new Map(selectedSourceTables.map((table, index) => [table, tableAlias(index)]));
-  const usedSourceColumnKeys = new Set(
-    columnMappings
-      .filter((mapping) => mapping.sourceTable && mapping.sourceColumn)
-      .map((mapping) => sourceColumnKey(mapping.sourceTable, mapping.sourceColumn)),
-  );
-  const sourceColumnOptions = sourceColumns.map((column) => ({
-    label: `${aliasByTable.get(column.table) ?? column.table}.${column.name}`,
-    value: sourceColumnKey(column.table, column.name),
-  }));
-  const editingMapping = columnMappings.find((mapping) => mapping.id === editingMappingId) ?? null;
-  const aliasLabel = (table: string) => `${aliasByTable.get(table) ?? table}.`;
-  const mappingSourceLabel = (mapping: ColumnMapping) => {
-    if (!mapping.sourceTable || !mapping.sourceColumn) {
-      return "";
-    }
-    return `${aliasByTable.get(mapping.sourceTable) ?? mapping.sourceTable}.${mapping.sourceColumn}`;
-  };
-
-  const applyColumnMappings = (nextMappings: ColumnMapping[]) => {
-    onColumnMappingsChange(nextMappings);
-    onLoadSqlChange(buildMappedLoadSql(connectionInfo, nextMappings));
-  };
-
-  const updateMapping = (mappingId: string, updates: Partial<ColumnMapping>) => {
-    applyColumnMappings(columnMappings.map((mapping) =>
-      mapping.id === mappingId ? { ...mapping, ...updates } : mapping,
-    ));
-  };
-
-  const moveMapping = (mappingId: string, direction: -1 | 1) => {
-    const currentIndex = columnMappings.findIndex((mapping) => mapping.id === mappingId);
-    const nextIndex = currentIndex + direction;
-    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= columnMappings.length) {
-      return;
-    }
-    const nextMappings = [...columnMappings];
-    const [removed] = nextMappings.splice(currentIndex, 1);
-    nextMappings.splice(nextIndex, 0, removed);
-    applyColumnMappings(nextMappings);
-  };
-
-  const handleAutoMatch = () => {
-    const nextMappings = autoMatchColumnMappings(columnMappings, sourceColumns);
-    applyColumnMappings(nextMappings);
-    message.success("컬럼명이 같은 항목을 1:1로 매핑했습니다.");
-  };
-
-  const deleteSourceColumn = (column: SourceColumnMetadata) => {
-    const removedKey = sourceColumnKey(column.table, column.name);
-    const nextSourceColumns = sourceColumns.filter(
-      (sourceColumn) => sourceColumnKey(sourceColumn.table, sourceColumn.name) !== removedKey,
-    );
-    const nextMappings = columnMappings.map((mapping) =>
-      sourceColumnKey(mapping.sourceTable, mapping.sourceColumn) === removedKey
-        ? { ...mapping, sourceTable: "", sourceColumn: "", logic: "" }
-        : mapping,
-    );
-    onSourceColumnsChange(nextSourceColumns);
-    applyColumnMappings(nextMappings);
-  };
-
-  const openLogicEditor = (mapping: ColumnMapping) => {
-    setEditingMappingId(mapping.id);
-    setEditingLogic(mapping.logic);
-  };
-
-  const saveLogicEditor = () => {
-    if (!editingMapping) {
-      return;
-    }
-    updateMapping(editingMapping.id, { logic: editingLogic });
-    setEditingMappingId(null);
-    setEditingLogic("");
-  };
-
   return (
     <div className="etl-target-preview">
       <div className="etl-load-mode">
@@ -1218,19 +1295,203 @@ function TargetStep({
           ) : null}
         </div>
       ) : null}
+      <div className="etl-change-key-column">
+        <label>적재로직 SQL문</label>
+        <textarea
+          value={loadSql}
+          onChange={(event) => onLoadSqlChange(event.target.value)}
+          placeholder={`select\n     as 타겟컬럼1\n    , as 타겟컬럼2\nfrom ${connectionInfo.sourceSchema || "소스스키마"}.소스테이블`}
+        />
+        <small className="etl-sql-hint">테이블 간 조인 조건을 추가 바랍니다.</small>
+      </div>
+    </div>
+  );
+}
 
-      <>
-        <div className="etl-column-mapping-panel">
-          <div className="etl-column-mapping-toolbar">
-            <strong>컬럼 매핑</strong>
-            <Button
-              size="small"
-              onClick={handleAutoMatch}
-              disabled={sourceColumns.length === 0 || columnMappings.length === 0}
-            >
-              1:1 직접 매핑
-            </Button>
-          </div>
+function TargetStep({
+  connectionInfo,
+  loadMode,
+  primaryKeys,
+  sourceColumns,
+  targetColumns,
+  columnMappings,
+  loadSql,
+  onQueryRecordSqlChange,
+  onPrimaryKeysChange,
+  onColumnMappingsChange,
+  onSourceColumnsChange,
+  onLoadSqlColumnsChange,
+  onLoadSqlChange,
+}: {
+  connectionInfo: ConnectionInfo;
+  loadMode: LoadMode;
+  primaryKeys: string;
+  sourceColumns: SourceColumnMetadata[];
+  targetColumns: ColumnMetadataResponse[];
+  columnMappings: ColumnMapping[];
+  loadSql: string;
+  onQueryRecordSqlChange: (queryRecordSql: string) => void;
+  onPrimaryKeysChange: (primaryKeys: string) => void;
+  onColumnMappingsChange: (mappings: ColumnMapping[]) => void;
+  onSourceColumnsChange: (columns: SourceColumnMetadata[]) => void;
+  onLoadSqlColumnsChange: (columns: SourceColumnMetadata[]) => void;
+  onLoadSqlChange: (loadSql: string) => void;
+}) {
+  const [editingMappingId, setEditingMappingId] = useState<string | null>(null);
+  const [editingLogic, setEditingLogic] = useState("");
+  const [addingSourceColumn, setAddingSourceColumn] = useState(false);
+  const [newSourceColumnValue, setNewSourceColumnValue] = useState("");
+  const [newSourceColumnName, setNewSourceColumnName] = useState("");
+  const [sourceOrderIds, setSourceOrderIds] = useState<string[]>([]);
+  const targetColumnOptions = columnOptions(targetColumns);
+  const selectedSourceTables = commaSeparatedValues(connectionInfo.sourceTable);
+  const editingMapping = columnMappings.find((mapping) => mapping.id === editingMappingId) ?? null;
+  const mappingDisplayExpression = (mapping: ColumnMapping) => displayMappingExpression(mapping, selectedSourceTables);
+  const sourceProjectionColumns = sourceColumns
+    .filter((sourceColumn, index, columns) =>
+      columns.findIndex((item) =>
+        sourceColumnKey(item.table, item.name) === sourceColumnKey(sourceColumn.table, sourceColumn.name),
+      ) === index,
+    );
+  const orderedSourceMappings = [
+    ...sourceOrderIds
+      .map((sourceKey) => sourceProjectionColumns.find((sourceColumn) =>
+        sourceColumnKey(sourceColumn.table, sourceColumn.name) === sourceKey,
+      ))
+      .filter((sourceColumn): sourceColumn is SourceColumnMetadata => !!sourceColumn),
+    ...sourceProjectionColumns.filter((sourceColumn) =>
+      !sourceOrderIds.includes(sourceColumnKey(sourceColumn.table, sourceColumn.name)),
+    ),
+  ];
+  const sourceIndexByKey = new Map(orderedSourceMappings.map((sourceColumn, index) => [
+    sourceColumnKey(sourceColumn.table, sourceColumn.name),
+    index,
+  ]));
+  const targetIndexByMappingId = new Map(columnMappings.map((mapping, index) => [mapping.id, index]));
+  const flowConnections = columnMappings.flatMap((mapping) =>
+    mappingReferencedSourceColumns(mapping, sourceColumns, selectedSourceTables).map((sourceColumn) => ({
+      sourceKey: sourceColumnKey(sourceColumn.table, sourceColumn.name),
+      targetMappingId: mapping.id,
+    })),
+  );
+  const flowRowCount = Math.max(orderedSourceMappings.length, columnMappings.length);
+  const flowHeight = Math.max(flowRowCount * COLUMN_MAPPING_ROW_HEIGHT, COLUMN_MAPPING_ROW_HEIGHT);
+
+  useEffect(() => {
+    setSourceOrderIds((previousIds) => {
+      const projectionIds = sourceProjectionColumns.map((sourceColumn) =>
+        sourceColumnKey(sourceColumn.table, sourceColumn.name),
+      );
+      return [
+        ...previousIds.filter((sourceKey) => projectionIds.includes(sourceKey)),
+        ...projectionIds.filter((sourceKey) => !previousIds.includes(sourceKey)),
+      ];
+    });
+  }, [columnMappings, connectionInfo.sourceTable, sourceColumns]);
+
+  const applyColumnMappings = (nextMappings: ColumnMapping[]) => {
+    onColumnMappingsChange(nextMappings);
+    onQueryRecordSqlChange(buildQueryRecordSql(nextMappings, selectedSourceTables));
+  };
+
+  const updateMapping = (mappingId: string, updates: Partial<ColumnMapping>) => {
+    applyColumnMappings(columnMappings.map((mapping) =>
+      mapping.id === mappingId ? { ...mapping, ...updates } : mapping,
+    ));
+  };
+
+  const moveMapping = (mappingId: string, direction: -1 | 1) => {
+    const currentIndex = columnMappings.findIndex((mapping) => mapping.id === mappingId);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= columnMappings.length) {
+      return;
+    }
+    const nextMappings = [...columnMappings];
+    const [removed] = nextMappings.splice(currentIndex, 1);
+    nextMappings.splice(nextIndex, 0, removed);
+    applyColumnMappings(nextMappings);
+  };
+
+  const moveSourceMapping = (sourceKey: string, direction: -1 | 1) => {
+    const orderedIds = orderedSourceMappings.map((sourceColumn) =>
+      sourceColumnKey(sourceColumn.table, sourceColumn.name),
+    );
+    const currentIndex = orderedIds.indexOf(sourceKey);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= orderedIds.length) {
+      return;
+    }
+    const nextIds = [...orderedIds];
+    const [removed] = nextIds.splice(currentIndex, 1);
+    nextIds.splice(nextIndex, 0, removed);
+    setSourceOrderIds(nextIds);
+  };
+
+  const deleteSourceColumn = (column: SourceColumnMetadata) => {
+    const removedKey = sourceColumnKey(column.table, column.name);
+    const nextColumns = sourceColumns.filter(
+      (sourceColumn) => sourceColumnKey(sourceColumn.table, sourceColumn.name) !== removedKey,
+    );
+    if (column.table === LOAD_SQL_SOURCE_TABLE) {
+      onLoadSqlColumnsChange(nextColumns);
+      onLoadSqlChange(removeLoadSqlAliasColumn(loadSql, column.name));
+    } else {
+      onSourceColumnsChange(nextColumns);
+    }
+    applyColumnMappings(columnMappings.map((mapping) =>
+      sourceColumnKey(mapping.sourceTable, mapping.sourceColumn) === removedKey
+        ? { ...mapping, sourceTable: "", sourceColumn: "", logic: "" }
+        : mapping,
+    ));
+  };
+
+  const openLogicEditor = (mapping: ColumnMapping) => {
+    setEditingMappingId(mapping.id);
+    setEditingLogic(mappingDisplayExpression(mapping));
+  };
+
+  const saveLogicEditor = () => {
+    if (!editingMapping) {
+      return;
+    }
+    updateMapping(editingMapping.id, { logic: editingLogic });
+    setEditingMappingId(null);
+    setEditingLogic("");
+  };
+
+  const saveSourceColumn = () => {
+    const columnValue = newSourceColumnValue.trim();
+    const columnName = newSourceColumnName.trim();
+    if (!columnValue) {
+      message.warning("추가할 값을 입력하세요.");
+      return;
+    }
+    if (!columnName) {
+      message.warning("추가할 소스 컬럼명을 입력하세요.");
+      return;
+    }
+    const exists = sourceColumns.some((sourceColumn) => normalizeName(sourceColumn.name) === normalizeName(columnName));
+    if (exists) {
+      message.warning("이미 존재하는 소스 컬럼입니다.");
+      return;
+    }
+    const nextSourceColumns = [...sourceColumns, sourceColumnFromLoadSqlAlias(columnName)];
+    onLoadSqlColumnsChange(nextSourceColumns);
+    const nextMappings = buildDefaultColumnMappings(targetColumns, nextSourceColumns, columnMappings);
+    onColumnMappingsChange(nextMappings);
+    onQueryRecordSqlChange(buildQueryRecordSql(nextMappings, selectedSourceTables));
+    onLoadSqlChange(appendLoadSqlAliasColumn(loadSql, columnName, columnValue));
+    setAddingSourceColumn(false);
+    setNewSourceColumnValue("");
+    setNewSourceColumnName("");
+  };
+
+  return (
+    <div className="etl-target-preview">
+      <div className="etl-column-mapping-panel">
+        <div className="etl-column-mapping-toolbar">
+          <strong>컬럼 매핑</strong>
+        </div>
           {selectedSourceTables.length > 1 ? (
             <div className="etl-mapping-alias-hint">
               {selectedSourceTables.map((table, index) => (
@@ -1240,37 +1501,89 @@ function TargetStep({
           ) : null}
           <div className="etl-column-mapping-layout">
             <div className="etl-source-column-list">
-              <div className="etl-column-list-heading">테이블 | 소스컬럼</div>
-              {sourceColumns.length > 0 ? sourceColumns.map((column) => (
-                <div key={`${column.table}-${column.name}`} className="etl-source-column-row">
-                  <span>{aliasLabel(column.table)}</span>
-                  <strong>{column.name}</strong>
-                  {!usedSourceColumnKeys.has(sourceColumnKey(column.table, column.name)) ? (
-                    <Tag color="default">not used</Tag>
-                  ) : null}
+              <div className="etl-column-list-heading">소스컬럼</div>
+              {orderedSourceMappings.length > 0 ? orderedSourceMappings.map((sourceColumn, index) => {
+                const sourceKey = sourceColumnKey(sourceColumn.table, sourceColumn.name);
+                return (
+                <div key={sourceKey} className="etl-source-column-row">
+                  <div className="etl-mapping-order-buttons">
+                    <Button
+                      size="small"
+                      title="위로 이동"
+                      icon={<UpOutlined />}
+                      disabled={index === 0}
+                      onClick={() => moveSourceMapping(sourceKey, -1)}
+                    />
+                    <Button
+                      size="small"
+                      title="아래로 이동"
+                      icon={<DownOutlined />}
+                      disabled={index === orderedSourceMappings.length - 1}
+                      onClick={() => moveSourceMapping(sourceKey, 1)}
+                    />
+                  </div>
+                  <strong>{sourceColumn.name}</strong>
                   <Button
                     size="small"
                     title="소스 컬럼 삭제"
                     icon={<CloseOutlined />}
-                    onClick={() => deleteSourceColumn(column)}
+                    onClick={() => deleteSourceColumn(sourceColumn)}
                   />
                 </div>
-              )) : (
+                );
+              }) : (
                 <div className="etl-column-empty">소스 컬럼 조회 결과가 없습니다.</div>
               )}
+              <div className="etl-source-column-add-row">
+                <Button
+                  size="small"
+                  type="dashed"
+                  icon={<PlusOutlined />}
+                  onClick={() => setAddingSourceColumn(true)}
+                >
+                  소스컬럼 추가
+                </Button>
+              </div>
             </div>
             <div className="etl-column-flow-list">
               <div className="etl-column-list-heading">연결</div>
-              {columnMappings.length > 0 ? columnMappings.map((mapping) => (
-                <div key={`${mapping.id}-flow`} className="etl-column-flow-row">
-                  {mappingSourceLabel(mapping) || mapping.logic.trim() ? (
-                    <div className="etl-column-flow-line">
-                      <span>{mappingSourceLabel(mapping) || "직접 로직"}</span>
-                      <i />
-                    </div>
-                  ) : null}
-                </div>
-              )) : (
+              {columnMappings.length > 0 ? (
+                <svg
+                  className="etl-column-flow-canvas"
+                  viewBox={`0 0 100 ${flowHeight}`}
+                  preserveAspectRatio="none"
+                  style={{ height: flowHeight }}
+                >
+                  <defs>
+                    <marker
+                      id="etl-column-flow-arrow"
+                      viewBox="0 0 10 10"
+                      refX="9"
+                      refY="5"
+                      markerWidth="6"
+                      markerHeight="6"
+                      orient="auto-start-reverse"
+                    >
+                      <path d="M 0 0 L 10 5 L 0 10 z" />
+                    </marker>
+                  </defs>
+                  {flowConnections.map((connection, index) => {
+                    const sourceIndex = sourceIndexByKey.get(connection.sourceKey);
+                    const targetIndex = targetIndexByMappingId.get(connection.targetMappingId);
+                    if (sourceIndex === undefined || targetIndex === undefined) {
+                      return null;
+                    }
+                    const sourceY = sourceIndex * COLUMN_MAPPING_ROW_HEIGHT + COLUMN_MAPPING_ROW_HEIGHT / 2;
+                    const targetY = targetIndex * COLUMN_MAPPING_ROW_HEIGHT + COLUMN_MAPPING_ROW_HEIGHT / 2;
+                    return (
+                      <path
+                        key={`${connection.sourceKey}-${connection.targetMappingId}-${index}`}
+                        d={`M 1 ${sourceY} C 34 ${sourceY}, 66 ${targetY}, 99 ${targetY}`}
+                      />
+                    );
+                  })}
+                </svg>
+              ) : (
                 <div className="etl-column-empty">-</div>
               )}
             </div>
@@ -1301,54 +1614,13 @@ function TargetStep({
                     onClick={() => openLogicEditor(mapping)}
                   />
                   <strong>{mapping.targetColumn}</strong>
-                  {mapping.logic.trim() ? (
-                    <button
-                      type="button"
-                      className="etl-mapping-logic-preview"
-                      title="처리 로직 편집"
-                      onClick={() => openLogicEditor(mapping)}
-                    >
-                      <span>{mappingSourceLabel(mapping) ? `← ${mappingSourceLabel(mapping)}` : "직접 로직"}</span>
-                      <strong>{mapping.logic}</strong>
-                    </button>
-                  ) : (
-                    <Select
-                      showSearch
-                      allowClear
-                      value={mapping.sourceTable && mapping.sourceColumn
-                        ? sourceColumnKey(mapping.sourceTable, mapping.sourceColumn)
-                        : undefined}
-                      disabled={sourceColumnOptions.length === 0}
-                      options={sourceColumnOptions}
-                      filterOption={matchesSelectOption}
-                      placeholder="소스 컬럼 선택"
-                      onChange={(value) => {
-                        const selected = splitSourceColumnKey(value ?? "");
-                        updateMapping(mapping.id, {
-                          sourceTable: selected.table,
-                          sourceColumn: selected.column,
-                          logic: value ? "" : mapping.logic,
-                        });
-                      }}
-                    />
-                  )}
                 </div>
               )) : (
                 <div className="etl-column-empty">타깃 컬럼 조회 결과가 없습니다.</div>
               )}
             </div>
           </div>
-        </div>
-        <div className="etl-change-key-column">
-          <label>적재로직 SQL문</label>
-          <textarea
-            value={loadSql}
-            onChange={(event) => onLoadSqlChange(event.target.value)}
-            placeholder={"예: SELECT *\nFROM source_schema.source_table"}
-          />
-          <small className="etl-sql-hint">테이블 간 조인 조건을 추가 바랍니다.</small>
-        </div>
-      </>
+      </div>
 
       {loadMode === "UPSERT" ? (
         <div className="etl-change-key-column">
@@ -1387,8 +1659,38 @@ function TargetStep({
             rows={12}
             onChange={(event) => setEditingLogic(event.target.value)}
             placeholder={editingMapping?.sourceTable && editingMapping.sourceColumn
-              ? `${tableAlias(selectedSourceTables.indexOf(editingMapping.sourceTable))}.${editingMapping.sourceColumn}`
-              : "예: NVL(a.column_name, 'N')"}
+              ? editingMapping.sourceColumn
+              : "예: NVL(column_name, 'N')"}
+          />
+          <small>* Apache Calcite SQL 문법에 따라 작성해야합니다.</small>
+        </div>
+      </Modal>
+      <Modal
+        title="소스컬럼 추가"
+        open={addingSourceColumn}
+        onOk={saveSourceColumn}
+        onCancel={() => {
+          setAddingSourceColumn(false);
+          setNewSourceColumnValue("");
+          setNewSourceColumnName("");
+        }}
+        okText="확인"
+        cancelText="취소"
+      >
+        <div className="etl-source-column-modal-body">
+          <label>값</label>
+          <Input
+            value={newSourceColumnValue}
+            autoFocus
+            placeholder="예: 'N'"
+            onChange={(event) => setNewSourceColumnValue(event.target.value)}
+          />
+          <label>소스컬럼</label>
+          <Input
+            value={newSourceColumnName}
+            placeholder="예: del_yn"
+            onChange={(event) => setNewSourceColumnName(event.target.value)}
+            onPressEnter={saveSourceColumn}
           />
         </div>
       </Modal>
@@ -1509,10 +1811,16 @@ export function EtlCreatePage() {
   const [showTruncateSql, setShowTruncateSql] = useState(false);
   const [truncateSql, setTruncateSql] = useState("");
   const [loadSql, setLoadSql] = useState(defaultLoadSql("INSERT", "", "", "PostgreSQL"));
+  const [queryRecordSql, setQueryRecordSql] = useState("");
   const [primaryKeys, setPrimaryKeys] = useState("");
   const [sourceColumns, setSourceColumns] = useState<SourceColumnMetadata[]>([]);
+  const [loadSqlColumns, setLoadSqlColumns] = useState<SourceColumnMetadata[]>([]);
   const [targetColumns, setTargetColumns] = useState<ColumnMetadataResponse[]>([]);
   const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>([]);
+  const mappingSourceColumns = useMemo(
+    () => loadSqlColumns.length > 0 ? loadSqlColumns : sourceColumns,
+    [loadSqlColumns, sourceColumns],
+  );
 
   const isUnlocked = (stepId: WizardStepId) => {
     const index = WIZARD_STEPS.findIndex((step) => step.id === stepId);
@@ -1550,12 +1858,16 @@ export function EtlCreatePage() {
       return;
     }
     if (targetColumns.length > 0) {
-      const nextMappings = buildDefaultColumnMappings(targetColumns, sourceColumns, columnMappings);
-      setColumnMappings(nextMappings);
-      setLoadSql(buildMappedLoadSql(connectionInfo, nextMappings));
+      setColumnMappings((previousMappings) => {
+        const nextMappings = buildDefaultColumnMappings(targetColumns, sourceColumns, previousMappings);
+        setLoadSql(buildMappedLoadSql(connectionInfo, nextMappings, loadMode));
+        setQueryRecordSql(buildQueryRecordSql(nextMappings, commaSeparatedValues(connectionInfo.sourceTable)));
+        return nextMappings;
+      });
       return;
     }
     setColumnMappings([]);
+    setQueryRecordSql("");
     setLoadSql(defaultLoadSql(
       loadMode,
       connectionInfo.sourceSchema,
@@ -1572,6 +1884,18 @@ export function EtlCreatePage() {
     sourceColumns,
     targetColumns,
   ]);
+
+  const completeQueryStep = () => {
+    const extractedColumns = extractLoadSqlAliasColumns(loadSql);
+    const nextSourceColumns = extractedColumns.length > 0 ? extractedColumns : sourceColumns;
+    setLoadSqlColumns(extractedColumns);
+    setColumnMappings((previousMappings) => {
+      const nextMappings = buildDefaultColumnMappings(targetColumns, nextSourceColumns, previousMappings);
+      setQueryRecordSql(buildQueryRecordSql(nextMappings, commaSeparatedValues(connectionInfo.sourceTable)));
+      return nextMappings;
+    });
+    completeAndOpen("query", "target");
+  };
 
   const completeWizard = async () => {
     if (!basicInfo.jobName.trim() || !basicInfo.parentGroupId) {
@@ -1647,6 +1971,7 @@ export function EtlCreatePage() {
             ? truncateSql.trim() || defaultTruncateSql(connectionInfo.targetSchema, connectionInfo.targetTable)
             : undefined,
           loadSql: loadSql.trim() || undefined,
+          queryRecordSql: queryRecordSql.trim() || undefined,
           primaryKeys: loadMode === "UPSERT" ? primaryKeys.trim() : undefined,
         });
       }
@@ -1715,10 +2040,34 @@ export function EtlCreatePage() {
             setPrimaryKeys("");
             setColumnMappings([]);
           }
+          setLoadSqlColumns([]);
           invalidateFrom("connection");
         }}
         onSourceColumnsChange={setSourceColumns}
         onTargetColumnsChange={setTargetColumns}
+      />
+    ),
+    query: isFileLoad ? (
+      <FileTargetStep columns={[]} />
+    ) : (
+      <QueryStep
+        connectionInfo={connectionInfo}
+        loadMode={loadMode}
+        truncateSql={truncateSql}
+        loadSql={loadSql}
+        showTruncateSql={showTruncateSql}
+        onLoadModeChange={(nextLoadMode) => {
+          setLoadMode(nextLoadMode);
+          if (targetColumns.length > 0) {
+            setLoadSql(buildMappedLoadSql(connectionInfo, columnMappings, nextLoadMode));
+          }
+          if (nextLoadMode !== "TRUNCATE") {
+            setShowTruncateSql(false);
+          }
+        }}
+        onTruncateSqlChange={setTruncateSql}
+        onLoadSqlChange={setLoadSql}
+        onShowTruncateSqlChange={setShowTruncateSql}
       />
     ),
     target: isFileLoad ? (
@@ -1727,25 +2076,17 @@ export function EtlCreatePage() {
       <TargetStep
         connectionInfo={connectionInfo}
         loadMode={loadMode}
-        truncateSql={truncateSql}
-        loadSql={loadSql}
         primaryKeys={primaryKeys}
-        sourceColumns={sourceColumns}
+        sourceColumns={mappingSourceColumns}
         targetColumns={targetColumns}
         columnMappings={columnMappings}
-        showTruncateSql={showTruncateSql}
-        onLoadModeChange={(nextLoadMode) => {
-          setLoadMode(nextLoadMode);
-          if (nextLoadMode !== "TRUNCATE") {
-            setShowTruncateSql(false);
-          }
-        }}
-        onTruncateSqlChange={setTruncateSql}
-        onLoadSqlChange={setLoadSql}
+        loadSql={loadSql}
+        onQueryRecordSqlChange={setQueryRecordSql}
         onPrimaryKeysChange={setPrimaryKeys}
         onColumnMappingsChange={setColumnMappings}
         onSourceColumnsChange={setSourceColumns}
-        onShowTruncateSqlChange={setShowTruncateSql}
+        onLoadSqlColumnsChange={setLoadSqlColumns}
+        onLoadSqlChange={setLoadSql}
       />
     ),
   } satisfies Record<WizardStepId, ReactNode>;
@@ -1800,7 +2141,27 @@ export function EtlCreatePage() {
                     <Button
                       type="primary"
                       disabled={!canCompleteConnection}
-                      onClick={() => completeAndOpen("connection", "target")}
+                      onClick={() => completeAndOpen("connection", "query")}
+                    >
+                      다음: 적재쿼리
+                    </Button>
+                  </div>
+                </>
+              ),
+            },
+            {
+              key: "query",
+              collapsible: isUnlocked("query") ? undefined : "disabled",
+              label: <StepLabel step="query" title="적재쿼리" completed={completedSteps.includes("query")} unlocked={isUnlocked("query")} />,
+              children: (
+                <>
+                  {content.query}
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
+                    <Button onClick={() => setActiveStep("connection")}>이전</Button>
+                    <Button
+                      type="primary"
+                      disabled={!isFileLoad && (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()}
+                      onClick={completeQueryStep}
                     >
                       다음: 대상
                     </Button>
@@ -1816,7 +2177,7 @@ export function EtlCreatePage() {
                 <>
                   {content.target}
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
-                    <Button onClick={() => setActiveStep("connection")}>이전</Button>
+                    <Button onClick={() => setActiveStep("query")}>이전</Button>
                     <Button
                       type="primary"
                       loading={isCreating}

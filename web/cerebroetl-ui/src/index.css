@@ -1063,7 +1063,7 @@ button.airflow-tree-label:hover {
 
 .etl-column-mapping-layout {
   display: grid;
-  grid-template-columns: minmax(320px, 0.85fr) minmax(140px, 0.32fr) minmax(520px, 1.35fr);
+  grid-template-columns: minmax(320px, 0.85fr) minmax(240px, 0.6fr) minmax(440px, 1.2fr);
   min-height: 460px;
   max-height: 62vh;
   overflow: auto;
@@ -1097,7 +1097,8 @@ button.airflow-tree-label:hover {
 
 .etl-source-column-row,
 .etl-target-column-row {
-  min-height: 38px;
+  height: 40px;
+  min-height: 40px;
   padding: 6px 10px;
   display: grid;
   align-items: center;
@@ -1106,7 +1107,7 @@ button.airflow-tree-label:hover {
 }
 
 .etl-source-column-row {
-  grid-template-columns: 52px minmax(150px, 0.9fr) minmax(150px, 1.1fr) 28px;
+  grid-template-columns: 58px minmax(170px, 1fr) 28px;
 }
 
 .etl-source-column-row span {
@@ -1128,6 +1129,19 @@ button.airflow-tree-label:hover {
   height: 26px;
 }
 
+.etl-source-column-add-row {
+  min-height: 44px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #edf1f6;
+}
+
+.etl-source-column-add-row .ant-btn {
+  width: 100%;
+  height: 28px;
+}
+
 .etl-source-column-row strong,
 .etl-target-column-row strong {
   min-width: 0;
@@ -1139,55 +1153,28 @@ button.airflow-tree-label:hover {
 }
 
 .etl-target-column-row {
-  grid-template-columns: 58px 32px minmax(120px, 0.8fr) minmax(180px, 1fr);
+  grid-template-columns: 58px 32px minmax(180px, 1fr);
 }
 
-.etl-column-flow-row {
-  min-height: 38px;
-  padding: 6px 10px;
-  display: flex;
-  align-items: center;
-  border-bottom: 1px solid #edf1f6;
-}
-
-.etl-column-flow-line {
+.etl-column-flow-canvas {
   width: 100%;
   min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px;
-  align-items: center;
-  gap: 8px;
-  color: #c81e1e;
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.etl-column-flow-line span {
-  min-width: 0;
-  overflow: hidden;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.etl-column-flow-line i {
-  position: relative;
   display: block;
-  height: 2px;
-  background: #ef1b1b;
+  overflow: visible;
 }
 
-.etl-column-flow-line i::after {
-  position: absolute;
-  top: 50%;
-  right: -1px;
-  width: 0;
-  height: 0;
-  border-top: 6px solid transparent;
-  border-bottom: 6px solid transparent;
-  border-left: 9px solid #ef1b1b;
-  content: "";
-  transform: translateY(-50%);
+.etl-column-flow-canvas path {
+  fill: none;
+  marker-end: url("#etl-column-flow-arrow");
+  stroke: #ef1b1b;
+  stroke-linecap: round;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.etl-column-flow-canvas marker path {
+  fill: #ef1b1b;
+  stroke: none;
 }
 
 .etl-mapping-order-buttons {
@@ -1201,44 +1188,17 @@ button.airflow-tree-label:hover {
   height: 26px;
 }
 
-.etl-target-column-row .ant-select {
-  min-width: 0;
-}
-
-.etl-mapping-logic-preview {
-  min-width: 0;
-  min-height: 32px;
-  padding: 4px 9px;
+.etl-source-column-modal-body {
   display: grid;
-  grid-template-columns: minmax(90px, 0.35fr) minmax(120px, 1fr);
+  grid-template-columns: 82px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
-  border: 1px solid #d6dde7;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #172033;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  gap: 12px 10px;
+  padding-top: 8px;
 }
 
-.etl-mapping-logic-preview span,
-.etl-mapping-logic-preview strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.etl-mapping-logic-preview span {
-  color: #526071;
-  font-size: 12px;
-}
-
-.etl-mapping-logic-preview strong {
-  color: #111827;
-  font-size: 13px;
-  font-weight: 700;
+.etl-source-column-modal-body label {
+  color: #374151;
+  font-weight: 800;
 }
 
 .etl-mapping-alias-hint {
@@ -1264,6 +1224,13 @@ button.airflow-tree-label:hover {
   padding-top: 6px;
   color: #374151;
   font-weight: 800;
+}
+
+.etl-logic-modal-body small {
+  grid-column: 2;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .etl-change-key-column {
@@ -1305,7 +1272,7 @@ button.airflow-tree-label:hover {
   color: #293442;
   background: #ffffff;
   font: inherit;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.5;
   resize: vertical;
 }
@@ -1497,14 +1464,6 @@ button.airflow-tree-label:hover {
 
   .etl-target-column-row {
     grid-template-columns: 58px 32px minmax(110px, 1fr);
-  }
-
-  .etl-target-column-row .ant-select {
-    grid-column: 1 / -1;
-  }
-
-  .etl-mapping-logic-preview {
-    grid-column: 1 / -1;
   }
 
   .etl-sql-hint {

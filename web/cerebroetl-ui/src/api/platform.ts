@@ -622,6 +622,7 @@ export interface InitialDbToDbFlowCreateRequest {
   loadMode: "INSERT" | "TRUNCATE" | "UPSERT";
   truncateSql?: string;
   loadSql?: string;
+  queryRecordSql?: string;
   primaryKeys?: string;
 }
 

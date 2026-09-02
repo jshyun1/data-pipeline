@@ -56,6 +56,9 @@ public record NifiInitialDbToDbCreateRequest(
         String loadSql,
 
         @Size(max = 20000)
+        String queryRecordSql,
+
+        @Size(max = 20000)
         String updateExtractQuery,
 
         @Size(max = 512)
