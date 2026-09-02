@@ -131,7 +131,17 @@ def _build_subworkflow(node: dict, spec: dict) -> TaskGroup:
             task_id="run",
             trigger_dag_id=sub_dag_id,
             # 부모 실행마다 자식 run_id가 달라야 한다(같으면 두 번째 실행이 충돌한다).
-            trigger_run_id="{{ dag_run.run_id }}__" + node["key"],
+            #
+            # ⚠️ 부모 run_id를 그대로 앞에 붙이면 안 된다. TriggerDagRunOperator가 만드는 건
+            # «수동(manual)» 실행인데, Airflow 3은 scheduled__ / backfill__ 접두사를 각각
+            # 스케줄·백필 전용으로 예약해 두고 그 밖의 실행이 쓰면 거부한다:
+            #   ValueError: A manual DAG run cannot use ID 'scheduled__...' since it is
+            #               reserved for scheduled runs
+            # 그래서 부모를 «수동»으로 돌릴 때(manual__…)는 통과하고 «스케줄»로 돌 때만
+            # 500으로 죽는, 재현이 헷갈리는 형태로 나타났다.
+            # manual__ 접두사를 우리가 직접 붙여 예약어 충돌을 없앤다(부모 run_id는 뒤에
+            # 그대로 남으므로 어느 부모 실행에서 나온 자식인지는 계속 추적된다).
+            trigger_run_id="manual__{{ dag_run.run_id }}__" + node["key"],
             wait_for_completion=True,
             poke_interval=30,
             allowed_states=["success"],
