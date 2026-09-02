@@ -45,8 +45,17 @@ notification:
   # {to,text} JSON 을 POST 해 실제 발송. 미설정이면 NO_RELAY(문자 안 감).
   sms:
     enabled: ${NOTIFICATION_SMS_ENABLED:false}
+    # 발신번호. 국내 문자 API 는 대부분 필수라 body-template 의 {sender} 로 넣는다.
+    sender: ${NOTIFICATION_SMS_SENDER:}
     gateway:
       url: ${NOTIFICATION_SMS_GATEWAY_URL:}
+      # 게이트웨이 규격 흡수(폐쇄망은 재빌드가 안 되므로 코드가 아니라 설정으로 맞춘다).
+      # headers: "Authorization: Bearer x; X-API-KEY: y"  (세미콜론 구분)
+      # body-template: 치환자 {to} {text} {sender}. 비우면 {"to","text"} JSON.
+      #   ($ 를 붙인 ${to} 형태는 compose 가 먼저 치환해 빈 값이 되므로 쓰지 않는다)
+      headers: ${NOTIFICATION_SMS_GATEWAY_HEADERS:}
+      content-type: ${NOTIFICATION_SMS_GATEWAY_CONTENT_TYPE:application/json}
+      body-template: ${NOTIFICATION_SMS_GATEWAY_BODY_TEMPLATE:}
 
 server:
   port: ${SERVER_PORT:8081}
