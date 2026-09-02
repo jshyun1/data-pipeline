@@ -525,10 +525,6 @@ function defaultTruncateSql(targetSchema: string, targetTable: string) {
   return `TRUNCATE TABLE ${targetSchema.trim()}.${targetTable.trim()}`;
 }
 
-function columnOptions(columns: ColumnMetadataResponse[]) {
-  return columns.map((column) => ({ label: column.name, value: column.name }));
-}
-
 function StepLabel({
   step,
   title,
