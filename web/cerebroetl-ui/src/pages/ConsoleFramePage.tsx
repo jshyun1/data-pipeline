@@ -6,6 +6,7 @@ import {
   getEtlJob,
   getEtlJobRuns,
   listEtlJobs,
+  syncEtlJobs,
   type EtlJobDetailResponse,
   type EtlJobLinkView,
   type EtlJobResponse,
@@ -431,6 +432,30 @@ function iframeDocument(frame: HTMLIFrameElement) {
   }
 }
 
+function isVisibleElement(element: Element) {
+  const rect = element.getBoundingClientRect();
+  const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+  return rect.width > 0 && rect.height > 0 && style?.display !== "none" && style?.visibility !== "hidden";
+}
+
+function closestNifiDialogElement(element: Element | null) {
+  return element?.closest(
+    [
+      '[role="dialog"]',
+      ".cdk-overlay-pane",
+      ".mat-dialog-container",
+      ".mat-mdc-dialog-container",
+      ".processor-configuration",
+    ].join(", "),
+  ) ?? null;
+}
+
+function hasOpenNifiDialog(doc: Document) {
+  return Array.from(
+    doc.querySelectorAll('[role="dialog"], .mat-dialog-container, .mat-mdc-dialog-container, .processor-configuration'),
+  ).some(isVisibleElement);
+}
+
 function hideToolChrome(frame: HTMLIFrameElement) {
   const doc = iframeDocument(frame);
   if (!doc) {
@@ -651,6 +676,9 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
 
   const DocumentMutationObserver = doc.defaultView?.MutationObserver ?? MutationObserver;
   const observer = new DocumentMutationObserver((mutations) => {
+    if (hasOpenNifiDialog(doc)) {
+      return;
+    }
     for (const mutation of mutations) {
       if (mutation.type === "attributes" && mutation.target instanceof Element) {
         patchElement(mutation.target);
@@ -700,7 +728,11 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
 
   if (doc.documentElement.getAttribute(KOREAN_TOOLTIP_INTERVAL_ATTRIBUTE) !== "true") {
     doc.documentElement.setAttribute(KOREAN_TOOLTIP_INTERVAL_ATTRIBUTE, "true");
-    const intervalId = doc.defaultView?.setInterval(() => patchDocument(), 1000);
+    const intervalId = doc.defaultView?.setInterval(() => {
+      if (!hasOpenNifiDialog(doc)) {
+        patchDocument();
+      }
+    }, 1000);
     doc.defaultView?.addEventListener("beforeunload", () => {
       if (intervalId) {
         doc.defaultView?.clearInterval(intervalId);
@@ -833,6 +865,9 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
   };
 
   const applyLayout = () => {
+    if (hasOpenNifiDialog(doc)) {
+      return;
+    }
     markPanel("navigation");
     markPanel("operation");
   };
@@ -844,12 +879,34 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
   }
   doc.documentElement.setAttribute(NIFI_PANEL_LAYOUT_ATTRIBUTE, "true");
 
+  let layoutFrameId: number | null = null;
+  const scheduleLayout = () => {
+    if (layoutFrameId !== null) {
+      return;
+    }
+    const frameWindow = doc.defaultView;
+    const run = () => {
+      layoutFrameId = null;
+      applyLayout();
+    };
+    layoutFrameId = frameWindow?.requestAnimationFrame
+      ? frameWindow.requestAnimationFrame(run)
+      : window.requestAnimationFrame(run);
+  };
+
   const DocumentMutationObserver = doc.defaultView?.MutationObserver ?? MutationObserver;
-  const observer = new DocumentMutationObserver(() => applyLayout());
+  const observer = new DocumentMutationObserver(() => scheduleLayout());
   observer.observe(doc.documentElement, {
     childList: true,
     subtree: true,
   });
+  doc.defaultView?.addEventListener("beforeunload", () => {
+    if (layoutFrameId !== null) {
+      doc.defaultView?.cancelAnimationFrame(layoutFrameId);
+      layoutFrameId = null;
+    }
+    observer.disconnect();
+  }, { once: true });
 }
 
 function looksLikeUuid(value: string | null | undefined) {
@@ -974,6 +1031,10 @@ function installCanvasSelectionSync(
   doc.documentElement.setAttribute(CANVAS_SELECTION_SYNC_ATTRIBUTE, "true");
 
   const notifyFromDocument = (target: Element | null) => {
+    if (closestNifiDialogElement(target)) {
+      return;
+    }
+
     const clickedProcessorId = readProcessorIdFromElement(target);
     if (clickedProcessorId) {
       onSelectionChange({ type: "processor", id: clickedProcessorId });
@@ -1068,9 +1129,10 @@ function withProcessGroupId(url: string, processGroupId: string) {
 interface ProcessGroupTreePanelProps {
   activeGroupId: string | null;
   onTreeChange?: (tree: NifiProcessGroupTreeNode | null) => void;
+  onCatalogSynced?: () => void;
 }
 
-function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTreePanelProps) {
+function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }: ProcessGroupTreePanelProps) {
   const navigate = useNavigate();
   const [tree, setTree] = useState<NifiProcessGroupTreeNode | null>(null);
   const treeRef = useRef<NifiProcessGroupTreeNode | null>(null);
@@ -1080,7 +1142,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const loadTree = useCallback((forceRefresh = false, resetExpanded = false, quietError = false) => {
+  const loadTree = useCallback((forceRefresh = false, resetExpanded = false, quietError = false, syncCatalog = false) => {
     let cancelled = false;
     if (forceRefresh) {
       setIsRefreshing(true);
@@ -1093,7 +1155,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
 
     const request = forceRefresh ? refreshNifiProcessGroupTree() : getNifiProcessGroupTree();
     request
-      .then((result) => {
+      .then(async (result) => {
         if (cancelled) {
           return;
         }
@@ -1103,6 +1165,18 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
         onTreeChange?.(result);
         if (resetExpanded) {
           setExpandedIds(new Set());
+        }
+        if (syncCatalog) {
+          try {
+            await syncEtlJobs();
+            if (!cancelled) {
+              onCatalogSynced?.();
+            }
+          } catch (ex) {
+            if (!cancelled && !quietError) {
+              setError(ex instanceof Error ? ex.message : "ETL Job 상세 동기화에 실패했습니다.");
+            }
+          }
         }
       })
       .catch((ex) => {
@@ -1123,9 +1197,9 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
     return () => {
       cancelled = true;
     };
-  }, [onTreeChange]);
+  }, [onCatalogSynced, onTreeChange]);
 
-  useEffect(() => loadTree(false, true), [loadTree]);
+  useEffect(() => loadTree(true, true, false, true), [loadTree]);
 
   useEffect(() => {
     let cleanupRequest = () => {};
@@ -1207,10 +1281,6 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
           </button>
           <button type="button" className="nifi-tree-label" title={node.name} onClick={() => openGroup(node.id)}>
             <span className="nifi-tree-name">{node.name}</span>
-            {/* 프로세서 수가 아니라 하위 그룹 수를 보여준다 - 트리에서 알고 싶은 건
-                "이 그룹 안에 몇 개가 들어있나"지 프로세서 개수가 아니다. */}
-            {node.children.length > 0
-              ? <span className="nifi-tree-count">({node.children.length})</span> : null}
           </button>
         </div>
         {hasChildren && expanded ? node.children.map((child) => renderNode(child, depth + 1)) : null}
@@ -1234,7 +1304,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange }: ProcessGroupTree
           loading={isRefreshing}
           title="트리 캐시 새로고침"
           aria-label="트리 캐시 새로고침"
-          onClick={() => loadTree(true, false)}
+          onClick={() => loadTree(true, false, false, true)}
         />
       </div>
       <input
@@ -1410,6 +1480,57 @@ function localDateString(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+const ADDED_FILE_STORAGE_PREFIX = "nifi-added-files";
+
+interface StoredAddedFiles {
+  date: string;
+  files: string[];
+}
+
+function addedFileStorageKey(jobId: string | number | null | undefined, inputDirectory: string | null | undefined) {
+  if (!jobId || !inputDirectory) {
+    return null;
+  }
+  return `${ADDED_FILE_STORAGE_PREFIX}:${jobId}:${inputDirectory}`;
+}
+
+function loadTodayAddedFiles(storageKey: string | null) {
+  if (!storageKey || typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const rawValue = window.localStorage.getItem(storageKey);
+    if (!rawValue) {
+      return [];
+    }
+    const parsed = JSON.parse(rawValue) as Partial<StoredAddedFiles>;
+    if (parsed.date !== localDateString(new Date()) || !Array.isArray(parsed.files)) {
+      window.localStorage.removeItem(storageKey);
+      return [];
+    }
+    return parsed.files.filter((fileName): fileName is string => typeof fileName === "string" && fileName.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function saveTodayAddedFiles(storageKey: string | null, files: string[]) {
+  if (!storageKey || typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        date: localDateString(new Date()),
+        files,
+      } satisfies StoredAddedFiles),
+    );
+  } catch {
+    // 목록 표시 보조 기능이라 저장 실패는 업로드 성공 흐름을 막지 않는다.
+  }
 }
 
 function shiftedDate(days: number) {
@@ -1638,33 +1759,6 @@ function lastTerminalProcessor(steps: EtlJobStepView[], links: EtlJobLinkView[])
   return sortProcessorsByPosition(steps.filter((step) => !outgoingIds.has(step.nifiProcessorId))).at(-1)
     ?? sortProcessorsByPosition(steps).at(-1)
     ?? null;
-}
-
-const CRON_SCHEDULE_LABELS: Record<string, string> = {
-  "0 0 0 * * ?": "매일 00:00",
-  "0 0 2 * * ?": "매일 02:00",
-  "0 30 9 * * ?": "매일 09:30",
-  "0 0 * * * ?": "매시간 정각",
-  "0 0/10 * * * ?": "10분마다",
-  "0 0 8 ? * MON-FRI": "월~금 오전 8시",
-  "0 0 9 ? * MON": "매주 월요일 오전 9시",
-  "0 0 1 1 * ?": "매월 1일 오전 1시",
-};
-
-function scheduleLabel(step: EtlJobStepView | null) {
-  if (!step) {
-    return "-";
-  }
-  const strategy = (step.schedulingStrategy ?? "").replace(/_/g, " ").toLowerCase();
-  const period = step.schedulingPeriod?.trim();
-  if (!period) {
-    return "-";
-  }
-  if (strategy.includes("cron")) {
-    const label = CRON_SCHEDULE_LABELS[period];
-    return label ?? period;
-  }
-  return period;
 }
 
 function stepProperties(step?: EtlJobStepView | null): Record<string, string> {
@@ -2168,9 +2262,10 @@ function ProcessorDetailPanel({ processorId, onParentGroupFound }: ProcessorDeta
 interface ProcessGroupDetailPanelProps {
   activeGroupId: string | null;
   tree: NifiProcessGroupTreeNode | null;
+  reloadKey: number;
 }
 
-function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPanelProps) {
+function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGroupDetailPanelProps) {
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<EtlJobResponse[]>([]);
   const [details, setDetails] = useState<EtlJobDetailResponse[]>([]);
@@ -2180,6 +2275,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const [jobsLoading, setJobsLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [isAddingFiles, setIsAddingFiles] = useState(false);
+  const [addedFiles, setAddedFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const addFileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -2226,7 +2322,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2300,6 +2396,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
   const lastRunTime = formatDateTime(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
   const lastRunCount = formatCount(latestRun?.totalInserted ?? 0);
   const logKeyword = detailLogKeyword(displayJob, displayNode);
+  const addedFilesStorageKey = addedFileStorageKey(displayJob?.id, inputDirectory);
   const titleName = displayJob?.jobName ?? displayNode?.name ?? "선택 없음";
   const headerTitle = isJobGroup
     ? `Job 명: ${titleName}`
@@ -2344,6 +2441,10 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
     };
   }, [displayJob?.id, isJobGroup, logKeyword]);
 
+  useEffect(() => {
+    setAddedFiles(loadTodayAddedFiles(addedFilesStorageKey));
+  }, [addedFilesStorageKey]);
+
   const handleAddFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.currentTarget.files ?? []);
     event.currentTarget.value = "";
@@ -2353,6 +2454,11 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
     setIsAddingFiles(true);
     try {
       const result = await uploadNifiInputDirectoryFiles(inputDirectory, files);
+      setAddedFiles((prev) => {
+        const next = [...prev, ...result.storedFiles];
+        saveTodayAddedFiles(addedFilesStorageKey, next);
+        return next;
+      });
       message.success(`${result.storedFiles.length}개 파일을 추가했습니다.`);
     } catch (ex) {
       message.error(ex instanceof Error ? ex.message : "파일 추가에 실패했습니다.");
@@ -2387,10 +2493,6 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
           </div>
           {isJobGroup ? (
             <>
-              <div>
-                <dt>스케줄</dt>
-                <dd>{scheduleLabel(firstStep)}</dd>
-              </div>
               <div>
                 <dt>연결 DAG</dt>
                 <dd>
@@ -2522,6 +2624,15 @@ function ProcessGroupDetailPanel({ activeGroupId, tree }: ProcessGroupDetailPane
                 type="file"
                 onChange={handleAddFiles}
               />
+              {addedFiles.length > 0 ? (
+                <ul className="nifi-added-file-list">
+                  {addedFiles.map((fileName, index) => (
+                    <li key={`${fileName}-${index}`} title={fileName}>
+                      추가된 파일 : {fileName}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </section>
           ) : null}
         </>
@@ -2540,6 +2651,7 @@ export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage, show
   const [selectedCanvasItem, setSelectedCanvasItem] = useState<CanvasSelection | null>(
     processGroupId ? { type: "processGroup", id: processGroupId } : null,
   );
+  const [jobCatalogReloadKey, setJobCatalogReloadKey] = useState(0);
   const processGroupTreeRef = useRef<NifiProcessGroupTreeNode | null>(null);
   const processGroupIdRef = useRef<string | null>(null);
   const frameSrc = processGroupId ? withProcessGroupId(src, processGroupId) : src;
@@ -2597,6 +2709,10 @@ export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage, show
     setFrameKey((key) => key + 1);
   };
 
+  const handleCatalogSynced = useCallback(() => {
+    setJobCatalogReloadKey((key) => key + 1);
+  }, []);
+
   const selectCanvasItem = (selection: CanvasSelection) => {
     setSelectedCanvasItem(selection);
     if (selection.type === "processGroup") {
@@ -2628,7 +2744,11 @@ export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage, show
   return (
     <div className="console-page">
       {showProcessGroupTree ? (
-        <ProcessGroupTreePanel activeGroupId={selectedProcessGroupId} onTreeChange={setProcessGroupTree} />
+        <ProcessGroupTreePanel
+          activeGroupId={selectedProcessGroupId}
+          onTreeChange={setProcessGroupTree}
+          onCatalogSynced={handleCatalogSynced}
+        />
       ) : null}
       <div className="console-frame-shell">
         {isReady ? (
@@ -2656,7 +2776,11 @@ export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage, show
         selectedCanvasItem?.type === "processor" ? (
           <ProcessorDetailPanel processorId={selectedCanvasItem.id} onParentGroupFound={setSelectedProcessGroupId} />
         ) : (
-          <ProcessGroupDetailPanel activeGroupId={selectedProcessGroupId} tree={processGroupTree} />
+          <ProcessGroupDetailPanel
+            activeGroupId={selectedProcessGroupId}
+            tree={processGroupTree}
+            reloadKey={jobCatalogReloadKey}
+          />
         )
       ) : null}
     </div>

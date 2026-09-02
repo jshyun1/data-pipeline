@@ -27,7 +27,7 @@ public record NifiInitialDbToDbCreateRequest(
         String sourceSchema,
 
         @NotBlank
-        @Size(max = 128)
+        @Size(max = 1000)
         String sourceTable,
 
         @NotBlank
@@ -52,10 +52,10 @@ public record NifiInitialDbToDbCreateRequest(
         @Size(max = 4000)
         String truncateSql,
 
-        @Size(max = 4000)
+        @Size(max = 20000)
         String loadSql,
 
-        @Size(max = 4000)
+        @Size(max = 20000)
         String updateExtractQuery,
 
         @Size(max = 512)

@@ -863,8 +863,9 @@ public class NifiClient {
 
         Map<String, String> selectProperties = mergedProperties(select);
         putProperty(selectProperties, SELECT_DBCP_KEYS, request.sourceServiceId().trim());
-        putProperty(selectProperties, SELECT_SQL_KEYS, "SELECT * FROM %s.%s".formatted(
-                request.sourceSchema().trim(), request.sourceTable().trim()));
+        putProperty(selectProperties, SELECT_SQL_KEYS, StringUtils.hasText(loadSql(request))
+                ? loadSql(request)
+                : "SELECT * FROM %s.%s".formatted(request.sourceSchema().trim(), request.sourceTable().trim()));
         updateProcessorProperties(token, select, selectProperties);
 
         Map<String, String> insertProperties = mergedProperties(insert);

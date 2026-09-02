@@ -1037,8 +1037,237 @@ button.airflow-tree-label:hover {
   resize: vertical;
 }
 
+.etl-column-mapping-panel {
+  width: 100%;
+  margin-top: 14px;
+  border: 1px solid #dfe5ee;
+  background: #ffffff;
+}
+
+.etl-column-mapping-toolbar {
+  min-height: 40px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #dfe5ee;
+  background: #f8fafc;
+}
+
+.etl-column-mapping-toolbar strong,
+.etl-column-list-heading {
+  color: #111827;
+  font-weight: 800;
+}
+
+.etl-column-mapping-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(140px, 0.32fr) minmax(520px, 1.35fr);
+  min-height: 460px;
+  max-height: 62vh;
+  overflow: auto;
+}
+
+.etl-source-column-list,
+.etl-column-flow-list,
+.etl-target-column-list {
+  min-width: 0;
+}
+
+.etl-source-column-list {
+  border-right: 1px solid #dfe5ee;
+}
+
+.etl-column-flow-list {
+  border-right: 1px solid #dfe5ee;
+  background: #fbfdff;
+}
+
+.etl-column-list-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: 36px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #edf1f6;
+  background: #fbfcfd;
+  font-size: 13px;
+}
+
+.etl-source-column-row,
+.etl-target-column-row {
+  min-height: 38px;
+  padding: 6px 10px;
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #edf1f6;
+}
+
+.etl-source-column-row {
+  grid-template-columns: 52px minmax(150px, 0.9fr) minmax(150px, 1.1fr) 28px;
+}
+
+.etl-source-column-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: #526071;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.etl-source-column-row .ant-tag {
+  margin-inline-end: 0;
+  text-align: center;
+}
+
+.etl-source-column-row .ant-btn {
+  width: 26px;
+  height: 26px;
+}
+
+.etl-source-column-row strong,
+.etl-target-column-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #172033;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.etl-target-column-row {
+  grid-template-columns: 58px 32px minmax(120px, 0.8fr) minmax(180px, 1fr);
+}
+
+.etl-column-flow-row {
+  min-height: 38px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #edf1f6;
+}
+
+.etl-column-flow-line {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 8px;
+  color: #c81e1e;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.etl-column-flow-line span {
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.etl-column-flow-line i {
+  position: relative;
+  display: block;
+  height: 2px;
+  background: #ef1b1b;
+}
+
+.etl-column-flow-line i::after {
+  position: absolute;
+  top: 50%;
+  right: -1px;
+  width: 0;
+  height: 0;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-left: 9px solid #ef1b1b;
+  content: "";
+  transform: translateY(-50%);
+}
+
+.etl-mapping-order-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, 26px);
+  gap: 4px;
+}
+
+.etl-target-column-row .ant-btn {
+  width: 26px;
+  height: 26px;
+}
+
+.etl-target-column-row .ant-select {
+  min-width: 0;
+}
+
+.etl-mapping-logic-preview {
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 9px;
+  display: grid;
+  grid-template-columns: minmax(90px, 0.35fr) minmax(120px, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #d6dde7;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172033;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.etl-mapping-logic-preview span,
+.etl-mapping-logic-preview strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.etl-mapping-logic-preview span {
+  color: #526071;
+  font-size: 12px;
+}
+
+.etl-mapping-logic-preview strong {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.etl-mapping-alias-hint {
+  padding: 8px 10px;
+  border-top: 1px solid #edf1f6;
+  background: #fbfcfd;
+}
+
+.etl-column-empty {
+  padding: 18px 10px;
+  color: #7a8493;
+  font-size: 13px;
+}
+
+.etl-logic-modal-body {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 10px 12px;
+  align-items: start;
+}
+
+.etl-logic-modal-body label {
+  padding-top: 6px;
+  color: #374151;
+  font-weight: 800;
+}
+
 .etl-change-key-column {
-  width: min(760px, 100%);
+  width: 100%;
   margin-top: 14px;
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr);
@@ -1069,7 +1298,7 @@ button.airflow-tree-label:hover {
 }
 
 .etl-change-key-column textarea {
-  min-height: 96px;
+  min-height: 1100px;
   min-width: 0;
   padding: 10px 12px;
   border: 0;
@@ -1079,6 +1308,19 @@ button.airflow-tree-label:hover {
   font-size: 13px;
   line-height: 1.5;
   resize: vertical;
+}
+
+.etl-sql-hint {
+  grid-column: 2;
+  padding: 7px 12px 9px;
+  border-top: 1px solid #eceff3;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.etl-target-preview {
+  width: 100%;
 }
 
 .etl-file-columns {
@@ -1237,6 +1479,36 @@ button.airflow-tree-label:hover {
   .form-row select,
   .form-row textarea {
     border-right: 1px solid #eceff3;
+  }
+
+  .etl-column-mapping-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .etl-source-column-list {
+    border-right: 0;
+    border-bottom: 1px solid #dfe5ee;
+  }
+
+  .etl-column-flow-list {
+    border-right: 0;
+    border-bottom: 1px solid #dfe5ee;
+  }
+
+  .etl-target-column-row {
+    grid-template-columns: 58px 32px minmax(110px, 1fr);
+  }
+
+  .etl-target-column-row .ant-select {
+    grid-column: 1 / -1;
+  }
+
+  .etl-mapping-logic-preview {
+    grid-column: 1 / -1;
+  }
+
+  .etl-sql-hint {
+    grid-column: 1;
   }
 
   .etl-terminal-panel div {
@@ -2432,9 +2704,9 @@ button.airflow-tree-label:hover {
 }
 
 .nifi-detail-section dd.nifi-detail-inline-value {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .nifi-detail-target-list > div {
@@ -2655,6 +2927,22 @@ button.airflow-tree-label:hover {
 .nifi-detail-empty {
   color: #111827;
   font-weight: 600;
+}
+
+.nifi-added-file-list {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  color: #111827;
+  font-size: 12px;
+}
+
+.nifi-added-file-list li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 1180px) {

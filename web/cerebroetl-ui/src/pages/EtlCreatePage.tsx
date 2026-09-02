@@ -1,5 +1,14 @@
-import { CheckCircleOutlined, CheckOutlined, LockOutlined, UploadOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Collapse, message, Radio, Select, Space, Tag } from "antd";
+import {
+  CheckCircleOutlined,
+  CheckOutlined,
+  CloseOutlined,
+  DownOutlined,
+  EditOutlined,
+  LockOutlined,
+  UpOutlined,
+  UploadOutlined,
+} from "@ant-design/icons";
+import { Alert, Button, Card, Collapse, Input, message, Modal, Radio, Select, Space, Tag } from "antd";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -19,6 +28,7 @@ import {
   type NifiControllerServiceEntity,
   type NifiProcessGroupTreeNode,
 } from "../api/platform";
+import { syncEtlJobs } from "../api/etlJobs";
 import type { ConnectionResponse } from "../types/connection";
 import { useNavigate } from "react-router-dom";
 
@@ -104,6 +114,7 @@ interface ControllerServiceOption {
   id: string;
   name: string;
   displayName: string;
+  type: string;
 }
 
 interface BasicInfo {
@@ -124,6 +135,18 @@ interface ConnectionInfo {
   targetDatabaseType: NifiDatabaseType;
   targetSchema: string;
   targetTable: string;
+}
+
+interface SourceColumnMetadata extends ColumnMetadataResponse {
+  table: string;
+}
+
+interface ColumnMapping {
+  id: string;
+  targetColumn: string;
+  sourceTable: string;
+  sourceColumn: string;
+  logic: string;
 }
 
 interface CompletionSummary {
@@ -148,13 +171,15 @@ function flattenProcessGroups(
 function toControllerServiceOption(service: NifiControllerServiceEntity): ControllerServiceOption | null {
   const id = service.component?.id ?? service.id;
   const name = service.component?.name;
-  if (!id || !name) {
+  const type = service.component?.type;
+  if (!id || !name || !type) {
     return null;
   }
   return {
     id,
     name,
     displayName: stripCdcControllerServicePrefix(name),
+    type,
   };
 }
 
@@ -168,6 +193,10 @@ function stripCdcControllerServicePrefix(value: string) {
 
 function normalizeControllerServiceName(value: string) {
   return normalizeName(stripCdcControllerServicePrefix(value));
+}
+
+function isDbcpConnectionPool(service: ControllerServiceOption) {
+  return service.type === "DBCPConnectionPool" || service.type.endsWith(".DBCPConnectionPool");
 }
 
 function nifiDatabaseTypeFromConnection(connection: ConnectionResponse | null) {
@@ -185,6 +214,110 @@ function commaSeparatedValues(value: string) {
     .filter(Boolean);
 }
 
+function tableAlias(index: number) {
+  if (index >= 0 && index < 26) {
+    return String.fromCharCode(97 + index);
+  }
+  return `t${index + 1}`;
+}
+
+function sourceColumnKey(table: string, column: string) {
+  return `${table}::${column}`;
+}
+
+function splitSourceColumnKey(value: string) {
+  const separatorIndex = value.indexOf("::");
+  if (separatorIndex < 0) {
+    return { table: "", column: value };
+  }
+  return {
+    table: value.slice(0, separatorIndex),
+    column: value.slice(separatorIndex + 2),
+  };
+}
+
+function buildDefaultColumnMappings(
+  targetColumns: ColumnMetadataResponse[],
+  sourceColumns: SourceColumnMetadata[],
+  previousMappings: ColumnMapping[],
+) {
+  return targetColumns.map((targetColumn) => {
+    const previous = previousMappings.find((mapping) => mapping.targetColumn === targetColumn.name);
+    const previousSourceExists = previous && sourceColumns.some((sourceColumn) =>
+      sourceColumn.table === previous.sourceTable && sourceColumn.name === previous.sourceColumn,
+    );
+    const matchedSource = sourceColumns.find(
+      (sourceColumn) => normalizeName(sourceColumn.name) === normalizeName(targetColumn.name),
+    );
+    const sourceTable = previousSourceExists ? previous.sourceTable : matchedSource?.table || "";
+    const sourceColumn = previousSourceExists ? previous.sourceColumn : matchedSource?.name || "";
+    return {
+      id: previous?.id ?? targetColumn.name,
+      targetColumn: targetColumn.name,
+      sourceTable,
+      sourceColumn,
+      logic: previous?.logic ?? "",
+    };
+  });
+}
+
+function autoMatchColumnMappings(
+  mappings: ColumnMapping[],
+  sourceColumns: SourceColumnMetadata[],
+) {
+  return mappings.map((mapping) => {
+    const matchedSource = sourceColumns.find(
+      (sourceColumn) => normalizeName(sourceColumn.name) === normalizeName(mapping.targetColumn),
+    );
+    return {
+      ...mapping,
+      sourceTable: matchedSource?.table ?? "",
+      sourceColumn: matchedSource?.name ?? "",
+      logic: matchedSource ? "" : mapping.logic,
+    };
+  });
+}
+
+function buildMappedLoadSql(
+  connectionInfo: ConnectionInfo,
+  mappings: ColumnMapping[],
+) {
+  const selectedTables = commaSeparatedValues(connectionInfo.sourceTable);
+  if (selectedTables.length === 0) {
+    return defaultLoadSql(
+      "INSERT",
+      connectionInfo.sourceSchema,
+      connectionInfo.sourceTable,
+      connectionInfo.sourceDatabaseType,
+    );
+  }
+
+  const aliasByTable = new Map(selectedTables.map((table, index) => [table, tableAlias(index)]));
+  const projectionMappings = mappings.length > 0
+    ? mappings
+    : selectedTables.map((table, index) => ({
+      id: `${table}-${index}`,
+      targetColumn: "*",
+      sourceTable: table,
+      sourceColumn: "*",
+      logic: "",
+    }));
+  const projections = projectionMappings.map((mapping, index) => {
+    const alias = aliasByTable.get(mapping.sourceTable);
+    const expression = mapping.logic.trim() || (alias && mapping.sourceColumn
+      ? `${alias}.${mapping.sourceColumn}`
+      : "NULL");
+    const prefix = index === 0 ? "" : ",";
+    return `${prefix}${expression} as ${mapping.targetColumn}`;
+  });
+  const schemaPrefix = connectionInfo.sourceSchema.trim() ? `${connectionInfo.sourceSchema.trim()}.` : "";
+  const fromClause = selectedTables
+    .map((table, index) => `${schemaPrefix}${table} ${tableAlias(index)}`)
+    .join(", ");
+
+  return `select \n${projections.join("\n")}\nfrom ${fromClause}`;
+}
+
 function defaultLoadSql(
   loadMode: LoadMode,
   sourceSchema: string,
@@ -192,8 +325,11 @@ function defaultLoadSql(
   databaseType: NifiDatabaseType,
 ) {
   const schema = sourceSchema.trim() || "소스스키마";
-  const table = sourceTable.trim() || "소스테이블";
-  const baseSql = `SELECT *\nFROM ${schema}.${table}`;
+  const tables = commaSeparatedValues(sourceTable);
+  const fromClause = tables.length > 0
+    ? tables.map((table) => `${schema}.${table}`).join(",\n     ")
+    : `${schema}.소스테이블`;
+  const baseSql = `SELECT *\nFROM ${fromClause}`;
   if (loadMode !== "UPSERT") {
     return baseSql;
   }
@@ -414,12 +550,11 @@ function ConnectionStep({
   value: ConnectionInfo;
   etlType: EtlType;
   onChange: (nextValue: Partial<ConnectionInfo>) => void;
-  onSourceColumnsChange: (columns: ColumnMetadataResponse[]) => void;
+  onSourceColumnsChange: (columns: SourceColumnMetadata[]) => void;
   onTargetColumnsChange: (columns: ColumnMetadataResponse[]) => void;
 }) {
   const [services, setServices] = useState<ControllerServiceOption[]>([]);
   const [connections, setConnections] = useState<ConnectionResponse[]>([]);
-  const [connectionsLoaded, setConnectionsLoaded] = useState(false);
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [sourceSchemas, setSourceSchemas] = useState<string[]>([]);
   const [sourceTables, setSourceTables] = useState<string[]>([]);
@@ -445,7 +580,8 @@ function ConnectionStep({
         setServices(
           result
             .map(toControllerServiceOption)
-            .filter((service): service is ControllerServiceOption => service !== null),
+            .filter((service): service is ControllerServiceOption => service !== null)
+            .filter(isDbcpConnectionPool),
         );
         setServiceError(null);
       })
@@ -467,13 +603,11 @@ function ConnectionStep({
       .then((result) => {
         if (!cancelled) {
           setConnections(result);
-          setConnectionsLoaded(true);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setConnections([]);
-          setConnectionsLoaded(true);
         }
       });
 
@@ -482,27 +616,20 @@ function ConnectionStep({
     };
   }, []);
 
-  const connectionMatchesControllerService = (connection: ConnectionResponse, service: ControllerServiceOption) =>
-    normalizeControllerServiceName(connection.name) === normalizeControllerServiceName(service.name);
-
-  const matchedServices = services.filter((service) =>
-    connections.some((connection) => connectionMatchesControllerService(connection, service)),
-  );
-
   const servicePlaceholder = serviceError
     ? "Controller Service 조회 실패"
-    : !connectionsLoaded || services.length === 0
-      ? "Controller Service 조회 중"
-      : matchedServices.length > 0
-        ? "Controller Service를 선택하세요"
-        : "연결정보와 일치하는 Controller Service가 없습니다";
+    : services.length > 0
+      ? "Controller Service를 선택하세요"
+      : "DBCPConnectionPool Controller Service가 없습니다";
 
   const connectionByServiceId = (serviceId: string) => {
-    const service = matchedServices.find((entry) => entry.id === serviceId);
+    const service = services.find((entry) => entry.id === serviceId);
     if (!service) {
       return null;
     }
-    return connections.find((connection) => connectionMatchesControllerService(connection, service)) ?? null;
+    return connections.find(
+      (connection) => normalizeControllerServiceName(connection.name) === normalizeControllerServiceName(service.name),
+    ) ?? null;
   };
 
   const sourceConnection = connectionByServiceId(value.sourceServiceId);
@@ -675,17 +802,23 @@ function ConnectionStep({
   useEffect(() => {
     let cancelled = false;
     onSourceColumnsChange([]);
+    const selectedSourceTables = commaSeparatedValues(value.sourceTable);
 
-    if (!sourceEnabled || !sourceConnection || !value.sourceSchema.trim() || !value.sourceTable.trim()) {
+    if (!sourceEnabled || !sourceConnection || !value.sourceSchema.trim() || selectedSourceTables.length === 0) {
       return () => {
         cancelled = true;
       };
     }
 
-    listConnectionColumns(sourceConnection.id, value.sourceSchema.trim(), value.sourceTable.trim())
-      .then((columns) => {
+    Promise.all(
+      selectedSourceTables.map((table) =>
+        listConnectionColumns(sourceConnection.id, value.sourceSchema.trim(), table)
+          .then((columns) => columns.map((column) => ({ ...column, table }))),
+      ),
+    )
+      .then((columnGroups) => {
         if (!cancelled) {
-          onSourceColumnsChange(columns);
+          onSourceColumnsChange(columnGroups.flat());
         }
       })
       .catch(() => {
@@ -799,13 +932,13 @@ function ConnectionStep({
             <label>소스 연결</label>
             <select
               value={value.sourceServiceId}
-              disabled={!connectionsLoaded || matchedServices.length === 0 || !!serviceError}
+              disabled={services.length === 0 || !!serviceError}
               onChange={(event) => handleSourceServiceChange(event.target.value)}
             >
               <option value="" disabled>
                 {servicePlaceholder}
               </option>
-              {matchedServices.map((service) => (
+              {services.map((service) => (
                 <option key={service.id} value={service.id}>
                   {service.displayName}
                 </option>
@@ -816,13 +949,13 @@ function ConnectionStep({
         <label>타깃 연결</label>
         <select
           value={value.targetServiceId}
-          disabled={!connectionsLoaded || matchedServices.length === 0 || !!serviceError}
+          disabled={services.length === 0 || !!serviceError}
           onChange={(event) => handleTargetServiceChange(event.target.value)}
         >
           <option value="" disabled>
             {servicePlaceholder}
           </option>
-          {matchedServices.map((service) => (
+          {services.map((service) => (
             <option key={service.id} value={service.id}>
               {service.displayName}
             </option>
@@ -892,14 +1025,15 @@ function ConnectionStep({
           <>
             <label>소스 테이블</label>
             <Select
+              mode="multiple"
               showSearch
-              value={value.sourceTable || undefined}
+              value={commaSeparatedValues(value.sourceTable)}
               placeholder={sourceTablePlaceholder}
               disabled={!value.sourceSchema.trim() || sourceTableLoading || !!sourceTableError || sourceTables.length === 0}
               loading={sourceTableLoading}
               options={sourceTableOptions}
               filterOption={matchesSelectOption}
-              onChange={(nextTable) => updateValue({ sourceTable: nextTable })}
+              onChange={(nextTables) => updateValue({ sourceTable: nextTables.join(",") })}
             />
           </>
         ) : null}
@@ -920,31 +1054,119 @@ function ConnectionStep({
 }
 
 function TargetStep({
+  connectionInfo,
   loadMode,
   truncateSql,
   loadSql,
   primaryKeys,
+  sourceColumns,
   targetColumns,
+  columnMappings,
   showTruncateSql,
   onLoadModeChange,
   onTruncateSqlChange,
   onLoadSqlChange,
   onPrimaryKeysChange,
+  onColumnMappingsChange,
+  onSourceColumnsChange,
   onShowTruncateSqlChange,
 }: {
+  connectionInfo: ConnectionInfo;
   loadMode: LoadMode;
   onLoadModeChange: (loadMode: LoadMode) => void;
   truncateSql: string;
   loadSql: string;
   primaryKeys: string;
+  sourceColumns: SourceColumnMetadata[];
   targetColumns: ColumnMetadataResponse[];
+  columnMappings: ColumnMapping[];
   showTruncateSql: boolean;
   onTruncateSqlChange: (truncateSql: string) => void;
   onLoadSqlChange: (loadSql: string) => void;
   onPrimaryKeysChange: (primaryKeys: string) => void;
+  onColumnMappingsChange: (mappings: ColumnMapping[]) => void;
+  onSourceColumnsChange: (columns: SourceColumnMetadata[]) => void;
   onShowTruncateSqlChange: (show: boolean) => void;
 }) {
+  const [editingMappingId, setEditingMappingId] = useState<string | null>(null);
+  const [editingLogic, setEditingLogic] = useState("");
   const targetColumnOptions = columnOptions(targetColumns);
+  const selectedSourceTables = commaSeparatedValues(connectionInfo.sourceTable);
+  const aliasByTable = new Map(selectedSourceTables.map((table, index) => [table, tableAlias(index)]));
+  const usedSourceColumnKeys = new Set(
+    columnMappings
+      .filter((mapping) => mapping.sourceTable && mapping.sourceColumn)
+      .map((mapping) => sourceColumnKey(mapping.sourceTable, mapping.sourceColumn)),
+  );
+  const sourceColumnOptions = sourceColumns.map((column) => ({
+    label: `${aliasByTable.get(column.table) ?? column.table}.${column.name}`,
+    value: sourceColumnKey(column.table, column.name),
+  }));
+  const editingMapping = columnMappings.find((mapping) => mapping.id === editingMappingId) ?? null;
+  const aliasLabel = (table: string) => `${aliasByTable.get(table) ?? table}.`;
+  const mappingSourceLabel = (mapping: ColumnMapping) => {
+    if (!mapping.sourceTable || !mapping.sourceColumn) {
+      return "";
+    }
+    return `${aliasByTable.get(mapping.sourceTable) ?? mapping.sourceTable}.${mapping.sourceColumn}`;
+  };
+
+  const applyColumnMappings = (nextMappings: ColumnMapping[]) => {
+    onColumnMappingsChange(nextMappings);
+    onLoadSqlChange(buildMappedLoadSql(connectionInfo, nextMappings));
+  };
+
+  const updateMapping = (mappingId: string, updates: Partial<ColumnMapping>) => {
+    applyColumnMappings(columnMappings.map((mapping) =>
+      mapping.id === mappingId ? { ...mapping, ...updates } : mapping,
+    ));
+  };
+
+  const moveMapping = (mappingId: string, direction: -1 | 1) => {
+    const currentIndex = columnMappings.findIndex((mapping) => mapping.id === mappingId);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= columnMappings.length) {
+      return;
+    }
+    const nextMappings = [...columnMappings];
+    const [removed] = nextMappings.splice(currentIndex, 1);
+    nextMappings.splice(nextIndex, 0, removed);
+    applyColumnMappings(nextMappings);
+  };
+
+  const handleAutoMatch = () => {
+    const nextMappings = autoMatchColumnMappings(columnMappings, sourceColumns);
+    applyColumnMappings(nextMappings);
+    message.success("컬럼명이 같은 항목을 1:1로 매핑했습니다.");
+  };
+
+  const deleteSourceColumn = (column: SourceColumnMetadata) => {
+    const removedKey = sourceColumnKey(column.table, column.name);
+    const nextSourceColumns = sourceColumns.filter(
+      (sourceColumn) => sourceColumnKey(sourceColumn.table, sourceColumn.name) !== removedKey,
+    );
+    const nextMappings = columnMappings.map((mapping) =>
+      sourceColumnKey(mapping.sourceTable, mapping.sourceColumn) === removedKey
+        ? { ...mapping, sourceTable: "", sourceColumn: "", logic: "" }
+        : mapping,
+    );
+    onSourceColumnsChange(nextSourceColumns);
+    applyColumnMappings(nextMappings);
+  };
+
+  const openLogicEditor = (mapping: ColumnMapping) => {
+    setEditingMappingId(mapping.id);
+    setEditingLogic(mapping.logic);
+  };
+
+  const saveLogicEditor = () => {
+    if (!editingMapping) {
+      return;
+    }
+    updateMapping(editingMapping.id, { logic: editingLogic });
+    setEditingMappingId(null);
+    setEditingLogic("");
+  };
 
   return (
     <div className="etl-target-preview">
@@ -997,7 +1219,126 @@ function TargetStep({
         </div>
       ) : null}
 
-      {(loadMode === "INSERT" || loadMode === "UPSERT") ? (
+      <>
+        <div className="etl-column-mapping-panel">
+          <div className="etl-column-mapping-toolbar">
+            <strong>컬럼 매핑</strong>
+            <Button
+              size="small"
+              onClick={handleAutoMatch}
+              disabled={sourceColumns.length === 0 || columnMappings.length === 0}
+            >
+              1:1 직접 매핑
+            </Button>
+          </div>
+          {selectedSourceTables.length > 1 ? (
+            <div className="etl-mapping-alias-hint">
+              {selectedSourceTables.map((table, index) => (
+                <Tag key={table}>{table} = {tableAlias(index)}</Tag>
+              ))}
+            </div>
+          ) : null}
+          <div className="etl-column-mapping-layout">
+            <div className="etl-source-column-list">
+              <div className="etl-column-list-heading">테이블 | 소스컬럼</div>
+              {sourceColumns.length > 0 ? sourceColumns.map((column) => (
+                <div key={`${column.table}-${column.name}`} className="etl-source-column-row">
+                  <span>{aliasLabel(column.table)}</span>
+                  <strong>{column.name}</strong>
+                  {!usedSourceColumnKeys.has(sourceColumnKey(column.table, column.name)) ? (
+                    <Tag color="default">not used</Tag>
+                  ) : null}
+                  <Button
+                    size="small"
+                    title="소스 컬럼 삭제"
+                    icon={<CloseOutlined />}
+                    onClick={() => deleteSourceColumn(column)}
+                  />
+                </div>
+              )) : (
+                <div className="etl-column-empty">소스 컬럼 조회 결과가 없습니다.</div>
+              )}
+            </div>
+            <div className="etl-column-flow-list">
+              <div className="etl-column-list-heading">연결</div>
+              {columnMappings.length > 0 ? columnMappings.map((mapping) => (
+                <div key={`${mapping.id}-flow`} className="etl-column-flow-row">
+                  {mappingSourceLabel(mapping) || mapping.logic.trim() ? (
+                    <div className="etl-column-flow-line">
+                      <span>{mappingSourceLabel(mapping) || "직접 로직"}</span>
+                      <i />
+                    </div>
+                  ) : null}
+                </div>
+              )) : (
+                <div className="etl-column-empty">-</div>
+              )}
+            </div>
+            <div className="etl-target-column-list">
+              <div className="etl-column-list-heading">타깃 컬럼</div>
+              {columnMappings.length > 0 ? columnMappings.map((mapping, index) => (
+                <div key={mapping.id} className="etl-target-column-row">
+                  <div className="etl-mapping-order-buttons">
+                    <Button
+                      size="small"
+                      title="위로 이동"
+                      icon={<UpOutlined />}
+                      disabled={index === 0}
+                      onClick={() => moveMapping(mapping.id, -1)}
+                    />
+                    <Button
+                      size="small"
+                      title="아래로 이동"
+                      icon={<DownOutlined />}
+                      disabled={index === columnMappings.length - 1}
+                      onClick={() => moveMapping(mapping.id, 1)}
+                    />
+                  </div>
+                  <Button
+                    size="small"
+                    title="처리 로직 편집"
+                    icon={<EditOutlined />}
+                    onClick={() => openLogicEditor(mapping)}
+                  />
+                  <strong>{mapping.targetColumn}</strong>
+                  {mapping.logic.trim() ? (
+                    <button
+                      type="button"
+                      className="etl-mapping-logic-preview"
+                      title="처리 로직 편집"
+                      onClick={() => openLogicEditor(mapping)}
+                    >
+                      <span>{mappingSourceLabel(mapping) ? `← ${mappingSourceLabel(mapping)}` : "직접 로직"}</span>
+                      <strong>{mapping.logic}</strong>
+                    </button>
+                  ) : (
+                    <Select
+                      showSearch
+                      allowClear
+                      value={mapping.sourceTable && mapping.sourceColumn
+                        ? sourceColumnKey(mapping.sourceTable, mapping.sourceColumn)
+                        : undefined}
+                      disabled={sourceColumnOptions.length === 0}
+                      options={sourceColumnOptions}
+                      filterOption={matchesSelectOption}
+                      placeholder="소스 컬럼 선택"
+                      onChange={(value) => {
+                        const selected = splitSourceColumnKey(value ?? "");
+                        updateMapping(mapping.id, {
+                          sourceTable: selected.table,
+                          sourceColumn: selected.column,
+                          logic: value ? "" : mapping.logic,
+                        });
+                      }}
+                    />
+                  )}
+                </div>
+              )) : (
+                <div className="etl-column-empty">타깃 컬럼 조회 결과가 없습니다.</div>
+              )}
+            </div>
+          </div>
+        </div>
         <div className="etl-change-key-column">
           <label>적재로직 SQL문</label>
           <textarea
@@ -1005,8 +1346,9 @@ function TargetStep({
             onChange={(event) => onLoadSqlChange(event.target.value)}
             placeholder={"예: SELECT *\nFROM source_schema.source_table"}
           />
+          <small className="etl-sql-hint">테이블 간 조인 조건을 추가 바랍니다.</small>
         </div>
-      ) : null}
+      </>
 
       {loadMode === "UPSERT" ? (
         <div className="etl-change-key-column">
@@ -1024,6 +1366,32 @@ function TargetStep({
           />
         </div>
       ) : null}
+      <Modal
+        title="변환 - 처리 로직"
+        open={!!editingMapping}
+        width="min(960px, 92vw)"
+        onOk={saveLogicEditor}
+        onCancel={() => {
+          setEditingMappingId(null);
+          setEditingLogic("");
+        }}
+        okText="확인"
+        cancelText="취소"
+      >
+        <div className="etl-logic-modal-body">
+          <label>대상 컬럼</label>
+          <Input value={editingMapping?.targetColumn ?? ""} disabled />
+          <label>처리 로직</label>
+          <Input.TextArea
+            value={editingLogic}
+            rows={12}
+            onChange={(event) => setEditingLogic(event.target.value)}
+            placeholder={editingMapping?.sourceTable && editingMapping.sourceColumn
+              ? `${tableAlias(selectedSourceTables.indexOf(editingMapping.sourceTable))}.${editingMapping.sourceColumn}`
+              : "예: NVL(a.column_name, 'N')"}
+          />
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -1142,8 +1510,9 @@ export function EtlCreatePage() {
   const [truncateSql, setTruncateSql] = useState("");
   const [loadSql, setLoadSql] = useState(defaultLoadSql("INSERT", "", "", "PostgreSQL"));
   const [primaryKeys, setPrimaryKeys] = useState("");
-  const [, setSourceColumns] = useState<ColumnMetadataResponse[]>([]);
+  const [sourceColumns, setSourceColumns] = useState<SourceColumnMetadata[]>([]);
   const [targetColumns, setTargetColumns] = useState<ColumnMetadataResponse[]>([]);
+  const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>([]);
 
   const isUnlocked = (stepId: WizardStepId) => {
     const index = WIZARD_STEPS.findIndex((step) => step.id === stepId);
@@ -1177,9 +1546,16 @@ export function EtlCreatePage() {
     !!connectionInfo.targetTable.trim();
 
   useEffect(() => {
-    if (isFileLoad || loadMode === "TRUNCATE") {
+    if (isFileLoad) {
       return;
     }
+    if (targetColumns.length > 0) {
+      const nextMappings = buildDefaultColumnMappings(targetColumns, sourceColumns, columnMappings);
+      setColumnMappings(nextMappings);
+      setLoadSql(buildMappedLoadSql(connectionInfo, nextMappings));
+      return;
+    }
+    setColumnMappings([]);
     setLoadSql(defaultLoadSql(
       loadMode,
       connectionInfo.sourceSchema,
@@ -1190,8 +1566,11 @@ export function EtlCreatePage() {
     connectionInfo.sourceDatabaseType,
     connectionInfo.sourceSchema,
     connectionInfo.sourceTable,
+    connectionInfo.targetTable,
     isFileLoad,
     loadMode,
+    sourceColumns,
+    targetColumns,
   ]);
 
   const completeWizard = async () => {
@@ -1267,13 +1646,18 @@ export function EtlCreatePage() {
           truncateSql: loadMode === "TRUNCATE"
             ? truncateSql.trim() || defaultTruncateSql(connectionInfo.targetSchema, connectionInfo.targetTable)
             : undefined,
-          loadSql: (loadMode === "INSERT" || loadMode === "UPSERT") ? loadSql.trim() : undefined,
+          loadSql: loadSql.trim() || undefined,
           primaryKeys: loadMode === "UPSERT" ? primaryKeys.trim() : undefined,
         });
       }
       const processGroupId = createdGroup.id;
       if (!processGroupId) {
         throw new Error("missing process group id");
+      }
+      try {
+        await syncEtlJobs();
+      } catch {
+        message.warning("생성은 완료됐지만 ETL Job 상세 동기화가 지연되고 있습니다.");
       }
       setCompletionSummary({
         processGroupId,
@@ -1329,6 +1713,7 @@ export function EtlCreatePage() {
             nextValue.targetTable !== undefined
           ) {
             setPrimaryKeys("");
+            setColumnMappings([]);
           }
           invalidateFrom("connection");
         }}
@@ -1340,11 +1725,14 @@ export function EtlCreatePage() {
       <FileTargetStep columns={[]} />
     ) : (
       <TargetStep
+        connectionInfo={connectionInfo}
         loadMode={loadMode}
         truncateSql={truncateSql}
         loadSql={loadSql}
         primaryKeys={primaryKeys}
+        sourceColumns={sourceColumns}
         targetColumns={targetColumns}
+        columnMappings={columnMappings}
         showTruncateSql={showTruncateSql}
         onLoadModeChange={(nextLoadMode) => {
           setLoadMode(nextLoadMode);
@@ -1355,6 +1743,8 @@ export function EtlCreatePage() {
         onTruncateSqlChange={setTruncateSql}
         onLoadSqlChange={setLoadSql}
         onPrimaryKeysChange={setPrimaryKeys}
+        onColumnMappingsChange={setColumnMappings}
+        onSourceColumnsChange={setSourceColumns}
         onShowTruncateSqlChange={setShowTruncateSql}
       />
     ),
