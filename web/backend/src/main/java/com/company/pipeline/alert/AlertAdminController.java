@@ -67,6 +67,10 @@ public class AlertAdminController {
      * DAG마다 따로 «이상 감지 설정»을 두었는데, 알림 규칙과 판정 기준이 두 벌이 되어
      * 어느 쪽이 실제로 울리는지 알 수 없었다. 규칙 하나로 합치고 여기서 읽기만 한다.
      *
+     * <p>«사용 중»(enabled)인 규칙만 돌려준다. 꺼둔 규칙은 울리지 않으므로 이 대상을 감시하는
+     * 것이 아닌데도 목록에 섞여, 「미사용 · 심각도 CRITICAL」 같은 항목이 감시 중인 것처럼
+     * 보였다. 규칙을 켜고 끄는 것은 설정 화면의 몫이고, 여기는 «지금 감시 중인 것»만 본다.
+     *
      * @param target CDC(=pipeline_definition.id) 또는 ETL(=etl_job.id)
      * @param ids    쉼표로 구분한 대상 id. ETL이면 그 job의 스텝(적재 체인)까지 함께 본다.
      */
@@ -81,7 +85,7 @@ public class AlertAdminController {
         // 규칙 유형마다 감시 대상이 다르다. CDC 쪽 규칙에 ETL job id를 맞춰보면 엉뚱한 규칙이 걸린다.
         List<String> types = "CDC".equalsIgnoreCase(target)
                 ? List.of("CDC_LAG", "DATA_FRESHNESS", "CONNECTOR_FAILED")
-                : List.of("JOB_FAILURE", "JOB_CONSECUTIVE_FAILURE", "JOB_NOT_RUN");
+                : List.of("JOB_FAILURE", "JOB_NOT_RUN", "WORKFLOW_FAILURE", "WORKFLOW_NOT_COMPLETED");
         // idKind=CHAIN 규칙은 etl_job이 아니라 etl_job_step을 가리킨다.
         Set<Long> chainIds = new HashSet<>();
         if (!"CDC".equalsIgnoreCase(target)) {
@@ -97,7 +101,7 @@ public class AlertAdminController {
                        r.enabled, r.severity, r.scope_json::text AS scope_json,
                        r.schedule_enabled, r.schedule_time, r.last_evaluated_at, r.last_eval_error
                 FROM alert_rule r JOIN alert_rule_type rt ON r.rule_type_code = rt.code
-                WHERE r.deleted_at IS NULL AND r.rule_type_code IN (%s)
+                WHERE r.deleted_at IS NULL AND r.enabled AND r.rule_type_code IN (%s)
                 ORDER BY rt.eval_priority, r.name""".formatted(placeholders(types)), types.toArray());
 
         List<Map<String, Object>> matched = new java.util.ArrayList<>();
@@ -107,6 +111,68 @@ public class AlertAdminController {
             }
         }
         return ApiResponse.success(matched);
+    }
+
+
+    /**
+     * scope_json 의 {@code groupPgIds}(NiFi 프로세스 그룹) → 그 아래 감시 단위 id 로 펼친다.
+     *
+     * <p>AlertEngine.expandGroupPgIds 와 같은 규칙이다 - 여기가 다르면 «실제로 울리는 범위»와
+     * «화면이 감시 중이라고 보여주는 범위»가 어긋난다.
+     */
+    private Set<Long> expandGroupPgIds(com.fasterxml.jackson.databind.JsonNode scope, String idKind) {
+        if (!scope.has("groupPgIds") || !scope.get("groupPgIds").isArray()
+                || scope.get("groupPgIds").isEmpty()) {
+            return Set.of();
+        }
+        List<String> pgIds = new java.util.ArrayList<>();
+        scope.get("groupPgIds").forEach(x -> pgIds.add(x.asText()));
+        String leafSql = "CHAIN".equals(idKind)
+                ? "SELECT s.id FROM etl_job_step s JOIN etl_job j ON j.id = s.job_id"
+                  + " WHERE s.deleted_at IS NULL AND j.deleted_at IS NULL AND s.target_table IS NOT NULL"
+                  + " AND j.nifi_pg_id IN (SELECT process_group_id FROM d)"
+                : "SELECT id FROM etl_job"
+                  + " WHERE deleted_at IS NULL AND nifi_pg_id IN (SELECT process_group_id FROM d)";
+        String sql = "WITH RECURSIVE d AS ("
+                + " SELECT process_group_id FROM nifi_process_group_metadata"
+                + " WHERE process_group_id IN (" + placeholders(pgIds) + ")"
+                + " UNION ALL"
+                + " SELECT m.process_group_id FROM nifi_process_group_metadata m"
+                + " JOIN d ON m.parent_group_id = d.process_group_id) " + leafSql;
+        try {
+            Set<Long> out = new HashSet<>();
+            jdbc.queryForList(sql, pgIds.toArray())
+                    .forEach(row -> out.add(((Number) row.values().iterator().next()).longValue()));
+            return out;
+        } catch (Exception ex) {
+            return Set.of();
+        }
+    }
+
+
+    /**
+     * scope_json 의 {@code groupConnIds}(소스 연결정보) → 그 원천의 파이프라인 id 로 펼친다.
+     *
+     * <p>CDC 규칙의 «그룹째 감시». ETL 의 groupPgIds 와 같은 이유로 저장은 연결정보 id 로 해두고
+     * 펼치는 것은 평가 시점에 한다 - 그 원천에 파이프라인이 추가돼도 자동으로 감시된다.
+     */
+    private Set<Long> expandGroupConnIds(com.fasterxml.jackson.databind.JsonNode scope) {
+        if (!scope.has("groupConnIds") || !scope.get("groupConnIds").isArray()
+                || scope.get("groupConnIds").isEmpty()) {
+            return Set.of();
+        }
+        List<Long> connIds = new java.util.ArrayList<>();
+        scope.get("groupConnIds").forEach(x -> connIds.add(x.asLong()));
+        String sql = "SELECT id FROM pipeline_definition WHERE source_connection_id IN ("
+                + placeholders(connIds) + ")";
+        try {
+            Set<Long> out = new HashSet<>();
+            jdbc.queryForList(sql, connIds.toArray())
+                    .forEach(row -> out.add(((Number) row.values().iterator().next()).longValue()));
+            return out;
+        } catch (Exception ex) {
+            return Set.of();
+        }
     }
 
     private static String placeholders(java.util.Collection<?> values) {
@@ -144,7 +210,12 @@ public class AlertAdminController {
             if (node.has("ids") && node.get("ids").isArray()) {
                 node.get("ids").forEach(x -> scopeIds.add(x.asLong()));
             }
-            Set<Long> compare = "CHAIN".equals(node.path("idKind").asText("JOB")) ? chainIds : targetIds;
+            String idKind = node.path("idKind").asText("JOB");
+            // 그룹째 고른 것은 AlertEngine 과 같은 규칙으로 «지금» 하위 대상까지 펼쳐서 본다.
+            // 안 그러면 그룹으로 감시 중인데 속성창에는 «감시 중인 규칙 없음»으로 보인다.
+            scopeIds.addAll(expandGroupPgIds(node, idKind));
+            scopeIds.addAll(expandGroupConnIds(node));
+            Set<Long> compare = "CHAIN".equals(idKind) ? chainIds : targetIds;
             if ("INCLUDE".equals(kind)) {
                 // 지정이 비어 있으면 사실상 전체다(미설정 방어). AlertEngine과 같은 판정.
                 return scopeIds.isEmpty() || scopeIds.stream().anyMatch(compare::contains);
@@ -201,29 +272,135 @@ public class AlertAdminController {
     @GetMapping("/api/admin/alert-scope-tree")
     public ApiResponse<List<Map<String, Object>>> scopeTree(@RequestParam(defaultValue = "ETL") String category) {
         if ("CDC".equalsIgnoreCase(category)) {
-            // CDC 는 그룹 계층이 없다. 소스 연결정보로 묶어 준다(같은 원천끼리 모임).
+            // CDC 는 NiFi 그룹 계층이 없다. 소스 연결정보로 묶어 준다(같은 원천끼리 모임).
+            // 연결정보 노드도 «그룹째» 고를 수 있다 - 그 원천의 파이프라인 전부를 감시한다.
             List<Map<String, Object>> rows = jdbc.queryForList("""
-                    SELECT p.id, p.name,
+                    SELECT p.id, p.name, p.source_connection_id AS conn_id,
                            COALESCE(c.name, '(연결정보 없음)') AS group_name
                     FROM pipeline_definition p
                     LEFT JOIN pipeline_connection c ON c.id = p.source_connection_id
                     ORDER BY group_name, p.name""");
-            return ApiResponse.success(groupRows(rows, "group_name"));
+            return ApiResponse.success(connGroupTree(rows));
         }
 
-        List<Map<String, Object>> jobs = jdbc.queryForList("""
-                SELECT id, nifi_pg_id, parent_pg_id, job_name
-                FROM etl_job WHERE deleted_at IS NULL ORDER BY job_name""");
-
-        if ("ETL_CHAIN".equalsIgnoreCase(category)) {
-            List<Map<String, Object>> steps = jdbc.queryForList("""
-                    SELECT s.id, s.job_id, s.target_table, s.step_name
-                    FROM etl_job_step s JOIN etl_job j ON j.id = s.job_id
-                    WHERE s.deleted_at IS NULL AND j.deleted_at IS NULL AND s.target_table IS NOT NULL
-                    ORDER BY s.target_table""");
-            return ApiResponse.success(jobTree(jobs, steps));
+        if ("WORKFLOW".equalsIgnoreCase(category)) {
+            // 워크플로우도 NiFi 그룹에 속한다(nifi_group_pg_id) - ETL 과 같은 계층에 얹어
+            // 그룹째 감시가 그대로 된다. 게시 안 한 것은 Airflow 에 DAG 가 없어 제외한다.
+            List<Map<String, Object>> groups = jdbc.queryForList("""
+                    SELECT process_group_id AS pg, process_group_name AS name, parent_group_id AS parent_pg
+                    FROM nifi_process_group_metadata ORDER BY process_group_name""");
+            List<Map<String, Object>> leaves = jdbc.queryForList("""
+                    SELECT id, nifi_group_pg_id AS pg, name
+                    FROM etl_workflow
+                    WHERE deleted_at IS NULL AND published_at IS NOT NULL
+                    ORDER BY name""");
+            return ApiResponse.success(pgTree(groups, leaves));
         }
-        return ApiResponse.success(jobTree(jobs, List.of()));
+
+        // 계층은 NiFi 프로세스 그룹 메타(nifi_process_group_metadata)에서 온다 - ETL>관리 화면의
+        // 트리와 같은 출처다. 예전에는 etl_job.parent_pg_id 로 이었는데, 상위 그룹(DZ·DW·ETL Root)은
+        // etl_job 에 없어서 부모를 못 찾고 전부 최상위로 흩어졌다(같은 이름 job 이 여러 번 보였다).
+        List<Map<String, Object>> groups = jdbc.queryForList("""
+                SELECT process_group_id AS pg, process_group_name AS name, parent_group_id AS parent_pg
+                FROM nifi_process_group_metadata ORDER BY process_group_name""");
+
+        boolean chain = "ETL_CHAIN".equalsIgnoreCase(category);
+        List<Map<String, Object>> leaves = chain
+                ? jdbc.queryForList("""
+                        SELECT s.id, j.nifi_pg_id AS pg, s.target_table AS name
+                        FROM etl_job_step s JOIN etl_job j ON j.id = s.job_id
+                        WHERE s.deleted_at IS NULL AND j.deleted_at IS NULL AND s.target_table IS NOT NULL
+                        ORDER BY s.target_table""")
+                : jdbc.queryForList("""
+                        SELECT id, nifi_pg_id AS pg, job_name AS name
+                        FROM etl_job WHERE deleted_at IS NULL ORDER BY job_name""");
+        return ApiResponse.success(pgTree(groups, leaves));
+    }
+
+    /**
+     * NiFi 프로세스 그룹 계층으로 만든 감시 대상 트리.
+     *
+     * <p>그룹 노드는 {@code groupPgId} 로 «그룹째» 고를 수 있고, 잎(테이블/잡)은 {@code id} 로
+     * 하나만 고른다. 그룹을 고르면 그 아래 전부가 감시 대상이 된다 - 나중에 테이블이 추가돼도
+     * 규칙을 다시 저장할 필요가 없도록, 저장은 그룹 id 로 하고 펼치는 것은 평가 시점에 한다.
+     *
+     * <p>고를 것이 하나도 없는 가지는 빼서 목록을 짧게 유지한다.
+     */
+    private List<Map<String, Object>> pgTree(List<Map<String, Object>> groups,
+                                             List<Map<String, Object>> leaves) {
+        Map<String, List<Map<String, Object>>> leavesByPg = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> l : leaves) {
+            leavesByPg.computeIfAbsent(String.valueOf(l.get("pg")), k -> new java.util.ArrayList<>())
+                    .add(node(l.get("id"), String.valueOf(l.get("name")), List.of()));
+        }
+
+        Map<String, Map<String, Object>> nodeByPg = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> g : groups) {
+            String pg = String.valueOf(g.get("pg"));
+            Map<String, Object> n = node(null, String.valueOf(g.get("name")),
+                    leavesByPg.getOrDefault(pg, List.of()));
+            n.put("groupPgId", pg);   // 그룹째 고를 때 쓰는 키
+            nodeByPg.put(pg, n);
+        }
+
+        List<Map<String, Object>> roots = new java.util.ArrayList<>();
+        for (Map<String, Object> g : groups) {
+            Map<String, Object> self = nodeByPg.get(String.valueOf(g.get("pg")));
+            Object parentPg = g.get("parent_pg");
+            Map<String, Object> parent = parentPg == null ? null : nodeByPg.get(String.valueOf(parentPg));
+            if (parent != null && parent != self) {
+                childrenOf(parent).add(self);
+            } else {
+                roots.add(self);
+            }
+        }
+        // 그룹 밖(메타에 없는 pg)에 달린 잎은 최상위로 올린다 - 목록에서 사라지지 않게.
+        leavesByPg.forEach((pg, ls) -> {
+            if (!nodeByPg.containsKey(pg)) {
+                roots.addAll(ls);
+            }
+        });
+        roots.removeIf(n -> !hasSelectable(n));
+        return roots;
+    }
+
+    /** 이 가지에 고를 것(잎 또는 하위 잎)이 하나라도 있나. 없으면 트리에서 뺀다. */
+    private boolean hasSelectable(Map<String, Object> n) {
+        if (n.get("id") != null) {
+            return true;
+        }
+        List<Map<String, Object>> kids = childrenOf(n);
+        kids.removeIf(k -> !hasSelectable(k));
+        return !kids.isEmpty();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> childrenOf(Map<String, Object> n) {
+        return (List<Map<String, Object>>) n.get("children");
+    }
+
+
+    /**
+     * CDC 감시 대상 트리. 소스 연결정보로 묶고, 그 묶음도 «그룹째» 고를 수 있게 한다.
+     *
+     * <p>연결정보가 없는 파이프라인은 고를 수 있는 묶음이 아니다(무엇을 감시할지 특정 못 함) -
+     * 잎만 고르게 둔다.
+     */
+    private List<Map<String, Object>> connGroupTree(List<Map<String, Object>> rows) {
+        java.util.LinkedHashMap<String, Map<String, Object>> byGroup = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> r : rows) {
+            String gname = String.valueOf(r.get("group_name"));
+            Object connId = r.get("conn_id");
+            Map<String, Object> g = byGroup.computeIfAbsent(gname, k -> {
+                Map<String, Object> n = node(null, gname, List.of());
+                if (connId != null) {
+                    n.put("groupConnId", connId);   // 연결정보째 고를 때 쓰는 키
+                }
+                return n;
+            });
+            childrenOf(g).add(node(r.get("id"), String.valueOf(r.get("name")), List.of()));
+        }
+        return new java.util.ArrayList<>(byGroup.values());
     }
 
     /** 한 컬럼 값으로 묶은 2단 트리. 묶음 노드는 선택 불가(id=null). */
@@ -342,8 +519,8 @@ public class AlertAdminController {
             "CDC_LAG", List.of(
                     param("threshold", "미처리 임계", "건", 1, 100000000, 50000),
                     param("clear", "해제 임계", "건", 0, 100000000, 10000)),
-            "JOB_CONSECUTIVE_FAILURE", List.of(
-                    param("count", "연속 실패 횟수", "회", 2, 100, 3)),
+            "WORKFLOW_NOT_COMPLETED", List.of(
+                    param("grace_minutes", "성공 없이 지날 수 있는 시간", "분", 10, 20160, 1440)),
             "JOB_NOT_RUN", List.of(
                     param("days", "미실행 허용 기간", "일", 1, 365, 7)),
             "CONNECTOR_FAILED", List.of(),

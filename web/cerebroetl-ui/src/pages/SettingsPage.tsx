@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { AlertHistoryTab } from "../components/AlertHistoryTab";
 import {
+  Alert,
   Button,
   Card,
   Form,
@@ -31,6 +32,7 @@ import {
   getChannels,
   getRecipients,
   getRuleRecipients,
+  setSubscription,
   getScopeTargets,
   getScopeTree,
   getRuleEvalLogs,
@@ -118,16 +120,19 @@ function describeCondition(rule: AlertRule, spec: RuleParamSpec[]): string {
  */
 function scopeSummary(rule: AlertRule, nameById: Map<number, string>) {
   const scope = parseScopeJson(rule.scope_json);
-  if (scope.mode === "ALL" || scope.ids.length === 0) {
+  const groupCount = scope.groupPgIds.length + scope.groupConnIds.length;
+  if (scope.mode === "ALL" || (scope.ids.length === 0 && groupCount === 0)) {
     return <span style={{ color: "#64748b" }}>전체</span>;
   }
+  // 그룹째 고른 것은 이름 목록에 없다(대상 후보는 잎만 담고 있다). 몇 개인지만 알린다.
   const names = scope.ids.map((id) => nameById.get(id) ?? `#${id}`);
+  const parts = [...(groupCount ? [`그룹 ${groupCount}개`] : []), ...names];
   const prefix = scope.mode === "EXCLUDE" ? "제외" : "지정";
   return (
-    <Tooltip title={names.join(", ")}>
+    <Tooltip title={parts.join(", ")}>
       <span>
-        {prefix} {scope.ids.length}건 · {names[0]}
-        {names.length > 1 ? ` 외 ${names.length - 1}` : ""}
+        {prefix} {parts.length}건 · {parts[0]}
+        {parts.length > 1 ? ` 외 ${parts.length - 1}` : ""}
       </span>
     </Tooltip>
   );
@@ -150,8 +155,10 @@ type RuleGroupKey = (typeof RULE_GROUPS)[number]["key"];
 
 const RULE_GROUP_BY_CODE: Record<string, RuleGroupKey> = {
   JOB_FAILURE: "ETL",
-  JOB_CONSECUTIVE_FAILURE: "ETL",
   JOB_NOT_RUN: "ETL",
+  // 워크플로우 규칙은 «워크플로우» 단위로 고른다(그룹째도 가능 - 워크플로우도 그룹에 속한다).
+  WORKFLOW_FAILURE: "WORKFLOW",
+  WORKFLOW_NOT_COMPLETED: "WORKFLOW",
   CDC_LAG: "CDC",
   CONNECTOR_FAILED: "CDC",
   DATA_FRESHNESS: "CDC",
@@ -176,18 +183,61 @@ function ruleGroupOf(type: { code: string; category: string }): RuleGroupKey {
  * id 가 null 인 노드는 «묶음»이라 고를 수 없다(selectable=false). 그런 노드도 key 는 있어야
  * 해서 이름 기반의 가짜 key 를 준다 - 실제 값으로는 쓰이지 않는다.
  */
+/**
+ * 감시 대상 트리 → antd TreeSelect 데이터.
+ *
+ * <p>값 형식을 둘로 나눈다 - 그룹은 {@code g:<프로세스그룹id>}, 잎(테이블/잡)은 {@code s:<id>}.
+ * 그룹째 고르면 그 아래 전부가 감시 대상이 되는데, 저장은 «그룹 id» 로 해둔다. 그래야 나중에
+ * 테이블이 추가돼도 규칙을 다시 저장할 필요 없이 자동으로 감시된다(펼치기는 서버가 평가할 때).
+ */
 function toTreeData(nodes: ScopeTreeNode[], path = ""): Array<Record<string, unknown>> {
   return nodes.map((n, i) => {
-    const key = n.id != null ? n.id : `${path}g${i}-${n.name}`;
+    const isGroup = n.id == null;
+    // 그룹은 무엇으로 묶였는지에 따라 키가 다르다 - ETL 은 NiFi 프로세스 그룹(g:),
+    // CDC 는 소스 연결정보(c:). 둘 다 «그 아래 전부»를 뜻한다.
+    const value = !isGroup
+      ? `s:${n.id}`
+      : n.groupPgId ? `g:${n.groupPgId}`
+      : n.groupConnId != null ? `c:${n.groupConnId}`
+      : `x:${path}${i}-${n.name}`;   // 고를 수 없는 묶음
     return {
       title: n.name,
-      value: key,
-      key,
-      selectable: n.id != null,
-      checkable: n.id != null,
-      children: toTreeData(n.children ?? [], `${key}/`),
+      value,
+      key: value,
+      selectable: !value.startsWith("x:"),
+      checkable: !value.startsWith("x:"),
+      children: toTreeData(n.children ?? [], `${value}/`),
     };
   });
+}
+
+/** TreeSelect 선택값(g:/c:/s: 접두) → 저장 형식으로 가른다. */
+function splitScopeValues(values: string[]):
+    { ids: number[]; groupPgIds: string[]; groupConnIds: number[] } {
+  const ids: number[] = [];
+  const groupPgIds: string[] = [];
+  const groupConnIds: number[] = [];
+  for (const v of values ?? []) {
+    if (typeof v !== "string") {
+      ids.push(Number(v));            // 예전 형식(숫자 그대로)도 잎으로 받아 준다
+    } else if (v.startsWith("s:")) {
+      ids.push(Number(v.slice(2)));
+    } else if (v.startsWith("g:")) {
+      groupPgIds.push(v.slice(2));
+    } else if (v.startsWith("c:")) {
+      groupConnIds.push(Number(v.slice(2)));
+    }
+  }
+  return { ids, groupPgIds, groupConnIds };
+}
+
+/** 저장 형식 → TreeSelect 선택값. */
+function toScopeValues(ids: number[], groupPgIds: string[], groupConnIds: number[]): string[] {
+  return [
+    ...(groupPgIds ?? []).map((g) => `g:${g}`),
+    ...(groupConnIds ?? []).map((c) => `c:${c}`),
+    ...(ids ?? []).map((i) => `s:${i}`),
+  ];
 }
 
 function RulesTab() {
@@ -390,11 +440,13 @@ function RulesTab() {
 // ETL_CHAIN = 적재 테이블 하나(그 앞의 trigger/extract/truncate 까지 한 묶음),
 // ETL = NiFi 프로세스 그룹, CDC = 파이프라인.
 // "ETL Job 실패"만 체인 단위다 — 그룹 단위로는 "COM001M 적재만 감시"가 불가능했다.
-type ScopeCategory = "ETL_CHAIN" | "ETL" | "CDC";
+type ScopeCategory = "ETL_CHAIN" | "ETL" | "CDC" | "WORKFLOW";
 const SCOPE_TYPES: Record<string, ScopeCategory> = {
   JOB_FAILURE: "ETL_CHAIN",
-  JOB_CONSECUTIVE_FAILURE: "ETL",
   JOB_NOT_RUN: "ETL",
+  // 워크플로우 규칙은 워크플로우 단위로 고른다(그룹째도 가능 - 워크플로우도 NiFi 그룹에 속한다).
+  WORKFLOW_FAILURE: "WORKFLOW",
+  WORKFLOW_NOT_COMPLETED: "WORKFLOW",
   CDC_LAG: "CDC",
   CONNECTOR_FAILED: "CDC",
 };
@@ -402,17 +454,24 @@ const SCOPE_TYPES: Record<string, ScopeCategory> = {
 type ScopeKind = "ALL" | "INCLUDE" | "EXCLUDE";
 // ids 가 무엇의 id 인지. CHAIN=etl_job_step(적재), JOB=etl_job/pipeline_definition.
 type ScopeIdKind = "CHAIN" | "JOB";
-function parseScopeJson(s: string | null | undefined): { mode: ScopeKind; ids: number[]; idKind: ScopeIdKind } {
-  if (!s) return { mode: "ALL", ids: [], idKind: "JOB" };
+function parseScopeJson(s: string | null | undefined):
+    { mode: ScopeKind; ids: number[]; idKind: ScopeIdKind; groupPgIds: string[]; groupConnIds: number[] } {
+  if (!s) return { mode: "ALL", ids: [], idKind: "JOB", groupPgIds: [], groupConnIds: [] };
   try {
-    const o = JSON.parse(s) as { kind?: ScopeKind; ids?: number[]; idKind?: ScopeIdKind };
+    const o = JSON.parse(s) as {
+      kind?: ScopeKind; ids?: number[]; idKind?: ScopeIdKind;
+      groupPgIds?: string[]; groupConnIds?: number[];
+    };
     return {
-      mode: o.kind ?? "ALL",
+      mode: o.kind === "INCLUDE" || o.kind === "EXCLUDE" ? o.kind : "ALL",
       ids: Array.isArray(o.ids) ? o.ids : [],
       idKind: o.idKind === "CHAIN" ? "CHAIN" : "JOB",
+      // 그룹째 감시. 예전 규칙에는 없으므로 빈 배열이면 기존 동작 그대로다.
+      groupPgIds: Array.isArray(o.groupPgIds) ? o.groupPgIds : [],
+      groupConnIds: Array.isArray(o.groupConnIds) ? o.groupConnIds : [],
     };
   } catch {
-    return { mode: "ALL", ids: [], idKind: "JOB" };
+    return { mode: "ALL", ids: [], idKind: "JOB", groupPgIds: [], groupConnIds: [] };
   }
 }
 
@@ -495,7 +554,8 @@ function RuleFormModal({
       // customParseFormat 플러그인이 있어야 하므로, 플러그인 없이도 되는 ISO 로 붙여 넣는다.
       scheduleTime: rule.schedule_time ? dayjs(`1970-01-01T${rule.schedule_time}`) : null,
       scopeMode: staleIds ? ("ALL" as ScopeKind) : scope.mode,
-      scopeIds: staleIds ? [] : scope.ids,
+      // TreeSelect 는 g:/s: 접두 문자열을 값으로 쓴다(그룹/잎 구분).
+      scopeIds: staleIds ? [] : toScopeValues(scope.ids, scope.groupPgIds, scope.groupConnIds),
       ...Object.fromEntries(spec.map((p) => [`param_${p.key}`, params[p.key] ?? p.defaultValue])),
     };
   }, [rule, spec, scopeCategory]);
@@ -558,9 +618,14 @@ function RuleFormModal({
     payload.scheduleTime = on && v.scheduleTime ? (v.scheduleTime as ReturnType<typeof dayjs>).format("HH:mm") : null;
     if (scopeCategory) {
       const mode = (v.scopeMode ?? "ALL") as ScopeKind;
+      // 그룹째 고른 것과 개별로 고른 것을 갈라 담는다. 그룹은 id 를 그대로 저장하고
+      // «지금 그 아래 무엇이 있는지»는 서버가 평가할 때 펼친다(테이블이 늘어도 자동 포함).
+      const picked = splitScopeValues((v.scopeIds as string[]) ?? []);
       payload.scopeJson = JSON.stringify({
         kind: mode,
-        ids: mode === "ALL" ? [] : ((v.scopeIds as number[]) ?? []),
+        ids: mode === "ALL" ? [] : picked.ids,
+        groupPgIds: mode === "ALL" ? [] : picked.groupPgIds,
+        groupConnIds: mode === "ALL" ? [] : picked.groupConnIds,
         idKind: scopeCategory === "ETL_CHAIN" ? "CHAIN" : "JOB",
       });
     }
@@ -733,7 +798,10 @@ function RuleFormModal({
           <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: 6, marginTop: 4 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
               감시 범위 (
-              {scopeCategory === "ETL_CHAIN" ? "적재 Job" : scopeCategory === "ETL" ? "ETL 그룹" : "CDC 파이프라인"})
+              {scopeCategory === "ETL_CHAIN" ? "적재 Job"
+                : scopeCategory === "ETL" ? "ETL 그룹"
+                : scopeCategory === "WORKFLOW" ? "워크플로우"
+                : "CDC 파이프라인"})
             </div>
             <Form.Item name="scopeMode" style={{ marginBottom: 8 }}>
               <Select
@@ -751,14 +819,17 @@ function RuleFormModal({
                   allowClear
                   showSearch
                   treeCheckable
-                  // 부모까지 값으로 올려보내면 «묶음» id(null)가 섞인다. 잎만 값으로 쓴다.
-                  showCheckedStrategy={TreeSelect.SHOW_CHILD}
+                  // 그룹도 «그룹째 감시»라는 뜻으로 값이 된다. 부모가 체크되면 부모만 값으로
+                  // 남겨야(SHOW_PARENT) 하위가 늘었을 때 자동 포함이라는 의미가 유지된다.
+                  showCheckedStrategy={TreeSelect.SHOW_PARENT}
                   treeNodeFilterProp="title"
                   treeDefaultExpandAll
                   maxTagCount="responsive"
                   style={{ width: "100%" }}
                   placeholder={
-                    scopeCategory === "CDC" ? "감시/제외할 파이프라인 선택" : "감시/제외할 대상 선택"
+                    scopeCategory === "CDC" ? "감시/제외할 파이프라인 선택"
+                      : scopeCategory === "WORKFLOW" ? "감시/제외할 워크플로우 선택"
+                      : "감시/제외할 대상 선택"
                   }
                   treeData={toTreeData(scopeTree)}
                 />
@@ -797,12 +868,22 @@ function ChannelsTab() {
 
   // 화면알림(IN_APP)은 채널로 관리하지 않는다 — 알림 규칙을 «사용»으로 켜면 자동으로 화면에 뜬다.
   const external = channels.filter((c) => c.channel_type !== "IN_APP");
+  // 토글만 켜고 서버 릴레이가 없으면 한 건도 못 나간다. 그 조합을 화면에서 먼저 알려 준다.
+  const onButUnconfigured = external.filter((c) => c.enabled && !c.relay_configured);
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="small">
       <span style={{ color: "#888", fontSize: 13 }}>
         화면알림은 별도 설정이 없습니다 — 알림 규칙을 «사용»으로 켜면 조치 대기열·헤더 알림에 자동으로 표시됩니다.
         외부 발송(이메일·SMS)만 여기서 켜고 끕니다.
       </span>
+      {onButUnconfigured.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          message={`${onButUnconfigured.map((c) => channelLabel(c.channel_type)).join("·")} — 사용은 켜져 있으나 서버에 발송 경로가 없습니다`}
+          description="실제 발송에는 서버 설정(.env)의 SMTP 릴레이 / SMS 게이트웨이 주소가 필요합니다. 지금 상태로는 발송 건이 모두 실패 처리됩니다."
+        />
+      )}
       <Table<ChannelConfig>
         rowKey="channel_type"
         loading={isLoading}
@@ -817,6 +898,20 @@ function ChannelsTab() {
           width: 120,
           render: (enabled: boolean) =>
             enabled ? <Tag color="success">정상</Tag> : <Tag>중지</Tag>,
+        },
+        {
+          // 서버 쪽 발송 경로(SMTP·문자 게이트웨이) 설정 여부. 사용 토글과 별개다.
+          title: "발송 경로",
+          key: "relay",
+          width: 130,
+          render: (_: unknown, ch) =>
+            ch.relay_configured ? (
+              <Tag color="success">설정됨</Tag>
+            ) : (
+              <Tooltip title="서버 .env 에 SMTP 릴레이 주소 또는 SMS 게이트웨이 주소를 넣고 재기동하면 설정됩니다.">
+                <Tag color="warning">미설정</Tag>
+              </Tooltip>
+            ),
         },
         {
           title: "사용",
@@ -870,9 +965,28 @@ function RecipientsTab() {
     message.success(`${r.display_name} ${enabled ? "사용" : "미사용"}`);
     qc.invalidateQueries({ queryKey: ["recipients"] });
   }
+  // 채널 구독. 이게 없으면 이메일·전화를 등록해 두어도 실제 알림은 화면에만 남는다.
+  async function toggleChannel(r: Recipient, channel: "EMAIL" | "SMS", on: boolean) {
+    try {
+      await setSubscription(r.id, channel, on);
+      message.success(`${r.display_name} ${channel === "EMAIL" ? "이메일" : "문자"} 수신 ${on ? "켜짐" : "꺼짐"}`);
+      qc.invalidateQueries({ queryKey: ["recipients"] });
+    } catch (err) {
+      // 연락처가 없는 채널을 켜면 서버가 이유를 준다 - 그대로 보여 준다.
+      const detail = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message;
+      message.error(detail ?? "수신 설정을 바꾸지 못했습니다.");
+    }
+  }
+  function subscribed(r: Recipient, channel: string) {
+    return (r.subscriptions ?? []).some((s) => s.channel === channel);
+  }
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="middle">
+      <span style={{ color: "#888", fontSize: 13 }}>
+        «이메일 수신»·«문자 수신»을 켜야 실제로 발송됩니다. 등록만 해두면 화면 알림에만 남습니다.
+        추가할 때 적은 연락처는 자동으로 켜집니다. (메일·문자는 «위험» 등급만 발송됩니다)
+      </span>
       <Form form={form} layout="inline" onFinish={add}>
         <Form.Item name="displayName" rules={[{ required: true, message: "이름" }]}>
           <Input placeholder="이름" />
@@ -911,6 +1025,45 @@ function RecipientsTab() {
           { title: "이메일", dataIndex: "email", render: (v: string | null) => v ?? "-" },
           // 마스킹하지 않는다 - 가려진 번호로는 맞는지 확인할 수도, 고칠 수도 없다.
           { title: "전화", dataIndex: "phone", width: 160, render: (v: string | null) => v ?? "-" },
+          {
+            // 등록만으로는 안 나간다. «이 사람을 어디로 보낼지»를 여기서 켠다.
+            title: (
+              <Tooltip title="켜야 실제로 발송됩니다. 끄면 화면 알림에만 남습니다.">
+                <span>이메일 수신 ⓘ</span>
+              </Tooltip>
+            ),
+            key: "sub-email",
+            width: 110,
+            render: (_: unknown, r) => (
+              <Tooltip title={r.email ? "" : "이메일이 등록되지 않아 켤 수 없습니다"}>
+                <Switch
+                  size="small"
+                  disabled={!r.email}
+                  checked={subscribed(r, "EMAIL")}
+                  onChange={(v) => toggleChannel(r, "EMAIL", v)}
+                />
+              </Tooltip>
+            ),
+          },
+          {
+            title: (
+              <Tooltip title="켜야 실제로 발송됩니다. 끄면 화면 알림에만 남습니다.">
+                <span>문자 수신 ⓘ</span>
+              </Tooltip>
+            ),
+            key: "sub-sms",
+            width: 100,
+            render: (_: unknown, r) => (
+              <Tooltip title={r.phone ? "" : "전화번호가 등록되지 않아 켤 수 없습니다"}>
+                <Switch
+                  size="small"
+                  disabled={!r.phone}
+                  checked={subscribed(r, "SMS")}
+                  onChange={(v) => toggleChannel(r, "SMS", v)}
+                />
+              </Tooltip>
+            ),
+          },
           {
             title: "사용여부",
             dataIndex: "enabled",

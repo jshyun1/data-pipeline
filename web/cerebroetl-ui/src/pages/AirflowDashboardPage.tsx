@@ -533,11 +533,6 @@ function BusinessTree({
     }
   });
   /** 이 그룹과 하위 전체에 걸린 워크플로우 수. 트리 오른쪽 숫자로 쓴다. */
-  const countWorkflowsUnder = (node: NifiProcessGroupTreeNode): number => {
-    const own = workflows.filter((w) => w.nifiGroupPgId === node.id).length;
-    return own + (node.children ?? []).reduce((sum, child) => sum + countWorkflowsUnder(child), 0);
-  };
-
   /** 이 그룹이나 하위에 돌릴 것(워크플로우 또는 아직 안 옮긴 옛 DAG)이 있는지. */
   const hasRunnable = (node: NifiProcessGroupTreeNode): boolean => {
     const own = dags.some((d) =>
@@ -702,6 +697,7 @@ function BusinessTree({
       return null;
     }
     // 이 그룹에 속한 워크플로우 DAG들. 워크플로우는 nifi_group_pg_id로 그룹을 안다.
+    // 그룹 미지정(nifi_group_pg_id = null)은 여기에 안 붙고 트리 맨 아래 목록으로 간다.
     const workflowDags = etlDags.filter((d) => groupOfWorkflowDag.get(d.dag_id) === node.id);
     // 아직 워크플로우로 옮기지 않은 그룹은 옛 팩토리 DAG가 그 자리를 지킨다(점진 컷오버).
     // dag_id 자체가 프로세스 그룹 id의 앞 8자를 담고 있다(nifi_pipeline_{8자}_control).
@@ -726,8 +722,6 @@ function BusinessTree({
     if (!hasRunnable(node)) {
       return null;
     }
-    const workflowCount = countWorkflowsUnder(node);
-
     return (
       <div key={node.id}>
         {dag ? renderDagButton(dag, depth) : (
@@ -746,8 +740,6 @@ function BusinessTree({
             {children.length ? (collapsed ? <RightOutlined /> : <DownOutlined />) : null}
             {children.length ? (collapsed ? <FolderOutlined /> : <FolderOpenOutlined />) : null}
             {node.name}
-            {/* 숫자는 이 그룹과 하위에 있는 워크플로우 수다(실행할 게 몇 개인지). */}
-            {workflowCount ? <span style={{ color: "#888" }}> ({workflowCount})</span> : null}
           </button>
         )}
         {!collapsed && workflowDags.map((workflowDag) => renderDagButton(workflowDag, depth + 1))}
@@ -1370,17 +1362,19 @@ function WatchingRules({ target, ids }: { target: "CDC" | "ETL"; ids: Array<numb
     <section>
       <strong>알림 규칙 {rules.length}건</strong>
       {query.isLoading ? <Spin size="small" /> : rules.length === 0 ? (
-        <p>이 작업을 감시하는 규칙이 없습니다.</p>
+        <p>이 작업을 감시 중인 규칙이 없습니다.</p>
       ) : (
         <div className="airflow-alert-list">
           {rules.map((rule) => (
             <article key={rule.id}>
               <div>
-                <Tag color={rule.enabled ? "blue" : "default"}>{rule.type_label}</Tag>
+                <Tag color="blue">{rule.type_label}</Tag>
                 <b>{rule.name}</b>
               </div>
+              {/* 백엔드가 «사용 중 + 이 대상을 감시»하는 규칙만 준다. 전부 사용 중이므로
+                  «사용/미사용» 문구는 더 이상 정보가 아니다. */}
               <p>
-                {rule.enabled ? "사용" : "미사용"} · 심각도 {rule.severity}
+                심각도 {rule.severity}
                 {rule.schedule_enabled && rule.schedule_time ? ` · 매일 ${rule.schedule_time.slice(0, 5)}` : ""}
               </p>
               {rule.last_eval_error && <small style={{ color: "#dc2626" }}>{rule.last_eval_error}</small>}

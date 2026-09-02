@@ -17,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import com.company.pipeline.airflowdashboard.AirflowDagRunClient;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -59,12 +60,19 @@ public class AlertEngine {
     private final JdbcTemplate jdbc;
     private final SettingService settings;
     private final com.company.pipeline.notification.NotificationService notificationService;
+    /** 워크플로우 규칙의 신호원. 우리 DB 사본이 아니라 Airflow 를 직접 본다. */
+    private final com.company.pipeline.airflowdashboard.AirflowDagRunClient dagRunClient;
+    private static final long DAGRUN_CACHE_MS = 10_000L;
+    private volatile List<AirflowDagRunClient.DagRunWithDag> dagRunCache;
+    private volatile long dagRunCachedAt;
 
     public AlertEngine(DataSource dataSource, SettingService settings,
-                       com.company.pipeline.notification.NotificationService notificationService) {
+                       com.company.pipeline.notification.NotificationService notificationService,
+                       com.company.pipeline.airflowdashboard.AirflowDagRunClient dagRunClient) {
         this.jdbc = new JdbcTemplate(dataSource);
         this.settings = settings;
         this.notificationService = notificationService;
+        this.dagRunClient = dagRunClient;
     }
 
     /** FIRING 확정 시 아웃박스 발송 + 사건 기록. */
@@ -159,8 +167,11 @@ public class AlertEngine {
             seedRule("SERVICE_UNREACHABLE", "서비스 응답 없음", "PROCESS", true, "CRITICAL", "WARNING",
                     "heartbeat.failure", "NiFi·Airflow 등 대상 서비스 무응답",
                     "{\"consecutive_failures\":3}", 0, 300);
-            seedRule("JOB_CONSECUTIVE_FAILURE", "연속 실패", "JOB", false, "CRITICAL", "WARNING",
-                    "job.run.status", "동일 잡 연속 실패", "{\"count\":3}", 0, 1800);
+            seedRule("WORKFLOW_FAILURE", "워크플로우 실패", "JOB", false, "CRITICAL", "WARNING",
+                    "airflow.dagrun.state", "워크플로우 DAG 실행이 실패로 끝남", "{}", 0, 300);
+            seedRule("WORKFLOW_NOT_COMPLETED", "워크플로우 미완료", "JOB", false, "WARNING", "INFO",
+                    "airflow.dagrun.state", "정기 실행인데 성공한 실행이 없음",
+                    "{\"grace_minutes\":1440}", 0, 300);
             seedRule("JOB_NOT_RUN", "장기 미실행", "JOB", false, "WARNING", "INFO",
                     "job.run.age", "일정 기간 실행 이력 없음", "{\"days\":7}", 0, 0);
         } catch (Exception ex) {
@@ -196,8 +207,9 @@ public class AlertEngine {
         evalSafely("CDC_LAG", this::cdcLagSignals);
         evalSafely("CONNECTOR_FAILED", this::connectorFailedSignals);
         evalSafely("SERVICE_UNREACHABLE", this::serviceUnreachableSignals);
-        evalSafely("JOB_CONSECUTIVE_FAILURE", this::consecutiveFailureSignals);
         evalSafely("JOB_NOT_RUN", this::notRunSignals);
+        evalSafely("WORKFLOW_FAILURE", this::workflowFailureSignals);
+        evalSafely("WORKFLOW_NOT_COMPLETED", this::workflowNotCompletedSignals);
         // 모든 규칙이 인스턴스를 만든 뒤, 연쇄로 쏟아진 하위 알림을 상위원인 아래로 접는다.
         try {
             evaluateChainSuppression();
@@ -1018,13 +1030,86 @@ public class AlertEngine {
         try {
             JsonNode n = MAPPER.readTree(json);
             String kind = n.path("kind").asText("ALL");
+            String idKind = n.path("idKind").asText("JOB");
             Set<Long> ids = new HashSet<>();
             if (n.has("ids") && n.get("ids").isArray()) {
                 n.get("ids").forEach(x -> ids.add(x.asLong()));
             }
-            return new ScopeFilter(kind, ids, n.path("idKind").asText("JOB"));
+            // 그룹째 고른 것은 «지금» 그 아래에 있는 대상으로 펼친다. 저장은 그룹 id 로 해두고
+            // 펼치는 것을 평가 시점에 하므로, 나중에 테이블이 추가돼도 규칙을 다시 저장할
+            // 필요가 없다(그게 그룹 선택의 의도다).
+            ids.addAll(expandGroupPgIds(n, idKind));
+            ids.addAll(expandGroupConnIds(n));
+            return new ScopeFilter(kind, ids, idKind);
         } catch (Exception ex) {
             return new ScopeFilter("ALL", Set.of(), "JOB");
+        }
+    }
+
+    /**
+     * scope_json 의 {@code groupPgIds}(NiFi 프로세스 그룹) → 그 아래 감시 단위 id 로 펼친다.
+     *
+     * <p>하위 그룹까지 재귀로 내려간다(DZ 를 고르면 DZ_COM·DZ_POP 아래 테이블까지). 계층은
+     * ETL>관리 화면과 같은 nifi_process_group_metadata 를 쓴다.
+     *
+     * <p>idKind=CHAIN 이면 적재 스텝(테이블), 아니면 etl_job 이 감시 단위다.
+     * 예전 규칙에는 groupPgIds 가 없으므로 빈 집합을 돌려주고 동작이 그대로다.
+     */
+    private Set<Long> expandGroupPgIds(JsonNode scope, String idKind) {
+        if (!scope.has("groupPgIds") || !scope.get("groupPgIds").isArray()
+                || scope.get("groupPgIds").isEmpty()) {
+            return Set.of();
+        }
+        List<String> pgIds = new java.util.ArrayList<>();
+        scope.get("groupPgIds").forEach(x -> pgIds.add(x.asText()));
+        String placeholders = pgIds.stream().map(v -> "?")
+                .collect(java.util.stream.Collectors.joining(","));
+        String leafSql = "CHAIN".equals(idKind)
+                ? "SELECT s.id FROM etl_job_step s JOIN etl_job j ON j.id = s.job_id"
+                  + " WHERE s.deleted_at IS NULL AND j.deleted_at IS NULL AND s.target_table IS NOT NULL"
+                  + " AND j.nifi_pg_id IN (SELECT process_group_id FROM d)"
+                : "SELECT id FROM etl_job"
+                  + " WHERE deleted_at IS NULL AND nifi_pg_id IN (SELECT process_group_id FROM d)";
+        String sql = "WITH RECURSIVE d AS ("
+                + " SELECT process_group_id FROM nifi_process_group_metadata"
+                + " WHERE process_group_id IN (" + placeholders + ")"
+                + " UNION ALL"
+                + " SELECT m.process_group_id FROM nifi_process_group_metadata m"
+                + " JOIN d ON m.parent_group_id = d.process_group_id) " + leafSql;
+        try {
+            Set<Long> out = new HashSet<>();
+            jdbc.queryForList(sql, pgIds.toArray())
+                    .forEach(row -> out.add(((Number) row.values().iterator().next()).longValue()));
+            return out;
+        } catch (Exception ex) {
+            log.warn("감시 범위 그룹 펼치기 실패 - 그룹 선택분은 이번 평가에서 제외됩니다: {}",
+                    ex.getMessage());
+            return Set.of();
+        }
+    }
+
+    /**
+     * scope_json 의 {@code groupConnIds}(소스 연결정보) → 그 원천의 파이프라인 id 로 펼친다.
+     *
+     * <p>CDC 규칙의 «그룹째 감시». AlertAdminController.expandGroupConnIds 와 같은 규칙이다.
+     */
+    private Set<Long> expandGroupConnIds(JsonNode scope) {
+        if (!scope.has("groupConnIds") || !scope.get("groupConnIds").isArray()
+                || scope.get("groupConnIds").isEmpty()) {
+            return Set.of();
+        }
+        List<Long> connIds = new java.util.ArrayList<>();
+        scope.get("groupConnIds").forEach(x -> connIds.add(x.asLong()));
+        String ph = connIds.stream().map(v -> "?").collect(java.util.stream.Collectors.joining(","));
+        try {
+            Set<Long> out = new HashSet<>();
+            jdbc.queryForList("SELECT id FROM pipeline_definition WHERE source_connection_id IN ("
+                            + ph + ")", connIds.toArray())
+                    .forEach(row -> out.add(((Number) row.values().iterator().next()).longValue()));
+            return out;
+        } catch (Exception ex) {
+            log.warn("감시 범위 연결정보 펼치기 실패 - 그룹 선택분 제외: {}", ex.getMessage());
+            return Set.of();
         }
     }
 
@@ -1301,39 +1386,6 @@ public class AlertEngine {
         }, (int) minFailures);
     }
 
-    /** 연속 N회 실패(원본 규칙표, 위험). 잡별 최근 실행을 훑어 연속 실패 길이를 센다. */
-    private List<Candidate> consecutiveFailureSignals(Map<String, Object> rule) {
-        int need = (int) jsonNum(rule.get("params").toString(), "count", 3);
-        ScopeFilter scope = scopeOf(rule);
-        return jdbc.query("""
-                WITH ranked AS (
-                    SELECT r.job_id, r.status, r.started_at,
-                           row_number() OVER (PARTITION BY r.job_id ORDER BY r.started_at DESC) AS rn
-                    FROM etl_job_run r
-                    WHERE r.started_at > now() - interval '30 days'
-                ),
-                streak AS (
-                    SELECT job_id, count(*) AS fails
-                    FROM ranked
-                    WHERE rn <= ? AND status = 'FAILED'
-                    GROUP BY job_id
-                )
-                SELECT s.job_id, s.fails, j.job_name
-                FROM streak s LEFT JOIN etl_job j ON j.id = s.job_id
-                WHERE s.fails >= ?
-                """, (rs, i) -> {
-            long jobId = rs.getLong("job_id");
-            if (!scope.allows(jobId)) {
-                return null;
-            }
-            int fails = rs.getInt("fails");
-            String name = rs.getString("job_name");
-            String label = name != null ? name : ("잡 " + jobId);
-            return new Candidate("JOB_STREAK:" + jobId, label, "ETL", (double) fails, (double) need,
-                    String.format("%s — 최근 %d회 연속 실패", label, fails), "/etl/logs?jobId=" + jobId);
-        }, need, need);
-    }
-
     /** N일 이상 미실행(원본 규칙표, 경고). 한 번은 돌았던 잡만 대상으로 한다. */
     private List<Candidate> notRunSignals(Map<String, Object> rule) {
         int days = (int) jsonNum(rule.get("params").toString(), "days", 7);
@@ -1359,4 +1411,130 @@ public class AlertEngine {
         }, days);
     }
 
+
+    /**
+     * 게시된 워크플로우 목록. 게시 안 한 것은 Airflow 에 DAG 자체가 없어 감시 대상이 아니다.
+     */
+    private List<Map<String, Object>> publishedWorkflows() {
+        return jdbc.queryForList("""
+                SELECT id, workflow_key, name, schedule_cron,
+                       COALESCE(dag_id_override, 'etl_wf_' || workflow_key) AS dag_id
+                FROM etl_workflow
+                WHERE deleted_at IS NULL AND published_at IS NOT NULL""");
+    }
+
+    /**
+     * 워크플로우 실패. 게시된 워크플로우의 <b>가장 최근 DAG 실행</b>이 failed 면 후보.
+     *
+     * <p>잡 단위 규칙(JOB_FAILURE)과 겹치지 않는다. 저쪽은 «잡이 돌다가 실패»고 이쪽은
+     * «워크플로우 전체가 실패»다 - 트리거 단계에서 죽어 잡이 하나도 안 돈 경우는 이쪽만 잡는다
+     * (실측 2026-09-02 13:53, etl_job_run 에 행이 없어 어떤 규칙도 울리지 않았다).
+     *
+     * <p>신호는 Airflow API 를 그대로 본다(우리 DB 사본 없음) - 실시간 모니터링 화면과 같은
+     * 원천이라 «화면은 실패인데 알림은 조용»한 어긋남이 생기지 않는다.
+     */
+    private List<Candidate> workflowFailureSignals(Map<String, Object> rule) {
+        ScopeFilter scope = scopeOf(rule);
+        Map<String, AirflowDagRunClient.DagRunWithDag> latest = latestDagRuns();
+        List<Candidate> out = new ArrayList<>();
+        for (Map<String, Object> wf : publishedWorkflows()) {
+            long wfId = ((Number) wf.get("id")).longValue();
+            if (!scope.allows(wfId)) {
+                continue;
+            }
+            AirflowDagRunClient.DagRunWithDag run = latest.get(String.valueOf(wf.get("dag_id")));
+            if (run == null || !"failed".equalsIgnoreCase(String.valueOf(run.state()))) {
+                continue;
+            }
+            String label = String.valueOf(wf.get("name"));
+            out.add(new Candidate("WORKFLOW_FAILED:" + wfId, label, "ETL", null, null,
+                    String.format("%s — 워크플로우 실행 실패 (%s)", label, run.dagRunId()),
+                    "/airflow/dashboard"));
+        }
+        return out;
+    }
+
+    /**
+     * 워크플로우 미완료. 정기 실행인데 <b>유예 시간</b>이 지나도 성공한 실행이 없으면 후보.
+     *
+     * <p>«실패»가 아니라 «아예 안 돎»을 잡는다 - 스케줄이 꺼졌거나, DAG 파싱이 깨졌거나,
+     * 상위가 자식 스케줄을 억제했는데 상위에 스케줄이 없는 경우 등. 이런 상황은 DAG 실행 자체가
+     * 생기지 않아 실패 규칙으로는 영원히 안 걸린다.
+     *
+     * <p>크론을 해석해 «다음 예정 시각»을 계산하지 않는다. 크론 파서를 들이는 것보다
+     * «마지막 성공이 언제였나»가 운영자가 실제로 묻는 질문에 가깝고, 유예 시간 하나로
+     * 일 배치·시간 배치를 모두 표현할 수 있다.
+     */
+    private List<Candidate> workflowNotCompletedSignals(Map<String, Object> rule) {
+        ScopeFilter scope = scopeOf(rule);
+        int graceMinutes = (int) jsonNum(rule.get("params").toString(), "grace_minutes", 1440);
+        Map<String, AirflowDagRunClient.DagRunWithDag> lastOk = lastSuccessfulDagRuns();
+        java.time.OffsetDateTime deadline = java.time.OffsetDateTime.now().minusMinutes(graceMinutes);
+        List<Candidate> out = new ArrayList<>();
+        for (Map<String, Object> wf : publishedWorkflows()) {
+            Object cron = wf.get("schedule_cron");
+            if (cron == null || String.valueOf(cron).isBlank()) {
+                continue;   // 수동 실행 전용은 «안 돌았다»가 이상이 아니다
+            }
+            long wfId = ((Number) wf.get("id")).longValue();
+            if (!scope.allows(wfId)) {
+                continue;
+            }
+            AirflowDagRunClient.DagRunWithDag ok = lastOk.get(String.valueOf(wf.get("dag_id")));
+            boolean overdue = ok == null || ok.startDate() == null || ok.startDate().isBefore(deadline);
+            if (!overdue) {
+                continue;
+            }
+            String label = String.valueOf(wf.get("name"));
+            String since = ok == null || ok.startDate() == null
+                    ? "성공 이력 없음"
+                    : "마지막 성공 " + ok.startDate().toLocalDateTime().toString().replace('T', ' ');
+            out.add(new Candidate("WORKFLOW_OVERDUE:" + wfId, label, "ETL", null, (double) graceMinutes,
+                    String.format("%s — %d분 넘게 성공한 실행이 없음 (%s)", label, graceMinutes, since),
+                    "/airflow/dashboard"));
+        }
+        return out;
+    }
+
+    /** DAG 별 «가장 최근» 실행(시작 시각 내림차순이라 먼저 본 것이 최신). */
+    private Map<String, AirflowDagRunClient.DagRunWithDag> latestDagRuns() {
+        Map<String, AirflowDagRunClient.DagRunWithDag> out = new java.util.LinkedHashMap<>();
+        for (AirflowDagRunClient.DagRunWithDag r : recentDagRuns()) {
+            out.putIfAbsent(r.dagId(), r);
+        }
+        return out;
+    }
+
+    /** DAG 별 «가장 최근 성공» 실행. */
+    private Map<String, AirflowDagRunClient.DagRunWithDag> lastSuccessfulDagRuns() {
+        Map<String, AirflowDagRunClient.DagRunWithDag> out = new java.util.LinkedHashMap<>();
+        for (AirflowDagRunClient.DagRunWithDag r : recentDagRuns()) {
+            if ("success".equalsIgnoreCase(String.valueOf(r.state()))) {
+                out.putIfAbsent(r.dagId(), r);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 최근 DAG 실행 목록. 규칙 둘이 같은 주기에 각자 부르면 호출이 두 배가 되므로 짧게 캐시한다.
+     * 엔진 주기(20초)보다 짧게 두어 «화면보다 오래된 값»을 보지 않게 한다.
+     */
+    private List<AirflowDagRunClient.DagRunWithDag> recentDagRuns() {
+        long now = System.currentTimeMillis();
+        List<AirflowDagRunClient.DagRunWithDag> cached = dagRunCache;
+        if (cached != null && now - dagRunCachedAt < DAGRUN_CACHE_MS) {
+            return cached;
+        }
+        try {
+            List<AirflowDagRunClient.DagRunWithDag> fresh = dagRunClient.getRecentDagRuns(200);
+            dagRunCache = fresh;
+            dagRunCachedAt = now;
+            return fresh;
+        } catch (Exception ex) {
+            log.warn("Airflow 실행 이력 조회 실패 - 워크플로우 규칙은 이번 주기를 건너뜁니다: {}",
+                    ex.getMessage());
+            return List.of();
+        }
+    }
 }
