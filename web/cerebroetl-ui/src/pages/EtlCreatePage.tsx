@@ -370,11 +370,14 @@ function buildDefaultColumnMappings(
       sourceColumn.table === previous.sourceTable && sourceColumn.name === previous.sourceColumn,
     );
     const targetName = normalizeComparableName(targetColumn.name);
-    const matchedSource = sourceColumns.find((sourceColumn) =>
-      normalizeComparableName(sourceColumn.name) === targetName ||
-      normalizeComparableName(sourceColumn.name).includes(targetName) ||
-      targetName.includes(normalizeComparableName(sourceColumn.name)),
+    const exactMatchedSource = sourceColumns.find((sourceColumn) =>
+      normalizeComparableName(sourceColumn.name) === targetName,
     );
+    const fuzzyMatchedSource = sourceColumns.find((sourceColumn) => {
+      const sourceName = normalizeComparableName(sourceColumn.name);
+      return sourceName.includes(targetName) || targetName.includes(sourceName);
+    });
+    const matchedSource = exactMatchedSource ?? fuzzyMatchedSource;
     const sourceTable = previousSourceExists ? previous.sourceTable : matchedSource?.table || "";
     const sourceColumn = previousSourceExists ? previous.sourceColumn : matchedSource?.name || "";
     return {
