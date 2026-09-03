@@ -389,7 +389,8 @@ function buildDefaultColumnMappings(
 
 function buildMappedLoadSql(
   connectionInfo: ConnectionInfo,
-  mappings: ColumnMapping[],
+  sourceColumns: SourceColumnMetadata[],
+  targetColumns: ColumnMetadataResponse[],
   loadMode: LoadMode,
 ) {
   const selectedTables = commaSeparatedValues(connectionInfo.sourceTable);
@@ -403,19 +404,24 @@ function buildMappedLoadSql(
   }
 
   const aliasByTable = new Map(selectedTables.map((table, index) => [table, tableAlias(index)]));
-  const projectionMappings = mappings.filter((mapping) =>
-    mapping.sourceTable && mapping.sourceColumn && aliasByTable.has(mapping.sourceTable),
+  const selectedSourceColumns = sourceColumns.filter((sourceColumn) =>
+    aliasByTable.has(sourceColumn.table),
   );
-  const uniqueProjectionMappings = projectionMappings.filter((mapping, index, allMappings) =>
-    allMappings.findIndex((item) =>
-      item.sourceTable === mapping.sourceTable && item.sourceColumn === mapping.sourceColumn,
+  const uniqueSourceColumns = selectedSourceColumns.filter((sourceColumn, index, allColumns) =>
+    allColumns.findIndex((item) =>
+      item.table === sourceColumn.table && item.name === sourceColumn.name,
     ) === index,
   );
-  const projections = uniqueProjectionMappings.map((mapping, index) => {
-    const alias = aliasByTable.get(mapping.sourceTable);
-    const expression = alias ? `${alias}.${mapping.sourceColumn}` : mapping.sourceColumn;
+  const targetColumnByName = new Map(targetColumns.map((targetColumn) => [
+    normalizeComparableName(targetColumn.name),
+    targetColumn.name,
+  ]));
+  const projections = uniqueSourceColumns.map((sourceColumn, index) => {
+    const alias = aliasByTable.get(sourceColumn.table);
+    const expression = alias ? `${alias}.${sourceColumn.name}` : sourceColumn.name;
+    const targetColumn = targetColumnByName.get(normalizeComparableName(sourceColumn.name));
     const prefix = index === 0 ? "" : ",";
-    return `${prefix}${expression} as ${mapping.sourceColumn}`;
+    return targetColumn ? `${prefix}${expression} as ${targetColumn}` : `${prefix}${expression}`;
   });
   const schemaPrefix = connectionInfo.sourceSchema.trim() ? `${connectionInfo.sourceSchema.trim()}.` : "";
   const fromClause = selectedTables
@@ -1839,7 +1845,7 @@ export function EtlCreatePage() {
     if (targetColumns.length > 0) {
       setColumnMappings((previousMappings) => {
         const nextMappings = buildDefaultColumnMappings(targetColumns, sourceColumns, previousMappings);
-        setLoadSql(buildMappedLoadSql(connectionInfo, nextMappings, loadMode));
+        setLoadSql(buildMappedLoadSql(connectionInfo, sourceColumns, targetColumns, loadMode));
         setQueryRecordSql(buildQueryRecordSql(nextMappings, commaSeparatedValues(connectionInfo.sourceTable)));
         return nextMappings;
       });
@@ -2037,7 +2043,7 @@ export function EtlCreatePage() {
         onLoadModeChange={(nextLoadMode) => {
           setLoadMode(nextLoadMode);
           if (targetColumns.length > 0) {
-            setLoadSql(buildMappedLoadSql(connectionInfo, columnMappings, nextLoadMode));
+            setLoadSql(buildMappedLoadSql(connectionInfo, sourceColumns, targetColumns, nextLoadMode));
           }
           if (nextLoadMode !== "TRUNCATE") {
             setShowTruncateSql(false);
