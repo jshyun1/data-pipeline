@@ -2265,6 +2265,183 @@ interface ProcessGroupDetailPanelProps {
   reloadKey: number;
 }
 
+/**
+ * ETL 관리 화면이 보여주는 job 속성 요약(마지막 실행·상위 경로·작성자·연결 DAG·대상·로그).
+ *
+ * <p>워크플로우 설계 캔버스의 노드 패널에서도 같은 값을 보여줘야 해서 여기서 꺼내 쓴다.
+ * 화면마다 다시 구현하면 «대상»을 뽑는 규칙이나 로그 집계 기간이 서로 어긋나므로,
+ * 계산은 이 파일에 있는 헬퍼 한 벌만 쓴다.
+ */
+export function EtlJobSummary({ jobId, nifiPgId }: { jobId: number; nifiPgId?: string | null }) {
+  const navigate = useNavigate();
+  const [detail, setDetail] = useState<EtlJobDetailResponse | null>(null);
+  const [runs, setRuns] = useState<EtlJobRunResponse[]>([]);
+  const [group, setGroup] = useState<ReturnType<typeof findTreeNode>>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [logSummaries, setLogSummaries] = useState<DetailLogSummary[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setFailed(false);
+    setDetail(null);
+    setRuns([]);
+    Promise.all([getEtlJob(jobId), getEtlJobRuns(jobId)])
+      .then(([jobDetail, jobRuns]) => {
+        if (!cancelled) {
+          setDetail(jobDetail);
+          setRuns(jobRuns);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFailed(true);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [jobId]);
+
+  // 상위 경로와 작성자는 job 응답에 없고 NiFi 프로세스 그룹 트리에만 있다
+  // (job.parentGroupName 은 비어 있는 경우가 있어 ETL 관리 화면도 트리 경로를 쓴다).
+  // 실패해도 나머지는 보여준다.
+  useEffect(() => {
+    let cancelled = false;
+    setGroup(null);
+    if (!nifiPgId) {
+      return () => { cancelled = true; };
+    }
+    getNifiProcessGroupTree()
+      .then((tree) => {
+        if (!cancelled) {
+          setGroup(findTreeNode(tree, nifiPgId));
+        }
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [nifiPgId]);
+
+  const job = detail?.job ?? null;
+  const groupNode = group?.node ?? null;
+  const logKeyword = detailLogKeyword(job, groupNode);
+  // effect 안에서 job 객체를 참조하면 매 렌더 새 참조라 의존성이 흔들린다. 있음/없음만 본다.
+  const hasJob = Boolean(job);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLogSummaries([]);
+    if (!hasJob) {
+      setLogsLoading(false);
+      return () => { cancelled = true; };
+    }
+    const { queryFrom, queryTo } = recentDetailLogPeriods();
+    setLogsLoading(true);
+    Promise.all([
+      listNifiProcessorRuns(queryFrom, queryTo),
+      listNifiExecutionLogs(queryFrom, queryTo),
+    ])
+      .then(([runRows, eventRows]) => {
+        if (!cancelled) {
+          setLogSummaries(buildDetailLogSummaries(logKeyword, runRows, eventRows));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLogSummaries([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLogsLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [hasJob, logKeyword]);
+
+  if (loading) {
+    return <div className="nifi-detail-message">불러오는 중</div>;
+  }
+  if (failed || !job) {
+    return <div className="nifi-detail-message error">조회 실패</div>;
+  }
+
+  const steps = detail?.steps ?? [];
+  const links = detail?.links ?? [];
+  const sourceText = sourceTargetText(firstStartProcessor(steps, links), "source");
+  const targetText = sourceTargetText(lastTerminalProcessor(steps, links), "target");
+  const latestRun = runs[0] ?? null;
+  const lastRunTime = formatDateTime(latestRun?.endedAt ?? latestRun?.startedAt ?? job.lastSyncedAt);
+  const lastRunCount = formatCount(latestRun?.totalInserted ?? 0);
+  const dagId = job.airflowDagId ?? null;
+
+  return (
+    <div className="etl-job-summary">
+      <div className="nifi-detail-status stacked">
+        <span>마지막 실행 {lastRunTime} · {lastRunCount}건</span>
+      </div>
+      <dl className="nifi-detail-header-info">
+        <div>
+          <dt>상위 경로</dt>
+          <dd>{directParentName(group?.path)}</dd>
+        </div>
+        <div>
+          <dt>작성자</dt>
+          <dd>{groupNode?.createdBy ?? "-"}</dd>
+        </div>
+        <div>
+          <dt>연결 DAG</dt>
+          <dd>
+            {dagId ? (
+              <>
+                {dagId}{" "}
+                <button
+                  type="button"
+                  className="nifi-detail-link"
+                  onClick={() => navigate(`/airflow/dashboard?dagId=${encodeURIComponent(dagId)}&detail=1`)}
+                >
+                  [열기]
+                </button>
+              </>
+            ) : (
+              "-"
+            )}
+          </dd>
+        </div>
+      </dl>
+
+      <section className="nifi-detail-section">
+        <h3>대상</h3>
+        <dl className="nifi-detail-target-list">
+          <div>
+            <dt>소스</dt>
+            <dd className="nifi-detail-inline-value" title={sourceText}>{sourceText}</dd>
+          </div>
+          <div>
+            <dt>타깃</dt>
+            <dd className="nifi-detail-inline-value" title={targetText}>{targetText}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="nifi-detail-section">
+        <h3>로그</h3>
+        <DetailLogRows
+          loading={logsLoading}
+          summaries={logSummaries}
+          keyword={logKeyword}
+          onNavigate={navigate}
+        />
+      </section>
+    </div>
+  );
+}
+
 function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGroupDetailPanelProps) {
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<EtlJobResponse[]>([]);
