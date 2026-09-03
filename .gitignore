@@ -69,3 +69,6 @@ deploy/p5b-certs/
 *.p5b-bak
 deploy/cerebro-certs/cerebro-proxy.key
 deploy/cerebro-certs/cerebro-proxy.crt
+
+# Claude Code 개인 설정(권한 허용 규칙 등) — 커밋하지 않는다
+.claude/settings.local.json

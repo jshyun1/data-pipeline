@@ -378,8 +378,10 @@ public class NifiJobMirrorService {
     }
 
     /**
-     * etl_job 조건에서 빠졌거나 NiFi에 더 이상 없는 잡을 삭제 표시한다. NiFi에서 아예
-     * 사라진 잡이 한 번에 여러 개면 캔버스 유실을 의심해 삭제 표시를 보류한다.
+     * etl_job 조건에서 빠졌거나 NiFi에 더 이상 없는 잡을 삭제 표시한다.
+     *
+     * <p>한 번에 여러 개가 사라지면 캔버스 유실을 의심하되, 개수만으로 단정하지 않고 NiFi 에
+     * 하나씩 물어 «404 로 확인된 것»만 지운다.
      */
     private int markMissingJobsDeleted(Set<String> seenJobGroupIds, Set<String> allDiscoveredGroupIds) {
         List<EtlJob> live = jobRepository.findByDeletedAtIsNullOrderByJobNameAsc();
@@ -395,11 +397,29 @@ public class NifiJobMirrorService {
             return 0;
         }
         if (missing.size() > MASS_DELETION_THRESHOLD) {
-            log.error("잡 {}개가 한 번에 NiFi에서 사라졌습니다(임계 {}개 초과). 캔버스 유실을 의심해 "
-                            + "삭제 표시를 보류합니다 - NiFi 상태를 확인하세요: {}",
-                    missing.size(), MASS_DELETION_THRESHOLD,
-                    missing.stream().map(EtlJob::getJobName).toList());
-            missing = List.of();
+            // 개수만으로는 «사용자가 한 번에 여러 개를 정리한 것»과 «캔버스가 유실된 것»을
+            // 구분할 수 없다. 예전에는 무조건 보류했는데, 그러면 정상적인 대량 삭제 뒤에
+            // 미러가 영영 멈춘 채 5분마다 ERROR 만 남기고 지워진 잡이 다른 화면(알림 감시대상
+            // 트리 등)에 계속 남았다 - 실측 2026-09-03, 21개가 사라진 뒤 복구 불가 상태.
+            //
+            // 그래서 개수로 단정하지 않고 NiFi 에 하나씩 물어본다. 404 로 «없다»는 확답을 받은
+            // 것만 지우고, 확인이 안 되는 것은 그대로 둔다(잘못 지우는 것보다 남기는 쪽이 안전).
+            List<EtlJob> confirmed = missing.stream()
+                    .filter(job -> !nifiClient.processGroupExists(job.getNifiPgId()))
+                    .toList();
+            List<EtlJob> unconfirmed = missing.stream()
+                    .filter(job -> nifiClient.processGroupExists(job.getNifiPgId()))
+                    .toList();
+            if (!unconfirmed.isEmpty()) {
+                log.error("잡 {}개가 NiFi 에서 안 보이는데 삭제를 확인하지 못했습니다. 이번엔 남겨 둡니다 "
+                                + "- NiFi 상태를 확인하세요: {}",
+                        unconfirmed.size(), unconfirmed.stream().map(EtlJob::getJobName).toList());
+            }
+            if (!confirmed.isEmpty()) {
+                log.warn("잡 {}개가 NiFi 에서 삭제된 것을 확인해 삭제 표시합니다: {}",
+                        confirmed.size(), confirmed.stream().map(EtlJob::getJobName).toList());
+            }
+            missing = confirmed;
         }
         noLongerJobs.forEach(job -> {
             markJobDeleted(job);

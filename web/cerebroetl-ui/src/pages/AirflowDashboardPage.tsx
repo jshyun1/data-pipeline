@@ -817,11 +817,18 @@ function TaskRows({
   run,
   refreshSeconds,
   configured = false,
+  auxColumn = true,
 }: {
   dag: DashboardDag;
   run?: AirflowDagRun;
   refreshSeconds: number;
   configured?: boolean;
+  /**
+   * 7번째 «보조» 열을 그릴지. 이 표를 쓰는 화면마다 그 자리의 머리글이 다른데
+   * (다음 실행 / 스케줄 / 없음) task 행에는 넣을 값이 없어 늘 "-" 였다.
+   * 열이 아예 없는 표(실행 이력)에서는 꺼야 칸이 밀리지 않는다.
+   */
+  auxColumn?: boolean;
 }) {
   const [retryingTaskId, setRetryingTaskId] = useState<string>();
   const [expandedJobKey, setExpandedJobKey] = useState<string>();
@@ -1012,9 +1019,10 @@ function TaskRows({
         <td><ProfileOutlined /> {isJob ? `JOB (${steps.length}단계)` : "워크플로우 종단"}</td>
         <td>{startedAt ? dayjs(startedAt).format("YYYY-MM-DD HH:mm") : "-"}</td>
         <td><Tag color={stateColor(state)}>{stateLabel(state)}</Tag></td>
-        <td>{state === "failed" ? <small title={detail}>{detail}</small> : detail}</td>
+        {/* 열 폭을 넘으면 CSS 가 잘라내므로, 전체 문구는 셀 title 로 남긴다. */}
+        <td title={detail}>{state === "failed" ? <small>{detail}</small> : detail}</td>
         <td>{duration(startedAt, endedAt)}</td>
-        <td>-</td>
+        {auxColumn && <td>-</td>}
         <td>
           {retryCount}회{" "}
           {/* job 통째로 다시 돌린다. 값 하나만 고쳐 다시 넣을 때와, 중간이 막혀
@@ -1048,7 +1056,7 @@ function TaskRows({
           <td><Tag color={stateColor(step.state)}>{stateLabel(step.state)}</Tag></td>
           <td>{step.state === "failed" ? <small title={stepDetail}>{stepDetail}</small> : stepDetail}</td>
           <td>{duration(step.start_date, step.end_date)}</td>
-          <td>-</td>
+          {auxColumn && <td>-</td>}
           <td>{Math.max(0, (step.try_number ?? 1) - 1)}회</td>
         </tr>
       );
@@ -1119,7 +1127,9 @@ function ScopeList({
         rowKey="id"
         size="small"
         dataSource={cdcRows}
-        scroll={{ x: 1130 }}
+        // 가운데 패널 폭(최소 650px)보다 넉넉히 작게 잡는다. 예전 1130 은 패널보다 넓어
+        // 처음 들어오자마자 가로 스크롤이 생겼다 - 열 폭도 함께 줄였다.
+        scroll={{ x: 860 }}
         columns={cdcPipelineColumns(runtimeByPipeline, metricByPipeline, {
           render: (pipeline) => {
             const run = latestRunOfPipeline(pipeline.id);
@@ -1270,7 +1280,8 @@ function RunHistoryTable({ dag, runs, refreshSeconds }: { dag?: DashboardDag; ru
   return (
     <div className="airflow-job-table-wrap">
       <table className="airflow-job-table">
-        <thead><tr><th>작업명</th><th>실행 유형</th><th>실행 일시</th><th>최종 결과</th><th>적재/실패 사유</th><th>소요</th><th>실행 ID</th><th>재시도/재시작</th></tr></thead>
+        {/* 실행 ID(dag_run_id)는 사람이 쓸 일이 없고 문자열이 길어 표를 가로로 밀어냈다. */}
+        <thead><tr><th>작업명</th><th>실행 유형</th><th>실행 일시</th><th>최종 결과</th><th>적재/실패 사유</th><th>소요</th><th>재시도/재시작</th></tr></thead>
         <tbody>
           {runs.flatMap((run) => {
             const expanded = expandedRunId === run.dag_run_id;
@@ -1282,10 +1293,9 @@ function RunHistoryTable({ dag, runs, refreshSeconds }: { dag?: DashboardDag; ru
               <td><Tag color={stateColor(run.state)}>{stateLabel(run.state)}</Tag></td>
               <td>-</td>
               <td>{duration(run.start_date, run.end_date)}</td>
-              <td title={run.dag_run_id}>{run.dag_run_id}</td>
               <td>{expanded ? <DownOutlined /> : <RightOutlined />}</td>
             </tr>,
-            ...(expanded ? [<TaskRows key={`${run.dag_run_id}-tasks`} dag={dag} run={run} refreshSeconds={refreshSeconds} />] : []),
+            ...(expanded ? [<TaskRows key={`${run.dag_run_id}-tasks`} dag={dag} run={run} refreshSeconds={refreshSeconds} auxColumn={false} />] : []),
           ];})}
         </tbody>
       </table>
@@ -1450,7 +1460,8 @@ function PropertyPanel({
               <dt>스냅샷 모드</dt>
               <dd>{pipeline.snapshotMode === "NO_DATA" ? "기존 데이터 미적재 · 이후 CDC" : "초기 적재 후 CDC"}</dd>
             </>}
-            <dt>상태</dt><dd>{renderRuntimeStatus(pipeline, runtime)}</dd>
+            {/* 목록의 «상태»는 제어 DAG 기준이라, 여기서는 무엇의 상태인지 밝힌다. */}
+            <dt>커넥터 상태</dt><dd>{renderRuntimeStatus(pipeline, runtime)}</dd>
             <dt>설명</dt><dd>{pipeline.description ?? "-"}</dd>
             <dt>생성 시각</dt><dd>{pipeline.createdAt}</dd>
             <dt>수정 시각</dt><dd>{pipeline.updatedAt}</dd>
