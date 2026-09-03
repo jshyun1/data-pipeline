@@ -15,6 +15,7 @@ DAG 1개 = 워크플로우 1개 = 스케줄 1개. 그 안의 job은 TaskGroup으
 국면을 나눈 이유는 실패 지점을 화면에서 바로 알아보게 하기 위해서다.
 """
 import json
+from datetime import timedelta
 
 import etl_job_runtime as runtime
 import _pipeline_svc_auth  # noqa: F401  # import 만으로 pipeline-api 서비스 토큰 자동주입
@@ -65,6 +66,20 @@ def _trigger_rule(node: dict, spec: dict) -> str:
     return "all_success"
 
 
+# NiFi·백엔드는 배포·재기동 중 잠깐 응답하지 않을 수 있다. 그때 이름 해석부터 실패하는데
+# (실측 2026-09-03: NiFi 재생성 3분 동안 'nifi' 호스트가 안 잡혀 await 가 즉시 실패),
+# 재시도가 없으면 일시적인 사정이 그대로 «배치 실패»가 되고 후단까지 upstream_failed 로
+# 번진다. 1분 간격 3회면 통상적인 재기동(2~3분)을 넘긴다 - 진짜 장애일 때 오래 끌지도 않는다.
+NIFI_CALL_RETRIES = 3
+NIFI_CALL_RETRY_DELAY = timedelta(minutes=1)
+
+
+def _retries_of(node: dict) -> int:
+    """노드에 지정한 재시도가 있으면 그걸 쓰고, 없으면 일시 장애용 기본값."""
+    configured = int(node.get("retries") or 0)
+    return configured if configured > 0 else NIFI_CALL_RETRIES
+
+
 def _build_job_group(node: dict, spec: dict) -> TaskGroup:
     """job 1개 = TaskGroup 1개."""
     rule = _trigger_rule(node, spec)
@@ -74,28 +89,37 @@ def _build_job_group(node: dict, spec: dict) -> TaskGroup:
             python_callable=runtime.open_run,
             op_kwargs={"node": node},
             trigger_rule=rule,          # 그룹의 진입 조건은 첫 태스크가 갖는다
+            retries=_retries_of(node),
+            retry_delay=NIFI_CALL_RETRY_DELAY,
         )
         start_pg = PythonOperator(
             task_id="start_pg",
             python_callable=runtime.start_pg,
             op_kwargs={"node": node},
-            retries=int(node.get("retries") or 0),
+            retries=_retries_of(node),
+            retry_delay=NIFI_CALL_RETRY_DELAY,
         )
         await_pg = PythonOperator(
             task_id="await",
             python_callable=runtime.await_completion,
             op_kwargs={"node": node},
+            retries=_retries_of(node),
+            retry_delay=NIFI_CALL_RETRY_DELAY,
         )
         stop_pg = PythonOperator(
             task_id="stop_pg",
             python_callable=runtime.stop_pg,
             op_kwargs={"node": node},
             trigger_rule="all_done",    # 실패해도 반드시 정지시킨다
+            retries=_retries_of(node),
+            retry_delay=NIFI_CALL_RETRY_DELAY,
         )
         verify = PythonOperator(
             task_id="verify",
             python_callable=runtime.verify_landing,
             op_kwargs={"node": node},
+            retries=_retries_of(node),
+            retry_delay=NIFI_CALL_RETRY_DELAY,
         )
         # 정지는 성패와 무관하게 도는 «곁가지»다. 본줄기에 두면(… >> stop_pg >> verify)
         # await가 실패해도 all_done인 stop_pg가 성공하면서 그 뒤가 정상으로 이어지고,

@@ -481,6 +481,32 @@ public class NifiClient {
      * <p>상태 조회와 달리 프로세서 설정값과 연결의 관계 이름, 캔버스 좌표가 들어 있다.
      * 한 번에 한 단계만 내려오므로 하위 그룹은 호출자가 재귀로 다시 부른다.
      */
+
+    /**
+     * 이 프로세스 그룹이 NiFi 에 아직 있는가. 404 면 «정말 지워졌다»는 확답이다.
+     *
+     * <p>미러가 «사라진 잡»을 지울지 판단할 때 쓴다. 개수만 세면 사용자가 한 번에 여러 개를
+     * 정리한 경우와 캔버스가 유실된 경우를 구분할 수 없다 - 하나씩 물어보면 구분된다.
+     *
+     * <p>조회 자체가 실패하면(NiFi 다운·네트워크) 판단을 미루기 위해 «있다»로 본다.
+     * 잘못 지우는 것보다 남겨 두는 쪽이 안전하다.
+     */
+    public boolean processGroupExists(String groupId) {
+        String token = getToken();
+        try {
+            restClient.get()
+                    .uri("/nifi-api/process-groups/{id}", groupId)
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .toBodilessEntity();
+            return true;
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound notFound) {
+            return false;
+        } catch (RestClientException ex) {
+            return true;   // 확인 불가 - 지우지 않는다
+        }
+    }
+
     public NifiFlowResponse getFlow(String groupId) {
         String token = getToken();
         try {

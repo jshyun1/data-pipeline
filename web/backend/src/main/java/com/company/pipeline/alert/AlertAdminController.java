@@ -307,7 +307,12 @@ public class AlertAdminController {
         boolean chain = "ETL_CHAIN".equalsIgnoreCase(category);
         List<Map<String, Object>> leaves = chain
                 ? jdbc.queryForList("""
-                        SELECT s.id, j.nifi_pg_id AS pg, s.target_table AS name
+                        -- 스키마명은 뗀다(public.dz_com001m -> dz_com001m). 트리에서 같은 폭을
+                        -- 차지하면서 구분에는 도움이 안 되고, 그룹 계층이 이미 소속을 보여준다.
+                        SELECT s.id, j.nifi_pg_id AS pg,
+                               CASE WHEN position('.' in s.target_table) > 0
+                                    THEN split_part(s.target_table, '.', 2)
+                                    ELSE s.target_table END AS name
                         FROM etl_job_step s JOIN etl_job j ON j.id = s.job_id
                         WHERE s.deleted_at IS NULL AND j.deleted_at IS NULL AND s.target_table IS NOT NULL
                         ORDER BY s.target_table""")
