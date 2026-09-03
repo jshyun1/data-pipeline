@@ -68,6 +68,9 @@ public class NifiClient {
             "query",
             "DB_DATA"
     );
+    private static final List<String> DB_TO_DB_UPSERT_QUERY_RECORD_SQL_KEYS = List.of(
+            "UPSERT"
+    );
     private static final List<String> PUT_DBCP_KEYS = List.of(
             "put-db-record-dcbp-service",
             "Database Connection Pooling Service"
@@ -831,7 +834,7 @@ public class NifiClient {
         putProperty(sourceProperties, SELECT_DBCP_KEYS, request.sourceServiceId().trim());
         putProperty(sourceProperties, SELECT_SQL_KEYS, loadSql(request));
         updateProcessorProperties(token, source, sourceProperties);
-        updateDbToDbQueryRecordProcessor(token, processors, request);
+        updateDbToDbQueryRecordProcessor(token, processors, request, DB_TO_DB_UPSERT_QUERY_RECORD_SQL_KEYS);
 
         updateTargetDbRecordProcessor(token, upsert, request, "UPSERT");
     }
@@ -912,6 +915,22 @@ public class NifiClient {
         }
         Map<String, String> queryProperties = mergedProperties(queryRecord);
         putProperty(queryProperties, DB_TO_DB_QUERY_RECORD_SQL_KEYS, request.queryRecordSql().trim());
+        updateProcessorProperties(token, queryRecord, queryProperties);
+    }
+
+    private void updateDbToDbQueryRecordProcessor(String token,
+            List<NifiFlowResponse.ProcessorEntity> processors,
+            NifiInitialDbToDbCreateRequest request,
+            List<String> sqlKeys) {
+        if (!StringUtils.hasText(request.queryRecordSql())) {
+            return;
+        }
+        NifiFlowResponse.ProcessorEntity queryRecord = findOptionalProcessor(processors, "QueryRecord");
+        if (queryRecord == null) {
+            return;
+        }
+        Map<String, String> queryProperties = mergedProperties(queryRecord);
+        putProperty(queryProperties, sqlKeys, request.queryRecordSql().trim());
         updateProcessorProperties(token, queryRecord, queryProperties);
     }
 
