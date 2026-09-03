@@ -26,6 +26,7 @@ import { listConnections, listConnectionColumns, listConnectionSchemas, listConn
 import { createLogFilePipeline, createPipeline, createPipelineBatch } from "../api/pipelines";
 import type { ConnectionResponse } from "../types/connection";
 import type { LogPipelineCreateRequest, PipelineCreateRequest, PipelineResponse } from "../types/pipeline";
+import { loadModeLabel } from "../types/pipeline";
 
 type StepKey = "basic" | "connections" | "targets" | "options" | "review";
 
@@ -100,6 +101,13 @@ function CdcCreateWizard() {
   const sourceSchema = Form.useWatch("sourceSchema", form);
   const targetSchema = Form.useWatch("targetSchema", form);
   const formValues = Form.useWatch([], form);
+  // 델타 적재: 변경 이벤트를 구분컬럼(맨 앞)과 함께 append-only 델타 테이블에 쌓는다.
+  // 백엔드 PipelineLoadMode.DELTA_APPEND. DELETE 반영 옵션은 이 모드에서 의미가 없다(항상 행 추가).
+  const isDeltaAppend = formValues?.loadMode === "DELTA_APPEND";
+  // 델타 최신상태: PK당 한 행만 남긴다(upsert). 소비자는 c/u/r→merge, d→있으면 삭제. 삭제 기준은 cdc_ts.
+  const isDeltaUpsert = formValues?.loadMode === "DELTA_UPSERT";
+  const isDelta = isDeltaAppend || isDeltaUpsert;
+  const deltaOpColumn = (formValues?.deltaOpColumn ?? "cdc_op").trim() || "cdc_op";
 
   const sourceSchemasQuery = useQuery({
     queryKey: ["connection-schemas", sourceConnectionId],
@@ -190,6 +198,8 @@ function CdcCreateWizard() {
     if (!formValues || selectedTables.length === 0) return [];
     return selectedTables.map((sourceTable) => ({
       ...formValues,
+      deltaOpColumn: formValues.loadMode === "DELTA_APPEND" || formValues.loadMode === "DELTA_UPSERT" ? formValues.deltaOpColumn : undefined,
+      deleteEnabled: formValues.loadMode === "DELTA_APPEND" || formValues.loadMode === "DELTA_UPSERT" ? false : formValues.deleteEnabled,
       name: selectedTables.length === 1 ? formValues.name : `${formValues.name}-${pipelineTableSuffix(sourceTable)}`.slice(0, 150),
       sourceTable,
       targetTable: targetTableBySource[sourceTable] ?? sourceTable.toLowerCase(),
@@ -264,7 +274,7 @@ function CdcCreateWizard() {
       <Form<PipelineCreateRequest>
         form={form}
         layout="vertical"
-        initialValues={{ deleteEnabled: false, snapshotMode: "INITIAL" }}
+        initialValues={{ deleteEnabled: false, snapshotMode: "INITIAL", loadMode: "UPSERT", deltaOpColumn: "cdc_op" }}
       >
         <Collapse
           accordion
@@ -550,9 +560,61 @@ function CdcCreateWizard() {
                   <Form.Item name="topicPrefix" label="Topic Prefix" rules={[{ required: true }]} tooltip="실제 토픽은 prefix.schema.table 형식입니다.">
                     <Input placeholder="예: postgres-cdc" />
                   </Form.Item>
-                  <Form.Item name="deleteEnabled" valuePropName="checked">
-                    <Checkbox>소스 DELETE 이벤트를 타깃에 반영</Checkbox>
+                  <Form.Item name="loadMode" label="적재 방식" rules={[{ required: true }]}
+                    tooltip="동기화: 타깃을 소스와 같은 모습으로 유지(upsert/delete). 델타: 변경 이벤트를 구분컬럼과 함께 한 행씩 쌓는 임시 테이블(CDC 기능이 없는 외부 솔루션이 주기적으로 읽어 반영).">
+                    <Select options={[
+                      { value: "UPSERT", label: "동기화 · 타깃을 소스와 동일하게 유지 (기본)" },
+                      { value: "DELTA_UPSERT", label: "델타 최신상태 · PK당 한 행, 마지막 상태 + 작업 종류" },
+                      { value: "DELTA_APPEND", label: "델타 append · 이벤트마다 한 행 쌓기" },
+                    ]} />
                   </Form.Item>
+                  {isDelta && (
+                    <Form.Item name="deltaOpColumn" label="구분컬럼명" rules={[
+                      { required: true, message: "구분컬럼명을 입력하세요." },
+                      { pattern: /^[A-Za-z][A-Za-z0-9_]{0,29}$/, message: "영문으로 시작하는 영문·숫자·_ 조합 30자 이하로 입력하세요." },
+                      { validator: async (_, value: string) => {
+                        const lower = (value ?? "").trim().toLowerCase();
+                        if (lower === "cdc_seq" || lower === "cdc_ts") throw new Error(`${lower}는 순번/시각 컬럼으로 예약되어 있습니다.`);
+                      } },
+                    ]} tooltip="델타 테이블의 구분 컬럼. 값은 Debezium op 코드 c(insert)·u(update)·d(delete)·r(초기 스냅샷)입니다.">
+                      <Input placeholder="cdc_op" style={{ maxWidth: 320 }} />
+                    </Form.Item>
+                  )}
+                  {isDeltaUpsert && (
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="델타 최신상태 테이블 모양"
+                      description={<div>
+                        <div>PK당 한 행만 남습니다. insert→update는 <b>u</b> 한 행(최신 값), insert→delete는 <b>d</b> 한 행(삭제 직전 값). 소비 쪽은 c/u/r을 merge(있으면 update, 없으면 insert), d는 있으면 delete로 처리하세요.</div>
+                        <div><b>{deltaOpColumn}</b>(구분) 외에 <b>cdc_ts</b>(이벤트 시각, epoch ms, 덮어쓸 때마다 갱신)가 함께 들어갑니다. «가져간 만큼 삭제»는 읽을 때의 MAX(cdc_ts) 이하 행만 지우세요.</div>
+                        <div>타깃 테이블은 <b>소스 PK와 같은 컬럼의 PK 또는 UNIQUE</b>가 있어야 합니다(커넥터 준비 시 검사). 테이블이 없으면 싱크가 PK 포함해 만들며 이때 구분·시각 컬럼은 뒤쪽에 붙습니다.</div>
+                        <div>PostgreSQL 소스는 REPLICA IDENTITY FULL이 아니면 d 행에 PK 외 컬럼이 NULL입니다.</div>
+                      </div>}
+                      style={{ marginBottom: 16 }}
+                    />
+                  )}
+                  {isDeltaAppend && (
+                    <>
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="델타 테이블 모양"
+                        description={<div>
+                          <div>커넥터 준비 시 <b>cdc_seq</b>(자동 증가 순번, PK) + <b>{deltaOpColumn}</b>(구분) 두 컬럼만 먼저 만들고, 소스 컬럼은 첫 변경 이벤트가 도착할 때 싱크가 뒤에 추가합니다.</div>
+                          <div>같은 행의 insert→update→delete 순서는 cdc_seq로 판단하세요. delete 행에는 삭제 직전 값이 담깁니다(PostgreSQL 소스는 REPLICA IDENTITY FULL이 아니면 PK 외 컬럼이 NULL).</div>
+                          <div>구분값은 c/u/d/r 코드입니다. 초기 스냅샷 행(r)이 필요 없으면 스냅샷 모드를 «기존 데이터 미적재»로 두세요.</div>
+                          <div>타깃 테이블이 이미 있으면 구분컬럼이 있는지만 확인하고 그대로 씁니다.</div>
+                        </div>}
+                        style={{ marginBottom: 16 }}
+                      />
+                    </>
+                  )}
+                  {!isDelta && (
+                    <Form.Item name="deleteEnabled" valuePropName="checked">
+                      <Checkbox>소스 DELETE 이벤트를 타깃에 반영</Checkbox>
+                    </Form.Item>
+                  )}
                   <Alert
                     type="info"
                     showIcon
@@ -563,7 +625,13 @@ function CdcCreateWizard() {
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <Button onClick={() => setActiveStep("targets")}>이전</Button>
                     <Button type="primary" onClick={async () => {
-                      await form.validateFields(["snapshotMode", "topicPrefix"]);
+                      await form.validateFields(["snapshotMode", "topicPrefix", "loadMode", ...(isDelta ? ["deltaOpColumn"] : [])]);
+                      if (isDelta) {
+                        // 소스 컬럼과 같은 이름이면 싱크가 같은 이름의 필드를 두 개 받아 깨진다.
+                        const clashing = selectedTables.filter((table) => (sourceMetadataByTable[table] ?? [])
+                          .some((column) => column.name.toLowerCase() === deltaOpColumn.toLowerCase()));
+                        if (clashing.length > 0) { message.error(`구분컬럼명 '${deltaOpColumn}'이(가) 소스 컬럼과 겹칩니다: ${clashing.join(", ")}`); return; }
+                      }
                       completeAndOpen("options", "review");
                     }}>다음: 검토</Button>
                   </div>
@@ -581,7 +649,8 @@ function CdcCreateWizard() {
                     <Descriptions.Item label="소스 연결">{sourceConnection ? connectionLabel(sourceConnection) : "—"}</Descriptions.Item>
                     <Descriptions.Item label="타깃 연결">{targetConnection ? connectionLabel(targetConnection) : "—"}</Descriptions.Item>
                     <Descriptions.Item label="스냅샷 모드">{formValues?.snapshotMode === "NO_DATA" ? "기존 데이터 미적재 · 이후 CDC" : "초기 적재 후 CDC"}</Descriptions.Item>
-                    <Descriptions.Item label="DELETE 반영">{formValues?.deleteEnabled ? "사용" : "사용 안 함"}</Descriptions.Item>
+                    <Descriptions.Item label="적재 방식">{loadModeLabel(formValues?.loadMode, deltaOpColumn)}</Descriptions.Item>
+                    {!isDelta && <Descriptions.Item label="DELETE 반영">{formValues?.deleteEnabled ? "사용" : "사용 안 함"}</Descriptions.Item>}
                   </Descriptions>
                   <Table<PipelineCreateRequest>
                     rowKey="name"
@@ -599,7 +668,25 @@ function CdcCreateWizard() {
                       { title: "Topic", width: 220, render: (_, row) => `${row.topicPrefix}.${row.sourceSchema}.${row.sourceTable}` },
                     ]}
                   />
-                  {batchRequests.some((request) => !findExistingTable(targetTablesQuery.data, request.targetTable)) && (
+                  {isDeltaAppend && (
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="델타 테이블은 커넥터 준비 시 뼈대(cdc_seq + 구분컬럼)를 먼저 만듭니다"
+                      description="소스 컬럼은 첫 변경 이벤트가 도착할 때 뒤에 추가됩니다. 타깃 스키마는 미리 존재해야 하고, 타깃 연결 계정에 CREATE TABLE 권한이 필요합니다. 기존 테이블을 지정한 경우 구분컬럼이 없으면 준비 단계에서 실패합니다."
+                      style={{ marginTop: 12 }}
+                    />
+                  )}
+                  {isDeltaUpsert && (
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="델타 최신상태는 커넥터 준비 시 타깃 키를 검사합니다"
+                      description="기존 타깃 테이블에 구분컬럼과 소스 PK와 같은 PK/UNIQUE가 있어야 합니다. cdc_ts 컬럼이 없으면 첫 이벤트에서 자동 추가됩니다. 테이블이 없으면 싱크가 PK 포함해 생성합니다."
+                      style={{ marginTop: 12 }}
+                    />
+                  )}
+                  {!isDelta && batchRequests.some((request) => !findExistingTable(targetTablesQuery.data, request.targetTable)) && (
                     <Alert
                       type="info"
                       showIcon

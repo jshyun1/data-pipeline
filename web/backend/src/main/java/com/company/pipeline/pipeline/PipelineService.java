@@ -113,6 +113,12 @@ public class PipelineService {
                 null
         );
         entity.setSnapshotMode(PipelineSnapshotMode.from(request.snapshotMode()).name());
+        PipelineLoadMode loadMode = PipelineLoadMode.from(request.loadMode());
+        entity.setLoadMode(loadMode.name());
+        // 델타 적재: 구분컬럼명은 생성 시점에 확정해 저장한다(배포·화면이 같은 이름을 봐야 함).
+        // 소스 컬럼과 이름이 겹치면 싱크가 같은 이름의 필드를 두 개 받게 되므로 미리 막는다.
+        entity.setDeltaOpColumn(loadMode.isDelta()
+                ? PipelineLoadMode.normalizeDeltaOpColumn(request.deltaOpColumn()) : null);
         entity.setExcludedColumns(request.excludedColumns() == null ? null
                 : request.excludedColumns().stream().map(String::trim).filter(value -> !value.isEmpty())
                         .distinct().sorted().reduce((left, right) -> left + "," + right).orElse(null));

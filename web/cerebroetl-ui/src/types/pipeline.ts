@@ -1,6 +1,17 @@
 import type { DbType } from "./connection";
 
 // web/backend의 com.company.pipeline.pipeline.dto.* / PipelineStatus 와 1:1로 맞춘 타입.
+// UPSERT: 타깃을 소스와 동일하게 유지. DELTA_APPEND: 이벤트마다 한 행 append(순번 cdc_seq).
+// DELTA_UPSERT: PK당 한 행, 마지막 상태 + 마지막 작업 종류(시각 cdc_ts). 백엔드 PipelineLoadMode 와 1:1.
+export type PipelineLoadMode = "UPSERT" | "DELTA_APPEND" | "DELTA_UPSERT";
+
+export function loadModeLabel(mode: PipelineLoadMode | null | undefined, opColumn?: string | null): string {
+  const column = opColumn ?? "cdc_op";
+  if (mode === "DELTA_APPEND") return `델타 append · 이벤트마다 한 행 (구분컬럼 ${column})`;
+  if (mode === "DELTA_UPSERT") return `델타 최신상태 · PK당 한 행 (구분컬럼 ${column})`;
+  return "동기화 upsert";
+}
+
 export type PipelineStatus = "CREATED" | "DEPLOYING" | "READY" | "DEPLOYED" | "PAUSED" | "STOPPED" | "FAILED";
 
 export interface PipelineConnectorSummary {
@@ -43,6 +54,10 @@ export interface PipelineResponse {
   excludedColumns: string | null;
   maskedColumns: string | null;
   deleteEnabled: boolean;
+  // UPSERT: 타깃을 소스와 같은 모습으로 유지(기존). DELTA_APPEND: 변경 이벤트를 구분컬럼과 함께
+  // append-only 델타 테이블에 한 행씩 쌓는다(CDC 없는 외부 솔루션이 주기적으로 읽어 가는 용도).
+  loadMode: PipelineLoadMode;
+  deltaOpColumn: string | null;
   description: string | null;
   connectors: PipelineConnectorSummary[];
   createdAt: string;
@@ -91,6 +106,8 @@ export interface PipelineCreateRequest {
   excludedColumns?: string[];
   maskedColumns?: string[];
   deleteEnabled?: boolean;
+  loadMode?: PipelineLoadMode;
+  deltaOpColumn?: string;
   description?: string;
 }
 

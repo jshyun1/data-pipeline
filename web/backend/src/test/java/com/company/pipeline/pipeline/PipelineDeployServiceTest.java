@@ -61,6 +61,8 @@ class PipelineDeployServiceTest {
     private FilebeatConfigRenderer filebeatConfigRenderer;
     @Mock
     private FilebeatInputFileService filebeatInputFileService;
+    @Mock
+    private DeltaTargetTableService deltaTargetTableService;
 
     private PipelineDeployService deployService;
 
@@ -69,7 +71,8 @@ class PipelineDeployServiceTest {
         deployService = new PipelineDeployService(pipelineDefinitionRepository, pipelineConnectorRepository,
                 commandHistoryRecorder, connectionRepository, passwordCryptoService,
                 connectorConfigRenderer, kafkaConnectClient, new ObjectMapper(),
-                logPipelineSourceRepository, filebeatConfigRenderer, filebeatInputFileService);
+                logPipelineSourceRepository, filebeatConfigRenderer, filebeatInputFileService,
+                deltaTargetTableService);
         // 단위 테스트에서는 실제 대기 없이 안정화 상태를 한 번 더 검증한다.
         ReflectionTestUtils.setField(deployService, "startStabilityMillis", 0L);
     }

@@ -6,6 +6,7 @@ import com.company.pipeline.connection.DbType;
 import com.company.pipeline.connector.dto.LogSinkConnectorRequest;
 import com.company.pipeline.connector.dto.RenderedConnectorConfig;
 import com.company.pipeline.connector.dto.SinkConnectorRequest;
+import com.company.pipeline.pipeline.PipelineLoadMode;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.stereotype.Component;
@@ -27,6 +28,11 @@ public class JdbcSinkTemplate {
         String topics = ConnectorNaming.topicName(
                 request.topicPrefix(), request.sourceDbType(), request.sourceSchema(), request.sourceTable());
 
+        PipelineLoadMode loadMode = PipelineLoadMode.from(request.loadMode());
+        if (loadMode.isDelta()) {
+            return renderDelta(request, loadMode, connectorName, topics);
+        }
+
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("connector.class", "io.debezium.connector.jdbc.JdbcSinkConnector");
         config.put("tasks.max", "1");
@@ -39,6 +45,63 @@ public class JdbcSinkTemplate {
         config.put("schema.evolution", "basic");
         config.put("table.name.format", request.targetSchema() + "." + request.targetTable());
         config.put("delete.enabled", String.valueOf(request.deleteEnabled()));
+        addDlqSettings(config, request.pipelineId());
+
+        return new RenderedConnectorConfig(connectorName, "SINK",
+                "io.debezium.connector.jdbc.JdbcSinkConnector", config);
+    }
+
+    /**
+     * 델타 적재 싱크. DELTA_APPEND 는 변경 이벤트 한 건 = 델타 테이블 한 행, DELTA_UPSERT 는
+     * PK당 한 행(마지막 상태 + 마지막 작업 종류).
+     *
+     * <p>Debezium JDBC 싱크는 CDC 봉투(before/after/op)를 스스로 풀지만 op 를 컬럼으로 남기지는
+     * 못한다. 그래서 싱크 쪽에 ExtractNewRecordState SMT 를 걸어 after(삭제는 before) 를
+     * 평면화하면서 op 필드를 구분컬럼 이름으로 붙인다(add.fields 의 {@code op:이름} 별칭 문법,
+     * 접두어 {@code __} 는 비움). 소스 토픽의 메시지 형식은 그대로라 같은 토픽에 기존 upsert
+     * 싱크를 나란히 붙일 수 있다.
+     *
+     * <ul>
+     *   <li>{@code delete.tombstone.handling.mode=rewrite}: 기본값(tombstone)이면 delete 가
+     *       빈 레코드로 바뀌어 사라진다. rewrite 여야 삭제 직전 값 + {@code __deleted=true} 로 남는다.
+     *       {@code __deleted} 는 요구 모양(구분컬럼 1 + 소스 컬럼 N)에 없는 열이라 ReplaceField 로 뺀다.</li>
+     *   <li>DELTA_APPEND: {@code insert.mode=insert}/{@code primary.key.mode=none} - 같은 PK 가 여러
+     *       행으로 쌓여야 하므로 upsert·PK 를 쓰지 않는다.</li>
+     *   <li>DELTA_UPSERT: {@code insert.mode=upsert}/{@code primary.key.mode=record_key} - 같은 PK 는
+     *       덮어쓴다. delete 도 행 삭제가 아니라 구분값 d 로 덮어쓰므로 delete.enabled 는 여전히 false.
+     *       순번(INSERT 때만 채번)은 덮어써도 안 바뀌어 "가져간 만큼 삭제" 기준이 못 되므로, 이벤트
+     *       시각 {@code ts_ms} 를 {@value PipelineLoadMode#DELTA_TS_COLUMN} 컬럼으로 같이 넣는다.</li>
+     *   <li>op 값은 Debezium 코드 그대로(c/u/d/r). 문자열로 바꿔 주는 내장 SMT 는 없다.</li>
+     * </ul>
+     * 구분컬럼을 맨 앞에 두기 위한 테이블 뼈대(APPEND)나 PK 검증(UPSERT)은 DeltaTargetTableService 가
+     * 배포 시 먼저 한다.
+     */
+    private RenderedConnectorConfig renderDelta(SinkConnectorRequest request, PipelineLoadMode loadMode,
+            String connectorName, String topics) {
+        String opColumn = PipelineLoadMode.normalizeDeltaOpColumn(request.deltaOpColumn());
+        boolean upsert = loadMode == PipelineLoadMode.DELTA_UPSERT;
+
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("connector.class", "io.debezium.connector.jdbc.JdbcSinkConnector");
+        config.put("tasks.max", "1");
+        config.put("topics", topics);
+        config.put("connection.url", connectionUrl(request));
+        config.put("connection.username", request.username());
+        config.put("connection.password", request.password());
+        config.put("insert.mode", upsert ? "upsert" : "insert");
+        config.put("primary.key.mode", upsert ? "record_key" : "none");
+        config.put("schema.evolution", "basic");
+        config.put("table.name.format", request.targetSchema() + "." + request.targetTable());
+        config.put("delete.enabled", "false");
+        config.put("transforms", "unwrap,dropDeleted");
+        config.put("transforms.unwrap.type", "io.debezium.transforms.ExtractNewRecordState");
+        config.put("transforms.unwrap.add.fields", upsert
+                ? "op:" + opColumn + ",ts_ms:" + PipelineLoadMode.DELTA_TS_COLUMN
+                : "op:" + opColumn);
+        config.put("transforms.unwrap.add.fields.prefix", "");
+        config.put("transforms.unwrap.delete.tombstone.handling.mode", "rewrite");
+        config.put("transforms.dropDeleted.type", "org.apache.kafka.connect.transforms.ReplaceField$Value");
+        config.put("transforms.dropDeleted.exclude", "__deleted");
         addDlqSettings(config, request.pipelineId());
 
         return new RenderedConnectorConfig(connectorName, "SINK",

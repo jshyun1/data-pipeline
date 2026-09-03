@@ -42,6 +42,7 @@ import { listConnections } from "../api/connections";
 import { getRealtimePipelineMetrics, type RealtimePipelineMetricResponse } from "../api/dashboard";
 import { listPipelineRuntimeStatuses, listPipelines } from "../api/pipelines";
 import type { PipelineResponse, PipelineRuntimeStatusResponse } from "../types/pipeline";
+import { loadModeLabel } from "../types/pipeline";
 import {
   cdcPipelineColumns,
   renderRuntimeStatus,
@@ -1459,6 +1460,8 @@ function PropertyPanel({
             {pipeline.pipelineType === "TABLE_CDC" && <>
               <dt>스냅샷 모드</dt>
               <dd>{pipeline.snapshotMode === "NO_DATA" ? "기존 데이터 미적재 · 이후 CDC" : "초기 적재 후 CDC"}</dd>
+              <dt>적재 방식</dt>
+              <dd>{loadModeLabel(pipeline.loadMode, pipeline.deltaOpColumn)}</dd>
             </>}
             {/* 목록의 «상태»는 제어 DAG 기준이라, 여기서는 무엇의 상태인지 밝힌다. */}
             <dt>커넥터 상태</dt><dd>{renderRuntimeStatus(pipeline, runtime)}</dd>

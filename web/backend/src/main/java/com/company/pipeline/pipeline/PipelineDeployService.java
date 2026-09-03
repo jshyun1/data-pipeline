@@ -67,6 +67,7 @@ public class PipelineDeployService {
     private final LogPipelineSourceRepository logPipelineSourceRepository;
     private final FilebeatConfigRenderer filebeatConfigRenderer;
     private final FilebeatInputFileService filebeatInputFileService;
+    private final DeltaTargetTableService deltaTargetTableService;
     private final ConcurrentHashMap<Long, ReentrantLock> pipelineLocks = new ConcurrentHashMap<>();
 
     /**
@@ -89,7 +90,8 @@ public class PipelineDeployService {
             ObjectMapper objectMapper,
             LogPipelineSourceRepository logPipelineSourceRepository,
             FilebeatConfigRenderer filebeatConfigRenderer,
-            FilebeatInputFileService filebeatInputFileService) {
+            FilebeatInputFileService filebeatInputFileService,
+            DeltaTargetTableService deltaTargetTableService) {
         this.pipelineDefinitionRepository = pipelineDefinitionRepository;
         this.pipelineConnectorRepository = pipelineConnectorRepository;
         this.commandHistoryRecorder = commandHistoryRecorder;
@@ -101,6 +103,7 @@ public class PipelineDeployService {
         this.logPipelineSourceRepository = logPipelineSourceRepository;
         this.filebeatConfigRenderer = filebeatConfigRenderer;
         this.filebeatInputFileService = filebeatInputFileService;
+        this.deltaTargetTableService = deltaTargetTableService;
     }
 
     public PipelineResponse deploy(Long pipelineId) {
@@ -147,6 +150,13 @@ public class PipelineDeployService {
         PipelineConnection source = findConnectionOrThrow(pipeline.getSourceConnectionId());
         PipelineConnection target = findConnectionOrThrow(pipeline.getTargetConnectionId());
 
+        // 델타 적재는 커넥터 등록 전에 타깃 테이블을 준비/검증한다(APPEND: 구분컬럼이 맨 앞인 뼈대
+        // 생성, UPSERT: 소스 PK 와 같은 키 존재 확인). 여기서 실패하면 아직 아무 커넥터도 등록되지
+        // 않은 상태라 되돌릴 것이 없다.
+        if (PipelineLoadMode.from(pipeline.getLoadMode()).isDelta()) {
+            deltaTargetTableService.ensureDeltaTable(pipeline, target);
+        }
+
         RenderedConnectorConfig sourceConfig = connectorConfigRenderer.renderSource(new SourceConnectorRequest(
                 pipeline.getId(), source.getDbType(), source.getHost(), source.getPort(),
                 source.getUsername(), passwordCryptoService.decrypt(source.getEncryptedPassword()),
@@ -162,7 +172,8 @@ public class PipelineDeployService {
                 target.getDatabaseName(), target.getServiceName(),
                 pipeline.getTargetSchema(), pipeline.getTargetTable(),
                 source.getDbType(), pipeline.getSourceSchema(), pipeline.getSourceTable(),
-                pipeline.getTopicName(), Boolean.TRUE.equals(pipeline.getDeleteEnabled())));
+                pipeline.getTopicName(), Boolean.TRUE.equals(pipeline.getDeleteEnabled()),
+                pipeline.getLoadMode(), pipeline.getDeltaOpColumn()));
         prepareStoppedConnector(pipeline.getId(), "SINK", sinkConfig);
     }
 
