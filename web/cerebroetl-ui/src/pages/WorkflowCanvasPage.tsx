@@ -150,11 +150,8 @@ export function WorkflowCanvasPage() {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string>();
   const [flow, setFlow] = useState<{ fitView: (o?: object) => void }>();
   const [validation, setValidation] = useState<ValidationResult>();
-  const [jobSearch, setJobSearch] = useState("");
   // 소속 그룹 밖 job이 필요할 때만 켠다(교차 그룹 워크플로우).
   const [showAllJobs, setShowAllJobs] = useState(false);
-  // 캔버스 위 메모. 속성창과 같은 값을 보므로 서버 값이 바뀌면 따라간다.
-  const [canvasMemo, setCanvasMemo] = useState("");
   const [dirty, setDirty] = useState(false);
 
   /** 캔버스를 떠나기 전 확인. 저장 안 한 변경을 말없이 버리지 않는다. */
@@ -212,7 +209,6 @@ export function WorkflowCanvasPage() {
     setSelectedNodeId(undefined);
     setSelectedEdgeId(undefined);
     setValidation(undefined);
-    setCanvasMemo("");
     setShowAllJobs(false);
   }, [workflowId, setNodes, setEdges]);
 
@@ -245,7 +241,6 @@ export function WorkflowCanvasPage() {
       className: nodeClass(node.jobMissing, node.nodeType),
     })));
     // 흐름은 항상 왼쪽에서 오른쪽이다. 연결점이 좌우 하나씩뿐이라 어느 변인지 추정할 것이 없다.
-    setCanvasMemo(detail.memo ?? "");
     setEdges(detail.edges.map((edge) => {
       return {
         id: `${edge.fromNodeKey}->${edge.toNodeKey}`,
@@ -624,12 +619,6 @@ export function WorkflowCanvasPage() {
     const children = (node.children ?? [])
       .map(buildPaletteTree)
       .filter(Boolean) as Array<{ key: string; title: React.ReactNode; selectable: boolean }>;
-    const needle = jobSearch.trim().toLowerCase();
-    const selfMatches = !needle || node.name.toLowerCase().includes(needle);
-    // 검색어가 있으면 자신 또는 자손이 걸리는 가지만 남긴다.
-    if (needle && !selfMatches && children.length === 0) {
-      return null;
-    }
     const placed = job ? usedJobIdSet.has(job.id) : false;
     return {
       key: node.id,
@@ -820,8 +809,7 @@ export function WorkflowCanvasPage() {
                 </Button>
               </div>
             )}
-            <Input.Search placeholder="그룹·job 검색" allowClear size="small" style={{ marginBottom: 8 }}
-                          onChange={(event) => setJobSearch(event.target.value)} />
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>태스크</div>
             {treeQuery.isLoading ? (
               <Spin size="small" />
             ) : paletteTree.length === 0 ? (
@@ -830,7 +818,6 @@ export function WorkflowCanvasPage() {
               <Tree
                 blockNode
                 defaultExpandedKeys={defaultOpenKeys}
-                autoExpandParent={Boolean(jobSearch.trim())}
                 selectedKeys={[]}
                 treeData={paletteTree as never}
                 onSelect={(_, info) => {
@@ -842,10 +829,6 @@ export function WorkflowCanvasPage() {
                 }}
               />
             )}
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              클릭하면 캔버스에 추가됩니다. ● 는 이미 배치된 job입니다.
-            </Typography.Text>
-
             {/* 워크플로우도 하나의 노드로 얹을 수 있다. 그래야 «daily = monthly 끝나면
                 years» 같은 조립이 가능하다. 자기 자신은 넣을 수 없다(무한 중첩). */}
             <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
@@ -869,9 +852,6 @@ export function WorkflowCanvasPage() {
                   }}
                 />
               )}
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                워크플로우를 얹으면 그 워크플로우가 끝날 때까지 기다린 뒤 다음으로 넘어갑니다.
-              </Typography.Text>
             </div>
           </Card>
 
@@ -899,40 +879,12 @@ export function WorkflowCanvasPage() {
               <Background />
               <Controls />
               <MiniMap pannable zoomable />
-              {/* 그림 옆에 맥락을 적어두는 자리. 속성창의 메모와 같은 값이라
-                  어느 쪽에서 고쳐도 같이 바뀐다. */}
+              {/* 캔버스 위 «메모» 상자는 뺐다(2026-09-03) - 속성창에 같은 메모 칸이 있어
+                  두 곳에 같은 것이 떠 있었고, 캔버스 좌상단을 늘 가리고 있었다. */}
               <Panel position="bottom-center">
                 <Button size="small" disabled={!canWrite} onClick={alignHorizontally}>
                   수평 정렬
                 </Button>
-              </Panel>
-              <Panel position="top-left">
-                <div className="wf-memo">
-                  <div className="wf-memo-title">메모</div>
-                  <Input.TextArea
-                    variant="borderless"
-                    autoSize={{ minRows: 2, maxRows: 8 }}
-                    placeholder="이 워크플로우에 대한 메모"
-                    value={canvasMemo}
-                    disabled={!canWrite}
-                    onChange={(event) => setCanvasMemo(event.target.value)}
-                    onBlur={() => {
-                      if (detail && canvasMemo !== (detail.memo ?? "")) {
-                        settingsMutation.mutate({
-                          name: detail.name,
-                          description: detail.description,
-                          nifiGroupPgId: detail.nifiGroupPgId,
-                          scheduleCron: detail.scheduleCron,
-                          timezone: detail.timezone,
-                          catchup: detail.catchup,
-                          maxActiveRuns: detail.maxActiveRuns,
-                          suspendOnError: detail.suspendOnError,
-                          memo: canvasMemo,
-                        });
-                      }
-                    }}
-                  />
-                </div>
               </Panel>
             </ReactFlow>
           </div>
@@ -978,6 +930,9 @@ export function WorkflowCanvasPage() {
                     jobId={Number(selectedNode.data.jobId)}
                     nifiPgId={selectedNode.data.nifiPgId ? String(selectedNode.data.nifiPgId) : null}
                   />
+                ) : null}
+                {selectedNode.data.subWorkflowId ? (
+                  <SubWorkflowSummary workflowId={Number(selectedNode.data.subWorkflowId)} />
                 ) : null}
                 <div>
                   <div style={{ fontSize: 12, color: "#888" }}>진입 조건 (trigger rule)</div>
@@ -1075,6 +1030,89 @@ const UNGROUPED_KEY = "__ungrouped__";
 function nodeClass(problem: boolean, nodeType?: string): string {
   const kind = nodeType === "SUBWF" ? " wf-node--subwf" : " wf-node--job";
   return problem ? `wf-node${kind} wf-node--problem` : `wf-node${kind}`;
+}
+
+/**
+ * 캔버스에 얹은 «워크플로우 노드»를 눌렀을 때 보여주는 그 워크플로우의 요약(읽기 전용).
+ *
+ * <p>예전에는 이름과 진입 조건만 나와서, 이 하위 워크플로우가 언제 도는지·누가 위에
+ * 있는지를 알려면 캔버스를 옮겨 다녀야 했다. 값은 그 워크플로우의 것이므로 여기서는
+ * 고치지 않는다 - 고치려면 «워크플로우 바로가기»로 넘어가 그 캔버스에서 저장한다.
+ */
+function SubWorkflowSummary({ workflowId }: { workflowId: number }) {
+  const query = useQuery({
+    queryKey: ["workflow", workflowId],
+    queryFn: () => getWorkflow(workflowId),
+  });
+  const detail = query.data;
+  if (query.isLoading) {
+    return <Typography.Text type="secondary" style={{ fontSize: 12 }}>불러오는 중</Typography.Text>;
+  }
+  if (!detail) {
+    return <Typography.Text type="secondary" style={{ fontSize: 12 }}>정보를 불러오지 못했습니다</Typography.Text>;
+  }
+  const parsed = parseCronToPreset(detail.scheduleCron);
+  const parents = detail.parents ?? [];
+  const manual = !detail.scheduleCron;
+  return (
+    <>
+      <div>
+        <div style={{ fontSize: 12, color: "#888" }}>스케줄</div>
+        {manual ? (
+          <Typography.Text style={{ fontSize: 13 }}>수동 실행</Typography.Text>
+        ) : (
+          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+            <Typography.Text style={{ fontSize: 13 }}>
+              정기 실행 · {parsed
+                ? presetDescription(parsed.preset, parsed.hour, parsed.minute, parsed.weekday)
+                : detail.scheduleCron}
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {detail.scheduleCron} ({detail.timezone})
+            </Typography.Text>
+            {/* 크론을 직접 적은 워크플로우는 다음 시각을 계산하지 않는다(프리셋 계산기라 어긋난다). */}
+            {parsed && (
+              <div style={{ fontSize: 12, color: "#888", lineHeight: 1.7 }}>
+                <strong style={{ color: "#555" }}>다음 2회 실행</strong>
+                {nextPresetRuns(parsed.preset, parsed.hour, parsed.minute, parsed.weekday).map((d) => (
+                  <div key={d.valueOf()}>{d.format("YYYY-MM-DD HH:mm")}</div>
+                ))}
+              </div>
+            )}
+          </Space>
+        )}
+      </div>
+      <div>
+        <div style={{ fontSize: 12, color: "#888" }}>상위 워크플로우</div>
+        {parents.length === 0 ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            없음 (위 스케줄대로 단독 실행)
+          </Typography.Text>
+        ) : (
+          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+            {parents.map((parent) => (
+              <div key={parent.id}>
+                <Link to={`/workflows/design/${parent.id}`}>{parent.name}</Link>
+                <span style={{ color: "#888", fontSize: 12 }}>
+                  {" "}{parent.scheduleCron ? `· ${parent.scheduleCron}` : "· 수동"}
+                </span>
+              </div>
+            ))}
+          </Space>
+        )}
+      </div>
+      <div>
+        <div style={{ fontSize: 12, color: "#888" }}>메모</div>
+        {detail.memo ? (
+          <Typography.Paragraph style={{ fontSize: 13, marginBottom: 0, whiteSpace: "pre-wrap" }}>
+            {detail.memo}
+          </Typography.Paragraph>
+        ) : (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>없음</Typography.Text>
+        )}
+      </div>
+    </>
+  );
 }
 
 function WorkflowSettings({ detail, disabled, onSave, saving, onDraftChange }: {
