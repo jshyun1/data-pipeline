@@ -37,7 +37,17 @@ IDLE_SETTLE_CHECKS = 3
 # 시작 후 이 시간까지 아무 활동이 없으면 "처리할 데이터가 없었다"로 본다.
 WAIT_START_GRACE_SECONDS = 180
 
-INSERT_COUNTER_NAME = "INSERT updates performed"
+# PutDatabaseRecord 는 statement type 마다 <b>다른 이름</b>의 카운터를 올린다
+# ("INSERT updates performed", "UPSERT updates performed", "UPDATE updates performed" …).
+# 예전에는 INSERT 하나만 세서, UPSERT 로 적재하는 job 은 실제로 10만 행이 들어가도
+# 실행 이력에 «적재 건수: 없음»(0행)으로 남았다. dz_*(INSERT)는 제대로 나오는데
+# dw_*(UPSERT)만 전부 0 으로 보이던 원인이다(2026-09-03 확인. 그날 MSA NiFi 누계는
+# INSERT 16,637,720 / UPSERT 2,116,460 이었다).
+#
+# 이름을 하나씩 나열하면 새 statement type 이 생길 때 또 0 이 되므로 접미사로 받는다.
+# "Records Written"/"Records Processed"/"Batches Executed" 는 행수가 아니거나 중복이라
+# 걸러진다.
+LOAD_COUNTER_NAME_SUFFIX = "updates performed"
 _PROCESSOR_ID_IN_CONTEXT = re.compile(r"\(([0-9a-fA-F-]{36})\)\s*$")
 
 
@@ -153,6 +163,9 @@ def insert_counters_by_processor(token: str) -> dict:
 
     FlowFile 건수는 "파일 몇 개"라 행수가 아니다 - 155MB짜리 FlowFile 하나가
     166만 행인 식이라, 실제 적재 건수는 이 카운터로만 알 수 있다.
+
+    INSERT/UPSERT 등 statement type 별 카운터를 <b>프로세서 단위로 합산</b>한다
+    (자세한 배경은 LOAD_COUNTER_NAME_SUFFIX 주석).
     """
     try:
         response = requests.get(
@@ -166,13 +179,14 @@ def insert_counters_by_processor(token: str) -> dict:
     except Exception as exc:  # 카운터는 부가 정보라 못 읽어도 진행한다
         print(f"카운터 조회 실패(적재 건수 표시 생략): {exc}")
         return {}
-    result = {}
+    result: dict = {}
     for counter in counters:
-        if counter.get("name") != INSERT_COUNTER_NAME:
+        if not (counter.get("name") or "").endswith(LOAD_COUNTER_NAME_SUFFIX):
             continue
         matched = _PROCESSOR_ID_IN_CONTEXT.search(counter.get("context") or "")
         if matched:
-            result[matched.group(1)] = as_int(counter.get("valueCount"))
+            # 한 프로세서가 여러 statement type 을 올릴 수 있어 대입이 아니라 누적이다.
+            result[matched.group(1)] = result.get(matched.group(1), 0) + as_int(counter.get("valueCount"))
     return result
 
 
