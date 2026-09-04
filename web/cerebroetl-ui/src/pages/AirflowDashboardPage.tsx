@@ -99,6 +99,24 @@ function runAt(run?: AirflowDagRun) {
   return run?.start_date ?? run?.execution_date;
 }
 
+/**
+ * 오늘 실행분 중 가장 최근 것. 없으면 undefined.
+ *
+ * <p>실시간 모니터링은 «오늘 무엇이 돌았나»를 보는 화면이다. 그런데 목록이 날짜를 가리지
+ * 않고 «마지막 실행»을 집으면, 며칠 전에 돈 워크플로우가 오늘 성공/실패한 것처럼 보인다.
+ * 어제 성공하고 오늘 아직 안 돈 작업과, 오늘 성공한 작업이 같은 «성공»으로 보이는 것이
+ * 특히 문제였다.
+ *
+ * <p>runs 는 최신순이라 첫 일치가 곧 오늘의 마지막 실행이다. 이전 일자는 속성창의
+ * «실행 이력»에서 기간을 넓혀 본다(RunHistoryModal).
+ */
+function latestRunToday(runs: AirflowDagRun[], today: Dayjs = dayjs().startOf("day")) {
+  return runs.find((run) => {
+    const startedAt = runAt(run);
+    return Boolean(startedAt && dayjs(startedAt).isAfter(today));
+  });
+}
+
 function duration(start?: string, end?: string) {
   if (!start || !end) {
     return "-";
@@ -279,10 +297,7 @@ function matchesMetric(
   if (metric === "all") return true;
   if (metric === "new") return Boolean(dag.created_at && dayjs(dag.created_at).isAfter(today));
   if (metric === "running") return runs.some((run) => run.state === "running");
-  const latestToday = runs.find((run) => {
-    const startedAt = runAt(run);
-    return Boolean(startedAt && dayjs(startedAt).isAfter(today));
-  });
+  const latestToday = latestRunToday(runs, today);
   if (metric === "success") return latestToday?.state === "success";
   if (metric === "failed") return latestToday?.state === "failed";
   return latestToday?.state === "queued" || latestToday?.state === "scheduled";
@@ -1146,7 +1161,9 @@ function ScopeList({
   }
 
   // ETL 그룹 / ETL 지표 선택 -> DAG(워크플로우) 목록
-  const latestRun = (dagId: string) => (runsByDag.get(dagId) ?? [])[0];
+  // 당일 실행분만 본다. 오늘 안 돈 워크플로우는 «실행 없음»으로 비워 두는 편이,
+  // 며칠 전 결과를 오늘 것처럼 보여주는 것보다 정확하다.
+  const latestRun = (dagId: string) => latestRunToday(runsByDag.get(dagId) ?? [], today);
   // cdc 범위는 위에서 이미 반환했으므로 여기서는 남은 세 가지만 다룬다.
   let rows: DashboardDag[] = [];
   if (scope.kind === "etl") {
@@ -1801,6 +1818,9 @@ export function AirflowDashboardPage() {
         .filter((id): id is number => typeof id === "number")
     : [];
   const selectedRuns = selectedDagId ? (runsByDag.get(selectedDagId) ?? []) : [];
+  // 목록과 같은 기준으로 맞춘다. 목록이 «실행 없음»인데 하단에 어제 실행의 단계가
+  // 펼쳐지면 둘이 어긋나 보인다.
+  const selectedRunToday = latestRunToday(selectedRuns);
   const selectedAlerts = selectedDagId ? (alertsByDag.get(selectedDagId) ?? []) : [];
   const historyDagId = selectedPipeline ? pipelineDag?.dag_id : selectedDagId;
   const historyRuns = historyDagId ? (runsByDag.get(historyDagId) ?? []) : [];
@@ -1884,7 +1904,7 @@ export function AirflowDashboardPage() {
                   <table className="airflow-job-table">
                     <thead><tr><th>작업(Task)</th><th>유형</th><th>시작</th><th>상태</th><th>적재/실패 사유</th><th>소요</th><th>스케줄</th><th>재실행</th></tr></thead>
                     <tbody>
-                      <TaskRows dag={selectedDag} run={selectedRuns[0]} refreshSeconds={refreshSeconds} />
+                      <TaskRows dag={selectedDag} run={selectedRunToday} refreshSeconds={refreshSeconds} />
                     </tbody>
                   </table>
                 </div>
