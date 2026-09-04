@@ -29,6 +29,7 @@ import {
   listAirflowTaskInstances,
   listAllAirflowDagRuns,
   retryAirflowTasks,
+  markAirflowTaskSuccess,
   syncAirflowDagCatalog,
   triggerAirflowDag,
   type AirflowDag,
@@ -905,10 +906,23 @@ function TaskRows({
     return reason?.replace(/^\[[^\]]+\]\s*/, "").replace(/^-\s*Caused by:\s*/, "").slice(0, 180)
       || "실패 사유를 확인할 수 없습니다.";
   };
-  const rerunJob = async (jobKey: string, taskIds: string[], withDownstream: boolean) => {
+  /** job 키(= TaskGroup 이름). 화면에 보이는 단위와 같게 맞춘다. */
+  const jobKeyOf = (taskId: string) => {
+    const dot = taskId.lastIndexOf(".");
+    return dot > 0 ? taskId.slice(0, dot) : taskId;
+  };
+
+  const doRerun = async (
+    jobKey: string, taskIds: string[], withDownstream: boolean, markBlockers: string[] = [],
+  ) => {
     if (!run) return;
     setRetryingTaskId(jobKey);
     try {
+      // 선행이 failed 로 남아 있으면 clear 해봐야 스케줄러가 곧바로 upstream_failed 로
+      // 되돌린다. 먼저 선행을 성공으로 표시해야 이 job 이 실제로 돈다.
+      for (const taskId of markBlockers) {
+        await markAirflowTaskSuccess(dag.dag_id, run.dag_run_id, taskId);
+      }
       // job 안의 단계를 한꺼번에 지운다. 한 단계만 지우면 그 job이 반쪽만 다시 돈다.
       await retryAirflowTasks(dag.dag_id, run.dag_run_id, taskIds, withDownstream);
       message.success(withDownstream
@@ -920,6 +934,63 @@ function TaskRows({
     } finally {
       setRetryingTaskId(undefined);
     }
+  };
+
+  const rerunJob = async (jobKey: string, taskIds: string[], withDownstream: boolean) => {
+    if (!run) return;
+    const all = tasksQuery.data ?? [];
+    const own = all.filter((task) => taskIds.includes(task.task_id));
+    /*
+     * «선행 때문에 막힌» job 은 자기 단계 중 실패가 <b>하나도 없고</b> upstream_failed 만
+     * 있는 경우다. 자기가 실패한 job 도 뒷단계는 upstream_failed 로 남으므로
+     * (예: await 실패 → verify 는 upstream_failed), upstream_failed 만 보고 판단하면
+     * 자기 자신의 실패를 «선행»으로 착각해 성공 처리해 버린다.
+     */
+    const blocked = own.some((task) => task.state === "upstream_failed")
+      && !own.some((task) => task.state === "failed");
+    if (!blocked) {
+      await doRerun(jobKey, taskIds, withDownstream);
+      return;
+    }
+    /*
+     * 선행이 실패로 남아 있는 job 을 그냥 clear 하면 «성공했습니다» 만 뜨고 아무 일도
+     * 일어나지 않는다 - Airflow 가 의존성을 다시 보고 즉시 upstream_failed 로 되돌리기
+     * 때문이다(실측 2026-09-04: wf_postgresql_dm_order_daily 를 눌러도 상태 그대로).
+     * 그래서 여기서 막고, 선행을 성공으로 표시할지 확인을 받는다.
+     *
+     * 선행을 «다시 돌리고» 싶은 경우는 그 행의 «이 작업부터 실행» 이 이미 해 주므로
+     * 여기서는 다루지 않는다. 여기서 필요한 건 «다시 돌려도 또 실패하는 선행을 건너뛰는»
+     * 길이다(어제 사례: 선행이 외래키 위반이라 재실행해도 결과가 같았다).
+     */
+    const blockers = all.filter((task) => task.state === "failed" && !taskIds.includes(task.task_id));
+    const blockerJobs = [...new Set(blockers.map((task) => jobKeyOf(task.task_id)))];
+    if (!blockerJobs.length) {
+      message.warning("선행 작업이 끝나지 않아 아직 실행할 수 없습니다.");
+      return;
+    }
+    Modal.confirm({
+      title: "선행 작업이 실패로 남아 있습니다",
+      okText: "선행을 성공 처리하고 실행",
+      okButtonProps: { danger: true },
+      cancelText: "취소",
+      width: 560,
+      content: (
+        <div>
+          <p>
+            <b>{blockerJobs.join(", ")}</b> 이(가) 실패 상태여서, <b>{jobKey}</b> 만 다시 눌러도
+            실행되지 않고 «선행 실패»로 되돌아갑니다.
+          </p>
+          <p>
+            계속하면 위 선행 작업을 <b>성공으로 표시한 뒤</b> {jobKey} 을(를) 실행합니다.
+            상태만 바꾸는 것이라 <b>선행의 적재는 일어나지 않습니다</b> - 빠진 데이터는 그대로입니다.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            선행을 <b>다시 돌리려면</b> 취소하고 해당 행의 «이 작업부터 실행»을 쓰십시오.
+          </p>
+        </div>
+      ),
+      onOk: () => doRerun(jobKey, taskIds, withDownstream, blockers.map((task) => task.task_id)),
+    });
   };
 
   if (configured && etlJobQuery.isLoading) {
@@ -988,6 +1059,35 @@ function TaskRows({
     }
     byJob.get(key)!.push(task);
   }
+
+  /*
+   * 줄 앞의 01·02·03 은 «실행 순서»로 읽힌다. 그런데 Airflow 가 태스크를 돌려주는 순서는
+   * 설계 순서가 아니라서, 직렬로 이어 그린 워크플로우인데도 번호가 뒤죽박죽으로 찍혔다
+   * (실측 2026-09-03: customer→product→order→store→order_item 으로 돈 워크플로우가
+   * 01 customer / 02 order / 03 order_item / 04 product / 05 store 로 보여, 맨 마지막
+   * job 인 order_item 이 03 으로 찍혔다).
+   *
+   * 그래서 job 이 «처음 시작한 시각» 순으로 세운다. 병렬로 뜬 job 끼리는 시작 순서가 곧
+   * 표시 순서다. 아직 시작 전이라 시각이 없는 job 은 뒤로 보내되 원래 순서를 지킨다
+   * (정렬이 안정적이어야 실행 중에 줄이 튀지 않는다).
+   */
+  const firstStartOf = (key: string) => {
+    // 문자열 비교가 아니라 시각으로 본다(오프셋 표기가 섞여도 안전하다).
+    const starts = byJob.get(key)!
+      .map((step) => (step.start_date ? new Date(step.start_date).getTime() : Number.NaN))
+      .filter((at) => Number.isFinite(at));
+    return starts.length ? Math.min(...starts) : undefined;
+  };
+  const apiOrder = new Map(order.map((key, index) => [key, index] as const));
+  const startedAtOf = new Map(order.map((key) => [key, firstStartOf(key)] as const));
+  order.sort((a, b) => {
+    const left = startedAtOf.get(a);
+    const right = startedAtOf.get(b);
+    if (left !== undefined && right !== undefined && left !== right) return left - right;
+    if (left !== undefined && right === undefined) return -1;
+    if (left === undefined && right !== undefined) return 1;
+    return apiOrder.get(a)! - apiOrder.get(b)!;
+  });
 
   /** 단계 상태를 job 하나의 상태로 접는다. 하나라도 실패면 실패다. */
   const rollUpState = (steps: NonNullable<typeof tasksQuery.data>) => {

@@ -474,6 +474,24 @@ export async function retryAirflowTasks(
   });
 }
 
+/**
+ * 태스크를 «성공»으로 표시한다. 다시 돌리지 않고 상태만 바꾼다.
+ *
+ * 선행이 실패로 남아 있으면 후행은 clear 해도 곧바로 upstream_failed 로 되돌아간다
+ * (Airflow 가 의존성을 다시 평가하기 때문). 선행 실패가 데이터 문제여서 다시 돌려도
+ * 또 실패하는 상황에서, 그 뒤 작업만 살려 진행시키려면 선행을 성공으로 눌러 주는 수밖에
+ * 없다. 실제 적재를 하지 않고 상태만 바꾸는 것이라 호출부에서 반드시 확인을 받는다.
+ */
+export async function markAirflowTaskSuccess(
+  dagId: string, dagRunId: string, taskId: string,
+): Promise<void> {
+  await axios.patch(
+    `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}`
+    + `/dagRuns/${encodeURIComponent(dagRunId)}/taskInstances/${encodeURIComponent(taskId)}`,
+    { new_state: "success" },
+  );
+}
+
 /** 이 작업부터 후행까지 다시 돌린다. 중간 job이 실패해 뒤가 멈췄을 때 쓴다. */
 export async function retryAirflowTaskFrom(dagId: string, dagRunId: string, taskId: string): Promise<void> {
   await axios.post(`${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/clearTaskInstances`, {
