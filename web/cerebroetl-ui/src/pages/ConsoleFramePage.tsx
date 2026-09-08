@@ -41,6 +41,8 @@ const NIFI_PANEL_LAYOUT_ATTRIBUTE = "data-cerebro-nifi-panel-layout";
 const NIFI_PANEL_ATTRIBUTE = "data-cerebro-nifi-panel";
 const NIFI_PANEL_EXPANDED_ATTRIBUTE = "data-cerebro-nifi-panel-expanded";
 const NIFI_PANEL_BOUND_ATTRIBUTE = "data-cerebro-nifi-panel-bound";
+const NIFI_AUTO_OPEN_MENU_ATTRIBUTE = "data-cerebro-auto-open-menu";
+const LEGACY_NIFI_MINI_CREATE_TOOLBAR_CLEANUP_ATTRIBUTE = "data-cerebro-mini-create-toolbar-cleanup";
 const NIFI_PROCESSOR_LOCK_HEARTBEAT_MS = 20_000;
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
 // 보이게 한다. 번들 분석으로 실제 렌더링되는 요소를 확인한 선택자:
@@ -164,6 +166,10 @@ const HIDE_TOOL_CHROME_CSS = `
   }
   [${NIFI_PANEL_ATTRIBUTE}="navigation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) > :not(:first-child),
   [${NIFI_PANEL_ATTRIBUTE}="operation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) > :not(:first-child) {
+    display: none !important;
+  }
+  [data-cerebro-mini-create-toolbar="true"],
+  [data-cerebro-mini-create-tool="true"] {
     display: none !important;
   }
 `;
@@ -422,6 +428,10 @@ function translateNifiTooltip(value: string) {
   return undefined;
 }
 
+function elementText(element: Element) {
+  return (element.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
 function iframeDocument(frame: HTMLIFrameElement) {
   try {
     return frame.contentDocument;
@@ -475,6 +485,48 @@ function hideToolChrome(frame: HTMLIFrameElement) {
   } catch {
     // 문서가 아직 교체 중이면 다음 iframe load에서 다시 시도한다.
   }
+}
+
+function cleanupLegacyNifiMiniCreateToolbars(frame: HTMLIFrameElement) {
+  const doc = iframeDocument(frame);
+  if (!doc) {
+    return;
+  }
+
+  const cleanup = () => {
+    doc
+      .querySelectorAll('[data-cerebro-mini-create-toolbar="true"], [data-cerebro-mini-create-tool="true"]')
+      .forEach((element) => {
+        element.remove();
+      });
+  };
+
+  cleanup();
+
+  if (doc.documentElement.getAttribute(LEGACY_NIFI_MINI_CREATE_TOOLBAR_CLEANUP_ATTRIBUTE) === "true") {
+    return;
+  }
+  doc.documentElement.setAttribute(LEGACY_NIFI_MINI_CREATE_TOOLBAR_CLEANUP_ATTRIBUTE, "true");
+
+  const frameWindow = doc.defaultView;
+  let frameId: number | null = null;
+  const observer = new (frameWindow?.MutationObserver ?? MutationObserver)(() => {
+    if (frameId !== null) {
+      return;
+    }
+    frameId = (frameWindow ?? window).requestAnimationFrame(() => {
+      frameId = null;
+      cleanup();
+    });
+  });
+
+  observer.observe(doc.documentElement, { childList: true, subtree: true });
+  frameWindow?.addEventListener("beforeunload", () => {
+    if (frameId !== null) {
+      frameWindow.cancelAnimationFrame(frameId);
+    }
+    observer.disconnect();
+  }, { once: true });
 }
 
 function patchKoreanTooltips(frame: HTMLIFrameElement) {
@@ -909,6 +961,64 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
   }, { once: true });
 }
 
+function clickNifiMenuItem(frame: HTMLIFrameElement, titles: string[]) {
+  const doc = iframeDocument(frame);
+  if (!doc || titles.length === 0) {
+    return;
+  }
+
+  const key = titles.join("|");
+  if (doc.documentElement.getAttribute(NIFI_AUTO_OPEN_MENU_ATTRIBUTE) === key) {
+    return;
+  }
+  doc.documentElement.setAttribute(NIFI_AUTO_OPEN_MENU_ATTRIBUTE, key);
+
+  const normalizedTitles = titles.map((title) => title.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const matches = (element: Element) => {
+    const values = [
+      element.getAttribute("title"),
+      element.getAttribute("aria-label"),
+      element.getAttribute("data-tooltip"),
+      element.getAttribute("mattooltip"),
+      element.getAttribute("matTooltip"),
+      elementText(element),
+    ].map((value) => value?.replace(/\s+/g, " ").trim()).filter(Boolean);
+
+    return normalizedTitles.some((title) =>
+      values.some((value) => value === title || value?.includes(title)),
+    );
+  };
+
+  const tryClick = () => {
+    const candidates = Array.from(doc.querySelectorAll("button, a, [role='button'], [title], [aria-label]"));
+    const matched = candidates.find((element) => matches(element));
+    const clickable = matched?.closest("button, a, [role='button']") ?? matched;
+    if (clickable instanceof HTMLElement && isVisibleElement(clickable)) {
+      clickable.click();
+      return true;
+    }
+    return false;
+  };
+
+  if (tryClick()) {
+    return;
+  }
+
+  let attempts = 0;
+  const frameWindow = doc.defaultView;
+  const timerId = frameWindow?.setInterval(() => {
+    attempts += 1;
+    if (tryClick() || attempts >= 20) {
+      frameWindow.clearInterval(timerId);
+    }
+  }, 250);
+  frameWindow?.addEventListener("beforeunload", () => {
+    if (timerId) {
+      frameWindow.clearInterval(timerId);
+    }
+  }, { once: true });
+}
+
 function looksLikeUuid(value: string | null | undefined) {
   return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
@@ -1113,6 +1223,7 @@ interface ConsoleFramePageProps {
   healthcheckSrc?: string;
   waitMessage?: string;
   showProcessGroupTree?: boolean;
+  nifiAutoOpenMenuTitles?: string[];
 }
 
 function withProcessGroupId(url: string, processGroupId: string) {
@@ -2641,7 +2752,14 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   );
 }
 
-export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage, showProcessGroupTree = false }: ConsoleFramePageProps) {
+export function ConsoleFramePage({
+  title,
+  src,
+  healthcheckSrc,
+  waitMessage,
+  showProcessGroupTree = false,
+  nifiAutoOpenMenuTitles = [],
+}: ConsoleFramePageProps) {
   const location = useLocation();
   const [isReady, setIsReady] = useState(!healthcheckSrc);
   const [frameKey, setFrameKey] = useState(0);
@@ -2728,9 +2846,11 @@ export function ConsoleFramePage({ title, src, healthcheckSrc, waitMessage, show
 
   const handleFrameLoad = (event: SyntheticEvent<HTMLIFrameElement>) => {
     const frame = event.currentTarget;
+    cleanupLegacyNifiMiniCreateToolbars(frame);
     hideToolChrome(frame);
     patchKoreanTooltips(frame);
     installNifiPanelLayout(frame);
+    clickNifiMenuItem(frame, nifiAutoOpenMenuTitles);
     if (showProcessGroupTree) {
       installCanvasRouteSync(frame, selectCanvasProcessGroupRoute);
       installCanvasSelectionSync(

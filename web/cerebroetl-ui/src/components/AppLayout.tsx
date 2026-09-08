@@ -98,6 +98,7 @@ const NAV_ITEMS: NavItem[] = [
     children: [
       { path: "/etl/create", label: "생성", system: "NIFI", action: "WRITE" },
       { path: "/etl/manage", label: "관리", system: "NIFI", action: "READ" },
+      { path: "/etl/settings", label: "관리 설정", system: "NIFI", action: "READ" },
       { path: "/etl/logs", label: "로그", system: "NIFI", action: "READ" },
     ],
   },

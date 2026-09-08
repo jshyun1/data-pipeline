@@ -338,6 +338,62 @@ body {
   font-weight: 700;
 }
 
+.etl-log-monitoring-card {
+  min-height: 58px;
+  margin-bottom: 12px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: stretch;
+  gap: 22px;
+  border: 1px solid #e1e5eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.etl-log-monitoring-metric {
+  min-width: 130px;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #1677ff;
+  font-size: 20px;
+}
+
+.etl-log-monitoring-metric span {
+  display: flex;
+  flex-direction: column;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.etl-log-monitoring-metric strong {
+  color: #1677ff;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.etl-log-monitoring-metric--success,
+.etl-log-monitoring-metric--success strong {
+  color: #16a34a;
+}
+
+.etl-log-monitoring-metric--danger {
+  border-radius: 8px;
+  background: #eef2f7;
+}
+
+.etl-log-monitoring-metric--danger,
+.etl-log-monitoring-metric--danger strong {
+  color: #dc2626;
+}
+
+.etl-log-monitoring-metric--extra,
+.etl-log-monitoring-metric--extra strong {
+  color: #7c3aed;
+}
+
 /* 하단 «인프라 상태» 줄을 없앤 자리를 이 영역이 가져간다. 헤더·상태카드 높이만 빼고
    뷰포트 끝까지 내려온다 - 빈 띠를 남기느니 목록·캔버스를 더 보여주는 편이 낫다. */
 .airflow-dashboard-workspace {
@@ -1066,7 +1122,7 @@ button.airflow-tree-label:hover {
 
 .etl-column-mapping-layout {
   display: grid;
-  grid-template-columns: minmax(320px, 0.85fr) minmax(240px, 0.6fr) minmax(440px, 1.2fr);
+  grid-template-columns: minmax(430px, 1.15fr) minmax(250px, 0.65fr) minmax(320px, 0.85fr);
   min-height: 460px;
   max-height: 62vh;
   overflow: auto;
@@ -1096,6 +1152,7 @@ button.airflow-tree-label:hover {
   border-bottom: 1px solid #edf1f6;
   background: #fbfcfd;
   font-size: 13px;
+  text-align: center;
 }
 
 .etl-source-column-row,
@@ -1107,10 +1164,25 @@ button.airflow-tree-label:hover {
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid #edf1f6;
+  cursor: grab;
+}
+
+.etl-source-column-row.dragging,
+.etl-target-column-row.dragging {
+  opacity: 0.55;
+  background: #eef6ff;
 }
 
 .etl-source-column-row {
-  grid-template-columns: 58px minmax(170px, 1fr) 28px;
+  grid-template-columns: 58px minmax(190px, 1.05fr) minmax(150px, 0.85fr) 40px;
+}
+
+.etl-source-column-heading {
+  display: grid;
+  grid-template-columns: 58px minmax(190px, 1.05fr) minmax(150px, 0.85fr) 40px;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
 }
 
 .etl-source-column-row span {
@@ -1132,17 +1204,8 @@ button.airflow-tree-label:hover {
   height: 26px;
 }
 
-.etl-source-column-add-row {
-  min-height: 44px;
-  padding: 8px 10px;
-  display: flex;
-  align-items: center;
-  border-bottom: 1px solid #edf1f6;
-}
-
-.etl-source-column-add-row .ant-btn {
-  width: 100%;
-  height: 28px;
+.etl-source-column-row > .ant-btn:last-child {
+  justify-self: center;
 }
 
 .etl-source-column-row strong,
@@ -1156,7 +1219,7 @@ button.airflow-tree-label:hover {
 }
 
 .etl-target-column-row {
-  grid-template-columns: 58px 32px minmax(180px, 1fr);
+  grid-template-columns: 32px 58px minmax(180px, 1fr);
 }
 
 .etl-column-flow-canvas {
@@ -1169,14 +1232,14 @@ button.airflow-tree-label:hover {
 .etl-column-flow-canvas path {
   fill: none;
   marker-end: url("#etl-column-flow-arrow");
-  stroke: #ef1b1b;
+  stroke: #16a34a;
   stroke-linecap: round;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 
 .etl-column-flow-canvas marker path {
-  fill: #ef1b1b;
+  fill: #16a34a;
   stroke: none;
 }
 
@@ -1189,19 +1252,6 @@ button.airflow-tree-label:hover {
 .etl-target-column-row .ant-btn {
   width: 26px;
   height: 26px;
-}
-
-.etl-source-column-modal-body {
-  display: grid;
-  grid-template-columns: 82px minmax(0, 1fr);
-  align-items: center;
-  gap: 12px 10px;
-  padding-top: 8px;
-}
-
-.etl-source-column-modal-body label {
-  color: #374151;
-  font-weight: 800;
 }
 
 .etl-mapping-alias-hint {
@@ -1267,17 +1317,53 @@ button.airflow-tree-label:hover {
   box-shadow: none;
 }
 
-.etl-change-key-column textarea {
+.etl-sql-editor {
+  position: relative;
+  min-height: 1100px;
+  min-width: 0;
+  background: #ffffff;
+}
+
+.etl-sql-editor pre,
+.etl-sql-editor textarea {
+  position: absolute;
+  inset: 0;
   min-height: 1100px;
   min-width: 0;
   padding: 10px 12px;
   border: 0;
-  color: #293442;
-  background: #ffffff;
   font: inherit;
   font-size: 15px;
   line-height: 1.5;
+  tab-size: 4;
+  white-space: pre;
+}
+
+.etl-sql-editor pre {
+  margin: 0;
+  overflow: hidden;
+  color: #293442;
+  pointer-events: none;
+}
+
+.etl-sql-editor textarea {
+  color: transparent;
+  background: transparent;
+  caret-color: #111827;
+  outline: none;
   resize: vertical;
+}
+
+.etl-sql-editor textarea::placeholder {
+  color: #8a94a6;
+}
+
+.etl-sql-editor textarea::selection {
+  background: rgb(59 130 246 / 22%);
+}
+
+.etl-sql-token {
+  color: #1677ff;
 }
 
 .etl-sql-hint {
@@ -2391,6 +2477,80 @@ button.airflow-tree-label:hover {
   padding-top: 120px;
 }
 
+.nifi-settings-page {
+  height: calc(100vh - 109px);
+  display: flex;
+  gap: 12px;
+  min-width: 920px;
+}
+
+.nifi-settings-list {
+  flex: 0 0 210px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid #d5dbe3;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgb(15 23 42 / 8%);
+}
+
+.nifi-settings-list-item {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #374151;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nifi-settings-list-item:hover {
+  color: #d40000;
+  background: #fff7f7;
+}
+
+.nifi-settings-list-item.active {
+  color: #d40000;
+  background: #fff0f0;
+}
+
+.nifi-settings-list-icon {
+  width: 18px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.nifi-settings-frame {
+  min-width: 0;
+  flex: 1;
+}
+
+.nifi-settings-frame .console-page {
+  height: 100%;
+}
+
+.nifi-settings-empty {
+  height: 100%;
+  min-height: 420px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background:
+    linear-gradient(#eef2f7 1px, transparent 1px),
+    linear-gradient(90deg, #eef2f7 1px, transparent 1px),
+    #ffffff;
+  background-size: 14px 14px;
+}
+
 .nifi-tree-panel {
   display: flex;
   flex-direction: column;
@@ -2927,6 +3087,22 @@ button.airflow-tree-label:hover {
 }
 
 @media (max-width: 1180px) {
+  .nifi-settings-page {
+    height: auto;
+    min-width: 0;
+    min-height: calc(100vh - 109px);
+    flex-direction: column;
+  }
+
+  .nifi-settings-list {
+    flex: none;
+    width: 100%;
+  }
+
+  .nifi-settings-frame {
+    height: 68vh;
+  }
+
   .console-page {
     height: auto;
     min-height: calc(100vh - 109px);
@@ -2947,6 +3123,10 @@ button.airflow-tree-label:hover {
 }
 
 @media (max-width: 720px) {
+  .nifi-settings-frame {
+    height: 64vh;
+  }
+
   .console-page {
     flex-direction: column;
   }
