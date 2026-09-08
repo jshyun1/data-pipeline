@@ -18,6 +18,7 @@ import { WorkflowDesignPage } from "./pages/WorkflowDesignPage";
 import { SelfCheckPage } from "./pages/SelfCheckPage";
 import { EtlCreatePage } from "./pages/EtlCreatePage";
 import { EtlLogsPage } from "./pages/EtlLogsPage";
+import { NifiSettingsPage } from "./pages/NifiSettingsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PipelinesPage } from "./pages/PipelinesPage";
 
@@ -77,6 +78,7 @@ export function App() {
             />
           }
         />
+        <Route path="/etl/settings" element={<NifiSettingsPage />} />
         <Route path="/etl/logs" element={<EtlLogsPage />} />
         <Route path="/cdc" element={<Navigate to="/cdc/pipelines" replace />} />
         <Route path="/cdc/create" element={<CdcCreatePage />} />

@@ -5,13 +5,12 @@ import {
   DownOutlined,
   EditOutlined,
   LockOutlined,
-  PlusOutlined,
   UpOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
-import { Alert, Button, Card, Collapse, Input, message, Modal, Radio, Select, Space, Tag } from "antd";
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { Button, Collapse, Input, message, Modal, Radio, Select, Space, Tag } from "antd";
+import type { DragEvent, KeyboardEvent, ReactNode, UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   listConnections,
   listConnectionColumns,
@@ -38,7 +37,7 @@ const WIZARD_STEPS = [
   { id: "basic", label: "기본 정보" },
   { id: "connection", label: "연결" },
   { id: "query", label: "적재쿼리" },
-  { id: "target", label: "대상" },
+  { id: "target", label: "컬럼매핑" },
 ] as const;
 
 type WizardStepId = (typeof WIZARD_STEPS)[number]["id"];
@@ -160,6 +159,79 @@ interface CompletionSummary {
   processorCount: number;
   loadMode: LoadMode;
   etlType: EtlType;
+}
+
+interface EtlCreateDraft {
+  activeStep: WizardStepId;
+  etlType: EtlType;
+  completedSteps: WizardStepId[];
+  basicInfo: Omit<BasicInfo, "files">;
+  connectionInfo: ConnectionInfo;
+  loadMode: LoadMode;
+  showTruncateSql: boolean;
+  truncateSql: string;
+  loadSql: string;
+  queryRecordSql: string;
+  sourceColumns: SourceColumnMetadata[];
+  loadSqlColumns: SourceColumnMetadata[];
+  targetColumns: ColumnMetadataResponse[];
+  columnMappings: ColumnMapping[];
+}
+
+const ETL_CREATE_DRAFT_STORAGE_KEY = "cerebroetl.etlCreateDraft.v1";
+
+const DEFAULT_BASIC_INFO: BasicInfo = {
+  jobName: "",
+  parentGroupId: "",
+  parentGroupPath: "",
+  comments: "",
+  fileExtension: "csv",
+  files: [],
+};
+
+const DEFAULT_CONNECTION_INFO: ConnectionInfo = {
+  sourceServiceId: "",
+  sourceDatabaseType: "PostgreSQL",
+  sourceSchema: "",
+  sourceTable: "",
+  targetServiceId: "",
+  targetDatabaseType: "PostgreSQL",
+  targetSchema: "",
+  targetTable: "",
+};
+
+function readEtlCreateDraft(): EtlCreateDraft | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const rawValue = window.sessionStorage.getItem(ETL_CREATE_DRAFT_STORAGE_KEY);
+    return rawValue ? JSON.parse(rawValue) as EtlCreateDraft : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeEtlCreateDraft(draft: EtlCreateDraft) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(ETL_CREATE_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  } catch {
+    // Draft persistence is best-effort; form editing must keep working if storage is blocked.
+  }
+}
+
+function clearEtlCreateDraft() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.removeItem(ETL_CREATE_DRAFT_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
 }
 
 function flattenProcessGroups(
@@ -304,6 +376,38 @@ function unquoteSqlIdentifier(value: string) {
   return trimmed;
 }
 
+function extractLoadSqlAliasTableMap(loadSql: string) {
+  const fromMatch = /\bfrom\b([\s\S]*?)(?:\bwhere\b|\bgroup\s+by\b|\border\s+by\b|\bhaving\b|$)/i.exec(loadSql);
+  if (!fromMatch) {
+    return new Map<string, string>();
+  }
+  return splitSqlSelectItems(fromMatch[1]).reduce((aliasMap, item) => {
+    const normalizedItem = item.trim().replace(/\s+/g, " ");
+    const match = /^([^\s,]+)(?:\s+(?:as\s+)?([a-zA-Z_][\w$]*))?$/i.exec(normalizedItem);
+    if (match?.[2]) {
+      aliasMap.set(match[2], match[1]);
+    }
+    return aliasMap;
+  }, new Map<string, string>());
+}
+
+function extractLoadSqlAliasColumnTableMap(loadSql: string) {
+  const selectMatch = loadSql.match(/\bselect\b([\s\S]*?)\bfrom\b/i);
+  if (!selectMatch) {
+    return new Map<string, string>();
+  }
+  const tableByAlias = extractLoadSqlAliasTableMap(loadSql);
+  return splitSqlSelectItems(selectMatch[1]).reduce((columnTableMap, item) => {
+    const columnAlias = loadSqlProjectionAlias(item);
+    const tableAliasMatch = /\b([a-zA-Z_][\w$]*)\s*\.\s*("[^"]+"|`[^`]+`|\[[^\]]+\]|[a-zA-Z_][\w$]*)/.exec(item);
+    const tableName = tableAliasMatch ? tableByAlias.get(tableAliasMatch[1]) : null;
+    if (columnAlias && tableName) {
+      columnTableMap.set(normalizeName(columnAlias), tableName);
+    }
+    return columnTableMap;
+  }, new Map<string, string>());
+}
+
 function extractLoadSqlAliasColumns(loadSql: string) {
   const selectMatch = loadSql.match(/\bselect\b([\s\S]*?)\bfrom\b/i);
   if (!selectMatch) {
@@ -315,24 +419,6 @@ function extractLoadSqlAliasColumns(loadSql: string) {
       normalizeName(item) === normalizeName(alias),
     ) === index)
     .map(sourceColumnFromLoadSqlAlias);
-}
-
-function appendLoadSqlAliasColumn(loadSql: string, columnName: string, expression: string) {
-  const trimmedColumnName = columnName.trim();
-  const trimmedExpression = expression.trim();
-  if (!trimmedColumnName) {
-    return loadSql;
-  }
-  if (!loadSql.trim()) {
-    return `select \n${trimmedExpression} as ${trimmedColumnName}\nfrom 소스테이블`;
-  }
-  const fromMatch = loadSql.match(/\bfrom\b/i);
-  if (!fromMatch || fromMatch.index === undefined) {
-    return `${loadSql.trimEnd()}\n,${trimmedExpression} as ${trimmedColumnName}`;
-  }
-  const beforeFrom = loadSql.slice(0, fromMatch.index).trimEnd();
-  const afterFrom = loadSql.slice(fromMatch.index);
-  return `${beforeFrom}\n,${trimmedExpression} as ${trimmedColumnName}\n${afterFrom}`;
 }
 
 function loadSqlProjectionAlias(item: string) {
@@ -461,6 +547,48 @@ function buildQueryRecordSql(
   return `SELECT\n${projections.join("\n")}\nFROM FLOWFILE`;
 }
 
+function formatLoadSqlIndent(sql: string) {
+  const lines = sql.replace(/\r\n?/g, "\n").split("\n");
+  let inSelectList = false;
+  return lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return "";
+    }
+    if (/^select\b/i.test(trimmed)) {
+      inSelectList = true;
+      return trimmed;
+    }
+    if (/^from\b/i.test(trimmed)) {
+      inSelectList = false;
+      return trimmed;
+    }
+    if (/^(where|group\s+by|order\s+by|having|union)\b/i.test(trimmed)) {
+      inSelectList = false;
+      return trimmed;
+    }
+    if (inSelectList || /^(,|and\b|or\b)/i.test(trimmed)) {
+      return `    ${trimmed}`;
+    }
+    return trimmed;
+  }).join("\n");
+}
+
+function renderSqlText(sql: string) {
+  if (!sql) {
+    return "\n";
+  }
+  return sql.split(/(#\{[^}\n]+\})/g).map((part, index) =>
+    /^#\{[^}\n]+\}$/.test(part) ? (
+      <span key={index} className="etl-sql-token">
+        {part}
+      </span>
+    ) : (
+      part
+    ),
+  );
+}
+
 function displayMappingExpression(mapping: ColumnMapping, selectedTables: string[]) {
   return stripSourceAliases(mapping.logic.trim() || mapping.sourceColumn || "", selectedTables);
 }
@@ -582,7 +710,7 @@ function TypeStep({
       </div>
       <div className="etl-step-complete-actions">
         <Button type="primary" onClick={onComplete}>
-          다음: 기본 정보
+          다음
         </Button>
       </div>
     </>
@@ -709,7 +837,7 @@ function BasicStep({
 
       <div className="etl-step-complete-actions">
         <Button type="primary" disabled={!canComplete} onClick={onComplete}>
-          다음: 연결
+          다음
         </Button>
       </div>
     </>
@@ -1250,6 +1378,39 @@ function QueryStep({
   onLoadSqlChange: (loadSql: string) => void;
   onShowTruncateSqlChange: (show: boolean) => void;
 }) {
+  const sqlPreviewRef = useRef<HTMLPreElement | null>(null);
+
+  const syncSqlScroll = (event: UIEvent<HTMLTextAreaElement>) => {
+    if (!sqlPreviewRef.current) {
+      return;
+    }
+    sqlPreviewRef.current.scrollTop = event.currentTarget.scrollTop;
+    sqlPreviewRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  };
+
+  const handleSqlKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Tab") {
+      return;
+    }
+    event.preventDefault();
+    const target = event.currentTarget;
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+    const nextValue = `${loadSql.slice(0, start)}    ${loadSql.slice(end)}`;
+    onLoadSqlChange(nextValue);
+    requestAnimationFrame(() => {
+      target.selectionStart = start + 4;
+      target.selectionEnd = start + 4;
+    });
+  };
+
+  const formatSqlOnBlur = () => {
+    const formattedSql = formatLoadSqlIndent(loadSql);
+    if (formattedSql !== loadSql) {
+      onLoadSqlChange(formattedSql);
+    }
+  };
+
   return (
     <div className="etl-target-preview">
       <div className="etl-load-mode">
@@ -1302,11 +1463,20 @@ function QueryStep({
       ) : null}
       <div className="etl-change-key-column">
         <label>적재로직 SQL문</label>
-        <textarea
-          value={loadSql}
-          onChange={(event) => onLoadSqlChange(event.target.value)}
-          placeholder={`select\n     as 타겟컬럼1\n    , as 타겟컬럼2\nfrom ${connectionInfo.sourceSchema || "소스스키마"}.소스테이블`}
-        />
+        <div className="etl-sql-editor">
+          <pre ref={sqlPreviewRef} aria-hidden="true">
+            {renderSqlText(loadSql)}
+          </pre>
+          <textarea
+            value={loadSql}
+            spellCheck={false}
+            onChange={(event) => onLoadSqlChange(event.target.value)}
+            onBlur={formatSqlOnBlur}
+            onKeyDown={handleSqlKeyDown}
+            onScroll={syncSqlScroll}
+            placeholder={`select\n     as 타겟컬럼1\n    , as 타겟컬럼2\nfrom ${connectionInfo.sourceSchema || "소스스키마"}.소스테이블`}
+          />
+        </div>
         <small className="etl-sql-hint">테이블 간 조인 조건을 추가 바랍니다.</small>
       </div>
     </div>
@@ -1316,7 +1486,6 @@ function QueryStep({
 function TargetStep({
   connectionInfo,
   sourceColumns,
-  targetColumns,
   columnMappings,
   loadSql,
   onQueryRecordSqlChange,
@@ -1327,7 +1496,6 @@ function TargetStep({
 }: {
   connectionInfo: ConnectionInfo;
   sourceColumns: SourceColumnMetadata[];
-  targetColumns: ColumnMetadataResponse[];
   columnMappings: ColumnMapping[];
   loadSql: string;
   onQueryRecordSqlChange: (queryRecordSql: string) => void;
@@ -1338,10 +1506,9 @@ function TargetStep({
 }) {
   const [editingMappingId, setEditingMappingId] = useState<string | null>(null);
   const [editingLogic, setEditingLogic] = useState("");
-  const [addingSourceColumn, setAddingSourceColumn] = useState(false);
-  const [newSourceColumnValue, setNewSourceColumnValue] = useState("");
-  const [newSourceColumnName, setNewSourceColumnName] = useState("");
   const [sourceOrderIds, setSourceOrderIds] = useState<string[]>([]);
+  const [draggingSourceKey, setDraggingSourceKey] = useState<string | null>(null);
+  const [draggingMappingId, setDraggingMappingId] = useState<string | null>(null);
   const selectedSourceTables = commaSeparatedValues(connectionInfo.sourceTable);
   const editingMapping = columnMappings.find((mapping) => mapping.id === editingMappingId) ?? null;
   const mappingDisplayExpression = (mapping: ColumnMapping) => displayMappingExpression(mapping, selectedSourceTables);
@@ -1365,6 +1532,7 @@ function TargetStep({
     sourceColumnKey(sourceColumn.table, sourceColumn.name),
     index,
   ]));
+  const loadSqlTableByColumn = useMemo(() => extractLoadSqlAliasColumnTableMap(loadSql), [loadSql]);
   const targetIndexByMappingId = new Map(columnMappings.map((mapping, index) => [mapping.id, index]));
   const flowConnections = columnMappings.flatMap((mapping) =>
     mappingReferencedSourceColumns(mapping, sourceColumns, selectedSourceTables).map((sourceColumn) => ({
@@ -1410,6 +1578,18 @@ function TargetStep({
     applyColumnMappings(nextMappings);
   };
 
+  const reorderMapping = (mappingId: string, targetMappingId: string) => {
+    const currentIndex = columnMappings.findIndex((mapping) => mapping.id === mappingId);
+    const targetIndex = columnMappings.findIndex((mapping) => mapping.id === targetMappingId);
+    if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) {
+      return;
+    }
+    const nextMappings = [...columnMappings];
+    const [removed] = nextMappings.splice(currentIndex, 1);
+    nextMappings.splice(targetIndex, 0, removed);
+    applyColumnMappings(nextMappings);
+  };
+
   const moveSourceMapping = (sourceKey: string, direction: -1 | 1) => {
     const orderedIds = orderedSourceMappings.map((sourceColumn) =>
       sourceColumnKey(sourceColumn.table, sourceColumn.name),
@@ -1423,6 +1603,33 @@ function TargetStep({
     const [removed] = nextIds.splice(currentIndex, 1);
     nextIds.splice(nextIndex, 0, removed);
     setSourceOrderIds(nextIds);
+  };
+
+  const reorderSourceMapping = (sourceKey: string, targetSourceKey: string) => {
+    const orderedIds = orderedSourceMappings.map((sourceColumn) =>
+      sourceColumnKey(sourceColumn.table, sourceColumn.name),
+    );
+    const currentIndex = orderedIds.indexOf(sourceKey);
+    const targetIndex = orderedIds.indexOf(targetSourceKey);
+    if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) {
+      return;
+    }
+    const nextIds = [...orderedIds];
+    const [removed] = nextIds.splice(currentIndex, 1);
+    nextIds.splice(targetIndex, 0, removed);
+    setSourceOrderIds(nextIds);
+  };
+
+  const startSourceDrag = (event: DragEvent<HTMLDivElement>, sourceKey: string) => {
+    setDraggingSourceKey(sourceKey);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", sourceKey);
+  };
+
+  const startMappingDrag = (event: DragEvent<HTMLDivElement>, mappingId: string) => {
+    setDraggingMappingId(mappingId);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", mappingId);
   };
 
   const deleteSourceColumn = (column: SourceColumnMetadata) => {
@@ -1457,33 +1664,6 @@ function TargetStep({
     setEditingLogic("");
   };
 
-  const saveSourceColumn = () => {
-    const columnValue = newSourceColumnValue.trim();
-    const columnName = newSourceColumnName.trim();
-    if (!columnValue) {
-      message.warning("추가할 값을 입력하세요.");
-      return;
-    }
-    if (!columnName) {
-      message.warning("추가할 소스 컬럼명을 입력하세요.");
-      return;
-    }
-    const exists = sourceColumns.some((sourceColumn) => normalizeName(sourceColumn.name) === normalizeName(columnName));
-    if (exists) {
-      message.warning("이미 존재하는 소스 컬럼입니다.");
-      return;
-    }
-    const nextSourceColumns = [...sourceColumns, sourceColumnFromLoadSqlAlias(columnName)];
-    onLoadSqlColumnsChange(nextSourceColumns);
-    const nextMappings = buildDefaultColumnMappings(targetColumns, nextSourceColumns, columnMappings);
-    onColumnMappingsChange(nextMappings);
-    onQueryRecordSqlChange(buildQueryRecordSql(nextMappings, selectedSourceTables));
-    onLoadSqlChange(appendLoadSqlAliasColumn(loadSql, columnName, columnValue));
-    setAddingSourceColumn(false);
-    setNewSourceColumnValue("");
-    setNewSourceColumnName("");
-  };
-
   return (
     <div className="etl-target-preview">
       <div className="etl-column-mapping-panel">
@@ -1499,11 +1679,38 @@ function TargetStep({
           ) : null}
           <div className="etl-column-mapping-layout">
             <div className="etl-source-column-list">
-              <div className="etl-column-list-heading">소스컬럼</div>
+              <div className="etl-column-list-heading etl-source-column-heading">
+                <span />
+                <span>테이블</span>
+                <span>소스컬럼</span>
+                <span />
+              </div>
               {orderedSourceMappings.length > 0 ? orderedSourceMappings.map((sourceColumn, index) => {
                 const sourceKey = sourceColumnKey(sourceColumn.table, sourceColumn.name);
+                const sourceTableLabel = sourceColumn.table === LOAD_SQL_SOURCE_TABLE
+                  ? loadSqlTableByColumn.get(normalizeName(sourceColumn.name)) ?? "SQL"
+                  : sourceColumn.table || "-";
                 return (
-                <div key={sourceKey} className="etl-source-column-row">
+                <div
+                  key={sourceKey}
+                  className={`etl-source-column-row${draggingSourceKey === sourceKey ? " dragging" : ""}`}
+                  draggable
+                  onDragStart={(event) => startSourceDrag(event, sourceKey)}
+                  onDragEnd={() => setDraggingSourceKey(null)}
+                  onDragOver={(event) => {
+                    if (draggingSourceKey && draggingSourceKey !== sourceKey) {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                    }
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (draggingSourceKey) {
+                      reorderSourceMapping(draggingSourceKey, sourceKey);
+                    }
+                    setDraggingSourceKey(null);
+                  }}
+                >
                   <div className="etl-mapping-order-buttons">
                     <Button
                       size="small"
@@ -1520,6 +1727,7 @@ function TargetStep({
                       onClick={() => moveSourceMapping(sourceKey, 1)}
                     />
                   </div>
+                  <span title={sourceTableLabel}>{sourceTableLabel}</span>
                   <strong>{sourceColumn.name}</strong>
                   <Button
                     size="small"
@@ -1532,16 +1740,6 @@ function TargetStep({
               }) : (
                 <div className="etl-column-empty">소스 컬럼 조회 결과가 없습니다.</div>
               )}
-              <div className="etl-source-column-add-row">
-                <Button
-                  size="small"
-                  type="dashed"
-                  icon={<PlusOutlined />}
-                  onClick={() => setAddingSourceColumn(true)}
-                >
-                  소스컬럼 추가
-                </Button>
-              </div>
             </div>
             <div className="etl-column-flow-list">
               <div className="etl-column-list-heading">연결</div>
@@ -1586,9 +1784,36 @@ function TargetStep({
               )}
             </div>
             <div className="etl-target-column-list">
-              <div className="etl-column-list-heading">타깃 컬럼</div>
+              <div className="etl-column-list-heading">
+                타깃컬럼{connectionInfo.targetTable ? `(${connectionInfo.targetTable})` : ""}
+              </div>
               {columnMappings.length > 0 ? columnMappings.map((mapping, index) => (
-                <div key={mapping.id} className="etl-target-column-row">
+                <div
+                  key={mapping.id}
+                  className={`etl-target-column-row${draggingMappingId === mapping.id ? " dragging" : ""}`}
+                  draggable
+                  onDragStart={(event) => startMappingDrag(event, mapping.id)}
+                  onDragEnd={() => setDraggingMappingId(null)}
+                  onDragOver={(event) => {
+                    if (draggingMappingId && draggingMappingId !== mapping.id) {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                    }
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (draggingMappingId) {
+                      reorderMapping(draggingMappingId, mapping.id);
+                    }
+                    setDraggingMappingId(null);
+                  }}
+                >
+                  <Button
+                    size="small"
+                    title="처리 로직 편집"
+                    icon={<EditOutlined />}
+                    onClick={() => openLogicEditor(mapping)}
+                  />
                   <div className="etl-mapping-order-buttons">
                     <Button
                       size="small"
@@ -1605,12 +1830,6 @@ function TargetStep({
                       onClick={() => moveMapping(mapping.id, 1)}
                     />
                   </div>
-                  <Button
-                    size="small"
-                    title="처리 로직 편집"
-                    icon={<EditOutlined />}
-                    onClick={() => openLogicEditor(mapping)}
-                  />
                   <strong>{mapping.targetColumn}</strong>
                 </div>
               )) : (
@@ -1645,35 +1864,6 @@ function TargetStep({
               : "예: NVL(column_name, 'N')"}
           />
           <small>* Apache Calcite SQL 문법에 따라 작성해야합니다.</small>
-        </div>
-      </Modal>
-      <Modal
-        title="소스컬럼 추가"
-        open={addingSourceColumn}
-        onOk={saveSourceColumn}
-        onCancel={() => {
-          setAddingSourceColumn(false);
-          setNewSourceColumnValue("");
-          setNewSourceColumnName("");
-        }}
-        okText="확인"
-        cancelText="취소"
-      >
-        <div className="etl-source-column-modal-body">
-          <label>값</label>
-          <Input
-            value={newSourceColumnValue}
-            autoFocus
-            placeholder="예: 'N'"
-            onChange={(event) => setNewSourceColumnValue(event.target.value)}
-          />
-          <label>소스컬럼</label>
-          <Input
-            value={newSourceColumnName}
-            placeholder="예: del_yn"
-            onChange={(event) => setNewSourceColumnName(event.target.value)}
-            onPressEnter={saveSourceColumn}
-          />
         </div>
       </Modal>
     </div>
@@ -1765,39 +1955,32 @@ function CompletionView({
 
 export function EtlCreatePage() {
   const navigate = useNavigate();
-  const [activeStep, setActiveStep] = useState<WizardStepId>("type");
-  const [etlType, setEtlType] = useState<EtlType>("DB_TO_DB");
+  const restoredDraft = useMemo(() => readEtlCreateDraft(), []);
+  const preserveRestoredSqlRef = useRef(Boolean(restoredDraft?.loadSql));
+  const [activeStep, setActiveStep] = useState<WizardStepId>(restoredDraft?.activeStep ?? "type");
+  const [etlType, setEtlType] = useState<EtlType>(restoredDraft?.etlType ?? "DB_TO_DB");
   const [completed, setCompleted] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [completedSteps, setCompletedSteps] = useState<WizardStepId[]>([]);
+  const [completedSteps, setCompletedSteps] = useState<WizardStepId[]>(restoredDraft?.completedSteps ?? []);
   const [completionSummary, setCompletionSummary] = useState<CompletionSummary | null>(null);
   const [basicInfo, setBasicInfo] = useState<BasicInfo>({
-    jobName: "",
-    parentGroupId: "",
-    parentGroupPath: "",
-    comments: "",
-    fileExtension: "csv",
+    ...DEFAULT_BASIC_INFO,
+    ...restoredDraft?.basicInfo,
     files: [],
   });
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo>({
-    sourceServiceId: "",
-    sourceDatabaseType: "PostgreSQL",
-    sourceSchema: "",
-    sourceTable: "",
-    targetServiceId: "",
-    targetDatabaseType: "PostgreSQL",
-    targetSchema: "",
-    targetTable: "",
+    ...DEFAULT_CONNECTION_INFO,
+    ...restoredDraft?.connectionInfo,
   });
-  const [loadMode, setLoadMode] = useState<LoadMode>("INSERT");
-  const [showTruncateSql, setShowTruncateSql] = useState(false);
-  const [truncateSql, setTruncateSql] = useState("");
-  const [loadSql, setLoadSql] = useState(defaultLoadSql("INSERT", "", "", "PostgreSQL"));
-  const [queryRecordSql, setQueryRecordSql] = useState("");
-  const [sourceColumns, setSourceColumns] = useState<SourceColumnMetadata[]>([]);
-  const [loadSqlColumns, setLoadSqlColumns] = useState<SourceColumnMetadata[]>([]);
-  const [targetColumns, setTargetColumns] = useState<ColumnMetadataResponse[]>([]);
-  const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>([]);
+  const [loadMode, setLoadMode] = useState<LoadMode>(restoredDraft?.loadMode ?? "INSERT");
+  const [showTruncateSql, setShowTruncateSql] = useState(restoredDraft?.showTruncateSql ?? false);
+  const [truncateSql, setTruncateSql] = useState(restoredDraft?.truncateSql ?? "");
+  const [loadSql, setLoadSql] = useState(restoredDraft?.loadSql ?? defaultLoadSql("INSERT", "", "", "PostgreSQL"));
+  const [queryRecordSql, setQueryRecordSql] = useState(restoredDraft?.queryRecordSql ?? "");
+  const [sourceColumns, setSourceColumns] = useState<SourceColumnMetadata[]>(restoredDraft?.sourceColumns ?? []);
+  const [loadSqlColumns, setLoadSqlColumns] = useState<SourceColumnMetadata[]>(restoredDraft?.loadSqlColumns ?? []);
+  const [targetColumns, setTargetColumns] = useState<ColumnMetadataResponse[]>(restoredDraft?.targetColumns ?? []);
+  const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>(restoredDraft?.columnMappings ?? []);
   const mappingSourceColumns = useMemo(
     () => loadSqlColumns.length > 0 ? loadSqlColumns : sourceColumns,
     [loadSqlColumns, sourceColumns],
@@ -1809,11 +1992,6 @@ export function EtlCreatePage() {
       .join(","),
     [targetColumns],
   );
-
-  const isUnlocked = (stepId: WizardStepId) => {
-    const index = WIZARD_STEPS.findIndex((step) => step.id === stepId);
-    return index === 0 || completedSteps.includes(WIZARD_STEPS[index - 1].id);
-  };
 
   const moveStep = (stepId: WizardStepId) => {
     if (completed) {
@@ -1842,26 +2020,81 @@ export function EtlCreatePage() {
     !!connectionInfo.targetTable.trim();
 
   useEffect(() => {
+    if (completed) {
+      return;
+    }
+    writeEtlCreateDraft({
+      activeStep,
+      etlType,
+      completedSteps,
+      basicInfo: {
+        jobName: basicInfo.jobName,
+        parentGroupId: basicInfo.parentGroupId,
+        parentGroupPath: basicInfo.parentGroupPath,
+        comments: basicInfo.comments,
+        fileExtension: basicInfo.fileExtension,
+      },
+      connectionInfo,
+      loadMode,
+      showTruncateSql,
+      truncateSql,
+      loadSql,
+      queryRecordSql,
+      sourceColumns,
+      loadSqlColumns,
+      targetColumns,
+      columnMappings,
+    });
+  }, [
+    activeStep,
+    basicInfo,
+    columnMappings,
+    completed,
+    completedSteps,
+    connectionInfo,
+    etlType,
+    loadMode,
+    loadSql,
+    loadSqlColumns,
+    queryRecordSql,
+    showTruncateSql,
+    sourceColumns,
+    targetColumns,
+    truncateSql,
+  ]);
+
+  useEffect(() => {
     if (isFileLoad) {
       return;
     }
     if (targetColumns.length > 0) {
       setColumnMappings((previousMappings) => {
+        if (preserveRestoredSqlRef.current && previousMappings.length > 0) {
+          setQueryRecordSql(buildQueryRecordSql(previousMappings, commaSeparatedValues(connectionInfo.sourceTable)));
+          return previousMappings;
+        }
         const nextMappings = buildDefaultColumnMappings(targetColumns, sourceColumns, previousMappings);
-        setLoadSql(buildMappedLoadSql(connectionInfo, sourceColumns, targetColumns, loadMode));
+        if (!preserveRestoredSqlRef.current) {
+          setLoadSql(formatLoadSqlIndent(buildMappedLoadSql(connectionInfo, sourceColumns, targetColumns, loadMode)));
+        }
         setQueryRecordSql(buildQueryRecordSql(nextMappings, commaSeparatedValues(connectionInfo.sourceTable)));
         return nextMappings;
       });
       return;
     }
+    if (preserveRestoredSqlRef.current) {
+      return;
+    }
     setColumnMappings([]);
     setQueryRecordSql("");
-    setLoadSql(defaultLoadSql(
-      loadMode,
-      connectionInfo.sourceSchema,
-      connectionInfo.sourceTable,
-      connectionInfo.sourceDatabaseType,
-    ));
+    if (!preserveRestoredSqlRef.current) {
+      setLoadSql(formatLoadSqlIndent(defaultLoadSql(
+        loadMode,
+        connectionInfo.sourceSchema,
+        connectionInfo.sourceTable,
+        connectionInfo.sourceDatabaseType,
+      )));
+    }
   }, [
     connectionInfo.sourceDatabaseType,
     connectionInfo.sourceSchema,
@@ -1980,6 +2213,7 @@ export function EtlCreatePage() {
         etlType,
       });
       message.success("NiFi 템플릿 그룹을 복제하고 설정을 반영했습니다.");
+      clearEtlCreateDraft();
       setCompletedSteps((previous) => previous.includes("target") ? previous : [...previous, "target"]);
       setCompleted(true);
       setActiveStep("target");
@@ -1995,6 +2229,7 @@ export function EtlCreatePage() {
       <TypeStep
         selectedType={etlType}
         onTypeChange={(nextType) => {
+          preserveRestoredSqlRef.current = false;
           setEtlType(nextType);
           invalidateFrom("type");
         }}
@@ -2017,6 +2252,7 @@ export function EtlCreatePage() {
         value={connectionInfo}
         etlType={etlType}
         onChange={(nextValue) => {
+          preserveRestoredSqlRef.current = false;
           setConnectionInfo((current) => {
             return { ...current, ...nextValue };
           });
@@ -2044,9 +2280,10 @@ export function EtlCreatePage() {
         loadSql={loadSql}
         showTruncateSql={showTruncateSql}
         onLoadModeChange={(nextLoadMode) => {
+          preserveRestoredSqlRef.current = false;
           setLoadMode(nextLoadMode);
           if (targetColumns.length > 0) {
-            setLoadSql(buildMappedLoadSql(connectionInfo, sourceColumns, targetColumns, nextLoadMode));
+            setLoadSql(formatLoadSqlIndent(buildMappedLoadSql(connectionInfo, sourceColumns, targetColumns, nextLoadMode)));
           }
           if (nextLoadMode !== "TRUNCATE") {
             setShowTruncateSql(false);
@@ -2063,7 +2300,6 @@ export function EtlCreatePage() {
       <TargetStep
         connectionInfo={connectionInfo}
         sourceColumns={mappingSourceColumns}
-        targetColumns={targetColumns}
         columnMappings={columnMappings}
         loadSql={loadSql}
         onQueryRecordSqlChange={setQueryRecordSql}
@@ -2077,14 +2313,6 @@ export function EtlCreatePage() {
 
   return (
     <div className="etl-create-page">
-      <Card title="ETL 생성" style={{ marginBottom: 16 }}>
-        <Alert
-          type="info"
-          showIcon
-          message="각 단계를 완료해야 다음 단계가 열립니다."
-        />
-      </Card>
-
       {completed && completionSummary ? (
         <CompletionView
           summary={completionSummary}
@@ -2097,7 +2325,7 @@ export function EtlCreatePage() {
           activeKey={activeStep}
           onChange={(key) => {
             const requested = Array.isArray(key) ? key[0] : key;
-            if (requested && isUnlocked(requested as WizardStepId)) {
+            if (requested) {
               setActiveStep(requested as WizardStepId);
             }
           }}
@@ -2109,14 +2337,12 @@ export function EtlCreatePage() {
             },
             {
               key: "basic",
-              collapsible: isUnlocked("basic") ? undefined : "disabled",
-              label: <StepLabel step="basic" title="기본 정보" completed={completedSteps.includes("basic")} unlocked={isUnlocked("basic")} />,
+              label: <StepLabel step="basic" title="기본 정보" completed={completedSteps.includes("basic")} unlocked />,
               children: content.basic,
             },
             {
               key: "connection",
-              collapsible: isUnlocked("connection") ? undefined : "disabled",
-              label: <StepLabel step="connection" title="연결" completed={completedSteps.includes("connection")} unlocked={isUnlocked("connection")} />,
+              label: <StepLabel step="connection" title="연결" completed={completedSteps.includes("connection")} unlocked />,
               children: (
                 <>
                   {content.connection}
@@ -2127,7 +2353,7 @@ export function EtlCreatePage() {
                       disabled={!canCompleteConnection}
                       onClick={() => completeAndOpen("connection", "query")}
                     >
-                      다음: 적재쿼리
+                      다음
                     </Button>
                   </div>
                 </>
@@ -2135,8 +2361,7 @@ export function EtlCreatePage() {
             },
             {
               key: "query",
-              collapsible: isUnlocked("query") ? undefined : "disabled",
-              label: <StepLabel step="query" title="적재쿼리" completed={completedSteps.includes("query")} unlocked={isUnlocked("query")} />,
+              label: <StepLabel step="query" title="적재쿼리" completed={completedSteps.includes("query")} unlocked />,
               children: (
                 <>
                   {content.query}
@@ -2147,7 +2372,7 @@ export function EtlCreatePage() {
                       disabled={!isFileLoad && (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()}
                       onClick={completeQueryStep}
                     >
-                      다음: 대상
+                      다음
                     </Button>
                   </div>
                 </>
@@ -2155,8 +2380,7 @@ export function EtlCreatePage() {
             },
             {
               key: "target",
-              collapsible: isUnlocked("target") ? undefined : "disabled",
-              label: <StepLabel step="target" title="대상" completed={completedSteps.includes("target")} unlocked={isUnlocked("target")} />,
+              label: <StepLabel step="target" title="컬럼매핑" completed={completedSteps.includes("target")} unlocked />,
               children: (
                 <>
                   {content.target}
