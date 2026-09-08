@@ -1,5 +1,5 @@
 -- ETL 하위에 NiFi 관리 설정 진입점을 추가한다.
--- 기존 DB에 이미 적용된 V63은 다시 실행되지 않으므로, 운영 반영용 증분으로 둔다.
+-- 이미 적용된 V63/V65 는 수정하지 않고, 운영 반영용 증분으로 둔다.
 INSERT INTO app_menu (menu_id, parent_id, menu_nm, menu_url, icon, system_code, required_bits, sort_ord, use_yn)
 VALUES ('ETL_SETTINGS', 'ETL', '관리 설정', '/etl/settings', NULL, 'NIFI', 1, 33, 'Y')
 ON CONFLICT (menu_id) DO UPDATE
