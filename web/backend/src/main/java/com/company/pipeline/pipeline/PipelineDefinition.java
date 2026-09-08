@@ -88,6 +88,14 @@ public class PipelineDefinition extends BaseAuditEntity {
     @Column(name = "delete_enabled")
     private Boolean deleteEnabled = true;
 
+    /** {@link PipelineLoadMode} 이름. TABLE_CDC 전용, LOG_FILE 은 항상 UPSERT(무의미). */
+    @Column(name = "load_mode", nullable = false, length = 30)
+    private String loadMode = PipelineLoadMode.UPSERT.name();
+
+    /** DELTA_APPEND 에서 쓰는 구분컬럼명. UPSERT 면 NULL. */
+    @Column(name = "delta_op_column", length = 100)
+    private String deltaOpColumn;
+
     @Column(columnDefinition = "TEXT")
     private String description;
 

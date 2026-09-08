@@ -29,6 +29,7 @@ import {
   listAirflowTaskInstances,
   listAllAirflowDagRuns,
   retryAirflowTasks,
+  markAirflowTaskSuccess,
   syncAirflowDagCatalog,
   triggerAirflowDag,
   type AirflowDag,
@@ -42,6 +43,7 @@ import { listConnections } from "../api/connections";
 import { getRealtimePipelineMetrics, type RealtimePipelineMetricResponse } from "../api/dashboard";
 import { listPipelineRuntimeStatuses, listPipelines } from "../api/pipelines";
 import type { PipelineResponse, PipelineRuntimeStatusResponse } from "../types/pipeline";
+import { loadModeLabel } from "../types/pipeline";
 import {
   cdcPipelineColumns,
   renderRuntimeStatus,
@@ -96,6 +98,24 @@ type ExecutionAction = "deploy" | "start" | "stop" | "monitor";
 
 function runAt(run?: AirflowDagRun) {
   return run?.start_date ?? run?.execution_date;
+}
+
+/**
+ * 오늘 실행분 중 가장 최근 것. 없으면 undefined.
+ *
+ * <p>실시간 모니터링은 «오늘 무엇이 돌았나»를 보는 화면이다. 그런데 목록이 날짜를 가리지
+ * 않고 «마지막 실행»을 집으면, 며칠 전에 돈 워크플로우가 오늘 성공/실패한 것처럼 보인다.
+ * 어제 성공하고 오늘 아직 안 돈 작업과, 오늘 성공한 작업이 같은 «성공»으로 보이는 것이
+ * 특히 문제였다.
+ *
+ * <p>runs 는 최신순이라 첫 일치가 곧 오늘의 마지막 실행이다. 이전 일자는 속성창의
+ * «실행 이력»에서 기간을 넓혀 본다(RunHistoryModal).
+ */
+function latestRunToday(runs: AirflowDagRun[], today: Dayjs = dayjs().startOf("day")) {
+  return runs.find((run) => {
+    const startedAt = runAt(run);
+    return Boolean(startedAt && dayjs(startedAt).isAfter(today));
+  });
 }
 
 function duration(start?: string, end?: string) {
@@ -278,10 +298,7 @@ function matchesMetric(
   if (metric === "all") return true;
   if (metric === "new") return Boolean(dag.created_at && dayjs(dag.created_at).isAfter(today));
   if (metric === "running") return runs.some((run) => run.state === "running");
-  const latestToday = runs.find((run) => {
-    const startedAt = runAt(run);
-    return Boolean(startedAt && dayjs(startedAt).isAfter(today));
-  });
+  const latestToday = latestRunToday(runs, today);
   if (metric === "success") return latestToday?.state === "success";
   if (metric === "failed") return latestToday?.state === "failed";
   return latestToday?.state === "queued" || latestToday?.state === "scheduled";
@@ -817,11 +834,18 @@ function TaskRows({
   run,
   refreshSeconds,
   configured = false,
+  auxColumn = true,
 }: {
   dag: DashboardDag;
   run?: AirflowDagRun;
   refreshSeconds: number;
   configured?: boolean;
+  /**
+   * 7번째 «보조» 열을 그릴지. 이 표를 쓰는 화면마다 그 자리의 머리글이 다른데
+   * (다음 실행 / 스케줄 / 없음) task 행에는 넣을 값이 없어 늘 "-" 였다.
+   * 열이 아예 없는 표(실행 이력)에서는 꺼야 칸이 밀리지 않는다.
+   */
+  auxColumn?: boolean;
 }) {
   const [retryingTaskId, setRetryingTaskId] = useState<string>();
   const [expandedJobKey, setExpandedJobKey] = useState<string>();
@@ -882,10 +906,23 @@ function TaskRows({
     return reason?.replace(/^\[[^\]]+\]\s*/, "").replace(/^-\s*Caused by:\s*/, "").slice(0, 180)
       || "실패 사유를 확인할 수 없습니다.";
   };
-  const rerunJob = async (jobKey: string, taskIds: string[], withDownstream: boolean) => {
+  /** job 키(= TaskGroup 이름). 화면에 보이는 단위와 같게 맞춘다. */
+  const jobKeyOf = (taskId: string) => {
+    const dot = taskId.lastIndexOf(".");
+    return dot > 0 ? taskId.slice(0, dot) : taskId;
+  };
+
+  const doRerun = async (
+    jobKey: string, taskIds: string[], withDownstream: boolean, markBlockers: string[] = [],
+  ) => {
     if (!run) return;
     setRetryingTaskId(jobKey);
     try {
+      // 선행이 failed 로 남아 있으면 clear 해봐야 스케줄러가 곧바로 upstream_failed 로
+      // 되돌린다. 먼저 선행을 성공으로 표시해야 이 job 이 실제로 돈다.
+      for (const taskId of markBlockers) {
+        await markAirflowTaskSuccess(dag.dag_id, run.dag_run_id, taskId);
+      }
       // job 안의 단계를 한꺼번에 지운다. 한 단계만 지우면 그 job이 반쪽만 다시 돈다.
       await retryAirflowTasks(dag.dag_id, run.dag_run_id, taskIds, withDownstream);
       message.success(withDownstream
@@ -897,6 +934,63 @@ function TaskRows({
     } finally {
       setRetryingTaskId(undefined);
     }
+  };
+
+  const rerunJob = async (jobKey: string, taskIds: string[], withDownstream: boolean) => {
+    if (!run) return;
+    const all = tasksQuery.data ?? [];
+    const own = all.filter((task) => taskIds.includes(task.task_id));
+    /*
+     * «선행 때문에 막힌» job 은 자기 단계 중 실패가 <b>하나도 없고</b> upstream_failed 만
+     * 있는 경우다. 자기가 실패한 job 도 뒷단계는 upstream_failed 로 남으므로
+     * (예: await 실패 → verify 는 upstream_failed), upstream_failed 만 보고 판단하면
+     * 자기 자신의 실패를 «선행»으로 착각해 성공 처리해 버린다.
+     */
+    const blocked = own.some((task) => task.state === "upstream_failed")
+      && !own.some((task) => task.state === "failed");
+    if (!blocked) {
+      await doRerun(jobKey, taskIds, withDownstream);
+      return;
+    }
+    /*
+     * 선행이 실패로 남아 있는 job 을 그냥 clear 하면 «성공했습니다» 만 뜨고 아무 일도
+     * 일어나지 않는다 - Airflow 가 의존성을 다시 보고 즉시 upstream_failed 로 되돌리기
+     * 때문이다(실측 2026-09-04: wf_postgresql_dm_order_daily 를 눌러도 상태 그대로).
+     * 그래서 여기서 막고, 선행을 성공으로 표시할지 확인을 받는다.
+     *
+     * 선행을 «다시 돌리고» 싶은 경우는 그 행의 «이 작업부터 실행» 이 이미 해 주므로
+     * 여기서는 다루지 않는다. 여기서 필요한 건 «다시 돌려도 또 실패하는 선행을 건너뛰는»
+     * 길이다(어제 사례: 선행이 외래키 위반이라 재실행해도 결과가 같았다).
+     */
+    const blockers = all.filter((task) => task.state === "failed" && !taskIds.includes(task.task_id));
+    const blockerJobs = [...new Set(blockers.map((task) => jobKeyOf(task.task_id)))];
+    if (!blockerJobs.length) {
+      message.warning("선행 작업이 끝나지 않아 아직 실행할 수 없습니다.");
+      return;
+    }
+    Modal.confirm({
+      title: "선행 작업이 실패로 남아 있습니다",
+      okText: "선행을 성공 처리하고 실행",
+      okButtonProps: { danger: true },
+      cancelText: "취소",
+      width: 560,
+      content: (
+        <div>
+          <p>
+            <b>{blockerJobs.join(", ")}</b> 이(가) 실패 상태여서, <b>{jobKey}</b> 만 다시 눌러도
+            실행되지 않고 «선행 실패»로 되돌아갑니다.
+          </p>
+          <p>
+            계속하면 위 선행 작업을 <b>성공으로 표시한 뒤</b> {jobKey} 을(를) 실행합니다.
+            상태만 바꾸는 것이라 <b>선행의 적재는 일어나지 않습니다</b> - 빠진 데이터는 그대로입니다.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            선행을 <b>다시 돌리려면</b> 취소하고 해당 행의 «이 작업부터 실행»을 쓰십시오.
+          </p>
+        </div>
+      ),
+      onOk: () => doRerun(jobKey, taskIds, withDownstream, blockers.map((task) => task.task_id)),
+    });
   };
 
   if (configured && etlJobQuery.isLoading) {
@@ -966,6 +1060,35 @@ function TaskRows({
     byJob.get(key)!.push(task);
   }
 
+  /*
+   * 줄 앞의 01·02·03 은 «실행 순서»로 읽힌다. 그런데 Airflow 가 태스크를 돌려주는 순서는
+   * 설계 순서가 아니라서, 직렬로 이어 그린 워크플로우인데도 번호가 뒤죽박죽으로 찍혔다
+   * (실측 2026-09-03: customer→product→order→store→order_item 으로 돈 워크플로우가
+   * 01 customer / 02 order / 03 order_item / 04 product / 05 store 로 보여, 맨 마지막
+   * job 인 order_item 이 03 으로 찍혔다).
+   *
+   * 그래서 job 이 «처음 시작한 시각» 순으로 세운다. 병렬로 뜬 job 끼리는 시작 순서가 곧
+   * 표시 순서다. 아직 시작 전이라 시각이 없는 job 은 뒤로 보내되 원래 순서를 지킨다
+   * (정렬이 안정적이어야 실행 중에 줄이 튀지 않는다).
+   */
+  const firstStartOf = (key: string) => {
+    // 문자열 비교가 아니라 시각으로 본다(오프셋 표기가 섞여도 안전하다).
+    const starts = byJob.get(key)!
+      .map((step) => (step.start_date ? new Date(step.start_date).getTime() : Number.NaN))
+      .filter((at) => Number.isFinite(at));
+    return starts.length ? Math.min(...starts) : undefined;
+  };
+  const apiOrder = new Map(order.map((key, index) => [key, index] as const));
+  const startedAtOf = new Map(order.map((key) => [key, firstStartOf(key)] as const));
+  order.sort((a, b) => {
+    const left = startedAtOf.get(a);
+    const right = startedAtOf.get(b);
+    if (left !== undefined && right !== undefined && left !== right) return left - right;
+    if (left !== undefined && right === undefined) return -1;
+    if (left === undefined && right !== undefined) return 1;
+    return apiOrder.get(a)! - apiOrder.get(b)!;
+  });
+
   /** 단계 상태를 job 하나의 상태로 접는다. 하나라도 실패면 실패다. */
   const rollUpState = (steps: NonNullable<typeof tasksQuery.data>) => {
     const states = steps.map((step) => step.state);
@@ -1012,9 +1135,10 @@ function TaskRows({
         <td><ProfileOutlined /> {isJob ? `JOB (${steps.length}단계)` : "워크플로우 종단"}</td>
         <td>{startedAt ? dayjs(startedAt).format("YYYY-MM-DD HH:mm") : "-"}</td>
         <td><Tag color={stateColor(state)}>{stateLabel(state)}</Tag></td>
-        <td>{state === "failed" ? <small title={detail}>{detail}</small> : detail}</td>
+        {/* 열 폭을 넘으면 CSS 가 잘라내므로, 전체 문구는 셀 title 로 남긴다. */}
+        <td title={detail}>{state === "failed" ? <small>{detail}</small> : detail}</td>
         <td>{duration(startedAt, endedAt)}</td>
-        <td>-</td>
+        {auxColumn && <td>-</td>}
         <td>
           {retryCount}회{" "}
           {/* job 통째로 다시 돌린다. 값 하나만 고쳐 다시 넣을 때와, 중간이 막혀
@@ -1048,7 +1172,7 @@ function TaskRows({
           <td><Tag color={stateColor(step.state)}>{stateLabel(step.state)}</Tag></td>
           <td>{step.state === "failed" ? <small title={stepDetail}>{stepDetail}</small> : stepDetail}</td>
           <td>{duration(step.start_date, step.end_date)}</td>
-          <td>-</td>
+          {auxColumn && <td>-</td>}
           <td>{Math.max(0, (step.try_number ?? 1) - 1)}회</td>
         </tr>
       );
@@ -1119,7 +1243,9 @@ function ScopeList({
         rowKey="id"
         size="small"
         dataSource={cdcRows}
-        scroll={{ x: 1130 }}
+        // 가운데 패널 폭(최소 650px)보다 넉넉히 작게 잡는다. 예전 1130 은 패널보다 넓어
+        // 처음 들어오자마자 가로 스크롤이 생겼다 - 열 폭도 함께 줄였다.
+        scroll={{ x: 860 }}
         columns={cdcPipelineColumns(runtimeByPipeline, metricByPipeline, {
           render: (pipeline) => {
             const run = latestRunOfPipeline(pipeline.id);
@@ -1135,7 +1261,9 @@ function ScopeList({
   }
 
   // ETL 그룹 / ETL 지표 선택 -> DAG(워크플로우) 목록
-  const latestRun = (dagId: string) => (runsByDag.get(dagId) ?? [])[0];
+  // 당일 실행분만 본다. 오늘 안 돈 워크플로우는 «실행 없음»으로 비워 두는 편이,
+  // 며칠 전 결과를 오늘 것처럼 보여주는 것보다 정확하다.
+  const latestRun = (dagId: string) => latestRunToday(runsByDag.get(dagId) ?? [], today);
   // cdc 범위는 위에서 이미 반환했으므로 여기서는 남은 세 가지만 다룬다.
   let rows: DashboardDag[] = [];
   if (scope.kind === "etl") {
@@ -1270,7 +1398,8 @@ function RunHistoryTable({ dag, runs, refreshSeconds }: { dag?: DashboardDag; ru
   return (
     <div className="airflow-job-table-wrap">
       <table className="airflow-job-table">
-        <thead><tr><th>작업명</th><th>실행 유형</th><th>실행 일시</th><th>최종 결과</th><th>적재/실패 사유</th><th>소요</th><th>실행 ID</th><th>재시도/재시작</th></tr></thead>
+        {/* 실행 ID(dag_run_id)는 사람이 쓸 일이 없고 문자열이 길어 표를 가로로 밀어냈다. */}
+        <thead><tr><th>작업명</th><th>실행 유형</th><th>실행 일시</th><th>최종 결과</th><th>적재/실패 사유</th><th>소요</th><th>재시도/재시작</th></tr></thead>
         <tbody>
           {runs.flatMap((run) => {
             const expanded = expandedRunId === run.dag_run_id;
@@ -1282,10 +1411,9 @@ function RunHistoryTable({ dag, runs, refreshSeconds }: { dag?: DashboardDag; ru
               <td><Tag color={stateColor(run.state)}>{stateLabel(run.state)}</Tag></td>
               <td>-</td>
               <td>{duration(run.start_date, run.end_date)}</td>
-              <td title={run.dag_run_id}>{run.dag_run_id}</td>
               <td>{expanded ? <DownOutlined /> : <RightOutlined />}</td>
             </tr>,
-            ...(expanded ? [<TaskRows key={`${run.dag_run_id}-tasks`} dag={dag} run={run} refreshSeconds={refreshSeconds} />] : []),
+            ...(expanded ? [<TaskRows key={`${run.dag_run_id}-tasks`} dag={dag} run={run} refreshSeconds={refreshSeconds} auxColumn={false} />] : []),
           ];})}
         </tbody>
       </table>
@@ -1449,8 +1577,11 @@ function PropertyPanel({
             {pipeline.pipelineType === "TABLE_CDC" && <>
               <dt>스냅샷 모드</dt>
               <dd>{pipeline.snapshotMode === "NO_DATA" ? "기존 데이터 미적재 · 이후 CDC" : "초기 적재 후 CDC"}</dd>
+              <dt>적재 방식</dt>
+              <dd>{loadModeLabel(pipeline.loadMode, pipeline.deltaOpColumn)}</dd>
             </>}
-            <dt>상태</dt><dd>{renderRuntimeStatus(pipeline, runtime)}</dd>
+            {/* 목록의 «상태»는 제어 DAG 기준이라, 여기서는 무엇의 상태인지 밝힌다. */}
+            <dt>커넥터 상태</dt><dd>{renderRuntimeStatus(pipeline, runtime)}</dd>
             <dt>설명</dt><dd>{pipeline.description ?? "-"}</dd>
             <dt>생성 시각</dt><dd>{pipeline.createdAt}</dd>
             <dt>수정 시각</dt><dd>{pipeline.updatedAt}</dd>
@@ -1787,6 +1918,9 @@ export function AirflowDashboardPage() {
         .filter((id): id is number => typeof id === "number")
     : [];
   const selectedRuns = selectedDagId ? (runsByDag.get(selectedDagId) ?? []) : [];
+  // 목록과 같은 기준으로 맞춘다. 목록이 «실행 없음»인데 하단에 어제 실행의 단계가
+  // 펼쳐지면 둘이 어긋나 보인다.
+  const selectedRunToday = latestRunToday(selectedRuns);
   const selectedAlerts = selectedDagId ? (alertsByDag.get(selectedDagId) ?? []) : [];
   const historyDagId = selectedPipeline ? pipelineDag?.dag_id : selectedDagId;
   const historyRuns = historyDagId ? (runsByDag.get(historyDagId) ?? []) : [];
@@ -1870,7 +2004,7 @@ export function AirflowDashboardPage() {
                   <table className="airflow-job-table">
                     <thead><tr><th>작업(Task)</th><th>유형</th><th>시작</th><th>상태</th><th>적재/실패 사유</th><th>소요</th><th>스케줄</th><th>재실행</th></tr></thead>
                     <tbody>
-                      <TaskRows dag={selectedDag} run={selectedRuns[0]} refreshSeconds={refreshSeconds} />
+                      <TaskRows dag={selectedDag} run={selectedRunToday} refreshSeconds={refreshSeconds} />
                     </tbody>
                   </table>
                 </div>

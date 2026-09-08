@@ -130,13 +130,19 @@ export function renderLag(metric: RealtimePipelineMetricResponse | undefined) {
 }
 
 /**
- * CDC 파이프라인 목록 열. 이름·유형·소스→타깃·Topic·(워크플로우 상태)·상태·지연·마지막 처리.
- * 관리 화면은 여기에 "관리" 열을 덧붙이고, 실행 현황은 이대로 쓴다.
+ * CDC 파이프라인 목록 열. 이름·유형·소스→타깃·Topic·상태·지연·마지막 처리.
+ * 관리 화면은 여기에 "관리" 열을 덧붙이고, 실시간 모니터링은 이대로 쓴다.
  *
- * <p>workflowStatus를 넘기면 "워크플로우 상태" 열이 하나 더 붙고, 뒤따르는 열 이름이
- * "커넥터 상태"로 바뀐다. 둘은 다른 것을 뜻한다 - 워크플로우는 <b>제어 DAG가 지금 도는지</b>,
- * 커넥터는 <b>데이터가 실제로 흐르는지</b>다. 한 열에 섞으면 "커넥터는 RUNNING인데 감시
- * Run이 죽은" 상태를 화면에서 구분할 수 없다.
+ * <p>상태 열은 화면에 따라 <b>하나만</b> 둔다.
+ * <ul>
+ *   <li>CDC 관리 화면: 커넥터 상태(데이터가 실제로 흐르는지)</li>
+ *   <li>실시간 모니터링(workflowStatus 를 넘김): 제어 DAG 가 지금 도는지</li>
+ * </ul>
+ *
+ * <p>둘 다 열 이름은 «상태»다 - 화면마다 하나뿐이라 수식어가 필요 없다.
+ *
+ * <p>예전엔 모니터링에서 둘을 나란히 보여줬는데, 상태 열이 둘이면 어느 쪽을 봐야 하는지
+ * 헷갈리고 표만 넓어졌다. 커넥터 상태는 속성창의 상세보기에서 확인한다(2026-09-03 결정).
  */
 export function cdcPipelineColumns(
   runtimeByPipeline: Map<number, PipelineRuntimeStatusResponse>,
@@ -144,16 +150,16 @@ export function cdcPipelineColumns(
   workflowStatus?: { render: (pipeline: PipelineResponse) => ReactNode },
 ): ColumnsType<PipelineResponse> {
   return [
-    { title: "이름", dataIndex: "name", width: 160 },
+    { title: "이름", dataIndex: "name", width: 130 },
     {
       title: "유형",
       dataIndex: "pipelineType",
-      width: 110,
+      width: 84,
       render: (value: string) => <Tag color={value === "LOG_FILE" ? "purple" : "blue"}>{value}</Tag>,
     },
     {
+      // 여기만 폭을 안 준다 - 남는 자리를 이 열이 흡수해야 표가 가로로 넘치지 않는다.
       title: "소스 → 타깃",
-      width: 240,
       render: (_, row) => (
         <div>
           <div>{sourceLabel(row)}</div>
@@ -161,28 +167,28 @@ export function cdcPipelineColumns(
         </div>
       ),
     },
-    { title: "Topic", dataIndex: "topicName", width: 180 },
-    ...(workflowStatus
-      ? [{
-          title: "워크플로우 상태",
-          width: 130,
+    { title: "Topic", dataIndex: "topicName", width: 120, ellipsis: true },
+    // 상태 열은 하나. 모니터링은 워크플로우 상태를, 관리 화면은 커넥터 상태를 쓴다.
+    workflowStatus
+      ? {
+          title: "상태",
+          width: 110,
           render: (_: unknown, row: PipelineResponse) => workflowStatus.render(row),
-        }]
-      : []),
-    {
-      // 워크플로우 열이 없으면(CDC 관리 화면) 상태 열이 하나뿐이라 그냥 "상태"로 둔다.
-      title: workflowStatus ? "커넥터 상태" : "상태",
-      width: 170,
-      render: (_, row) => renderRuntimeStatus(row, runtimeByPipeline.get(row.id)),
-    },
+        }
+      : {
+          title: "상태",
+          width: 150,
+          render: (_: unknown, row: PipelineResponse) =>
+            renderRuntimeStatus(row, runtimeByPipeline.get(row.id)),
+        },
     {
       title: "지연",
-      width: 90,
+      width: 68,
       render: (_, row) => renderLag(metricByPipeline.get(row.id)),
     },
     {
       title: "마지막 처리",
-      width: 110,
+      width: 92,
       render: (_, row) => {
         const lastProgressAt = metricByPipeline.get(row.id)?.lastProgressAt ?? null;
         return <span title={lastProgressAt ?? undefined}>{formatRelativeTime(lastProgressAt)}</span>;

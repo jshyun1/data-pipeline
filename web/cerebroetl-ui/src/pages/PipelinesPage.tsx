@@ -42,6 +42,7 @@ import type {
   PipelineCommandHistoryResponse,
   PipelineResponse,
 } from "../types/pipeline";
+import { loadModeLabel } from "../types/pipeline";
 import {
   CDC_STATUS_LABEL,
   RUNTIME_STATUS_COLOR,
@@ -477,6 +478,11 @@ export function PipelinesPage() {
                     {detailPipeline.pipelineType === "TABLE_CDC" && (
                       <Descriptions.Item label="스냅샷 모드">
                         {detailPipeline.snapshotMode === "NO_DATA" ? "기존 데이터 미적재 · 이후 CDC" : "초기 적재 후 CDC"}
+                      </Descriptions.Item>
+                    )}
+                    {detailPipeline.pipelineType === "TABLE_CDC" && (
+                      <Descriptions.Item label="적재 방식">
+                        {loadModeLabel(detailPipeline.loadMode, detailPipeline.deltaOpColumn)}
                       </Descriptions.Item>
                     )}
                     <Descriptions.Item label="상태">

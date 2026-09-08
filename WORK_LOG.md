@@ -1192,3 +1192,100 @@ form-urlencoded 모드에서 한글 URL 인코딩 확인 / SMS 채널 토글 off
    - **검증**(로컬): 끄기→`EMAIL=false` / 켜기→`EMAIL=true` / 이메일만 있는 수신자 생성 시
      `EMAIL` 만 자동 구독 / 전화번호 없이 문자 수신 켜기 → «전화번호가 등록되지 않아…» 거절.
      검증용 수신자는 삭제.
+
+## 30. CDC 델타 적재(DELTA_APPEND) - 변경분을 구분컬럼과 함께 임시 테이블에 쌓기 (2026-09-03)
+
+**요구**: CDC 기능이 없는 데이터분석 솔루션이 변경분을 받아 가도록, 소스 `AA_table`(컬럼 N개)의
+변경 이벤트를 타깃 `AA_table_delta`(맨 앞 구분컬럼 1 + 소스 컬럼 N)에 **한 이벤트 = 한 행**으로
+append 한다. 솔루션이 주기적으로 읽어 구분값(insert/update/delete)에 맞게 반영하는 건 저쪽 몫.
+Oracle·PostgreSQL·MySQL 셋 다 소스/타깃 어느 쪽으로도 가능해야 함.
+
+**기존 CDC 에 영향 없음**: 적재 방식 기본값 `UPSERT` 면 렌더링되는 커넥터 설정이 종전과 동일.
+델타는 싱크 커넥터 하나의 설정 분기이고 소스 커넥터·워커 전역 설정·토픽 메시지 형식은 안 건드림.
+
+**구성(Debezium 3.6, 실행 중 Connect 의 `config/validate` 로 옵션명 확인함)**
+- 싱크 = Debezium JDBC Sink + `ExtractNewRecordState` SMT(싱크 쪽에 걺 → 같은 토픽에 upsert 싱크
+  병행 가능). `add.fields=op:<구분컬럼>` 별칭 문법, `add.fields.prefix=`(빈값), 
+  `delete.tombstone.handling.mode=rewrite`(**기본값 tombstone 이면 delete 가 사라짐**),
+  `__deleted` 는 `ReplaceField$Value exclude` 로 제거. `insert.mode=insert`/`primary.key.mode=none`/
+  `delete.enabled=false`/`schema.evolution=basic`.
+- 구분값은 Debezium op 코드 그대로 **c/u/d/r**. 문자열로 바꿔 주는 내장 SMT 는 없음(커스텀 SMT 필요).
+- **구분컬럼을 맨 앞에**: 싱크가 만들면 SMT 추가 필드가 맨 뒤에 붙는다. 그래서 배포(PREPARE) 시
+  `DeltaTargetTableService` 가 **`cdc_seq`(자동증가 PK) + 구분컬럼** 두 열짜리 뼈대를 먼저 만들고,
+  소스 컬럼은 첫 이벤트에서 싱크가 ALTER ADD 한다(세 DB 간 타입 매핑을 앱이 흉내 내지 않기 위함).
+  테이블이 이미 있으면 구분컬럼 존재만 확인(순번 컬럼 강제 안 함 - «구분 1 + 소스 N» 정확히
+  맞추고 싶으면 직접 만들면 됨). 식별자는 인용 없이 - 싱크(quote.identifiers=false)와 같은 접힘.
+- `cdc_seq` 는 같은 행의 insert→update→delete 순서 판단용. 토픽 단일 파티션·싱크 태스크 1 이라
+  삽입 순서 = 이벤트 순서.
+
+**변경 파일**
+- DB: `V65__add_pipeline_load_mode.sql` (`load_mode` NOT NULL DEFAULT 'UPSERT', `delta_op_column`).
+- 백엔드: `pipeline/PipelineLoadMode`(enum + 구분컬럼명 검증), `pipeline/DeltaTargetTableService`(신규),
+  `PipelineDefinition`·`PipelineCreateRequest`·`PipelineResponse`·`SinkConnectorRequest`(필드 추가, 구 생성자
+  호환 유지), `JdbcSinkTemplate.renderDeltaAppend`, `PipelineDeployService`(델타면 뼈대 생성 후 커넥터 등록),
+  `PipelineService.buildDefinition`(적재 방식·구분컬럼 저장), `PipelineConsistencyService`(델타는 UNSUPPORTED -
+  append-only 라 행 수 비교 무의미).
+- 프론트: `types/pipeline.ts`, `CdcCreatePage`(실행 옵션에 «적재 방식» + 구분컬럼명, 델타면 DELETE 반영
+  숨김, 소스 컬럼과 이름 충돌 검사, 검토 요약), `PipelinesPage`·`AirflowDashboardPage` 상세에 «적재 방식».
+- 테스트: `JdbcSinkTemplateTest`(델타 3건), `PipelineServiceTest`(델타 3건), `DeltaTargetTableServiceTest`(DDL 3 DB).
+
+**주의(운영)**
+- 타깃 연결 계정에 CREATE TABLE 권한 필요(뼈대 생성). 없으면 PREPARE 가 FAILED 로 떨어지고 커넥터는 안 만들어짐.
+- PostgreSQL 소스: delete 행에 PK 외 컬럼까지 담으려면 소스 테이블 `REPLICA IDENTITY FULL` 필요
+  (기존 파이프라인의 WAL 양도 늘어남). Oracle LogMiner/MySQL(binlog_row_image=FULL)은 기본으로 전체 before 제공.
+- 초기 스냅샷 행은 `r` 로 쌓임. 필요 없으면 스냅샷 모드 NO_DATA.
+- 실 데이터 end-to-end 는 사용자가 UI 로 파이프라인 생성해 직접 검증 예정(이번 커밋은 단위 테스트 + Connect
+  config/validate 까지).
+
+### 30.1. 세 번째 적재 방식 DELTA_UPSERT - PK당 한 행(마지막 상태 + 작업 종류) (같은 날 이어서)
+
+사용자 확인: 분석 솔루션은 "주기적으로 최신 상태만 동기화"하는 구조라 이 방식을 주로 쓴다.
+- 싱크: `insert.mode=upsert`/`primary.key.mode=record_key`, SMT 는 APPEND 와 같되
+  `add.fields=op:<구분>,ts_ms:cdc_ts`. delete.enabled 는 여전히 false(delete 도 d 로 덮어씀).
+  insert→update = u 한 행(최신 값), insert→delete = d 한 행(삭제 직전 값).
+- **"가져간 만큼 삭제" 기준이 바뀜**: 순번(cdc_seq)은 INSERT 때만 채번돼 덮어써도 안 바뀌므로 범위
+  삭제에 갱신분이 같이 지워진다. 그래서 덮어쓸 때마다 갱신되는 `cdc_ts`(epoch ms)를 기준으로
+  `DELETE … WHERE cdc_ts <= 읽을 때의 MAX(cdc_ts)`.
+- 소비 규칙: c/u/r → merge(있으면 update, 없으면 insert - u 인데 대상에 없는 경우가 정상), d → 있으면 delete.
+- **타깃 뼈대는 안 만든다**: upsert 는 소스 PK 와 같은 키가 타깃에 있어야 하는데(Postgres ON CONFLICT·
+  MySQL ON DUPLICATE KEY) PK 컬럼을 앱이 타입 매핑해 만드는 건 추측이라, 없으면 싱크가 PK 포함해
+  만들게 두고(구분·시각 컬럼은 뒤쪽), 있으면 `DeltaTargetTableService.verifyUpsertKey` 가 구분컬럼 존재 +
+  타깃 PK/UNIQUE(getPrimaryKeys + getIndexInfo(unique)) 중 소스 PK 와 컬럼 집합이 같은 것이 있는지 확인.
+  소스 PK 조회 실패 시엔 경고만 남기고 통과(싱크에서 드러남). `cdc_ts` 는 없으면 싱크가 ALTER ADD.
+- 구분컬럼명 예약어에 `cdc_ts` 추가. 정합성 검증은 델타 두 방식 모두 UNSUPPORTED.
+- 프론트: `loadModeLabel()` 공용(types/pipeline.ts), 생성 화면 선택지 3개·모드별 안내, 상세 2곳.
+- 테스트: 싱크 템플릿 DELTA_UPSERT 1건, keyMatches 1건, 예약어 1건, 생성 서비스 1건 추가.
+
+## 31. 화면 정리 - 실시간 모니터링 레이아웃 · 캔버스/팔레트 군더더기 제거 (2026-09-03)
+
+사용자가 화면을 보며 지적한 것들을 이어서 반영했다. 기능 변경보다 «화면이 화면답게
+보이는가»에 대한 손질이다.
+
+1. **실시간 모니터링 세로 스크롤 제거**: workspace 높이가 `calc(100vh - 330px)` 라는 «헤딩+
+   상태카드가 이만큼일 것»이라는 추측이라 실제와 20px 쯤 어긋나 페이지가 스크롤됐다.
+   `.airflow-dashboard-page` 를 뷰포트에 못박고(헤더 61 + 패딩 48 = 109) workspace 는
+   flex 로 남은 높이를 가져가게 바꿔 추측 자체를 없앴다. 상태 카드도 74→58px 로 축소.
+2. **가로 스크롤 제거**: CDC 목록은 `scroll={{x:1130}}` 이 패널(약 1040px)보다 넓어 무조건
+   스크롤이 생겼다 - 860 으로 낮추고 열 폭을 줄였으며 «소스 → 타깃» 은 폭을 아예 안 줘서
+   남는 자리를 흡수하게 했다. ETL task 표는 실패 사유가 nowrap 으로 늘어나 표를 밀어냈다 -
+   5번째 열을 200px 에서 자르고 전문은 title 로.
+3. **CDC 목록 «커넥터 상태» 열 삭제**: 상태 열이 둘이면 어느 쪽을 봐야 하는지 헷갈린다.
+   목록은 «상태»(제어 DAG 기준) 하나, 커넥터 상태는 속성창에서 «커넥터 상태»로 본다.
+4. **실행 이력 «실행 ID» 열 삭제**: dag_run_id 는 사람이 쓸 일이 없고 문자열이 길어 팝업을
+   가로로 밀어냈다. TaskRows 에 `auxColumn` 을 둬서 열이 하나 적은 표에서도 칸이 안 밀린다.
+5. **캔버스 «저장하지 않은 변경» 배너 제거**: 제목 옆 태그(«저장 안 됨»·«게시본과 다름»)가
+   같은 말을 이미 하고 있었다.
+6. **이탈 확인의 범위 확대**: 확인창이 속성창의 «바로가기» 버튼 두 개에서만 떴다 - ← 버튼·
+   사이드 메뉴·로고 이동까지 걸었다. 데이터 라우터가 아니라 useBlocker 를 못 써서
+   `utils/navigationGuard.ts`(모듈 단일 슬롯)로 만들었고, 새 탭 열기는 가로채지 않는다.
+7. **캔버스 위 메모 상자 제거**: 속성창에 같은 메모 칸이 있어 두 곳에 떠 있었고 좌상단을
+   늘 가렸다. 입력 창구를 속성창 하나로 합쳤다.
+8. **job 노드 속성에서 «대상»·«로그» 제거**: 캔버스에서는 배치와 연결이 관심사다. 로그 구역
+   때문에 노드를 누를 때마다 NiFi 실행이력 두 벌을 더 불러오던 것도 같이 사라졌다.
+9. **워크플로우 노드 속성에 그 워크플로우 요약 추가(읽기 전용)**: 스케줄·다음 2회 실행·상위
+   워크플로우·메모. 값은 그 워크플로우의 것이라 여기서 고치지 않는다(고치려면 바로가기).
+10. **팔레트 정리**: 안내 문구 2개와 검색창 제거, 위쪽 트리에 «태스크» 머리글 추가
+    (아래 «워크플로우»와 짝).
+11. **스케줄링 화면 높이**: 목록이 짧으면 카드 아래가 통째로 빈 띠였다. 실시간 모니터링과
+    같은 방식으로 뷰포트에 못박고 트리·목록이 각자 안에서 스크롤한다. 좌측 업무 그룹
+    트리는 최초 진입 시 최상위만 펼친다(전부 펼침 → 1단계).

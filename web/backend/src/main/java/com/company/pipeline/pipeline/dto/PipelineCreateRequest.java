@@ -17,19 +17,23 @@ public record PipelineCreateRequest(
         List<String> excludedColumns,
         List<String> maskedColumns,
         Boolean deleteEnabled,
-        String description
+        String description,
+        /** UPSERT(기본) 또는 DELTA_APPEND. {@link com.company.pipeline.pipeline.PipelineLoadMode} */
+        String loadMode,
+        /** DELTA_APPEND 의 구분컬럼명. 비우면 cdc_op. */
+        String deltaOpColumn
 ) {
     public PipelineCreateRequest(String name, Long sourceConnectionId, Long targetConnectionId,
             String sourceSchema, String sourceTable, String targetSchema, String targetTable,
             String topicPrefix, String snapshotMode, Boolean deleteEnabled, String description) {
         this(name, sourceConnectionId, targetConnectionId, sourceSchema, sourceTable, targetSchema, targetTable,
-                topicPrefix, snapshotMode, List.of(), List.of(), deleteEnabled, description);
+                topicPrefix, snapshotMode, List.of(), List.of(), deleteEnabled, description, null, null);
     }
 
     public PipelineCreateRequest(String name, Long sourceConnectionId, Long targetConnectionId,
             String sourceSchema, String sourceTable, String targetSchema, String targetTable,
             String topicPrefix, Boolean deleteEnabled, String description) {
         this(name, sourceConnectionId, targetConnectionId, sourceSchema, sourceTable, targetSchema, targetTable,
-                topicPrefix, "INITIAL", List.of(), List.of(), deleteEnabled, description);
+                topicPrefix, "INITIAL", List.of(), List.of(), deleteEnabled, description, null, null);
     }
 }

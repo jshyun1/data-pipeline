@@ -15,6 +15,7 @@ import {
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { useAuth } from "../auth/AuthContext";
+import { confirmLeave } from "../utils/navigationGuard";
 import type { AccessAction, SystemCode } from "../api/authz";
 
 const { Header, Sider, Content } = Layout;
@@ -141,6 +142,27 @@ export function AppLayout() {
     setOpenGroups((previous) => ({ ...previous, [path]: !previous[path] }));
   };
 
+  /**
+   * 메뉴 이동. «저장하지 않은 변경»이 있는 화면(워크플로우 캔버스)이 가드를 걸어 두면
+   * 먼저 물어보고, 취소하면 이동하지 않는다. 걸린 가드가 없으면 평소와 똑같이 동작한다.
+   *
+   * <p>새 탭으로 열기(Ctrl/Cmd·가운데 클릭)는 이 화면을 떠나지 않으므로 가로채지 않는다.
+   */
+  const guardedNavigate = (
+    event: React.MouseEvent<HTMLAnchorElement>,
+    path: string,
+  ) => {
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    void confirmLeave().then((ok) => {
+      if (ok) {
+        navigate(path);
+      }
+    });
+  };
+
   // 권한이 아직 안 실렸으면(fail-open) 전부 보여준다. 실린 뒤엔 시스템 권한으로 게이팅.
   const leafVisible = (leaf: NavLeaf) => {
     if (!permissionsLoaded) {
@@ -181,7 +203,8 @@ export function AppLayout() {
           aria-controls="primary-sidebar"
           onClick={() => setSidebarCollapsed((previous) => !previous)}
         />
-        <Link to="/dashboard" className="brand-link">
+        <Link to="/dashboard" className="brand-link"
+              onClick={(event) => guardedNavigate(event, "/dashboard")}>
           <img src="/logo.svg" alt="데이터월드" className="brand-logo" />
           <div className="brand-divider" />
           <div className="brand-title">Cerebro ETL</div>
@@ -242,7 +265,8 @@ export function AppLayout() {
                       <span>{item.label}</span>
                     </button>
                   ) : (
-                    <NavLink to={item.path} className={active ? "sidebar-link active" : "sidebar-link"}>
+                    <NavLink to={item.path} className={active ? "sidebar-link active" : "sidebar-link"}
+                             onClick={(event) => guardedNavigate(event, item.path)}>
                       <span className="sidebar-link-icon">{item.icon}</span>
                       <span>{item.label}</span>
                     </NavLink>
@@ -259,6 +283,7 @@ export function AppLayout() {
                           // 자체 판정으로 "active" 를 덧붙이므로 여기서 따로 계산하지 않는다.
                           end
                           className="sidebar-sublink"
+                          onClick={(event) => guardedNavigate(event, child.path)}
                         >
                           {child.label}
                         </NavLink>

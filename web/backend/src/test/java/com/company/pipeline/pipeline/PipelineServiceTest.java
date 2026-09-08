@@ -79,6 +79,76 @@ class PipelineServiceTest {
     }
 
     @Test
+    void create_deltaAppend_storesLoadModeAndNormalizedOpColumn() throws Exception {
+        PipelineConnection source = newConnection(10L, DbType.ORACLE);
+        PipelineConnection target = newConnection(20L, DbType.POSTGRESQL);
+        when(connectionRepository.findById(10L)).thenReturn(Optional.of(source));
+        when(connectionRepository.findById(20L)).thenReturn(Optional.of(target));
+        when(pipelineDefinitionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        var request = new PipelineCreateRequest("delta-pipeline", 10L, 20L,
+                "APPUSER", "AA_TABLE", "public", "aa_table_delta", "oracle-cdc", "INITIAL",
+                java.util.List.of(), java.util.List.of(), false, null, "delta_append", " Change_Type ");
+
+        var response = pipelineService.create(request);
+
+        assertThat(response.loadMode()).isEqualTo("DELTA_APPEND");
+        assertThat(response.deltaOpColumn()).isEqualTo("Change_Type");
+    }
+
+    @Test
+    void create_deltaUpsert_storesLoadModeAndOpColumn() throws Exception {
+        PipelineConnection source = newConnection(10L, DbType.ORACLE);
+        PipelineConnection target = newConnection(20L, DbType.POSTGRESQL);
+        when(connectionRepository.findById(10L)).thenReturn(Optional.of(source));
+        when(connectionRepository.findById(20L)).thenReturn(Optional.of(target));
+        when(pipelineDefinitionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        var request = new PipelineCreateRequest("delta-latest", 10L, 20L,
+                "APPUSER", "AA_TABLE", "public", "aa_table_delta", "oracle-cdc", "NO_DATA",
+                java.util.List.of(), java.util.List.of(), false, null, "DELTA_UPSERT", null);
+
+        var response = pipelineService.create(request);
+
+        assertThat(response.loadMode()).isEqualTo("DELTA_UPSERT");
+        assertThat(response.deltaOpColumn()).isEqualTo("cdc_op");
+    }
+
+    @Test
+    void create_upsertDefault_leavesOpColumnNull() throws Exception {
+        PipelineConnection source = newConnection(10L, DbType.ORACLE);
+        PipelineConnection target = newConnection(20L, DbType.POSTGRESQL);
+        when(connectionRepository.findById(10L)).thenReturn(Optional.of(source));
+        when(connectionRepository.findById(20L)).thenReturn(Optional.of(target));
+        when(pipelineDefinitionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        var request = new PipelineCreateRequest("test-pipeline", 10L, 20L,
+                "APPUSER", "CUSTOMERS", "cdc_landing", "customers", "test-topic", "INITIAL",
+                java.util.List.of(), java.util.List.of(), true, null, null, "cdc_op");
+
+        var response = pipelineService.create(request);
+
+        assertThat(response.loadMode()).isEqualTo("UPSERT");
+        assertThat(response.deltaOpColumn()).isNull();
+    }
+
+    @Test
+    void create_deltaAppend_rejectsInvalidOpColumn() throws Exception {
+        PipelineConnection source = newConnection(10L, DbType.ORACLE);
+        PipelineConnection target = newConnection(20L, DbType.POSTGRESQL);
+        when(connectionRepository.findById(10L)).thenReturn(Optional.of(source));
+        when(connectionRepository.findById(20L)).thenReturn(Optional.of(target));
+
+        var request = new PipelineCreateRequest("delta-pipeline", 10L, 20L,
+                "APPUSER", "AA_TABLE", "public", "aa_table_delta", "oracle-cdc", "INITIAL",
+                java.util.List.of(), java.util.List.of(), false, null, "DELTA_APPEND", "op column;drop");
+
+        assertThat(org.junit.jupiter.api.Assertions.assertThrows(
+                com.company.pipeline.common.BusinessException.class,
+                () -> pipelineService.create(request)).getMessage()).contains("구분컬럼명");
+    }
+
+    @Test
     void create_rejectsOracleSourceWithNonCommonUser() throws Exception {
         PipelineConnection source = newConnectionWithUsername(10L, DbType.ORACLE, "appuser");
         PipelineConnection target = newConnection(20L, DbType.POSTGRESQL);

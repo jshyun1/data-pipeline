@@ -212,10 +212,18 @@ body {
   color: #172033;
 }
 
-/* Airflow 운영 화면은 기존 Ant Design 요소를 그대로 쓰고, 3열 배치만 CSS로 잡는다. */
+/* Airflow 운영 화면은 기존 Ant Design 요소를 그대로 쓰고, 3열 배치만 CSS로 잡는다.
+ *
+ * 높이는 뷰포트에 못박는다(앱 헤더 61px + .app-content 위아래 패딩 48px = 109px).
+ * 예전엔 아래 workspace 만 calc(100vh - 330px)로 잡았는데, 그 330 은 «헤딩+상태카드가
+ * 이만큼일 것»이라는 추측이라 실제 높이와 어긋나면 화면 전체에 세로 스크롤이 생겼다.
+ * 여기서 높이를 고정하고 workspace 가 남은 높이를 flex 로 가져가면 추측이 사라진다. */
 .airflow-dashboard-page {
   min-width: 1080px;
   color: #1f2937;
+  height: calc(100vh - 109px);
+  display: flex;
+  flex-direction: column;
 }
 
 .airflow-dashboard-heading,
@@ -255,34 +263,38 @@ body {
 
 .airflow-business-status {
   display: grid;
-  gap: 9px;
-  margin-bottom: 12px;
+  gap: 8px;
+  margin-bottom: 10px;
+  /* 상태 카드는 줄어들지 않는다 - 줄어들 몫은 아래 workspace 가 진다. */
+  flex: 0 0 auto;
 }
 
+/* 카드 두 장이 세로를 많이 먹어 목록이 밀렸다. 읽히는 크기는 유지하면서 여백만 줄인다. */
 .airflow-business-card {
-  min-height: 74px;
-  padding: 10px 18px;
-  gap: 20px;
+  min-height: 58px;
+  padding: 7px 16px;
+  gap: 18px;
   border: 1px solid #e1e5eb;
   border-radius: 8px;
   background: #fff;
 }
 
 .airflow-business-name {
-  width: 86px;
+  width: 78px;
   color: #1677ff;
-  font-size: 24px;
+  font-size: 21px;
 }
 
 /* 지표는 이제 버튼이다(누르면 가운데 목록이 그 대상으로 좁혀진다). button 기본 스타일을
    지우고 눌리는 것임을 커서·hover로만 드러낸다. */
 .airflow-business-metric {
-  min-width: 145px;
+  min-width: 138px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   color: #1677ff;
-  font-size: 25px;
+  /* 아이콘 크기가 이 font-size 를 따른다(em 기준). 카드 높이와 함께 줄인다. */
+  font-size: 20px;
   background: none;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -310,7 +322,7 @@ body {
 
 .airflow-business-metric strong {
   color: #1677ff;
-  font-size: 22px;
+  font-size: 19px;
 }
 
 .airflow-business-metric--success,
@@ -400,8 +412,9 @@ body {
   display: grid;
   grid-template-columns: 220px minmax(650px, 1fr) 280px;
   gap: 12px;
-  height: calc(100vh - 330px);
-  min-height: 455px;
+  /* 헤딩·상태카드가 쓰고 남은 높이를 그대로 가져간다(높이 계산은 .airflow-dashboard-page). */
+  flex: 1 1 auto;
+  min-height: 360px;
   /* 위 캔버스 그리드와 같은 이유로 행을 못박는다. */
   grid-template-rows: minmax(0, 1fr);
 }
@@ -557,6 +570,21 @@ button.airflow-tree-label:hover {
   padding: 6px 9px;
   border-bottom: 1px solid #edf0f4;
   text-align: left;
+}
+
+/* 5번째 열은 «적재/실패 사유»다(세 표가 같은 자리에 둔다). 실패 사유는
+   "Task failed with exception: ConnectionError: HTTPConnectionPool..." 처럼 길어서,
+   nowrap 인 이 표를 그대로 두면 표가 패널 밖으로 밀려 가로 스크롤이 생겼다.
+   잘라서 보여주고 전체 문구는 셀의 title(마우스 올림)로 남긴다. */
+.airflow-job-table td:nth-child(5) {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 재실행 버튼 두 개가 마지막 열을 넓혔다. 글자는 그대로 두고 좌우 여백만 줄인다. */
+.airflow-job-table .ant-btn-sm {
+  padding-inline: 7px;
 }
 
 .airflow-job-table th {
@@ -838,7 +866,9 @@ button.airflow-tree-label:hover {
 .airflow-infra-bar i.unused { background: #9ca3af; }
 
 .airflow-dashboard-loading {
-  min-height: 500px;
+  /* 페이지가 고정 높이라, 로딩 표시도 남은 높이를 채우게 둔다(500px 못박으면 넘친다). */
+  flex: 1 1 auto;
+  min-height: 320px;
   display: grid;
   place-items: center;
   align-content: center;
@@ -3988,21 +4018,6 @@ button.airflow-tree-label:hover {
 }
 
 
-/* 캔버스 위 메모. 그림을 가리지 않게 좁고 반투명하게 얹는다. */
-.wf-memo {
-  width: 230px;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 6px 8px;
-}
-
-.wf-memo-title {
-  font-size: 12px;
-  color: #888;
-  margin-bottom: 2px;
-}
-
 
 /* 캔버스 3분할. 화면 아래에 빈 공간이 남지 않도록 뷰포트 높이를 채운다
    (헤더·툴바·알림 영역만큼만 빼고 나머지를 캔버스가 가져간다). */
@@ -4087,5 +4102,48 @@ button.airflow-tree-label:hover {
 .wf-side-card > .ant-card-body {
   flex: 1 1 auto;
   min-height: 0;
+  overflow-y: auto;
+}
+
+/* 워크플로우 스케줄링 화면. 실시간 모니터링과 같은 방식으로 높이를 뷰포트에 못박는다
+   (앱 헤더 61px + .app-content 위아래 패딩 48px = 109px). 예전에는 내용 높이만큼만
+   차지해서, 워크플로우가 몇 개 없으면 카드 아래로 화면 절반이 빈 띠로 남았다. */
+.wf-design-page {
+  height: calc(100vh - 109px);
+  display: flex;
+  flex-direction: column;
+}
+
+.wf-design-page > .ant-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 트리와 목록이 남은 높이를 나눠 갖는다. align-items 를 기본값(stretch)으로 둬야
+   왼쪽 트리 카드도 아래까지 늘어난다. */
+.wf-design-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+}
+
+.wf-design-body > .ant-card {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 길어지는 쪽은 각자 안에서 스크롤한다 - 페이지 전체가 스크롤되지 않게. */
+.wf-design-body > .ant-card > .ant-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.wf-design-table {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow-y: auto;
 }

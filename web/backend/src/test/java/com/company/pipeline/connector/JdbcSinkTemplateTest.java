@@ -52,6 +52,71 @@ class JdbcSinkTemplateTest {
         assertThat(rendered.config().get("topics")).isEqualTo("oracle-cdc.APPUSER.CUSTOMERS");
     }
 
+    // 델타 적재: 변경 이벤트를 구분컬럼과 함께 append-only 로 쌓는 싱크. upsert/PK/delete 가 모두
+    // 꺼지고, SMT 가 op 를 구분컬럼 이름으로 붙이며 delete 는 rewrite 로 살려야 한다.
+    @Test
+    void render_deltaAppend_usesInsertOnlySinkWithUnwrapTransform() {
+        SinkConnectorRequest request = new SinkConnectorRequest(
+                21L, DbType.MYSQL, "mysql-db", 3306, "appuser", "pw",
+                "warehouse", null, "warehouse", "aa_table_delta",
+                DbType.ORACLE, "APPUSER", "AA_TABLE", "oracle-cdc", true,
+                "DELTA_APPEND", "cdc_op");
+
+        var config = template.render(request).config();
+
+        assertThat(config.get("topics")).isEqualTo("oracle-cdc.APPUSER.AA_TABLE");
+        assertThat(config.get("insert.mode")).isEqualTo("insert");
+        assertThat(config.get("primary.key.mode")).isEqualTo("none");
+        assertThat(config.get("delete.enabled")).isEqualTo("false");
+        assertThat(config.get("schema.evolution")).isEqualTo("basic");
+        assertThat(config.get("table.name.format")).isEqualTo("warehouse.aa_table_delta");
+        assertThat(config.get("transforms")).isEqualTo("unwrap,dropDeleted");
+        assertThat(config.get("transforms.unwrap.type")).isEqualTo("io.debezium.transforms.ExtractNewRecordState");
+        assertThat(config.get("transforms.unwrap.add.fields")).isEqualTo("op:cdc_op");
+        assertThat(config.get("transforms.unwrap.add.fields.prefix")).isEqualTo("");
+        assertThat(config.get("transforms.unwrap.delete.tombstone.handling.mode")).isEqualTo("rewrite");
+        assertThat(config.get("transforms.dropDeleted.exclude")).isEqualTo("__deleted");
+        assertThat(config.get("errors.deadletterqueue.topic.name")).isEqualTo("dlq.pipeline-21");
+    }
+
+    // 델타 최신상태: PK당 한 행. upsert + record_key 로 덮어쓰되 delete 는 행 삭제가 아니라 d 로
+    // 남기고, "가져간 만큼 삭제" 기준이 되는 이벤트 시각(ts_ms)을 cdc_ts 로 같이 넣는다.
+    @Test
+    void render_deltaUpsert_usesUpsertByRecordKeyWithTimestampField() {
+        SinkConnectorRequest request = new SinkConnectorRequest(
+                24L, DbType.ORACLE, "ora", 1521, "u", "pw", null, "XEPDB1", "APPUSER", "AA_TABLE_DELTA",
+                DbType.POSTGRESQL, "public", "aa_table", "postgres-cdc", true, "DELTA_UPSERT", "cdc_op");
+
+        var config = template.render(request).config();
+
+        assertThat(config.get("insert.mode")).isEqualTo("upsert");
+        assertThat(config.get("primary.key.mode")).isEqualTo("record_key");
+        assertThat(config.get("delete.enabled")).isEqualTo("false");
+        assertThat(config.get("transforms.unwrap.add.fields")).isEqualTo("op:cdc_op,ts_ms:cdc_ts");
+        assertThat(config.get("transforms.unwrap.delete.tombstone.handling.mode")).isEqualTo("rewrite");
+        assertThat(config.get("transforms.dropDeleted.exclude")).isEqualTo("__deleted");
+    }
+
+    @Test
+    void render_deltaAppend_blankOpColumnFallsBackToDefault() {
+        SinkConnectorRequest request = new SinkConnectorRequest(
+                22L, DbType.POSTGRESQL, "pg", 5432, "u", "pw", "db", null, "public", "t_delta",
+                DbType.MYSQL, "src", "t", "mysql-cdc", false, "delta_append", " ");
+
+        assertThat(template.render(request).config().get("transforms.unwrap.add.fields")).isEqualTo("op:cdc_op");
+    }
+
+    @Test
+    void render_upsertDefault_hasNoTransforms() {
+        SinkConnectorRequest request = new SinkConnectorRequest(
+                23L, DbType.POSTGRESQL, "pg", 5432, "u", "pw", "db", null, "public", "t",
+                DbType.MYSQL, "src", "t", "mysql-cdc", true);
+
+        var config = template.render(request).config();
+        assertThat(config.get("insert.mode")).isEqualTo("upsert");
+        assertThat(config.containsKey("transforms")).isFalse();
+    }
+
     @Test
     void render_oracleTarget_buildsOracleThinConnectionUrl() {
         SinkConnectorRequest request = new SinkConnectorRequest(

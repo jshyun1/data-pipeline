@@ -130,6 +130,9 @@ export function WorkflowDesignPage() {
   };
 
   const groupTree = treeQuery.data ? [buildGroupTree(treeQuery.data)].filter(Boolean) : [];
+  // 처음에는 최상위만 펼친다(= 그 바로 아래 계층까지 보인다). 예전엔 전부 펼쳐서
+  // 그룹이 몇 겹만 되어도 목록이 길어지고, 정작 어디를 봐야 하는지 눈에 안 들어왔다.
+  const rootGroupKeys = groupTree.map((node) => (node as { key: string }).key);
 
   const groupNames = new Map<string, string>();
   const collectNames = (node: NifiProcessGroupTreeNode) => {
@@ -259,6 +262,7 @@ export function WorkflowDesignPage() {
 
   return (
     <Card
+      className="wf-design-page"
       title="워크플로우 스케줄링"
       extra={
         <Space>
@@ -279,9 +283,8 @@ export function WorkflowDesignPage() {
         </Space>
       }
     >
-      <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+      <div className="wf-design-body">
         <Card size="small" title="업무 그룹" style={{ width: 260, flex: "0 0 260px" }}
-              styles={{ body: { maxHeight: 560, overflowY: "auto" } }}
               extra={selectedGroup
                 ? <Button size="small" type="link" onClick={() => setSelectedGroup(undefined)}>전체</Button>
                 : null}>
@@ -289,7 +292,8 @@ export function WorkflowDesignPage() {
             <>
               <Tree
                 blockNode
-                defaultExpandAll
+                // 트리 데이터가 실린 뒤에 마운트되므로(위 isLoading 분기) 이 기본값이 그대로 먹는다.
+                defaultExpandedKeys={rootGroupKeys}
                 selectedKeys={selectedGroup ? [selectedGroup] : []}
                 treeData={groupTree as never}
                 onSelect={(keys) => setSelectedGroup(keys.length ? String(keys[0]) : undefined)}
@@ -310,7 +314,7 @@ export function WorkflowDesignPage() {
         <Table<WorkflowSummary>
           rowKey="id"
           size="middle"
-          style={{ flex: 1, minWidth: 0 }}
+          className="wf-design-table"
           loading={isLoading}
           dataSource={visible}
           columns={columns}

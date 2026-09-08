@@ -32,6 +32,13 @@ public class PipelineConsistencyService {
                     pipelineId, null, null, "UNSUPPORTED", "로그파일 파이프라인은 소스 DB 통계 검증을 지원하지 않습니다."));
             return PipelineConsistencyCheckResponse.from(saved);
         }
+        if (PipelineLoadMode.from(pipeline.getLoadMode()).isDelta()) {
+            // 델타 테이블은 변경분만 담기고(append 는 계속 쌓이고, upsert 도 소비자가 지워 가므로)
+            // 소스 행 수와 같을 이유가 없다.
+            PipelineConsistencyCheck saved = checkRepository.save(new PipelineConsistencyCheck(
+                    pipelineId, null, null, "UNSUPPORTED", "델타 적재 파이프라인은 행 수 비교 대상이 아닙니다."));
+            return PipelineConsistencyCheckResponse.from(saved);
+        }
         Long source = estimate(pipeline.getSourceConnectionId(), pipeline.getSourceDbType(), pipeline.getSourceSchema(), pipeline.getSourceTable());
         Long target = estimate(pipeline.getTargetConnectionId(), pipeline.getTargetDbType(), pipeline.getTargetSchema(), pipeline.getTargetTable());
         String result = source == null || target == null ? "UNKNOWN" : source.equals(target) ? "MATCH" : "MISMATCH";
