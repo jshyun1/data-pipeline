@@ -3857,6 +3857,12 @@ button.airflow-tree-label:hover {
 /* 캔버스 바탕은 화살표가 기본. 손바닥은 «잡을 수 있는 것» 위에서만 나온다.
    React Flow가 `.react-flow__pane.draggable{cursor:grab}`을 같은 특이도로 걸고 뒤에
    실려서, 컨테이너 클래스를 하나 더 얹어 이긴다. */
+.wf-flow,
+.wf-flow .react-flow__pane {
+  /* 배경 점(dot grid) 대신 흰 바탕. Background 컴포넌트를 걷어냈으므로 여기서 칠한다. */
+  background: #ffffff;
+}
+
 .wf-flow .react-flow__pane.draggable {
   cursor: default;
 }
@@ -3899,14 +3905,52 @@ button.airflow-tree-label:hover {
 }
 
 /* job과 워크플로우를 겉모습으로 가른다 - 워크플로우는 «다른 그림을 통째로 부르는» 것이라
-   같은 상자로 보이면 그래프를 잘못 읽는다. */
+   같은 상자로 보이면 그래프를 잘못 읽는다.
+
+   왼쪽 띠를 넓혀 종류(job/wf)를 글자로 적는다. 색 차이(파랑·보라)만으로는 한눈에
+   구분되지 않았다. 띠는 노드 높이를 꽉 채우고, 이름은 그 오른쪽에 남는 폭을 쓴다. */
+.react-flow__node.wf-node {
+  padding: 0;                    /* 띠가 모서리까지 닿아야 해서 안쪽 여백은 라벨이 갖는다 */
+  overflow: visible;
+}
+
+.react-flow__node.wf-node > span {
+  flex: 1;
+  min-width: 0;
+  padding: 0 10px;
+  text-align: center;
+}
+
+.wf-node__kind {
+  flex: 0 0 auto;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #ffffff;
+  border-radius: 7px 0 0 7px;
+  user-select: none;
+}
+
 .react-flow__node.wf-node--job {
-  border-left: 4px solid #2563eb;
+  border-left: none;
+}
+
+.react-flow__node.wf-node--job .wf-node__kind {
+  background: #2563eb;
 }
 
 .react-flow__node.wf-node--subwf {
-  border-left: 4px solid #7c3aed;
+  border-left: none;
   background: #faf5ff;
+}
+
+.react-flow__node.wf-node--subwf .wf-node__kind {
+  background: #7c3aed;
 }
 
 
