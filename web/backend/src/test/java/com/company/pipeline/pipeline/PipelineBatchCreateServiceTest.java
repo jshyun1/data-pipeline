@@ -53,6 +53,6 @@ class PipelineBatchCreateServiceTest {
 
     private PipelineResponse response(Long id, String name) {
         return new PipelineResponse(id, name, "TABLE_CDC", 1L, 2L, null, null, "s", "t", "d", "t",
-                "topic", PipelineStatus.READY, "INITIAL", null, null, false, "UPSERT", null, null, List.of(), null, null);
+                "topic", PipelineStatus.READY, "INITIAL", null, null, false, "UPSERT", null, null, null, List.of(), null, null);
     }
 }

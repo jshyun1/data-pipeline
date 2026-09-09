@@ -123,18 +123,39 @@ class NifiJobMirrorServiceTest {
     }
 
     @Test
-    void 잡이_한꺼번에_사라지면_삭제표시를_보류한다() {
+    void 한꺼번에_사라졌는데_삭제를_확인하지_못하면_보류한다() {
         givenEmptyCanvas();
         List<EtlJob> many = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
             many.add(new EtlJob("gone-" + i, "사라진잡" + i));
         }
         when(jobRepository.findByDeletedAtIsNullOrderByJobNameAsc()).thenReturn(many);
+        // NiFi 는 아직 그룹이 있다고 답한다 - 캔버스 조회만 비어 보이는 상황(유실 의심).
+        // 이때는 지우지 않는다. 조회 자체가 실패해도 processGroupExists 가 «있다»로 답한다.
+        when(nifiClient.processGroupExists(any())).thenReturn(true);
 
         NifiJobMirrorService.SyncResult result = service.sync();
 
         assertThat(result.deleted()).isZero();
         assertThat(many).allSatisfy(job -> assertThat(job.getDeletedAt()).isNull());
+    }
+
+    @Test
+    void 한꺼번에_사라져도_삭제가_확인되면_지운다() {
+        // 사용자가 실제로 여러 개를 정리한 경우. 개수로 단정해 보류하면 미러가 영영 멈춘다
+        // (실측 2026-09-03). 404 로 «없다»는 확답을 받았으면 개수와 무관하게 지운다.
+        givenEmptyCanvas();
+        List<EtlJob> many = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            many.add(new EtlJob("gone-" + i, "사라진잡" + i));
+        }
+        when(jobRepository.findByDeletedAtIsNullOrderByJobNameAsc()).thenReturn(many);
+        when(nifiClient.processGroupExists(any())).thenReturn(false);
+
+        NifiJobMirrorService.SyncResult result = service.sync();
+
+        assertThat(result.deleted()).isEqualTo(5);
+        assertThat(many).allSatisfy(job -> assertThat(job.getDeletedAt()).isNotNull());
     }
 
     @Test

@@ -92,7 +92,7 @@ class PipelineServiceTest {
 
         var request = new PipelineCreateRequest("delta-pipeline", 10L, 20L,
                 "APPUSER", "AA_TABLE", "public", "aa_table_delta", "oracle-cdc", "INITIAL",
-                java.util.List.of(), java.util.List.of(), false, null, "delta_append", " Change_Type ");
+                java.util.List.of(), java.util.List.of(), false, null, "delta_append", " Change_Type ", null);
 
         var response = pipelineService.create(request);
 
@@ -110,7 +110,7 @@ class PipelineServiceTest {
 
         var request = new PipelineCreateRequest("delta-latest", 10L, 20L,
                 "APPUSER", "AA_TABLE", "public", "aa_table_delta", "oracle-cdc", "NO_DATA",
-                java.util.List.of(), java.util.List.of(), false, null, "DELTA_UPSERT", null);
+                java.util.List.of(), java.util.List.of(), false, null, "DELTA_UPSERT", null, null);
 
         var response = pipelineService.create(request);
 
@@ -128,7 +128,7 @@ class PipelineServiceTest {
 
         var request = new PipelineCreateRequest("test-pipeline", 10L, 20L,
                 "APPUSER", "CUSTOMERS", "cdc_landing", "customers", "test-topic", "INITIAL",
-                java.util.List.of(), java.util.List.of(), true, null, null, "cdc_op");
+                java.util.List.of(), java.util.List.of(), true, null, null, "cdc_op", null);
 
         var response = pipelineService.create(request);
 
@@ -145,7 +145,7 @@ class PipelineServiceTest {
 
         var request = new PipelineCreateRequest("delta-pipeline", 10L, 20L,
                 "APPUSER", "AA_TABLE", "public", "aa_table_delta", "oracle-cdc", "INITIAL",
-                java.util.List.of(), java.util.List.of(), false, null, "DELTA_APPEND", "op column;drop");
+                java.util.List.of(), java.util.List.of(), false, null, "DELTA_APPEND", "op column;drop", null);
 
         assertThat(org.junit.jupiter.api.Assertions.assertThrows(
                 com.company.pipeline.common.BusinessException.class,
