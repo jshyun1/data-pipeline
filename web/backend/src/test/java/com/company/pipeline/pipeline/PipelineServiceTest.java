@@ -50,13 +50,17 @@ class PipelineServiceTest {
     @Mock
     private PipelineMetadataArchiveRepository metadataArchiveRepository;
 
+    @Mock
+    private PipelineGroupService groupService;
+
     private PipelineService pipelineService;
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         pipelineService = new PipelineService(pipelineDefinitionRepository, pipelineConnectorRepository,
                 connectionRepository, kafkaConnectClient, logPipelineSourceRepository, filebeatInputFileService,
-                postgresReplicationCleanupService, kafkaTopicCleanupService, metadataArchiveRepository);
+                postgresReplicationCleanupService, kafkaTopicCleanupService, metadataArchiveRepository,
+                groupService);
     }
 
     @Test

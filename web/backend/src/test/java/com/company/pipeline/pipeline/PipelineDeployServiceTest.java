@@ -5,15 +5,18 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.company.pipeline.common.crypto.PasswordCryptoService;
+import com.company.pipeline.connection.CdcPrerequisiteService;
 import com.company.pipeline.connection.ConnectionRepository;
 import com.company.pipeline.connection.DbType;
 import com.company.pipeline.connection.PipelineConnection;
+import com.company.pipeline.connection.dto.CdcTableReadinessResponse;
 import com.company.pipeline.connector.ConnectorConfigRenderer;
 import com.company.pipeline.connector.KafkaConnectClient;
 import com.company.pipeline.connector.KafkaConnectClientException;
@@ -63,6 +66,8 @@ class PipelineDeployServiceTest {
     private FilebeatInputFileService filebeatInputFileService;
     @Mock
     private DeltaTargetTableService deltaTargetTableService;
+    @Mock
+    private CdcPrerequisiteService cdcPrerequisiteService;
 
     private PipelineDeployService deployService;
 
@@ -72,7 +77,11 @@ class PipelineDeployServiceTest {
                 commandHistoryRecorder, connectionRepository, passwordCryptoService,
                 connectorConfigRenderer, kafkaConnectClient, new ObjectMapper(),
                 logPipelineSourceRepository, filebeatConfigRenderer, filebeatInputFileService,
-                deltaTargetTableService);
+                deltaTargetTableService, cdcPrerequisiteService);
+        // 대부분의 테스트는 배포 경로를 타지 않으므로 lenient - 기본값은 «캡처 조건 충족».
+        lenient().when(cdcPrerequisiteService.checkTable(any(), any(), any()))
+                .thenReturn(new CdcTableReadinessResponse("APPUSER", "CUSTOMERS", DbType.ORACLE,
+                        "PASS", "ALL COLUMN LOGGING", null));
         // 단위 테스트에서는 실제 대기 없이 안정화 상태를 한 번 더 검증한다.
         ReflectionTestUtils.setField(deployService, "startStabilityMillis", 0L);
     }
@@ -143,6 +152,61 @@ class PipelineDeployServiceTest {
         verify(commandHistoryRecorder).record(eq(1L), eq("PREPARE"), eq("FAILED"), anyString());
         // 소스 등록 시도 전에 실패했으니 싱크 렌더링까지는 안 가야 함
         verify(connectorConfigRenderer, never()).renderSink(any());
+    }
+
+    // 보충 로깅이 없는 Oracle 소스는 UPDATE 가 조용히 뭉개지므로 커넥터를 만들기 전에 막는다.
+    @Test
+    void deploy_oracleSourceWithoutSupplementalLogging_failsBeforeCreatingAnyConnector() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        when(pipelineDefinitionRepository.findById(1L)).thenReturn(Optional.of(pipeline));
+        when(pipelineDefinitionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PipelineConnection source = newConnection(10L, DbType.ORACLE, "cipher-src");
+        PipelineConnection target = newConnection(20L, DbType.POSTGRESQL, "cipher-tgt");
+        when(connectionRepository.findById(10L)).thenReturn(Optional.of(source));
+        when(connectionRepository.findById(20L)).thenReturn(Optional.of(target));
+        when(cdcPrerequisiteService.checkTable(any(), any(), any()))
+                .thenReturn(new CdcTableReadinessResponse("APPUSER", "CUSTOMERS", DbType.ORACLE,
+                        "FAIL", "설정 없음", "ALL COLUMNS 보충 로깅을 적용하세요."));
+
+        var thrown = org.junit.jupiter.api.Assertions.assertThrows(
+                com.company.pipeline.common.BusinessException.class, () -> deployService.deploy(1L));
+
+        assertThat(thrown.getMessage()).contains("보충 로깅");
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.FAILED);
+        verify(connectorConfigRenderer, never()).renderSource(any());
+        verify(connectorConfigRenderer, never()).renderSink(any());
+        verify(kafkaConnectClient, never()).createStopped(anyString(), any());
+    }
+
+    // Postgres 소스의 REPLICA IDENTITY 경고(WARN)는 배포를 막지 않는다 - 미러링에는 지장이 없다.
+    @Test
+    void deploy_nonOracleSource_skipsTableCaptureCheck() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        pipeline.setSourceDbType(DbType.POSTGRESQL);
+        when(pipelineDefinitionRepository.findById(1L)).thenReturn(Optional.of(pipeline));
+        when(pipelineDefinitionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PipelineConnection source = newConnection(10L, DbType.POSTGRESQL, "cipher-src");
+        PipelineConnection target = newConnection(20L, DbType.POSTGRESQL, "cipher-tgt");
+        when(connectionRepository.findById(10L)).thenReturn(Optional.of(source));
+        when(connectionRepository.findById(20L)).thenReturn(Optional.of(target));
+        when(passwordCryptoService.decrypt(anyString())).thenReturn("plain-pw");
+        when(connectorConfigRenderer.renderSource(any())).thenReturn(new RenderedConnectorConfig(
+                "source-1-postgres", "SOURCE", "io.debezium.connector.postgresql.PostgresConnector", Map.of("k", "v")));
+        when(connectorConfigRenderer.renderSink(any())).thenReturn(new RenderedConnectorConfig(
+                "sink-1-postgres", "SINK", "io.debezium.connector.jdbc.JdbcSinkConnector", Map.of("k", "v")));
+        when(kafkaConnectClient.listConnectors()).thenReturn(List.of());
+        when(kafkaConnectClient.getStatus("source-1-postgres")).thenReturn(stoppedStatus());
+        when(kafkaConnectClient.getStatus("sink-1-postgres")).thenReturn(stoppedStatus());
+        when(pipelineConnectorRepository.findByPipelineIdAndConnectorRole(eq(1L), anyString()))
+                .thenReturn(Optional.empty());
+        when(pipelineConnectorRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        deployService.deploy(1L);
+
+        verify(cdcPrerequisiteService, never()).checkTable(any(), any(), any());
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.READY);
     }
 
     @Test

@@ -3,10 +3,9 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addEdge,
-  Background,
   Handle,
-  Panel,
   Position,
+  ControlButton,
   Controls,
   MiniMap,
   ReactFlow,
@@ -35,11 +34,25 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { ArrowLeftOutlined, InfoCircleFilled, SyncOutlined } from "@ant-design/icons";
+import {
+  ArrowLeftOutlined,
+  ColumnWidthOutlined,
+  ExpandOutlined,
+  InfoCircleFilled,
+  LockOutlined,
+  MinusOutlined,
+  PlusOutlined,
+  SyncOutlined,
+  UnlockOutlined,
+} from "@ant-design/icons";
 import { useAuth } from "../auth/AuthContext";
 import { setLeaveGuard } from "../utils/navigationGuard";
 import { listEtlJobs, syncEtlJobs, type EtlJobResponse } from "../api/etlJobs";
 import { getNifiProcessGroupTree, type NifiProcessGroupTreeNode } from "../api/platform";
+import { listPipelines } from "../api/pipelines";
+import { listPipelineGroups, type PipelineGroupResponse } from "../api/pipelineGroups";
+import type { PipelineResponse } from "../types/pipeline";
+import { buildWorkflowHierarchy, workflowPathOf, type WorkflowTreeItem } from "../utils/workflowTree";
 import { EtlJobSummary } from "./ConsoleFramePage";
 import {
   nextPresetRuns,
@@ -140,11 +153,18 @@ export function WorkflowCanvasPage() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
+  // 캔버스 «편집 잠금». 기본 컨트롤의 Toggle interactivity 를 우리 버튼으로 대신한다.
+  const [interactive, setInteractive] = useState(true);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string>();
-  const [flow, setFlow] = useState<{ fitView: (o?: object) => void }>();
+  // 직접 만든 컨트롤(확대·축소·전체 보기)이 쓰는 인스턴스.
+  const [flow, setFlow] = useState<{
+    fitView: (o?: object) => void;
+    zoomIn: () => void;
+    zoomOut: () => void;
+    screenToFlowPosition: (p: { x: number; y: number }) => { x: number; y: number };
+  }>();
   const [validation, setValidation] = useState<ValidationResult>();
   // 소속 그룹 밖 job이 필요할 때만 켠다(교차 그룹 워크플로우).
-  const [showAllJobs, setShowAllJobs] = useState(false);
   const [dirty, setDirty] = useState(false);
 
   /** 캔버스를 떠나기 전 확인. 저장 안 한 변경을 말없이 버리지 않는다. */
@@ -186,6 +206,9 @@ export function WorkflowCanvasPage() {
   const workflowsQuery = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
   // 팔레트를 ETL 화면과 같은 계층으로 보여주기 위해 NiFi 그룹 트리를 그대로 쓴다.
   const treeQuery = useQuery({ queryKey: ["nifi-pg-tree"], queryFn: getNifiProcessGroupTree });
+  // CDC 팔레트. 관리 화면과 같은 계층(전체 파이프라인 > 그룹 > 파이프라인)으로 보여준다.
+  const pipelinesQuery = useQuery({ queryKey: ["pipelines"], queryFn: listPipelines });
+  const pipelineGroupsQuery = useQuery({ queryKey: ["pipeline-groups"], queryFn: listPipelineGroups });
 
   // 서버에서 받은 그래프를 캔버스로 옮긴다. 저장하지 않은 편집을 덮어쓰지 않도록
   /**
@@ -202,7 +225,6 @@ export function WorkflowCanvasPage() {
     setSelectedNodeId(undefined);
     setSelectedEdgeId(undefined);
     setValidation(undefined);
-    setShowAllJobs(false);
   }, [workflowId, setNodes, setEdges]);
 
   // 아직 손대지 않았을 때만(dirty=false) 반영한다.
@@ -283,7 +305,9 @@ export function WorkflowCanvasPage() {
   }, [setEdges, markDirty]);
 
   /** 팔레트에서 job을 클릭하면 캔버스에 노드로 얹는다(참조지 복사가 아니다). */
-  const addJobNode = useCallback((job: EtlJobResponse, parentLabel?: string) => {
+  /** at 을 주면 그 자리에, 없으면 빈 칸을 찾아 놓는다(끌어다 놓기는 놓은 자리를 준다). */
+  const addJobNode = useCallback((job: EtlJobResponse, parentLabel?: string,
+                                  at?: { x: number; y: number }) => {
     setNodes((current) => {
       const taken = new Set(current.map((node) => node.id));
       // 체인 이름은 그룹마다 겹치므로(DW/DZ 아래 COM001M) 그룹을 접두어로 붙여
@@ -296,7 +320,8 @@ export function WorkflowCanvasPage() {
         taken);
       return [...current, {
         id: key,
-        position: { x: 60 + (current.length % 3) * 200, y: 40 + Math.floor(current.length / 3) * 120 },
+        position: at
+          ?? { x: 60 + (current.length % 3) * 200, y: 40 + Math.floor(current.length / 3) * 120 },
         data: {
           label: job.jobName,
           jobId: job.id,
@@ -315,13 +340,15 @@ export function WorkflowCanvasPage() {
   }, [setNodes, markDirty]);
 
   /** 팔레트의 워크플로우를 클릭하면 «그 워크플로우를 통째로 실행하는 노드»를 얹는다. */
-  const addSubWorkflowNode = useCallback((target: WorkflowSummary) => {
+  /** at 을 주면 그 자리에, 없으면 빈 칸을 찾아 놓는다(끌어다 놓기는 놓은 자리를 준다). */
+  const addSubWorkflowNode = useCallback((target: WorkflowSummary, at?: { x: number; y: number }) => {
     setNodes((current) => {
       const taken = new Set(current.map((node) => node.id));
       const key = toNodeKey(`wf_${target.workflowKey}`, taken);
       return [...current, {
         id: key,
-        position: { x: 60 + (current.length % 3) * 200, y: 40 + Math.floor(current.length / 3) * 120 },
+        position: at
+          ?? { x: 60 + (current.length % 3) * 200, y: 40 + Math.floor(current.length / 3) * 120 },
         data: {
           label: `▷ ${target.name}`,
           nodeType: "SUBWF",
@@ -617,7 +644,15 @@ export function WorkflowCanvasPage() {
       key: node.id,
       selectable: Boolean(job),
       title: (
-        <span style={{ opacity: job || children.length ? 1 : 0.45 }}>
+        // 워크플로우 트리와 같은 조작으로 맞춘다 - 얹는 것은 «끌어다 놓기»로만 한다.
+        <span style={{ opacity: job || children.length ? 1 : 0.45 }}
+              title={job ? "끌어다 캔버스에 놓으면 추가됩니다" : undefined}
+              draggable={Boolean(job) && canWrite}
+              onDragStart={(event) => {
+                if (!job) return;
+                event.dataTransfer.setData("application/cerebro-job", String(job.id));
+                event.dataTransfer.effectAllowed = "copy";
+              }}>
           {job ? (placed ? "● " : "○ ") : ""}
           {node.name}
           {/* 하위 그룹 수만 표시한다(프로세서 수는 여기서 알 필요가 없다). */}
@@ -628,84 +663,121 @@ export function WorkflowCanvasPage() {
     };
   };
   /**
-   * 팔레트의 뿌리. 워크플로우가 그룹에 속하면 그 그룹 아래만 보여준다.
+   * 팔레트의 뿌리. ETL(NiFi) 그룹 계층 전체를 그대로 보여준다.
    *
-   * 그룹별로 워크플로우를 그리는 게 기본이라(Informatica의 폴더), 전체를 늘 펼쳐두면
-   * DW 워크플로우를 그리다 DZ의 같은 이름 job을 집는 사고가 난다. 다른 그룹 job이
-   * 정말 필요할 때만 "전체 보기"로 넓힌다.
+   * <p>예전에는 워크플로우가 «소속 업무 그룹»을 갖고 그 그룹 아래 job 만 보여줬다(«전체 보기»로
+   * 넓힐 수 있었다). 워크플로우에서 업무 그룹 개념을 걷어내면서 좁힐 기준이 없어졌다 -
+   * 이제는 늘 전체를 보여주고, 필요한 job 은 위 검색으로 찾는다.
    */
-  const findGroup = (node: NifiProcessGroupTreeNode, pgId: string): NifiProcessGroupTreeNode | undefined => {
-    if (node.id === pgId) {
-      return node;
-    }
-    for (const child of node.children ?? []) {
-      const hit = findGroup(child, pgId);
-      if (hit) {
-        return hit;
-      }
-    }
-    return undefined;
-  };
-  const ownGroup = treeQuery.data && detail?.nifiGroupPgId
-    ? findGroup(treeQuery.data, detail.nifiGroupPgId)
-    : undefined;
-  const paletteRoot = showAllJobs ? treeQuery.data : (ownGroup ?? treeQuery.data);
+  const paletteRoot = treeQuery.data;
   const paletteTree = paletteRoot ? [buildPaletteTree(paletteRoot)].filter(Boolean) : [];
 
   /**
    * 얹을 수 있는 워크플로우. 자기 자신은 뺀다(자기 안에 자기를 넣을 수 없다).
-   * ETL 그룹 계층 그대로 묶어서, job 트리와 같은 방식으로 찾게 한다.
+   *
+   * <p>예전에는 NiFi 업무 그룹 계층으로 묶어 보여줬는데, 여기서 고르는 기준은 «무엇이
+   * 무엇을 품고 있는가»다. 그래서 워크플로우 상하 계층으로 세운다 - 이름 오른쪽 숫자는
+   * 그 워크플로우 캔버스에 놓인 job 수다. 목록 화면(스케줄링)과 같은 트리를 쓴다.
+   *
+   * <p>자기 자신을 빼면 그 하위였던 워크플로우는 부모를 잃는데, 빌더가 그런 것들을
+   * 최상단으로 올려 주므로 목록에서 사라지지 않는다.
    */
-  const selectableWorkflows = (workflowsQuery.data ?? []).filter((w) => w.id !== workflowId);
-  const workflowsByGroup = new Map<string, WorkflowSummary[]>();
-  selectableWorkflows.forEach((workflow) => {
-    const key = workflow.nifiGroupPgId ?? UNGROUPED_KEY;
-    workflowsByGroup.set(key, [...(workflowsByGroup.get(key) ?? []), workflow]);
-  });
+  const allWorkflows = workflowsQuery.data ?? [];
+  const canvasPath = workflowPathOf(allWorkflows, workflowId);
+  // 얹을 수 있는 것은 «자기 자신을 뺀» 목록이다(자기 안에 자기를 넣을 수 없다).
+  // 다만 트리에는 자기 자신도 그린다 - 지금 어디를 열고 있는지 보여야 길을 잃지 않는다.
+  const selectableWorkflows = allWorkflows.filter((w) => w.id !== workflowId);
 
-  const buildWorkflowTree = (node: NifiProcessGroupTreeNode): {
-    key: string; title: React.ReactNode; children?: unknown[]; selectable: boolean; count: number;
-  } | null => {
-    if (node.groupType === "JOB") {
-      return null;
-    }
-    const children = (node.children ?? []).map(buildWorkflowTree).filter(Boolean) as Array<{
-      key: string; title: React.ReactNode; children?: unknown[]; selectable: boolean; count: number;
-    }>;
-    const own = (workflowsByGroup.get(node.id) ?? []).map((workflow) => ({
-      key: `wf:${workflow.id}`,
-      selectable: true,
-      count: 1,
-      title: <span>▷ {workflow.name}{workflow.published ? "" : " (미게시)"}</span>,
-    }));
-    const count = own.length + children.reduce((sum, child) => sum + child.count, 0);
-    if (count === 0) {
-      return null;      // 워크플로우가 하나도 없는 가지는 접어둘 것도 없다
-    }
+  const toSubWorkflowNodes = (items: WorkflowTreeItem[]): Array<{
+    key: string; title: React.ReactNode; children?: unknown[]; selectable: boolean;
+  }> => items.map((item) => {
+    const isCurrent = item.workflow.id === workflowId;
     return {
-      key: node.id,
-      selectable: false,
-      count,
-      title: <span>{node.name}<span style={{ color: "#888" }}> ({count})</span></span>,
-      children: [...own, ...children],
+      key: `wf:${item.workflow.id}`,
+      // 지금 열려 있는 워크플로우는 «얹는» 대상이 아니다(자기 안에 자기를 넣을 수 없다).
+      selectable: !isCurrent,
+      title: (
+        // 더블클릭은 여기(제목)에 건다. antd Tree 에는 onDoubleClick prop 이 없어서
+        // Tree 에 넘기면 조용히 무시된다(실측 2026-09-09).
+        <span style={isCurrent ? { fontWeight: 700, color: "#1677ff" } : undefined}
+              title={isCurrent ? "지금 열려 있는 워크플로우" : "더블클릭하면 이 워크플로우를 엽니다"}
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+                if (!isCurrent) leaveTo(`/workflows/design/${item.workflow.id}`);
+              }}
+              // 캔버스에 얹는 것은 «끌어다 놓기»로만 한다. 한 번 클릭으로 얹히면 트리를
+              // 훑어보다가 노드가 생겨 버려서, 지우고 다시 저장하는 일이 잦았다.
+              draggable={canWrite && !isCurrent}
+              onDragStart={(event) => {
+                event.dataTransfer.setData("application/cerebro-workflow", String(item.workflow.id));
+                event.dataTransfer.effectAllowed = "copy";
+              }}>
+          ▷ {item.workflow.name}{item.workflow.published ? "" : " (미게시)"}
+          <span style={{ color: "#888" }}> ({item.workflow.jobCount})</span>
+          {isCurrent && <span style={{ color: "#1677ff" }}> · 열림</span>}
+        </span>
+      ),
+      children: item.children.length ? toSubWorkflowNodes(item.children) : undefined,
     };
-  };
+  });
+  const subWorkflowHierarchy = buildWorkflowHierarchy(allWorkflows);
+  const subWorkflowTree = toSubWorkflowNodes(subWorkflowHierarchy);
+  // 최상단은 펼쳐 둔다(= 하위 워크플로우까지 바로 보인다).
+  const subWorkflowOpenKeys = subWorkflowTree.map((node) => node.key);
 
-  const ungrouped = (workflowsByGroup.get(UNGROUPED_KEY) ?? []).map((workflow) => ({
-    key: `wf:${workflow.id}`,
-    selectable: true,
-    count: 1,
-    title: <span>▷ {workflow.name}{workflow.published ? "" : " (미게시)"}</span>,
-  }));
-  const subWorkflowTree = [
-    ...(treeQuery.data ? [buildWorkflowTree(treeQuery.data)].filter(Boolean) : []),
-    ...(ungrouped.length
-      ? [{ key: "wf-ungrouped", selectable: false, count: ungrouped.length,
-           title: <span>그룹 미지정<span style={{ color: "#888" }}> ({ungrouped.length})</span></span>,
-           children: ungrouped }]
-      : []),
-  ];
-  const subWorkflowOpenKeys = treeQuery.data ? [treeQuery.data.id] : [];
+  /**
+   * CDC 팔레트. CDC 관리 화면과 같은 계층으로 그린다.
+   *
+   * <p>지금은 «무엇이 있는지» 보여주기만 한다. 캔버스에 얹으려면 노드 종류(현재 JOB·SUBWF)에
+   * CDC 를 더하고, 컴파일러가 그 노드를 Kafka Connect 시작/정지 태스크로 풀어내야 한다.
+   * 그 전에 얹을 수 있게 해두면 저장은 되는데 게시가 깨진다.
+   */
+  const cdcTree = (() => {
+    const pipelines = pipelinesQuery.data ?? [];
+    const groups = pipelineGroupsQuery.data ?? [];
+    const groupIds = new Set(groups.map((g) => g.id));
+    const byGroup = new Map<number | null, PipelineResponse[]>();
+    pipelines.forEach((pipeline) => {
+      const key = pipeline.groupId != null && groupIds.has(pipeline.groupId) ? pipeline.groupId : null;
+      byGroup.set(key, [...(byGroup.get(key) ?? []), pipeline]);
+    });
+    const leaf = (pipeline: PipelineResponse) => ({
+      key: `cdc:${pipeline.id}`,
+      selectable: false,
+      title: (
+        <span style={{ color: "#8c8c8c" }}>
+          {pipeline.name}
+          <span style={{ color: "#bfbfbf" }}> · {pipeline.sourceTable ?? pipeline.targetTable}</span>
+        </span>
+      ),
+    });
+    const branch = (group: PipelineGroupResponse): { node: Record<string, unknown>; count: number } => {
+      const subs = groups.filter((g) => g.parentId === group.id).map(branch);
+      const own = byGroup.get(group.id) ?? [];
+      const count = own.length + subs.reduce((sum, sub) => sum + sub.count, 0);
+      return {
+        count,
+        node: {
+          key: `cdcgroup:${group.id}`,
+          selectable: false,
+          title: <span>{group.name}<span style={{ color: "#888" }}> ({count})</span></span>,
+          children: [...subs.map((sub) => sub.node), ...own.map(leaf)],
+        },
+      };
+    };
+    const roots = groups.filter((g) => g.parentId === null).map(branch);
+    const ungrouped = (byGroup.get(null) ?? []).map(leaf);
+    if (!pipelines.length) {
+      return [];
+    }
+    return [{
+      key: "cdc:all",
+      selectable: false,
+      title: <span>전체 파이프라인<span style={{ color: "#888" }}> ({pipelines.length})</span></span>,
+      children: [...roots.map((root) => root.node), ...ungrouped],
+    }];
+  })();
+  const cdcOpenKeys = ["cdc:all"];
 
   /**
    * 처음 펼쳐둘 가지. 최상단 하나만 연다(그 바로 아래 계층까지 «보이는» 상태).
@@ -730,6 +802,10 @@ export function WorkflowCanvasPage() {
           <Space>
             <Button size="small" icon={<ArrowLeftOutlined />} onClick={() => leaveTo("/workflows/design")} />
             <strong>{detail.name}</strong>
+            {/* 최상단부터의 경로. 하위 워크플로우를 열었을 때 «어디에 속한 것인지»가 보인다. */}
+            {canvasPath.length > 1 && (
+              <span style={{ color: "#888", fontSize: 12 }}>{canvasPath.join(" > ")}</span>
+            )}
             <Tag>{detail.dagId}</Tag>
             {detail.published ? <Tag color="success">게시됨</Tag> : <Tag>미게시 (DAG 없음)</Tag>}
             {(dirty || detail.dirty) && detail.published && <Tag color="warning">게시본과 다름</Tag>}
@@ -792,58 +868,63 @@ export function WorkflowCanvasPage() {
                                loading={syncMutation.isPending}
                                onClick={() => syncMutation.mutate()} />}
                 className="wf-side-card">
-            {ownGroup && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-                            marginBottom: 8, gap: 6 }}>
-                <Tag color="blue" style={{ margin: 0 }}>{ownGroup.name}</Tag>
-                <Button size="small" type="link" style={{ padding: 0, height: "auto" }}
-                        onClick={() => setShowAllJobs((current) => !current)}>
-                  {showAllJobs ? "이 그룹만" : "전체 보기"}
-                </Button>
-              </div>
-            )}
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>태스크</div>
-            {treeQuery.isLoading ? (
-              <Spin size="small" />
-            ) : paletteTree.length === 0 ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="job이 없습니다" />
+            {/* 워크플로우도 하나의 노드로 얹을 수 있다. 그래야 «daily = monthly 끝나면
+                years» 같은 조립이 가능하다. 자기 자신은 넣을 수 없다(무한 중첩).
+                조립이 이 화면의 관심사라 job 목록보다 위에 둔다. */}
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>
+              워크플로우
+              <span style={{ fontWeight: 400, fontSize: 12, color: "#888" }}> · 끌어다 놓기</span>
+            </div>
+            {subWorkflowTree.length === 0 ? (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                얹을 수 있는 다른 워크플로우가 없습니다.
+              </Typography.Text>
             ) : (
               <Tree
                 blockNode
-                defaultExpandedKeys={defaultOpenKeys}
+                defaultExpandedKeys={subWorkflowOpenKeys}
                 selectedKeys={[]}
-                treeData={paletteTree as never}
-                onSelect={(_, info) => {
-                  // job 노드만 캔버스에 추가한다(상위 그룹은 접기/펼치기 전용).
-                  const job = jobByPgId.get(String(info.node.key));
-                  if (job && canWrite) {
-                    addJobNode(job, parentNameOf(job));
-                  }
-                }}
+                treeData={subWorkflowTree as never}
               />
             )}
-            {/* 워크플로우도 하나의 노드로 얹을 수 있다. 그래야 «daily = monthly 끝나면
-                years» 같은 조립이 가능하다. 자기 자신은 넣을 수 없다(무한 중첩). */}
             <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>워크플로우</div>
-              {subWorkflowTree.length === 0 ? (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  얹을 수 있는 다른 워크플로우가 없습니다.
-                </Typography.Text>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                ETL 태스크
+                <span style={{ fontWeight: 400, fontSize: 12, color: "#888" }}> · 끌어다 놓기</span>
+              </div>
+              {treeQuery.isLoading ? (
+                <Spin size="small" />
+              ) : paletteTree.length === 0 ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="job이 없습니다" />
               ) : (
                 <Tree
                   blockNode
-                  defaultExpandedKeys={subWorkflowOpenKeys}
+                  defaultExpandedKeys={defaultOpenKeys}
                   selectedKeys={[]}
-                  treeData={subWorkflowTree as never}
-                  onSelect={(_, info) => {
-                    const picked = selectableWorkflows.find(
-                      (workflow) => `wf:${workflow.id}` === String(info.node.key));
-                    if (picked && canWrite) {
-                      addSubWorkflowNode(picked);
-                    }
-                  }}
+                  treeData={paletteTree as never}
                 />
+              )}
+            </div>
+            <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>CDC</div>
+              {cdcTree.length === 0 ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  등록된 CDC 파이프라인이 없습니다.
+                </Typography.Text>
+              ) : (
+                <>
+                  <Tree
+                    blockNode
+                    defaultExpandedKeys={cdcOpenKeys}
+                    selectedKeys={[]}
+                    treeData={cdcTree as never}
+                  />
+                  {/* 얹을 수 있게 되기 전까지는 오해하지 않도록 분명히 적어 둔다. */}
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    아직 캔버스에 얹을 수 없습니다(목록 보기 전용). 노드 종류에 CDC 가 없어
+                    지금 얹으면 저장은 되고 게시가 깨집니다.
+                  </Typography.Text>
+                </>
               )}
             </div>
           </Card>
@@ -851,12 +932,52 @@ export function WorkflowCanvasPage() {
           {/* 중: 캔버스 - 노드를 잇는 선이 곧 실행 순서다 */}
           <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, height: "100%" }}>
             <ReactFlow
+              // 팔레트에서 끌어온 워크플로우를 놓은 자리에 얹는다.
+              onDragOver={(event) => {
+                const kinds = event.dataTransfer.types;
+                if (kinds.includes("application/cerebro-workflow")
+                    || kinds.includes("application/cerebro-job")) {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "copy";
+                }
+              }}
+              onDrop={(event) => {
+                if (!canWrite) return;
+                const at = () => (flow?.screenToFlowPosition
+                  ? flow.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+                  : undefined);
+                const workflowRaw = event.dataTransfer.getData("application/cerebro-workflow");
+                if (workflowRaw) {
+                  event.preventDefault();
+                  const picked = selectableWorkflows.find((w) => w.id === Number(workflowRaw));
+                  if (picked) addSubWorkflowNode(picked, at());
+                  return;
+                }
+                const jobRaw = event.dataTransfer.getData("application/cerebro-job");
+                if (jobRaw) {
+                  event.preventDefault();
+                  const job = (jobsQuery.data ?? []).find((j) => j.id === Number(jobRaw));
+                  if (job) addJobNode(job, parentNameOf(job), at());
+                }
+              }}
               nodes={nodes}
               edges={edges}
               onNodesChange={(changes) => { onNodesChange(changes); if (isUserEdit(changes)) markDirty(); }}
               onEdgesChange={(changes) => { onEdgesChange(changes); if (isUserEdit(changes)) markDirty(); }}
               onConnect={onConnect}
               onNodeClick={(_, node) => { setSelectedNodeId(node.id); setSelectedEdgeId(undefined); }}
+              // 더블클릭 = 그 노드가 가리키는 곳으로 이동. 속성창의 «바로가기» 버튼 두 개와
+              // 같은 자리로 간다(워크플로우 노드 → 그 설계화면, job 노드 → ETL 관리의 그 job).
+              onNodeDoubleClick={(_, node) => {
+                const data = node.data as { subWorkflowId?: unknown; nifiPgId?: unknown };
+                if (data.subWorkflowId) {
+                  leaveTo(`/workflows/design/${Number(data.subWorkflowId)}`);
+                  return;
+                }
+                if (data.nifiPgId) {
+                  leaveTo(`/etl/manage?processGroupId=${encodeURIComponent(String(data.nifiPgId))}`);
+                }
+              }}
               onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedNodeId(undefined); }}
               onPaneClick={() => { setSelectedNodeId(undefined); setSelectedEdgeId(undefined); }}
               className="wf-flow"
@@ -868,17 +989,40 @@ export function WorkflowCanvasPage() {
               nodeTypes={NODE_TYPES}
               onInit={(instance) => setFlow(instance)}
               deleteKeyCode={["Backspace", "Delete"]}
+              nodesDraggable={interactive}
+              nodesConnectable={interactive}
+              elementsSelectable={interactive}
             >
-              <Background />
-              <Controls />
+              {/* 배경 점(dot grid)은 뺐다 - 흰 바탕이 노드와 선을 더 또렷하게 한다. */}
+              {/*
+                기본 컨트롤 넷은 툴팁이 영문(Zoom in/Zoom out/Fit view/Toggle interactivity)으로
+                고정돼 있어 우리가 바꿀 수 없다. 그래서 전부 끄고 같은 자리에 직접 만든다.
+                «정렬»을 맨 위에 둔 것은 캔버스 아래 따로 떠 있던 버튼을 여기로 합친 것이다.
+              */}
+              <Controls showZoom={false} showFitView={false} showInteractive={false}>
+                <ControlButton title="정렬" aria-label="정렬"
+                               disabled={!canWrite} onClick={alignHorizontally}>
+                  <ColumnWidthOutlined />
+                </ControlButton>
+                <ControlButton title="확대" aria-label="확대" onClick={() => flow?.zoomIn()}>
+                  <PlusOutlined />
+                </ControlButton>
+                <ControlButton title="축소" aria-label="축소" onClick={() => flow?.zoomOut()}>
+                  <MinusOutlined />
+                </ControlButton>
+                <ControlButton title="전체 보기" aria-label="전체 보기"
+                               onClick={() => flow?.fitView({ padding: 0.35, maxZoom: 0.85 })}>
+                  <ExpandOutlined />
+                </ControlButton>
+                <ControlButton title={interactive ? "편집 잠금" : "편집 잠금 해제"}
+                               aria-label={interactive ? "편집 잠금" : "편집 잠금 해제"}
+                               onClick={() => setInteractive((current) => !current)}>
+                  {interactive ? <UnlockOutlined /> : <LockOutlined />}
+                </ControlButton>
+              </Controls>
               <MiniMap pannable zoomable />
               {/* 캔버스 위 «메모» 상자는 뺐다(2026-09-03) - 속성창에 같은 메모 칸이 있어
                   두 곳에 같은 것이 떠 있었고, 캔버스 좌상단을 늘 가리고 있었다. */}
-              <Panel position="bottom-center">
-                <Button size="small" disabled={!canWrite} onClick={alignHorizontally}>
-                  수평 정렬
-                </Button>
-              </Panel>
             </ReactFlow>
           </div>
 
@@ -912,7 +1056,7 @@ export function WorkflowCanvasPage() {
               <Space direction="vertical" style={{ width: "100%" }} size={10}>
                 <div>
                   <div style={{ fontSize: 12, color: "#888" }}>
-                    {selectedNode.data.subWorkflowId ? "워크플로우" : "job"}
+                    {selectedNode.data.subWorkflowId ? "워크플로우" : "실행 job"}
                   </div>
                   <div>{String(selectedNode.data.label)}</div>
                 </div>
@@ -928,7 +1072,7 @@ export function WorkflowCanvasPage() {
                   <SubWorkflowSummary workflowId={Number(selectedNode.data.subWorkflowId)} />
                 ) : null}
                 <div>
-                  <div style={{ fontSize: 12, color: "#888" }}>진입 조건 (trigger rule)</div>
+                  <div style={{ fontSize: 12, color: "#888" }}>실행 조건</div>
                   <Select size="small" style={{ width: "100%" }}
                           value={String(selectedNode.data.triggerRule ?? "ALL_SUCCESS")}
                           onChange={(value) => {
@@ -1005,9 +1149,12 @@ function JobNode({ data, isConnectable }: {
   data: { label?: string; nodeType?: string };
   isConnectable?: boolean;
 }) {
+  // 왼쪽 띠에 종류를 적는다. 색만으로는 job 과 워크플로우가 헷갈렸다(파랑·보라 차이뿐이었다).
+  const kind = data?.nodeType === "SUBWF" ? "wf" : "job";
   return (
     <>
       <Handle type="target" position={Position.Left} id="t-left" isConnectable={isConnectable} />
+      <b className="wf-node__kind">{kind}</b>
       <span>{String(data?.label ?? "")}</span>
       <Handle type="source" position={Position.Right} id="s-right" isConnectable={isConnectable} />
     </>
@@ -1015,9 +1162,6 @@ function JobNode({ data, isConnectable }: {
 }
 
 const NODE_TYPES = { job: JobNode };
-
-/** 그룹을 안 정한 워크플로우를 담는 자리. */
-const UNGROUPED_KEY = "__ungrouped__";
 
 /** 노드 겉모습. 워크플로우 노드는 job과 한눈에 구분돼야 한다(보라 계열 + 왼쪽 굵은 띠). */
 function nodeClass(problem: boolean, nodeType?: string): string {
@@ -1117,6 +1261,9 @@ function WorkflowSettings({ detail, disabled, onSave, saving, onDraftChange }: {
   onDraftChange?: (body: Parameters<typeof updateWorkflow>[1]) => void;
 }) {
   const [name, setName] = useState(detail.name);
+  // 최상단부터의 경로. 목록 조회는 이미 캐시에 있어 추가 호출이 사실상 없다.
+  const pathQuery = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
+  const settingsPath = workflowPathOf(pathQuery.data ?? [], detail.id);
   // 저장된 크론을 프리셋으로 되돌려 채운다. 프리셋으로 표현 안 되는 식이면 직접 입력에만 남는다.
   const parsed = parseCronToPreset(detail.scheduleCron);
   const [scheduleMode, setScheduleMode] = useState<"manual" | "recurring">(
@@ -1134,7 +1281,6 @@ function WorkflowSettings({ detail, disabled, onSave, saving, onDraftChange }: {
   const settingsBody = {
     name,
     description: detail.description,
-    nifiGroupPgId: detail.nifiGroupPgId,
     scheduleCron: scheduleMode === "manual" ? null
       : (customCron.trim() || presetCron(preset, hour, minute, weekday)),
     timezone: detail.timezone,
@@ -1153,6 +1299,10 @@ function WorkflowSettings({ detail, disabled, onSave, saving, onDraftChange }: {
       <div>
         <div style={{ fontSize: 12, color: "#888" }}>이름</div>
         <Input size="small" value={name} onChange={(event) => setName(event.target.value)} />
+        {/* 최상단부터 이 워크플로우까지. 상위가 없으면 자기 이름뿐이라 굳이 적지 않는다. */}
+        {settingsPath.length > 1 && (
+          <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>{settingsPath.join(" > ")}</div>
+        )}
       </div>
       <div>
         <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>스케줄</div>

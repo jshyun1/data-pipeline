@@ -25,7 +25,6 @@ public final class WorkflowRequests {
             String workflowKey,
             @NotBlank String name,
             String description,
-            String nifiGroupPgId,
             String scheduleCron,
             String timezone,
             Boolean catchup,
@@ -37,7 +36,6 @@ public final class WorkflowRequests {
     public record UpdateWorkflow(
             @NotBlank String name,
             String description,
-            String nifiGroupPgId,
             String scheduleCron,
             String timezone,
             Boolean catchup,

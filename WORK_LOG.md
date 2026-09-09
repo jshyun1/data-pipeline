@@ -1289,3 +1289,77 @@ Oracle·PostgreSQL·MySQL 셋 다 소스/타깃 어느 쪽으로도 가능해야
 11. **스케줄링 화면 높이**: 목록이 짧으면 카드 아래가 통째로 빈 띠였다. 실시간 모니터링과
     같은 방식으로 뷰포트에 못박고 트리·목록이 각자 안에서 스크롤한다. 좌측 업무 그룹
     트리는 최초 진입 시 최상위만 펼친다(전부 펼침 → 1단계).
+
+## 31. Oracle 테이블별 보충 로깅 미설정으로 UPDATE 가 조용히 유실되던 문제 (2026-09-05~06)
+
+**증상**: MSA 운영의 델타 파이프라인(pipeline 20, `CSB.INS_PYM_STT` → `CSB.INS_PYM_STT_DELTA`)에서
+`UPDATE ... WHERE INS_PYM_STT_ID='3'` 을 했는데 델타 테이블에 **PK 가 0** 이고 바뀐 컬럼(`hspt_clsf`)
+외 전부 NULL 인 행이 들어감. INSERT·DELETE 는 멀쩡했고 커넥터도 계속 RUNNING.
+
+**원인 — 우리 코드가 아니라 소스 Oracle 설정**. 토픽 `oracle-cdc.CSB.INS_PYM_STT` offset 8713 원본을
+직접 까 보니 **Kafka 레코드 키부터 `{"INS_PYM_STT_ID": 0.0}`**, before/after 모두 PK 가 0 이었다.
+`all_log_groups` 에 CSB 의 CDC 소스 3개 테이블 모두 행이 없다 = 테이블별 보충 로깅 미설정.
+Oracle redo 는 UPDATE 때 **바뀐 컬럼만** 남기므로(INSERT/DELETE 는 행 전체) LogMiner 가 PK 값을
+못 읽고, PK 는 NOT NULL 숫자 필드라 null 대신 **기본값 0** 으로 채워진다. 그 0 이 그대로 키가 되어
+`primary.key.mode=record_key` 싱크가 **모든 UPDATE 를 PK=0 한 행에 덮어썼다**(4건 → 1행).
+
+**조치 ①(소스 DB, 앱 밖)**: `ALTER TABLE CSB.<표> ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;`
+적용 이후 발생분부터 정상. 이미 발행된 이벤트는 불변이라 복구 불가 - PK=0 행은 수동 정리.
+
+**조치 ②(이번 커밋) — 제품이 이걸 못 막고 있었다**
+`CdcPrerequisiteService.checkOracle()` 의 `ORACLE_TABLE_SUPPLEMENTAL` 은 "생성 마법사에서 선택한
+테이블 기준으로 다시 점검합니다" 라고 **안내만 하고 그 재점검 코드가 어디에도 없었다**(전체 검색에서
+`all_log_groups` 조회 0건). 그래서 조건이 빠진 채로 파이프라인이 만들어지고 조용히 틀린 데이터가 쌓였다.
+- **신규 `CdcPrerequisiteService.checkTable(connectionId, schema, table)`** + `CdcTableReadinessResponse`:
+  Oracle = `ALL_LOG_GROUPS` 에 `ALL COLUMN LOGGING` 있는지(DB 전체 `SUPPLEMENTAL_LOG_DATA_ALL=YES` 면 통과) → 없으면 **FAIL**,
+  Postgres = `pg_class.relreplident` 가 FULL 아니면 **WARN**(미러링엔 지장 없고 델타의 삭제 직전 값만 제한),
+  MySQL = `binlog_row_image` 가 서버 단위라 테이블 조건 없음 → PASS.
+- **`GET /api/connections/{id}/cdc-table-readiness?schema=&table=`** 신설.
+- **`PipelineDeployService.verifySourceTableCaptureReady()`**: Oracle 소스가 FAIL 이면 **커넥터를 만들기 전에
+  배포 차단**(조치 SQL 을 메시지로). WARN/UNKNOWN 은 로그만 - 점검 권한이 없다고 배포를 막으면 안 된다.
+  ※ 기존 Oracle 파이프라인도 보충 로깅 없으면 **재배포가 막힌다**(실제로 깨져 있는 상태라 의도된 동작).
+- **화면**: 대상 선택 표의 소스 테이블 칸에 «변경분 캡처 불가 / 삭제 전 값 제한» 태그 + 상단 오류 배너,
+  FAIL 이 하나라도 있으면 다음 단계로 못 넘어간다(PK 없음 차단과 같은 자리).
+- **테스트**: `CdcPrerequisiteServiceTableTest` 7건(ALL/없음/PK만/DB전체/PG FULL·DEFAULT/MySQL),
+  `PipelineDeployServiceTest` 에 차단 1건 + 비 Oracle 건너뜀 1건.
+
+**미완**: 델타 타깃 테이블 컬럼 타입 정리(CLOB→VARCHAR2 등)는 SQL 만 준비하고 미적용 -
+원격 DB DDL 이 자동 승인 정책에 막혀 실행 못 함(`delta-table-rebuild.sql`).
+`column.propagate.source.type` 으로 싱크가 애초에 VARCHAR2(n) 으로 만들게 하는 건 검증 필요.
+
+### 31.1. MSA 운영 환경 실제 조치 및 복구 (2026-09-06) — ✅ 완료·검증
+
+코드 수정(31절)과 별개로, MSA 운영 Oracle/PostgreSQL 에 실제 조치를 적용했다.
+
+**① 보충 로깅 적용** — `ALTER TABLE CSB.<표> ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS` 를
+INS_PYM_STT / TB_IMP018M / TB_IMP060L 3개에 적용. `all_log_groups` 에서 세 건 모두
+`ALL COLUMN LOGGING` 확인. 커넥터 재시작 불필요(redo 내용만 바뀜).
+
+**② 델타 타깃 테이블 재생성** — `CSB.INS_PYM_STT_DELTA` 를 소스와 같은 타입으로 교체.
+Oracle 은 CLOB→VARCHAR2 직접 변경 불가(ORA-22858) 라 새 테이블 생성 → 3행 복사 →
+이름 교체(이전 것은 `INS_PYM_STT_DELTA_BAK` 로 보존) → PK 재생성 순서로 진행.
+문자 13개 CLOB→VARCHAR2(40~800 CHAR), FLOAT→NUMBER(15,0)/(15,2), TIMESTAMP(9)→DATE,
+CDC_OP 는 CLOB→VARCHAR2(10). CDC_OP·CDC_TS 를 **맨 앞**으로 배치(최초 설계안).
+앞뒤로 sink-20 pause → resume → `restart?includeTasks=true`(싱크의 테이블 메타 캐시 비움).
+※ `SqlRunner` 가 JDBC auto-commit 인데 스크립트에 `COMMIT` 이 있어 ORA-17273 으로 한 번
+중단됐다 - auto-commit 이라 이미 반영된 상태였고 남은 문장만 이어서 실행했다.
+
+**③ 검증** — 소스 3번 행 UPDATE → 델타에 `CDC_OP=u, INS_PYM_STT_ID=3` 과 **전체 컬럼**이
+정상 도착(이전에는 PK 가 0 이고 나머지 NULL). 검증 후 소스 값은 원래대로 되돌렸고,
+델타의 `INS_PYM_STT_ID=0` 유령 행은 삭제.
+
+**④ 미러링 파이프라인 피해 규모가 예상보다 컸다** — `tb_imp018m` 타깃에 PK 가 빈 문자열인
+유령 행 1건이 있었는데(text PK 라 0 이 아니라 `''`), 소스와 대조해 보니 **실제로는
+232건의 UPDATE 가 통째로 유실**돼 있었다. `primary.key.mode=record_key` upsert 라
+키를 잃은 232건이 **전부 같은 유령 행 하나에 덮어써진** 것. (델타에서 UPDATE 4건이
+ID=0 한 행이 됐던 것과 같은 원리 - 미러링에서는 소스/타깃이 조용히 어긋난다.)
+- 소스 `TEST00000087100~87356` 구간 257행이 `clrp_dvsn_cd='08'` 인데 타깃은 원래 값(00~09) 유지.
+- 복구: 유령 행 삭제 후 소스에서 **값을 그대로 다시 쓰는 무해한 UPDATE**(`SET CLRP_DVSN_CD =
+  CLRP_DVSN_CD`)로 257행을 재전파 → 타깃 257행 모두 `08` 로 일치 확인. 행 수도 100,000 일치.
+- `tb_imp060l` 은 유령 행 0건(그동안 UPDATE 가 없었음).
+
+**최종 상태** — 커넥터 6개 전부 RUNNING, 델타 테이블 3행(정상), 유령 행 0건.
+
+**교훈**: 이 조건이 빠지면 INSERT/DELETE 는 정상이고 커넥터도 RUNNING 이라 **화면상 아무
+문제가 없어 보인다**. 유일한 신호가 «타깃에 PK 가 0/빈 문자열인 행 1건» 이었고, 그 뒤에
+232건 유실이 숨어 있었다. 31절의 사전점검·배포 차단이 필요한 이유가 이것이다.

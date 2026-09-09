@@ -58,9 +58,19 @@ public class WorkflowService {
     @Transactional(readOnly = true)
     public List<WorkflowSummary> list() {
         return workflowRepository.findByDeletedAtIsNullOrderByNameAsc().stream()
-                .map(w -> WorkflowSummary.from(
-                        w, nodeRepository.findByWorkflowIdAndDeletedAtIsNull(w.getId()).size(),
-                        upstreamIds(w).size()))
+                .map(w -> {
+                    // 노드를 한 번만 읽어 세 값(전체 수·JOB 수·하위 워크플로우)을 함께 뽑는다.
+                    List<EtlWorkflowNode> nodes = nodeRepository.findByWorkflowIdAndDeletedAtIsNull(w.getId());
+                    int jobCount = (int) nodes.stream()
+                            .filter(n -> EtlWorkflowNode.TYPE_JOB.equals(n.getNodeType()))
+                            .count();
+                    List<Long> childIds = nodes.stream()
+                            .map(EtlWorkflowNode::getSubWorkflowId)
+                            .filter(Objects::nonNull)
+                            .distinct()
+                            .toList();
+                    return WorkflowSummary.from(w, nodes.size(), upstreamIds(w).size(), jobCount, childIds);
+                })
                 .toList();
     }
 
@@ -102,44 +112,30 @@ public class WorkflowService {
     public WorkflowSummary create(CreateWorkflow request) {
         String key = StringUtils.hasText(request.workflowKey())
                 ? request.workflowKey()
-                : generateKey(request.nifiGroupPgId(), request.name());
+                : generateKey(request.name());
         workflowRepository.findByWorkflowKeyAndDeletedAtIsNull(key)
                 .ifPresent(existing -> {
                     throw new BusinessException(ErrorCode.VALIDATION_ERROR,
                             "이미 사용 중인 workflowKey입니다: " + key);
                 });
         EtlWorkflow workflow = new EtlWorkflow(key, request.name());
-        workflow.updateSettings(request.name(), request.description(), request.nifiGroupPgId(),
+        workflow.updateSettings(request.name(), request.description(),
                 request.scheduleCron(), request.timezone(), request.catchup(),
                 request.maxActiveRuns(), request.suspendOnError());
         return WorkflowSummary.from(workflowRepository.save(workflow), 0, 0);
     }
 
     /**
-     * workflowKey를 그룹·이름에서 만든다. 사용자는 키를 입력하지 않는다.
+     * workflowKey를 이름에서 만든다. 사용자는 키를 입력하지 않는다.
      *
-     * <p>키는 dag_id({@code etl_wf_{key}})의 축이라 전역에서 유일해야 하는데, 그룹별로
-     * 워크플로우를 그리면 DW와 DZ 양쪽에 같은 이름이 생기기 마련이다(실제로 두 그룹 다
-     * COM001M을 갖고 있다). 그래서 그룹 이름을 앞에 붙여 충돌을 구조적으로 없앤다.
+     * <p>키는 dag_id({@code etl_wf_{key}})의 축이라 전역에서 유일해야 한다. 예전에는 워크플로우가
+     * 업무 그룹에 속해서 그룹 이름을 앞에 붙여 충돌을 피했는데, 그룹 개념을 걷어내면서
+     * 이름만 남았다. 같은 이름을 또 쓰면 아래에서 뒤에 번호를 붙인다.
      *
-     * <p>한글 이름은 슬러그가 비므로 그룹 이름만 쓰고, 그래도 겹치면 뒤에 번호를 붙인다.
+     * <p>한글 이름은 슬러그가 비므로 «wf»로 시작해 번호가 붙는다.
      */
-    private String generateKey(String groupPgId, String name) {
-        String groupSlug = groupPgId == null ? "" : pgRepository.findById(groupPgId)
-                .map(com.company.pipeline.nifi.NifiProcessGroupMetadata::getProcessGroupName)
-                .map(WorkflowService::slug)
-                .orElse("");
-        String nameSlug = slug(name);
-        // "DW 일배치"처럼 이름이 그룹 이름으로 시작하면 dw_dw가 되어버린다. 겹치면 한 번만 쓴다.
-        String base;
-        if (!StringUtils.hasText(groupSlug) || nameSlug.equals(groupSlug)
-                || nameSlug.startsWith(groupSlug + "_")) {
-            base = StringUtils.hasText(nameSlug) ? nameSlug : groupSlug;
-        } else {
-            base = Stream.of(groupSlug, nameSlug)
-                    .filter(StringUtils::hasText)
-                    .collect(Collectors.joining("_"));
-        }
+    private String generateKey(String name) {
+        String base = slug(name);
         if (!StringUtils.hasText(base)) {
             base = "wf";
         }
@@ -190,7 +186,7 @@ public class WorkflowService {
     @Transactional
     public WorkflowSummary update(Long id, UpdateWorkflow request) {
         EtlWorkflow workflow = require(id);
-        workflow.updateSettings(request.name(), request.description(), request.nifiGroupPgId(),
+        workflow.updateSettings(request.name(), request.description(),
                 request.scheduleCron(), request.timezone(), request.catchup(),
                 request.maxActiveRuns(), request.suspendOnError(),
                 writeIds(request.upstreamWorkflowIds()), request.upstreamMode(), request.memo());

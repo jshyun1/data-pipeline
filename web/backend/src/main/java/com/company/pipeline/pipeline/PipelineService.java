@@ -36,6 +36,7 @@ public class PipelineService {
     private final PostgresReplicationCleanupService postgresReplicationCleanupService;
     private final KafkaTopicCleanupService kafkaTopicCleanupService;
     private final PipelineMetadataArchiveRepository metadataArchiveRepository;
+    private final PipelineGroupService groupService;
 
     public PipelineService(PipelineDefinitionRepository pipelineDefinitionRepository,
             PipelineConnectorRepository pipelineConnectorRepository,
@@ -45,7 +46,9 @@ public class PipelineService {
             FilebeatInputFileService filebeatInputFileService,
             PostgresReplicationCleanupService postgresReplicationCleanupService,
             KafkaTopicCleanupService kafkaTopicCleanupService,
-            PipelineMetadataArchiveRepository metadataArchiveRepository) {
+            PipelineMetadataArchiveRepository metadataArchiveRepository,
+            PipelineGroupService groupService) {
+        this.groupService = groupService;
         this.pipelineDefinitionRepository = pipelineDefinitionRepository;
         this.pipelineConnectorRepository = pipelineConnectorRepository;
         this.connectionRepository = connectionRepository;
@@ -112,6 +115,9 @@ public class PipelineService {
                 request.description(),
                 null
         );
+        // 그룹은 관리 화면 트리에서 놓일 자리다. 없는 그룹을 가리키면 트리에서 사라지므로 먼저 확인한다.
+        groupService.requireExists(request.groupId());
+        entity.setGroupId(request.groupId());
         entity.setSnapshotMode(PipelineSnapshotMode.from(request.snapshotMode()).name());
         PipelineLoadMode loadMode = PipelineLoadMode.from(request.loadMode());
         entity.setLoadMode(loadMode.name());

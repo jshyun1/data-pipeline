@@ -28,6 +28,8 @@ public record PipelineResponse(
         String loadMode,
         String deltaOpColumn,
         String description,
+        /** 관리 화면 트리에서 놓이는 그룹. null 이면 그룹 미지정. */
+        Long groupId,
         List<PipelineConnectorSummary> connectors,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
@@ -54,6 +56,7 @@ public record PipelineResponse(
                 entity.getLoadMode() != null ? entity.getLoadMode() : "UPSERT",
                 entity.getDeltaOpColumn(),
                 entity.getDescription(),
+                entity.getGroupId(),
                 connectors.stream().map(PipelineConnectorSummary::from).toList(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()

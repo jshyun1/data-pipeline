@@ -1021,6 +1021,58 @@ public class AlertEngine {
     }
 
     /** rule 맵의 scope(scope_json::text)를 파싱. 파싱 실패/미지정은 ALL. */
+    /**
+     * 워크플로우 규칙의 감시 범위. 고른 워크플로우와 <b>그 하위 전부</b>를 본다.
+     *
+     * <p>감시대상 트리(스케줄링 화면과 같은 상하 계층)에서 상위를 고르면 «그 아래도 같이
+     * 봐 달라»는 뜻이다. 저장은 고른 id 로만 해 두고 펼치는 것은 여기서 하므로, 나중에
+     * 하위 워크플로우가 붙어도 규칙을 다시 저장할 필요가 없다.
+     *
+     * <p>순환(A 안에 B, B 안에 A)이 있어도 방문한 id 를 기억해 멈춘다.
+     */
+    private ScopeFilter workflowScopeOf(Map<String, Object> rule) {
+        // scopeOf 를 그대로 쓰지 않는다 - 그쪽은 groupPgIds 를 «etl_job id»로 펼치는데,
+        // 여기서 필요한 것은 워크플로우 id 라 섞이면 엉뚱한 것을 감시하게 된다.
+        // 워크플로우에는 업무 그룹 개념이 없으므로 고른 id 만 보고, 하위는 아래에서 펼친다.
+        ScopeFilter scope;
+        try {
+            String json = rule.get("scope") == null ? null : rule.get("scope").toString();
+            if (json == null || json.isBlank()) {
+                return new ScopeFilter("ALL", Set.of(), "JOB");
+            }
+            JsonNode n = MAPPER.readTree(json);
+            Set<Long> picked = new HashSet<>();
+            if (n.has("ids") && n.get("ids").isArray()) {
+                n.get("ids").forEach(x -> picked.add(x.asLong()));
+            }
+            scope = new ScopeFilter(n.path("kind").asText("ALL"), picked, "JOB");
+        } catch (Exception ex) {
+            return new ScopeFilter("ALL", Set.of(), "JOB");
+        }
+        if ("ALL".equals(scope.kind()) || scope.ids().isEmpty()) {
+            return scope;
+        }
+        List<Map<String, Object>> links = jdbc.queryForList("""
+                SELECT DISTINCT n.workflow_id AS parent_id, n.sub_workflow_id AS child_id
+                FROM etl_workflow_node n
+                WHERE n.deleted_at IS NULL AND n.sub_workflow_id IS NOT NULL""");
+        Map<Long, List<Long>> children = new HashMap<>();
+        for (Map<String, Object> link : links) {
+            children.computeIfAbsent(((Number) link.get("parent_id")).longValue(),
+                    k -> new ArrayList<>()).add(((Number) link.get("child_id")).longValue());
+        }
+        Set<Long> expanded = new HashSet<>(scope.ids());
+        Deque<Long> queue = new ArrayDeque<>(scope.ids());
+        while (!queue.isEmpty()) {
+            for (Long child : children.getOrDefault(queue.poll(), List.of())) {
+                if (expanded.add(child)) {
+                    queue.add(child);
+                }
+            }
+        }
+        return new ScopeFilter(scope.kind(), expanded, scope.idKind());
+    }
+
     private ScopeFilter scopeOf(Map<String, Object> rule) {
         Object raw = rule.get("scope");
         String json = raw == null ? null : raw.toString();
@@ -1434,7 +1486,7 @@ public class AlertEngine {
      * 원천이라 «화면은 실패인데 알림은 조용»한 어긋남이 생기지 않는다.
      */
     private List<Candidate> workflowFailureSignals(Map<String, Object> rule) {
-        ScopeFilter scope = scopeOf(rule);
+        ScopeFilter scope = workflowScopeOf(rule);
         Map<String, AirflowDagRunClient.DagRunWithDag> latest = latestDagRuns();
         List<Candidate> out = new ArrayList<>();
         for (Map<String, Object> wf : publishedWorkflows()) {
@@ -1466,7 +1518,7 @@ public class AlertEngine {
      * 일 배치·시간 배치를 모두 표현할 수 있다.
      */
     private List<Candidate> workflowNotCompletedSignals(Map<String, Object> rule) {
-        ScopeFilter scope = scopeOf(rule);
+        ScopeFilter scope = workflowScopeOf(rule);
         int graceMinutes = (int) jsonNum(rule.get("params").toString(), "grace_minutes", 1440);
         Map<String, AirflowDagRunClient.DagRunWithDag> lastOk = lastSuccessfulDagRuns();
         java.time.OffsetDateTime deadline = java.time.OffsetDateTime.now().minusMinutes(graceMinutes);

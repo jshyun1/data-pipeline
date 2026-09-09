@@ -4,6 +4,9 @@ import com.company.pipeline.common.BusinessException;
 import com.company.pipeline.common.ErrorCode;
 import com.company.pipeline.common.crypto.PasswordCryptoService;
 import com.company.pipeline.connection.ConnectionRepository;
+import com.company.pipeline.connection.DbType;
+import com.company.pipeline.connection.dto.CdcTableReadinessResponse;
+import com.company.pipeline.connection.CdcPrerequisiteService;
 import com.company.pipeline.connection.PipelineConnection;
 import com.company.pipeline.connector.ConnectorConfigRenderer;
 import com.company.pipeline.connector.KafkaConnectClient;
@@ -68,6 +71,7 @@ public class PipelineDeployService {
     private final FilebeatConfigRenderer filebeatConfigRenderer;
     private final FilebeatInputFileService filebeatInputFileService;
     private final DeltaTargetTableService deltaTargetTableService;
+    private final CdcPrerequisiteService cdcPrerequisiteService;
     private final ConcurrentHashMap<Long, ReentrantLock> pipelineLocks = new ConcurrentHashMap<>();
 
     /**
@@ -91,7 +95,8 @@ public class PipelineDeployService {
             LogPipelineSourceRepository logPipelineSourceRepository,
             FilebeatConfigRenderer filebeatConfigRenderer,
             FilebeatInputFileService filebeatInputFileService,
-            DeltaTargetTableService deltaTargetTableService) {
+            DeltaTargetTableService deltaTargetTableService,
+            CdcPrerequisiteService cdcPrerequisiteService) {
         this.pipelineDefinitionRepository = pipelineDefinitionRepository;
         this.pipelineConnectorRepository = pipelineConnectorRepository;
         this.commandHistoryRecorder = commandHistoryRecorder;
@@ -104,6 +109,7 @@ public class PipelineDeployService {
         this.filebeatConfigRenderer = filebeatConfigRenderer;
         this.filebeatInputFileService = filebeatInputFileService;
         this.deltaTargetTableService = deltaTargetTableService;
+        this.cdcPrerequisiteService = cdcPrerequisiteService;
     }
 
     public PipelineResponse deploy(Long pipelineId) {
@@ -150,6 +156,8 @@ public class PipelineDeployService {
         PipelineConnection source = findConnectionOrThrow(pipeline.getSourceConnectionId());
         PipelineConnection target = findConnectionOrThrow(pipeline.getTargetConnectionId());
 
+        verifySourceTableCaptureReady(pipeline, source);
+
         // 델타 적재는 커넥터 등록 전에 타깃 테이블을 준비/검증한다(APPEND: 구분컬럼이 맨 앞인 뼈대
         // 생성, UPSERT: 소스 PK 와 같은 키 존재 확인). 여기서 실패하면 아직 아무 커넥터도 등록되지
         // 않은 상태라 되돌릴 것이 없다.
@@ -175,6 +183,33 @@ public class PipelineDeployService {
                 pipeline.getTopicName(), Boolean.TRUE.equals(pipeline.getDeleteEnabled()),
                 pipeline.getLoadMode(), pipeline.getDeltaOpColumn()));
         prepareStoppedConnector(pipeline.getId(), "SINK", sinkConfig);
+    }
+
+    /**
+     * 소스 테이블이 «변경분을 온전히 캡처할 수 있는 상태»인지 커넥터 등록 전에 확인한다.
+     *
+     * <p>Oracle 은 테이블별 ALL COLUMNS 보충 로깅이 없으면 UPDATE 의 PK 조차 redo 에 안 남아,
+     * 이벤트 키가 0 으로 나가고 타깃의 엉뚱한 한 행에 모든 UPDATE 가 덮어써진다. INSERT/DELETE 는
+     * 정상이라 커넥터도 RUNNING 이고 화면도 정상으로 보여서 <b>문제가 아주 늦게 드러난다</b>.
+     * 조용히 틀린 데이터를 만드는 것보다 배포를 막고 조치를 알려주는 편이 낫다.
+     *
+     * <p>WARN(Postgres REPLICA IDENTITY 등)이나 UNKNOWN(점검 권한 부족)은 막지 않고 로그만 남긴다 -
+     * 점검이 안 된다는 이유로 배포를 못 하게 하면 권한이 제한된 환경에서 아무것도 못 만든다.
+     */
+    private void verifySourceTableCaptureReady(PipelineDefinition pipeline, PipelineConnection source) {
+        if (source.getDbType() != DbType.ORACLE) {
+            return;
+        }
+        CdcTableReadinessResponse readiness = cdcPrerequisiteService.checkTable(
+                source.getId(), pipeline.getSourceSchema(), pipeline.getSourceTable());
+        if ("FAIL".equals(readiness.status())) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, readiness.guidance());
+        }
+        if (!"PASS".equals(readiness.status())) {
+            log.warn("소스 테이블 캡처 조건 점검 결과 {} pipelineId={} table={}.{} value={}",
+                    readiness.status(), pipeline.getId(), pipeline.getSourceSchema(),
+                    pipeline.getSourceTable(), readiness.actualValue());
+        }
     }
 
     /**

@@ -7,6 +7,9 @@ public interface PipelineDefinitionRepository extends JpaRepository<PipelineDefi
 
     boolean existsByName(String name);
 
+    /** 그룹 삭제 전에 «비어 있는가»를 확인할 때 쓴다. */
+    long countByGroupId(Long groupId);
+
     List<PipelineDefinition> findByStatus(PipelineStatus status);
 
     List<PipelineDefinition> findByStatusIn(List<PipelineStatus> statuses);

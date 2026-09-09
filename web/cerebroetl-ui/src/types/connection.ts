@@ -87,6 +87,16 @@ export interface CdcPrerequisiteCheckResponse {
   guidance: string;
 }
 
+/** 선택한 테이블 하나의 CDC 조건. 백엔드 CdcTableReadinessResponse 와 1:1. */
+export interface CdcTableReadinessResponse {
+  schema: string;
+  table: string;
+  dbType: DbType;
+  status: "PASS" | "WARN" | "FAIL" | "UNKNOWN";
+  actualValue: string | null;
+  guidance: string | null;
+}
+
 export interface CdcPrerequisiteResponse {
   connectionId: number;
   dbType: DbType;
