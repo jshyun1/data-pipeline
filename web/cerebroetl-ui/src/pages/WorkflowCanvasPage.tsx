@@ -128,13 +128,6 @@ function hasGroupPrefix(parentLabel: string, jobName: string): boolean {
   return rest === "" || rest.startsWith("_") || /^[0-9]/.test(rest);
 }
 
-/** 캔버스 라벨. 잡 이름에 이미 그룹명이 있으면 «그룹 / 잡»으로 겹쳐 쓰지 않는다. */
-function jobNodeLabel(parentLabel: string | undefined, jobName: string): string {
-  return parentLabel && !hasGroupPrefix(parentLabel, jobName)
-    ? `${parentLabel} / ${jobName}`
-    : jobName;
-}
-
 function toNodeKey(jobName: string, taken: Set<string>): string {
   const base = normalizeKeyPart(jobName) || "job";
   let key = base;
@@ -247,9 +240,9 @@ export function WorkflowCanvasPage() {
         // SUBWF는 job 이름이 없다. 가리키는 워크플로우 이름을 보여준다(키가 아니라).
         label: node.nodeType === "SUBWF"
           ? `▷ ${node.subWorkflowName ?? node.nodeKey}`
-          : (node.jobName
-            ? jobNodeLabel(node.parentGroupName ?? undefined, node.jobName)
-            : node.nodeKey),
+          // 노드에는 job 이름만 쓴다. 상위 경로를 함께 적으면 이름이 길어져 오히려
+          // 구분이 어렵고, 그 정보는 우측 속성창에 이미 나온다(2026-09-03 제보).
+          : (node.jobName ?? node.nodeKey),
         jobId: node.jobId,
         nodeType: node.nodeType,
         triggerRule: node.triggerRule,
@@ -330,7 +323,7 @@ export function WorkflowCanvasPage() {
         position: at
           ?? { x: 60 + (current.length % 3) * 200, y: 40 + Math.floor(current.length / 3) * 120 },
         data: {
-          label: jobNodeLabel(parentLabel, job.jobName),
+          label: job.jobName,
           jobId: job.id,
           nodeType: "JOB",
           triggerRule: "ALL_SUCCESS",
