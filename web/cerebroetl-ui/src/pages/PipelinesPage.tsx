@@ -11,7 +11,6 @@ import {
   Input,
   message,
   Popconfirm,
-  Segmented,
   Select,
   Space,
   Spin,
@@ -22,9 +21,17 @@ import {
   Typography,
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
+import { Dropdown, Form, Modal } from "antd";
 import type { TreeProps } from "antd";
 import { useNavigate } from "react-router-dom";
 import { listConnections } from "../api/connections";
+import {
+  createPipelineGroup,
+  deletePipelineGroup,
+  listPipelineGroups,
+  updatePipelineGroup,
+  type PipelineGroupResponse,
+} from "../api/pipelineGroups";
 import {
   getPipelineDashboardSummary,
   getRealtimePipelineMetrics,
@@ -84,13 +91,25 @@ export function PipelinesPage() {
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [treeSearch, setTreeSearch] = useState("");
+  // 그룹 만들기·이름 고치기 모달. mode 로 무엇을 하는 중인지 구분한다.
+  const [groupEdit, setGroupEdit] = useState<
+    { mode: "create"; parentId: number | null } | { mode: "rename"; group: PipelineGroupResponse } | undefined
+  >();
+  const [groupForm] = Form.useForm<{ name: string }>();
   const [selectedTreeKey, setSelectedTreeKey] = useState<string>("all");
-  const [quickFilter, setQuickFilter] = useState("ALL");
 
   const { data: pipelines, isLoading } = useQuery({
     queryKey: ["pipelines"],
     queryFn: listPipelines,
   });
+  const { data: groups } = useQuery({
+    queryKey: ["pipeline-groups"],
+    queryFn: listPipelineGroups,
+  });
+  const groupById = useMemo(
+    () => new Map((groups ?? []).map((group) => [group.id, group])),
+    [groups],
+  );
   const { data: runtimeStatuses } = useQuery({
     queryKey: ["pipeline-runtime-statuses"],
     queryFn: listPipelineRuntimeStatuses,
@@ -135,32 +154,31 @@ export function PipelinesPage() {
     enabled: detailPipelineId !== null,
   });
 
-  const matchesQuickFilter = (pipeline: PipelineResponse) => {
-    const runtimeStatus = runtimeByPipeline.get(pipeline.id)?.runtimeStatus;
-    const lag = metricByPipeline.get(pipeline.id)?.consumerLag ?? 0;
-    if (quickFilter === "READY") return runtimeStatus === "READY" || (!runtimeStatus && pipeline.status === "READY");
-    if (quickFilter === "RUNNING") return runtimeStatus === "RUNNING";
-    if (quickFilter === "LAGGING") return lag > 0;
-    if (quickFilter === "ERROR") return ["FAILED", "MISSING", "DEGRADED"].includes(runtimeStatus ?? pipeline.status);
-    if (quickFilter === "STOPPED") return ["STOPPED", "PAUSED"].includes(runtimeStatus ?? pipeline.status);
-    return true;
-  };
+
+  /** 고른 그룹과 그 하위 전부의 id. 트리 숫자와 목록이 같은 범위를 보게 한다. */
+  const groupScope = useMemo(() => {
+    const scope = new Set<number>();
+    if (!selectedTreeKey.startsWith("group:")) return scope;
+    let frontier = [Number(selectedTreeKey.split(":")[1])];
+    while (frontier.length) {
+      frontier.forEach((id) => scope.add(id));
+      const parents = frontier;
+      frontier = (groups ?? [])
+        .filter((g) => g.parentId !== null && parents.includes(g.parentId) && !scope.has(g.id))
+        .map((g) => g.id);
+    }
+    return scope;
+  }, [selectedTreeKey, groups]);
 
   const filteredPipelines = useMemo(() => {
     const name = nameFilter.trim().toLowerCase();
     const topic = topicFilter.trim().toLowerCase();
     return (pipelines ?? []).filter((p) => {
-      if (!matchesQuickFilter(p)) return false;
-      if (selectedTreeKey.startsWith("connection:")) {
-        const connectionId = Number(selectedTreeKey.split(":")[1]);
-        if (p.sourceConnectionId !== connectionId) return false;
-      } else if (selectedTreeKey.startsWith("schema:")) {
-        const [, connectionId, schema] = selectedTreeKey.split(":");
-        if (p.sourceConnectionId !== Number(connectionId) || p.sourceSchema !== schema) return false;
+      if (selectedTreeKey.startsWith("group:")) {
+        // 그룹을 고르면 하위 그룹의 파이프라인까지 함께 본다(트리의 숫자와 같은 기준).
+        if (!groupScope.has(p.groupId ?? -1)) return false;
       } else if (selectedTreeKey.startsWith("pipeline:")) {
         if (p.id !== Number(selectedTreeKey.split(":")[1])) return false;
-      } else if (selectedTreeKey === "log-files" && p.pipelineType !== "LOG_FILE") {
-        return false;
       }
       if (name && !p.name.toLowerCase().includes(name)) {
         return false;
@@ -182,66 +200,172 @@ export function PipelinesPage() {
       const bLag = metricByPipeline.get(b.id)?.consumerLag ?? -1;
       return bLag - aLag;
     });
-  }, [pipelines, nameFilter, topicFilter, statusFilter, typeFilter, metricByPipeline, runtimeByPipeline, selectedTreeKey, quickFilter]);
+  }, [pipelines, nameFilter, topicFilter, statusFilter, typeFilter, metricByPipeline, runtimeByPipeline, selectedTreeKey, groupScope]);
 
+  /**
+   * 관리 트리. 사용자가 만든 «그룹» 계층으로 세운다.
+   *
+   * <p>예전에는 소스 DB > 스키마로 자동으로 묶었다. 그건 파이프라인이 어디서 오는지일 뿐,
+   * 운영자가 묶어서 보고 싶은 단위(업무·과제·담당)와 다르다. 그래서 ETL 이 NiFi 그룹으로
+   * 폴더를 갖듯 CDC 도 자기 폴더를 갖는다. 소스·스키마는 목록 표와 상세에 그대로 있다.
+   *
+   * <p>최상단 «전체 파이프라인»은 서버에 행이 없는 가상 뿌리다. 그래서 여기서만 «하위 그룹
+   * 생성»이 되고 수정·삭제는 없다. 그룹을 아직 하나도 안 만들었으면 파이프라인이 전부
+   * 뿌리 바로 밑에 놓여 예전과 비슷하게 보인다.
+   */
   const pipelineTreeData = useMemo(() => {
     const search = treeSearch.trim().toLowerCase();
     const connectionNameById = new Map((connections ?? []).map((connection) => [connection.id, connection.name]));
-    const sourceGroups = new Map<number, Map<string, PipelineResponse[]>>();
-    const logPipelines: PipelineResponse[] = [];
 
-    for (const pipeline of pipelines ?? []) {
-      if (!matchesQuickFilter(pipeline)) continue;
-      if (pipeline.pipelineType === "LOG_FILE" || pipeline.sourceConnectionId == null) {
-        if (!search || pipeline.name.toLowerCase().includes(search) || pipeline.targetTable.toLowerCase().includes(search)) {
-          logPipelines.push(pipeline);
-        }
-        continue;
-      }
-      const matches = !search
-        || pipeline.name.toLowerCase().includes(search)
-        || (pipeline.sourceTable ?? "").toLowerCase().includes(search)
-        || (pipeline.sourceSchema ?? "").toLowerCase().includes(search)
-        || (connectionNameById.get(pipeline.sourceConnectionId) ?? "").toLowerCase().includes(search);
-      if (!matches) continue;
-      const schemas = sourceGroups.get(pipeline.sourceConnectionId) ?? new Map<string, PipelineResponse[]>();
-      const schema = pipeline.sourceSchema ?? "스키마 없음";
-      schemas.set(schema, [...(schemas.get(schema) ?? []), pipeline]);
-      sourceGroups.set(pipeline.sourceConnectionId, schemas);
-    }
+    const matches = (pipeline: PipelineResponse) => !search
+      || pipeline.name.toLowerCase().includes(search)
+      || (pipeline.sourceTable ?? "").toLowerCase().includes(search)
+      || (pipeline.sourceSchema ?? "").toLowerCase().includes(search)
+      || (pipeline.targetTable ?? "").toLowerCase().includes(search)
+      || (pipeline.sourceConnectionId != null
+          && (connectionNameById.get(pipeline.sourceConnectionId) ?? "").toLowerCase().includes(search));
 
-    const children: NonNullable<TreeProps["treeData"]> = [...sourceGroups.entries()].map(([connectionId, schemas]) => {
-      const count = [...schemas.values()].reduce((sum, rows) => sum + rows.length, 0);
-      return {
-        key: `connection:${connectionId}`,
-        title: <Space size={4}><span>{connectionNameById.get(connectionId) ?? `연결 ${connectionId}`}</span><Tag>{count}</Tag></Space>,
-        children: [...schemas.entries()].map(([schema, rows]) => ({
-          key: `schema:${connectionId}:${schema}`,
-          title: <Space size={4}><span>{schema}</span><Tag>{rows.length}</Tag></Space>,
-          children: rows.map((pipeline) => ({
-            key: `pipeline:${pipeline.id}`,
-            title: <Space size={4}><span>{pipeline.name}</span><Tag color={RUNTIME_STATUS_COLOR[runtimeByPipeline.get(pipeline.id)?.runtimeStatus ?? ""] ?? "default"}>{pipeline.sourceTable}</Tag></Space>,
-            isLeaf: true,
-          })),
-        })),
-      };
+    const shown = (pipelines ?? []).filter(matches);
+    const byGroup = new Map<number | null, PipelineResponse[]>();
+    shown.forEach((pipeline) => {
+      // 없는 그룹을 가리키는 파이프라인(그룹이 지워진 뒤 등)은 미지정으로 본다 - 트리에서
+      // 사라지면 손댈 방법이 없어진다.
+      const groupId = pipeline.groupId != null && groupById.has(pipeline.groupId) ? pipeline.groupId : null;
+      byGroup.set(groupId, [...(byGroup.get(groupId) ?? []), pipeline]);
     });
-    if (logPipelines.length > 0) {
-      children.push({
-        key: "log-files",
-        title: <Space size={4}><span>로그파일</span><Tag>{logPipelines.length}</Tag></Space>,
-        children: logPipelines.map((pipeline) => ({
-          key: `pipeline:${pipeline.id}`,
-          title: pipeline.name,
-          isLeaf: true,
-        })),
+
+    const pipelineNode = (pipeline: PipelineResponse) => ({
+      key: `pipeline:${pipeline.id}`,
+      title: (
+        <Space size={4}>
+          <span>{pipeline.name}</span>
+          <Tag color={RUNTIME_STATUS_COLOR[runtimeByPipeline.get(pipeline.id)?.runtimeStatus ?? ""] ?? "default"}>
+            {pipeline.sourceTable ?? pipeline.targetTable}
+          </Tag>
+        </Space>
+      ),
+      isLeaf: true,
+    });
+
+    /** 그룹 한 칸과 그 아래(하위 그룹 + 그 그룹의 파이프라인). 숫자는 하위까지 합친 수다. */
+    const groupNode = (group: PipelineGroupResponse): { node: NonNullable<TreeProps["treeData"]>[number]; count: number } => {
+      const subs = (groups ?? []).filter((g) => g.parentId === group.id).map(groupNode);
+      const own = byGroup.get(group.id) ?? [];
+      const count = own.length + subs.reduce((sum, sub) => sum + sub.count, 0);
+      return {
+        count,
+        node: {
+          key: `group:${group.id}`,
+          title: <Space size={4}><span>{group.name}</span><Tag>{count}</Tag></Space>,
+          children: [...subs.map((sub) => sub.node), ...own.map(pipelineNode)],
+        },
+      };
+    };
+
+    const rootGroups = (groups ?? []).filter((g) => g.parentId === null).map(groupNode);
+    const ungrouped = (byGroup.get(null) ?? []).map(pipelineNode);
+    const children: NonNullable<TreeProps["treeData"]> = [
+      ...rootGroups.map((root) => root.node),
+      ...ungrouped,
+    ];
+    const visibleCount = (pipelines ?? []).length;
+    return [{ key: "all", title: <Space size={4}><span>전체 파이프라인</span><Tag>{visibleCount}</Tag></Space>, children }];
+  }, [pipelines, connections, groups, groupById, treeSearch, runtimeByPipeline]);
+
+  /**
+   * 트리 우클릭 메뉴.
+   *
+   * <p>최상단 «전체 파이프라인»은 서버에 행이 없는 가상 뿌리라 «하위 그룹 생성»만 둔다.
+   * 그 아래 그룹부터 이름 수정·삭제가 붙는다. 파이프라인 줄에는 메뉴가 없다(파이프라인
+   * 자체의 삭제·상세는 오른쪽 목록에서 한다).
+   */
+  /**
+   * 파이프라인이 트리에서 놓인 자리를 «전체 파이프라인 > 상위 > 하위» 로 적는다.
+   *
+   * <p>그룹이 없으면 뿌리 바로 밑이므로 «전체 파이프라인»만 나온다. 그룹이 지워졌는데
+   * 파이프라인이 그 id 를 아직 들고 있는 경우도 트리와 같게 미지정으로 본다.
+   */
+  const groupPathOf = (groupId: number | null) => {
+    const names: string[] = [];
+    let current = groupId != null ? groupById.get(groupId) : undefined;
+    const guard = new Set<number>();          // 데이터가 꼬여 순환이 생겨도 멈춘다
+    while (current && !guard.has(current.id)) {
+      guard.add(current.id);
+      names.unshift(current.name);
+      current = current.parentId != null ? groupById.get(current.parentId) : undefined;
+    }
+    return ["전체 파이프라인", ...names].join(" > ");
+  };
+
+  const treeMenuItems = (key: string) => {
+    if (!canWrite) return [];
+    if (key === "all") {
+      return [{ key: "create", label: "하위 그룹 생성" }];
+    }
+    if (key.startsWith("group:")) {
+      return [
+        { key: "create", label: "하위 그룹 생성" },
+        { key: "rename", label: "그룹 수정" },
+        { key: "delete", label: "그룹 삭제", danger: true },
+      ];
+    }
+    return [];
+  };
+
+  const onTreeMenu = (key: string, action: string) => {
+    const groupId = key.startsWith("group:") ? Number(key.split(":")[1]) : null;
+    if (action === "create") {
+      setGroupEdit({ mode: "create", parentId: groupId });
+      groupForm.setFieldsValue({ name: "" });
+      return;
+    }
+    const group = groupId != null ? groupById.get(groupId) : undefined;
+    if (!group) return;
+    if (action === "rename") {
+      setGroupEdit({ mode: "rename", group });
+      groupForm.setFieldsValue({ name: group.name });
+      return;
+    }
+    if (action === "delete") {
+      Modal.confirm({
+        title: `그룹 «${group.name}»을(를) 삭제할까요?`,
+        content: "하위 그룹이나 파이프라인이 남아 있으면 삭제되지 않습니다. 먼저 옮겨주세요.",
+        okText: "삭제",
+        okButtonProps: { danger: true },
+        cancelText: "취소",
+        onOk: () => groupDeleteMutation.mutateAsync(group.id),
       });
     }
-    const visibleCount = (pipelines ?? []).filter(matchesQuickFilter).length;
-    return [{ key: "all", title: <Space size={4}><span>전체 파이프라인</span><Tag>{visibleCount}</Tag></Space>, children }];
-  }, [pipelines, connections, treeSearch, runtimeByPipeline, metricByPipeline, quickFilter]);
+  };
 
   const invalidatePipelines = () => queryClient.invalidateQueries({ queryKey: ["pipelines"] });
+  const invalidateGroups = () => queryClient.invalidateQueries({ queryKey: ["pipeline-groups"] });
+
+  const groupMutation = useMutation({
+    mutationFn: (input: { id?: number; parentId: number | null; name: string }) =>
+      input.id === undefined
+        ? createPipelineGroup({ parentId: input.parentId, name: input.name }).then(() => undefined)
+        : updatePipelineGroup(input.id, { parentId: input.parentId, name: input.name }).then(() => undefined),
+    onSuccess: () => {
+      message.success("그룹을 저장했습니다.");
+      setGroupEdit(undefined);
+      groupForm.resetFields();
+      void invalidateGroups();
+    },
+    onError: (error: Error) => message.error(error.message),
+  });
+
+  const groupDeleteMutation = useMutation({
+    mutationFn: deletePipelineGroup,
+    onSuccess: () => {
+      message.success("그룹을 삭제했습니다.");
+      // 지운 그룹을 고른 채였다면 트리 선택이 허공을 가리키므로 최상단으로 돌린다.
+      setSelectedTreeKey("all");
+      void invalidateGroups();
+      void invalidatePipelines();
+    },
+    onError: (error: Error) => message.error(error.message),
+  });
 
   const deleteMutation = useMutation({
     mutationFn: deletePipeline,
@@ -309,30 +433,6 @@ export function PipelinesPage() {
         ))}
         <div style={{ display: "grid", gridTemplateColumns: "290px minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
           <Card size="small" title="파이프라인 탐색" styles={{ body: { padding: 12, overflowX: "auto" } }}>
-            <Segmented
-              block
-              size="small"
-              value={quickFilter}
-              onChange={(value) => { setQuickFilter(String(value)); setSelectedTreeKey("all"); }}
-              options={[
-                { value: "ALL", label: "전체" },
-                { value: "READY", label: "대기" },
-                { value: "RUNNING", label: "실행" },
-              ]}
-              style={{ marginBottom: 8 }}
-            />
-            <Segmented
-              block
-              size="small"
-              value={["LAGGING", "ERROR", "STOPPED"].includes(quickFilter) ? quickFilter : undefined}
-              onChange={(value) => { setQuickFilter(String(value)); setSelectedTreeKey("all"); }}
-              options={[
-                { value: "LAGGING", label: "지연" },
-                { value: "ERROR", label: "오류" },
-                { value: "STOPPED", label: "중지" },
-              ]}
-              style={{ marginBottom: 12 }}
-            />
             <Input.Search
               allowClear
               placeholder="이름·스키마·테이블 검색"
@@ -342,6 +442,9 @@ export function PipelinesPage() {
             />
             <Tree
               blockNode
+              // treeData 가 조회 후에 채워지므로 defaultExpandAll 만으로는 첫 렌더(빈 트리)에
+              // 걸려 아무것도 안 펼쳐진다. 데이터가 들어오면 key 가 바뀌어 다시 마운트되게 한다.
+              key={`pipeline-tree-${(pipelines ?? []).length}-${(groups ?? []).length}`}
               defaultExpandAll
               autoExpandParent={Boolean(treeSearch)}
               treeData={pipelineTreeData}
@@ -351,6 +454,20 @@ export function PipelinesPage() {
                 // 상세창(Drawer)은 '상세' 버튼으로만 열도록 하여 선택만으로 열리지 않게 한다.
                 const key = String(keys[0] ?? "all");
                 setSelectedTreeKey(key);
+              }}
+              titleRender={(node) => {
+                const key = String((node as { key: React.Key }).key);
+                const title = (node as { title: React.ReactNode }).title;
+                const items = treeMenuItems(key);
+                // 파이프라인 줄에는 메뉴가 없다 - 그룹만 만들고 고치고 지운다.
+                if (!items.length) {
+                  return <span>{title}</span>;
+                }
+                return (
+                  <Dropdown trigger={["contextMenu"]} menu={{ items, onClick: ({ key: action }) => onTreeMenu(key, action) }}>
+                    <span>{title}</span>
+                  </Dropdown>
+                );
               }}
             />
           </Card>
@@ -465,6 +582,8 @@ export function PipelinesPage() {
                 children: (
                   <Descriptions column={1} bordered size="small">
                     <Descriptions.Item label="이름">{detailPipeline.name}</Descriptions.Item>
+                    {/* 트리 어디에 놓여 있는지. 최상단(전체 파이프라인)부터 순서대로 보여준다. */}
+                    <Descriptions.Item label="경로">{groupPathOf(detailPipeline.groupId)}</Descriptions.Item>
                     <Descriptions.Item label="유형">{detailPipeline.pipelineType}</Descriptions.Item>
                     <Descriptions.Item label="소스">
                       {detailPipeline.pipelineType === "LOG_FILE"
@@ -653,6 +772,39 @@ export function PipelinesPage() {
           />
         )}
       </Drawer>
+
+      {/* 그룹 만들기·이름 고치기. 위치(부모)는 우클릭한 자리로 정해지므로 이름만 받는다. */}
+      <Modal
+        open={Boolean(groupEdit)}
+        title={groupEdit?.mode === "rename" ? "그룹 수정" : "하위 그룹 생성"}
+        okText="저장"
+        cancelText="취소"
+        confirmLoading={groupMutation.isPending}
+        onCancel={() => { setGroupEdit(undefined); groupForm.resetFields(); }}
+        onOk={() => {
+          void groupForm.validateFields().then((values) => {
+            if (!groupEdit) return;
+            groupMutation.mutate(groupEdit.mode === "create"
+              ? { parentId: groupEdit.parentId, name: values.name }
+              // 이름만 고칠 때도 현재 부모를 그대로 실어 보낸다. 안 보내면 서버가
+              // «최상단으로 옮긴다»로 읽어 그룹이 트리 꼭대기로 튀어 오른다.
+              : { id: groupEdit.group.id, parentId: groupEdit.group.parentId, name: values.name });
+          });
+        }}
+      >
+        <Form form={groupForm} layout="vertical">
+          <Form.Item
+            name="name"
+            label="그룹 이름"
+            rules={[
+              { required: true, message: "그룹 이름을 입력해주세요." },
+              { max: 100, message: "100자를 넘을 수 없습니다." },
+            ]}
+          >
+            <Input placeholder="예: 주문업무" autoFocus />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

@@ -59,6 +59,8 @@ export interface PipelineResponse {
   loadMode: PipelineLoadMode;
   deltaOpColumn: string | null;
   description: string | null;
+  /** 관리 화면 트리에서 놓이는 그룹. null 이면 «그룹 미지정». */
+  groupId: number | null;
   connectors: PipelineConnectorSummary[];
   createdAt: string;
   updatedAt: string;
@@ -109,6 +111,8 @@ export interface PipelineCreateRequest {
   loadMode?: PipelineLoadMode;
   deltaOpColumn?: string;
   description?: string;
+  /** 관리 화면 트리에서 놓일 그룹. 비우면 «그룹 미지정». */
+  groupId?: number | null;
 }
 
 // web/backend의 LogPipelineCreateRequest와 1:1. parseType/multilineEnabled는 이번 버전

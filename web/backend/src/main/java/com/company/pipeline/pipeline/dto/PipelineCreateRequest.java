@@ -21,19 +21,21 @@ public record PipelineCreateRequest(
         /** UPSERT(기본) 또는 DELTA_APPEND. {@link com.company.pipeline.pipeline.PipelineLoadMode} */
         String loadMode,
         /** DELTA_APPEND 의 구분컬럼명. 비우면 cdc_op. */
-        String deltaOpColumn
+        String deltaOpColumn,
+        /** 관리 화면 트리에서 놓일 그룹. 비우면 «그룹 미지정». */
+        Long groupId
 ) {
     public PipelineCreateRequest(String name, Long sourceConnectionId, Long targetConnectionId,
             String sourceSchema, String sourceTable, String targetSchema, String targetTable,
             String topicPrefix, String snapshotMode, Boolean deleteEnabled, String description) {
         this(name, sourceConnectionId, targetConnectionId, sourceSchema, sourceTable, targetSchema, targetTable,
-                topicPrefix, snapshotMode, List.of(), List.of(), deleteEnabled, description, null, null);
+                topicPrefix, snapshotMode, List.of(), List.of(), deleteEnabled, description, null, null, null);
     }
 
     public PipelineCreateRequest(String name, Long sourceConnectionId, Long targetConnectionId,
             String sourceSchema, String sourceTable, String targetSchema, String targetTable,
             String topicPrefix, Boolean deleteEnabled, String description) {
         this(name, sourceConnectionId, targetConnectionId, sourceSchema, sourceTable, targetSchema, targetTable,
-                topicPrefix, "INITIAL", List.of(), List.of(), deleteEnabled, description, null, null);
+                topicPrefix, "INITIAL", List.of(), List.of(), deleteEnabled, description, null, null, null);
     }
 }

@@ -99,6 +99,11 @@ public class PipelineDefinition extends BaseAuditEntity {
     @Column(columnDefinition = "TEXT")
     private String description;
 
+    // 관리 화면 트리에서 이 파이프라인이 놓이는 그룹. NULL 이면 «그룹 미지정»으로
+    // 전체 파이프라인 바로 아래에 놓인다(그룹은 나중에 지정해도 된다).
+    @Column(name = "group_id")
+    private Long groupId;
+
     @Column(name = "created_by", length = 100)
     private String createdBy;
 
