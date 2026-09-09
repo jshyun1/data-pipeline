@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Empty, Form, Input, message, Modal, Popconfirm, Space, Table, Tag, Tree, TreeSelect } from "antd";
+import { Button, Card, Empty, Form, Input, message, Modal, Popconfirm, Space, Table, Tag, Tree } from "antd";
 import { PlusOutlined, SyncOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useAuth } from "../auth/AuthContext";
-import { getNifiProcessGroupTree, type NifiProcessGroupTreeNode } from "../api/platform";
 import { syncEtlJobs } from "../api/etlJobs";
 import {
   createWorkflow,
@@ -15,17 +14,20 @@ import {
   unpublishWorkflow,
   type WorkflowSummary,
 } from "../api/workflows";
+import {
+  buildWorkflowHierarchy,
+  flattenWorkflowTree,
+  type WorkflowTreeItem,
+} from "../utils/workflowTree";
 
 // 워크플로우 목록. 여기서 만들고, 캔버스(설계)로 들어가 job을 배치한다.
 //
 // "게시" 여부가 곧 "Airflow에 DAG가 있는가"다. 저장만 해서는 DAG가 생기지 않으므로
 // 목록에서 그 상태를 한눈에 보여준다.
 //
-// 워크플로우는 NiFi 그룹에 속한다(Informatica의 폴더와 같은 자리). 왼쪽 트리에서 그룹을
-// 고르면 그 그룹 워크플로우만 보여주고, 새로 만들 때도 그 그룹으로 들어간다.
-
-/** 그룹 트리에서 "그룹 미지정"을 고른 상태. 여러 그룹의 job을 모은 워크플로우가 여기 모인다. */
-const UNGROUPED = "__ungrouped__";
+// 왼쪽 트리는 «워크플로우 계층»이다. 최상단은 누구의 하위도 아닌 워크플로우이고, 그 아래는
+// 캔버스에 노드로 얹어 둔 하위 워크플로우다. 고르면 그 워크플로우와 하위 전부를 표에 보여준다.
+// 워크플로우는 업무 그룹(NiFi 그룹)에 속하지 않는다. 분류는 이 계층이 전부다.
 
 export function WorkflowDesignPage() {
   const navigate = useNavigate();
@@ -35,17 +37,16 @@ export function WorkflowDesignPage() {
   const canWrite = !permissionsLoaded || can("NIFI", "WRITE");
   const canPublish = !permissionsLoaded || can("AIRFLOW", "WRITE");
   const [createOpen, setCreateOpen] = useState(false);
-  const [selectedGroup, setSelectedGroup] = useState<string>();
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<number>();
   const [form] = Form.useForm();
 
   const { data, isLoading } = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
-  const treeQuery = useQuery({ queryKey: ["nifi-pg-tree"], queryFn: getNifiProcessGroupTree });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["workflows"] });
 
   /**
-   * 업무 그룹 트리는 NiFi 미러링 결과라, 캔버스에서 그룹을 만든 직후에는 여기 나오지 않는다
-   * (미러링은 5분 주기). 기다리지 않고 바로 반영하고 싶을 때 쓴다.
+   * ETL(NiFi)에서 만든 job 을 바로 끌어와 쓰고 싶을 때. 미러링은 5분 주기라 방금 만든 job 이
+   * 캔버스 팔레트에 아직 없을 수 있는데, 이걸 누르면 기다리지 않고 반영된다.
    */
   const syncMutation = useMutation({
     mutationFn: syncEtlJobs,
@@ -57,7 +58,6 @@ export function WorkflowDesignPage() {
     },
     onError: (error: Error) => message.warning(`동기화 실패(목록만 새로고침합니다): ${error.message}`),
     onSettled: () => {
-      void treeQuery.refetch();
       void refresh();
     },
   });
@@ -95,98 +95,52 @@ export function WorkflowDesignPage() {
   const workflows = data ?? [];
 
   /**
-   * 그룹 트리. ETL 화면과 같은 NiFi 그룹 계층을 쓰되, 워크플로우를 담을 수 있는
-   * GROUPING 그룹만 남긴다(job 그룹은 워크플로우의 재료지 보관함이 아니다).
-   * 오른쪽 숫자는 그 그룹과 하위에 있는 워크플로우 수다.
+   * 워크플로우 트리. 최상단은 «누구의 하위도 아닌» 워크플로우이고, 그 아래는 캔버스에
+   * 노드로 얹어 둔 하위 워크플로우다. 이름 오른쪽 숫자는 그 워크플로우 캔버스에 놓인
+   * job 수다(하위 워크플로우 노드는 세지 않는다 - 그건 자기 줄에서 다시 세어진다).
+   *
+   * 예전에는 NiFi 업무 그룹(DW/DZ/Template)으로 묶어 보여줬는데, 여기서 알고 싶은 것은
+   * «total 을 돌리면 무엇이 같이 도는가»이고 그건 그룹이 아니라 캔버스에 그린 상하 관계다.
    */
-  const countByGroup = new Map<string, number>();
-  workflows.forEach((w) => {
-    const key = w.nifiGroupPgId ?? UNGROUPED;
-    countByGroup.set(key, (countByGroup.get(key) ?? 0) + 1);
-  });
+  const workflowTree = buildWorkflowHierarchy(workflows);
 
-  const buildGroupTree = (node: NifiProcessGroupTreeNode): {
-    key: string; title: React.ReactNode; children?: unknown[]; count: number;
-  } | null => {
-    if (node.groupType === "JOB") {
-      return null;
-    }
-    const children = (node.children ?? []).map(buildGroupTree).filter(Boolean) as Array<{
-      key: string; title: React.ReactNode; children?: unknown[]; count: number;
-    }>;
-    const count = (countByGroup.get(node.id) ?? 0)
-      + children.reduce((sum, child) => sum + child.count, 0);
-    return {
-      key: node.id,
-      count,
-      title: (
-        <span>
-          {node.name}
-          {count ? <span style={{ color: "#888" }}> ({count})</span> : null}
-        </span>
-      ),
-      children: children.length ? children : undefined,
-    };
-  };
+  const toTreeData = (items: WorkflowTreeItem[]): Array<{
+    key: string; title: React.ReactNode; children?: unknown[];
+  }> => items.map((item) => ({
+    key: String(item.workflow.id),
+    title: (
+      <span>
+        {item.workflow.name}
+        <span style={{ color: "#888" }}> ({item.workflow.jobCount})</span>
+      </span>
+    ),
+    children: item.children.length ? toTreeData(item.children) : undefined,
+  }));
+  const workflowTreeData = toTreeData(workflowTree);
+  // 최상단은 펼쳐 둔다(= 하위 워크플로우까지 바로 보인다). 계층이 깊지 않아 이 정도가 낫다.
+  const workflowTreeOpenKeys = workflowTreeData.map((node) => node.key);
 
-  const groupTree = treeQuery.data ? [buildGroupTree(treeQuery.data)].filter(Boolean) : [];
-  // 처음에는 최상위만 펼친다(= 그 바로 아래 계층까지 보인다). 예전엔 전부 펼쳐서
-  // 그룹이 몇 겹만 되어도 목록이 길어지고, 정작 어디를 봐야 하는지 눈에 안 들어왔다.
-  const rootGroupKeys = groupTree.map((node) => (node as { key: string }).key);
-
-  const groupNames = new Map<string, string>();
-  const collectNames = (node: NifiProcessGroupTreeNode) => {
-    groupNames.set(node.id, node.name);
-    (node.children ?? []).forEach(collectNames);
-  };
-  if (treeQuery.data) {
-    collectNames(treeQuery.data);
-  }
-  const groupNameOf = (pgId: string) => groupNames.get(pgId) ?? pgId.slice(0, 8);
-  const ungroupedCount = countByGroup.get(UNGROUPED) ?? 0;
-
-  /** 그룹 id -> 그 그룹의 하위 전체 id. 상위 그룹을 고르면 하위 워크플로우까지 함께 보여준다. */
-  const subtreeIds = (root: NifiProcessGroupTreeNode | undefined, target: string): Set<string> => {
-    const found = new Set<string>();
-    const collect = (node: NifiProcessGroupTreeNode) => {
-      found.add(node.id);
-      (node.children ?? []).forEach(collect);
-    };
-    const find = (node: NifiProcessGroupTreeNode): boolean => {
-      if (node.id === target) {
-        collect(node);
-        return true;
+  /**
+   * 트리에서 워크플로우를 고르면 그 워크플로우와 <b>하위 전부</b>를 표에 보여준다.
+   * 상위 그룹을 고르면 하위까지 보여주던 예전 동작을 계층 기준으로 옮긴 것이다 -
+   * total 을 고르면 total·dz_com_daily·dz_pop_daily 가 함께 보인다.
+   */
+  const findSubtree = (items: WorkflowTreeItem[], id: number): WorkflowTreeItem | undefined => {
+    for (const item of items) {
+      if (item.workflow.id === id) {
+        return item;
       }
-      return (node.children ?? []).some(find);
-    };
-    if (root) {
-      find(root);
+      const hit = findSubtree(item.children, id);
+      if (hit) {
+        return hit;
+      }
     }
-    return found;
+    return undefined;
   };
-
-  const visible = !selectedGroup
-    ? workflows
-    : selectedGroup === UNGROUPED
-      ? workflows.filter((w) => !w.nifiGroupPgId)
-      : (() => {
-          const ids = subtreeIds(treeQuery.data, selectedGroup);
-          return workflows.filter((w) => w.nifiGroupPgId && ids.has(w.nifiGroupPgId));
-        })();
-
-  /** 그룹 선택기(생성 모달)용. 워크플로우를 담을 수 있는 그룹만 고를 수 있다. */
-  const buildGroupOptions = (node: NifiProcessGroupTreeNode): {
-    value: string; title: string; children?: unknown[];
-  } | null => {
-    if (node.groupType === "JOB") {
-      return null;
-    }
-    const children = (node.children ?? []).map(buildGroupOptions).filter(Boolean);
-    return { value: node.id, title: node.name, children: children.length ? children : undefined };
-  };
-  const groupOptions = treeQuery.data
-    ? [buildGroupOptions(treeQuery.data)].filter(Boolean)
-    : [];
+  const selectedSubtree = selectedWorkflowId === undefined
+    ? undefined
+    : findSubtree(workflowTree, selectedWorkflowId);
+  const visible = selectedSubtree ? flattenWorkflowTree([selectedSubtree]) : workflows;
 
   const columns: ColumnsType<WorkflowSummary> = [
     {
@@ -201,14 +155,7 @@ export function WorkflowDesignPage() {
         </Space>
       ),
     },
-    {
-      title: "업무 그룹",
-      width: 130,
-      render: (_, row) => row.nifiGroupPgId
-        ? <span>{groupNameOf(row.nifiGroupPgId)}</span>
-        : <span style={{ color: "#888" }}>미지정</span>,
-    },
-    { title: "job 수", dataIndex: "nodeCount", width: 90 },
+    { title: "job 수", dataIndex: "jobCount", width: 90 },
     {
       title: "스케줄",
       width: 160,
@@ -271,43 +218,26 @@ export function WorkflowDesignPage() {
           동기화
         </Button>
         <Button type="primary" icon={<PlusOutlined />} disabled={!canWrite}
-                onClick={() => {
-                  // 트리에서 그룹을 골라둔 채로 만들면 그 그룹으로 들어가는 게 자연스럽다.
-                  form.setFieldsValue({
-                    nifiGroupPgId: selectedGroup && selectedGroup !== UNGROUPED ? selectedGroup : undefined,
-                  });
-                  setCreateOpen(true);
-                }}>
+                onClick={() => setCreateOpen(true)}>
           새 워크플로우
         </Button>
         </Space>
       }
     >
       <div className="wf-design-body">
-        <Card size="small" title="업무 그룹" style={{ width: 260, flex: "0 0 260px" }}
-              extra={selectedGroup
-                ? <Button size="small" type="link" onClick={() => setSelectedGroup(undefined)}>전체</Button>
+        <Card size="small" title="워크플로우" style={{ width: 260, flex: "0 0 260px" }}
+              extra={selectedWorkflowId !== undefined
+                ? <Button size="small" type="link" onClick={() => setSelectedWorkflowId(undefined)}>전체</Button>
                 : null}>
-          {treeQuery.isLoading ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="불러오는 중" /> : (
-            <>
-              <Tree
-                blockNode
-                // 트리 데이터가 실린 뒤에 마운트되므로(위 isLoading 분기) 이 기본값이 그대로 먹는다.
-                defaultExpandedKeys={rootGroupKeys}
-                selectedKeys={selectedGroup ? [selectedGroup] : []}
-                treeData={groupTree as never}
-                onSelect={(keys) => setSelectedGroup(keys.length ? String(keys[0]) : undefined)}
-              />
-              {/* 그룹을 안 정한 워크플로우도 어딘가에서는 보여야 한다. */}
-              {ungroupedCount > 0 && (
-                <Tree
-                  blockNode
-                  selectedKeys={selectedGroup === UNGROUPED ? [UNGROUPED] : []}
-                  treeData={[{ key: UNGROUPED, title: `그룹 미지정 (${ungroupedCount})` }] as never}
-                  onSelect={(keys) => setSelectedGroup(keys.length ? UNGROUPED : undefined)}
-                />
-              )}
-            </>
+          {isLoading ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="불러오는 중" /> : (
+            <Tree
+              blockNode
+              // 트리 데이터가 실린 뒤에 마운트되므로(위 isLoading 분기) 이 기본값이 그대로 먹는다.
+              defaultExpandedKeys={workflowTreeOpenKeys}
+              selectedKeys={selectedWorkflowId !== undefined ? [String(selectedWorkflowId)] : []}
+              treeData={workflowTreeData as never}
+              onSelect={(keys) => setSelectedWorkflowId(keys.length ? Number(keys[0]) : undefined)}
+            />
           )}
         </Card>
 
@@ -321,9 +251,7 @@ export function WorkflowDesignPage() {
           pagination={{ pageSize: 20, showTotal: (total) => `전체 ${total}건` }}
           locale={{
             emptyText: (
-              <Empty description={selectedGroup
-                ? "이 그룹에는 아직 워크플로우가 없습니다."
-                : "아직 워크플로우가 없습니다. ETL에서 만든 job을 캔버스에 배치해 워크플로우를 구성하세요."} />
+              <Empty description="아직 워크플로우가 없습니다. ETL에서 만든 job을 캔버스에 배치해 워크플로우를 구성하세요." />
             ),
           }}
         />
@@ -339,14 +267,8 @@ export function WorkflowDesignPage() {
         cancelText="취소"
       >
         <Form form={form} layout="vertical" onFinish={(values) => createMutation.mutate(values)}>
-          {/* 워크플로우 키(=dag_id의 축)는 서버가 그룹·이름에서 만든다. 사용자가 짓게 하면
-              그룹이 달라도 같은 이름을 써서 부딪히고, 규칙을 어긴 값이 게시 때 터진다. */}
-          <Form.Item name="nifiGroupPgId" label="업무 그룹"
-                     extra="이 그룹의 job으로 워크플로우를 구성합니다. 비우면 그룹 없이 만듭니다."
-                     rules={[{ required: true, message: "업무 그룹을 골라주세요." }]}>
-            <TreeSelect treeDefaultExpandAll placeholder="그룹 선택"
-                        treeData={groupOptions as never} />
-          </Form.Item>
+          {/* 워크플로우 키(=dag_id의 축)는 서버가 이름에서 만든다. 사용자가 짓게 하면
+              규칙을 어긴 값이 게시 때 터진다. */}
           <Form.Item name="name" label="이름" rules={[{ required: true, message: "이름을 입력해주세요." }]}>
             <Input placeholder="DW 일배치" />
           </Form.Item>

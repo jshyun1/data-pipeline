@@ -50,7 +50,7 @@ import {
   sourceLabel,
   targetLabel,
 } from "../utils/cdcPresentation";
-import { getNifiProcessGroupTree, type NifiProcessGroupTreeNode } from "../api/platform";
+import { buildWorkflowHierarchy, type WorkflowTreeItem } from "../utils/workflowTree";
 import { getEtlJob, listEtlJobs } from "../api/etlJobs";
 import { categorizeDag, extractKafkaPipelineId, type DagCategory } from "../utils/dagHistory";
 import { scheduleDescription } from "../utils/schedulePreset";
@@ -276,7 +276,6 @@ type ListScope =
   | { kind: "cdc"; scope: "schema"; connectionId: number; schema: string }
   | { kind: "cdc"; scope: "logfile" }
   | { kind: "cdc"; scope: "pipeline"; pipelineId: number }
-  | { kind: "etl"; groupPgId: string; groupName: string }
   | { kind: "dag"; dagId: string }
   | { kind: "metric"; category: BusinessCategory; metric: StatusMetric };
 
@@ -369,7 +368,6 @@ function StatusCard({
 
 function BusinessTree({
   dags,
-  groupTree,
   selectedDagId,
   search,
   alertsByDag,
@@ -385,9 +383,7 @@ function BusinessTree({
   onExecution,
 }: {
   dags: DashboardDag[];
-  /** NiFi 프로세스 그룹 계층. ETL은 이 구조 그대로 보여준다(ETL 관리 화면과 동일). */
-  groupTree?: NifiProcessGroupTreeNode | null;
-  /** 워크플로우 목록. DAG를 어느 그룹에 붙일지는 여기의 nifiGroupPgId가 정한다. */
+  /** 워크플로우 목록. ETL 가지는 이 상하 관계로 그린다(스케줄링 화면 트리와 같은 모양). */
   workflows: WorkflowSummary[];
   /** CDC 가지는 CDC 관리 화면과 같은 계층(연결 → 스키마 → 파이프라인)으로 그린다. */
   pipelines: PipelineResponse[];
@@ -419,7 +415,7 @@ function BusinessTree({
    * 사용자가 펼치게 한다.
    */
   useEffect(() => {
-    if (seeded.current || !groupTree) {
+    if (seeded.current || workflows.length === 0) {
       return;
     }
     seeded.current = true;
@@ -430,16 +426,18 @@ function BusinessTree({
         initial.add(`cdc:schema:${pipeline.sourceConnectionId}:${pipeline.sourceSchema ?? "스키마 없음"}`);
       }
     });
-    const collapseChildren = (node: NifiProcessGroupTreeNode) => {
-      (node.children ?? []).forEach((child) => {
-        initial.add(`group:${child.id}`);
-        collapseChildren(child);
+    // ETL 은 최상단 워크플로우까지만 보이게 하고 하위는 접어 둔다.
+    const collapseChildren = (items: WorkflowTreeItem[]) => {
+      items.forEach((item) => {
+        if (item.children.length) {
+          initial.add(`wf:${item.workflow.id}`);
+        }
+        collapseChildren(item.children);
       });
     };
-    initial.add(`group:${groupTree.id}`);
-    collapseChildren(groupTree);
+    collapseChildren(buildWorkflowHierarchy(workflows.filter((w) => w.published)));
     setCollapsedNodes(initial);
-  }, [groupTree, pipelines]);
+  }, [workflows, pipelines]);
   /**
    * 가운데 목록에서 고른 항목이 트리에서 보이도록 조상 가지를 편다.
    *
@@ -451,23 +449,19 @@ function BusinessTree({
   useEffect(() => {
     const open = new Set<string>();
     if (selectedDagId) {
-      const groupPgId = groupOfWorkflowDag.get(selectedDagId)
-        // 아직 워크플로우로 안 옮긴 옛 DAG는 잡 카탈로그의 프로세스 그룹으로 찾는다.
-        ?? dags.find((dag) => dag.dag_id === selectedDagId)?.nifi_process_group_id;
-      if (groupPgId && groupTree) {
-        const path: string[] = [];
-        const find = (node: NifiProcessGroupTreeNode, trail: string[]): boolean => {
-          const next = [...trail, node.id];
-          if (node.id === groupPgId) {
-            path.push(...next);
-            return true;
-          }
-          return (node.children ?? []).some((child) => find(child, next));
-        };
-        if (find(groupTree, [])) {
-          open.add("category:ETL");
-          path.forEach((id) => open.add(`group:${id}`));
+      // 고른 워크플로우까지 내려오는 «조상»만 편다(형제 가지는 접힌 채로 둔다).
+      const trail: number[] = [];
+      const find = (items: WorkflowTreeItem[], path: number[]): boolean => items.some((item) => {
+        const next = [...path, item.workflow.id];
+        if (item.workflow.dagId === selectedDagId) {
+          trail.push(...next);
+          return true;
         }
+        return find(item.children, next);
+      });
+      if (find(buildWorkflowHierarchy(workflows.filter((w) => w.published)), [])) {
+        open.add("category:ETL");
+        trail.forEach((id) => open.add(`wf:${id}`));
       }
     }
     if (revealPipelineId != null) {
@@ -494,7 +488,7 @@ function BusinessTree({
       open.forEach((key) => next.delete(key));
       return next;
     });
-  }, [selectedDagId, revealPipelineId, groupTree, pipelines, dags]);
+  }, [selectedDagId, revealPipelineId, workflows, pipelines, dags]);
 
   const toggleNode = (node: string) => {
     setCollapsedNodes((current) => {
@@ -538,26 +532,19 @@ function BusinessTree({
   );
 
   /**
-   * NiFi 그룹 계층을 그대로 그린다(ETL 관리 화면과 같은 모양).
+   * ETL 가지는 «워크플로우 계층»으로 그린다 - 스케줄링 화면 왼쪽 트리와 같은 모양이다.
    *
-   * 그룹에 대응하는 DAG가 있으면 그 자리에서 바로 선택할 수 있고, DAG가 없는 그룹
-   * (예: 체인을 담고 있는 DW/DZ, 템플릿 보관용 그룹)은 위치만 보여준다.
+   * <p>예전에는 NiFi 업무 그룹(DW/DZ) 아래에 워크플로우를 붙였다. 워크플로우에서 업무 그룹
+   * 개념을 걷어내면서 붙일 자리가 없어졌고, 애초에 여기서 알고 싶은 것은 «total 을 돌리면
+   * 무엇이 같이 도는가»라 그룹보다 상하 관계가 맞다.
+   *
+   * <p>게시한 것만 보여준다. 이 화면은 «지금 도는 것»을 보는 자리라 Airflow 에 DAG 가 없는
+   * 워크플로우는 볼 것도 누를 것도 없다(알림 감시대상 트리도 같은 기준이다).
+   * 미게시 상위 밑에 게시된 하위가 있으면 그 하위는 최상단으로 올라온다 - 빌더가 목록에 없는
+   * 부모를 «없는 것»으로 보기 때문이라, 게시된 워크플로우가 트리에서 사라지지는 않는다.
    */
-  const groupOfWorkflowDag = new Map<string, string>();
-  workflows.forEach((workflow) => {
-    if (workflow.nifiGroupPgId) {
-      groupOfWorkflowDag.set(workflow.dagId, workflow.nifiGroupPgId);
-    }
-  });
-  /** 이 그룹과 하위 전체에 걸린 워크플로우 수. 트리 오른쪽 숫자로 쓴다. */
-  /** 이 그룹이나 하위에 돌릴 것(워크플로우 또는 아직 안 옮긴 옛 DAG)이 있는지. */
-  const hasRunnable = (node: NifiProcessGroupTreeNode): boolean => {
-    const own = dags.some((d) =>
-      groupOfWorkflowDag.get(d.dag_id) === node.id
-      || d.nifi_process_group_id === node.id
-      || d.dag_id === `nifi_pipeline_${node.id.slice(0, 8)}_control`);
-    return own || (node.children ?? []).some(hasRunnable);
-  };
+  const publishedWorkflows = workflows.filter((workflow) => workflow.published);
+  const workflowHierarchy = buildWorkflowHierarchy(publishedWorkflows);
 
   /**
    * CDC 파이프라인 트리 항목. ETL DAG 항목과 같은 우클릭 메뉴(상세·실행 설정)를 준다.
@@ -687,79 +674,67 @@ function BusinessTree({
   };
 
   /**
-   * 트리 어딘가에 자리를 갖는 DAG. 접기와 무관하게 원본 트리 전체를 훑는다.
+   * 트리에 자리를 갖는 DAG. 워크플로우 계층에 올라간 것이 전부다.
    *
-   * 그려진 노드에서만 모으면, 접힌 가지에 속한 워크플로우가 «아직 배치 안 됨»으로 남아
-   * 트리 맨 아래 고아 목록에 뜬다 - 그룹을 접었는데 DAG만 그룹 밖에 나와 보이는 증상.
+   * <p>여기 없는 ETL DAG(워크플로우로 아직 안 옮긴 옛 팩토리 DAG 등)는 트리 맨 아래에
+   * 따로 늘어놓는다 - 어디에도 안 보여서 존재를 모르는 일이 없도록.
    */
-  const placedDagIds = new Set<string>();
-  const collectPlaced = (node: NifiProcessGroupTreeNode, etlDags: DashboardDag[]) => {
-    const own = etlDags.filter((d) => groupOfWorkflowDag.get(d.dag_id) === node.id);
-    own.forEach((d) => placedDagIds.add(d.dag_id));
-    if (own.length === 0) {
-      const legacy = etlDags.find((d) =>
-        d.nifi_process_group_id === node.id
-        || d.dag_id === `nifi_pipeline_${node.id.slice(0, 8)}_control`);
-      if (legacy) {
-        placedDagIds.add(legacy.dag_id);
-      }
-    }
-    (node.children ?? []).forEach((child) => collectPlaced(child, etlDags));
-  };
+  const placedDagIds = new Set(workflows.map((workflow) => workflow.dagId));
 
-  const renderGroupTree = (node: NifiProcessGroupTreeNode, etlDags: DashboardDag[], depth: number): React.ReactNode => {
-    // 실행 단위는 워크플로우(DAG)다. job 그룹은 워크플로우 안의 작업이라 트리에 두지 않는다
-    // - 눌러도 아무 일이 없는 항목이 절반을 차지했다. job은 DAG 내 하위 작업 탭에서 본다.
-    if (node.groupType === "JOB") {
-      return null;
-    }
-    // 이 그룹에 속한 워크플로우 DAG들. 워크플로우는 nifi_group_pg_id로 그룹을 안다.
-    // 그룹 미지정(nifi_group_pg_id = null)은 여기에 안 붙고 트리 맨 아래 목록으로 간다.
-    const workflowDags = etlDags.filter((d) => groupOfWorkflowDag.get(d.dag_id) === node.id);
-    // 아직 워크플로우로 옮기지 않은 그룹은 옛 팩토리 DAG가 그 자리를 지킨다(점진 컷오버).
-    // dag_id 자체가 프로세스 그룹 id의 앞 8자를 담고 있다(nifi_pipeline_{8자}_control).
-    const dag = workflowDags.length ? undefined : etlDags.find((d) =>
-      d.nifi_process_group_id === node.id
-      || d.dag_id === `nifi_pipeline_${node.id.slice(0, 8)}_control`);
-    const children = node.children ?? [];
-    const nodeKey = `group:${node.id}`;
-    const collapsed = collapsedNodes.has(nodeKey);
+  /**
+   * 워크플로우 한 칸과 그 하위. DAG 가 있으면 그 자리에서 바로 고르고 우클릭 메뉴도 붙는다
+   * (게시 전이라 DAG 가 없으면 이름만 보여준다 - 있는데 안 보이는 것보다 낫다).
+   */
+  const renderWorkflowTree = (
+    item: WorkflowTreeItem, etlDags: DashboardDag[], depth: number,
+  ): React.ReactNode => {
     const needle = search.trim().toLowerCase();
-    // 검색 중이면 자신 또는 자손이 걸리는 가지만 남긴다.
-    const selfMatches = !needle || node.name.toLowerCase().includes(needle);
-    const renderedChildren = collapsed ? [] : children
-      .map((child) => renderGroupTree(child, etlDags, depth + 1))
+    const nodeKey = `wf:${item.workflow.id}`;
+    const collapsed = collapsedNodes.has(nodeKey);
+    const renderedChildren = collapsed ? [] : item.children
+      .map((child) => renderWorkflowTree(child, etlDags, depth + 1))
       .filter(Boolean);
-    if (needle && !selfMatches && renderedChildren.length === 0 && workflowDags.length === 0) {
+    // 검색 중이면 자신 또는 자손이 걸리는 가지만 남긴다.
+    const selfMatches = !needle || item.workflow.name.toLowerCase().includes(needle);
+    if (needle && !selfMatches && renderedChildren.length === 0) {
       return null;
     }
-    // 실행할 것이 하나도 없는 그룹(워크플로우도, 아직 안 옮긴 옛 DAG도 없음)은 감춘다.
-    // 실행 현황은 "무엇을 돌릴 수 있나"를 보는 화면이라 빈 폴더는 잡음이다.
-    // 접힘 여부와 무관해야 하므로 renderedChildren이 아니라 원본 트리를 본다.
-    if (!hasRunnable(node)) {
-      return null;
-    }
+    const dag = etlDags.find((d) => d.dag_id === item.workflow.dagId);
+    const hasChildren = item.children.length > 0;
     return (
-      <div key={node.id}>
-        {dag ? renderDagButton(dag, depth) : (
+      <div key={item.workflow.id}>
+        {/*
+          게시된 워크플로우는 DAG 버튼 그대로 둔다(선택·우클릭 메뉴가 붙어야 한다). 다만
+          하위가 있으면 접기 화살표를 «옆에» 따로 둔다 - 버튼 안에 넣으면 누를 때마다
+          선택까지 같이 돼서 접으려다 화면이 바뀐다.
+        */}
+        {dag ? (
+          <div style={{ display: "flex", alignItems: "center" }}>
+            {hasChildren && (
+              <button type="button" className="airflow-tree-caret"
+                      style={{ paddingLeft: 8 + depth * 14, background: "none", border: "none", cursor: "pointer" }}
+                      aria-expanded={!collapsed}
+                      aria-label={collapsed ? "하위 워크플로우 펼치기" : "하위 워크플로우 접기"}
+                      onClick={() => toggleNode(nodeKey)}>
+                {collapsed ? <RightOutlined /> : <DownOutlined />}
+              </button>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {renderDagButton(dag, hasChildren ? 0 : depth)}
+            </div>
+          </div>
+        ) : (
           <button type="button"
-                  className={scope?.kind === "etl" && scope.groupPgId === node.id
-                    ? "airflow-tree-label active" : "airflow-tree-label"}
-                  style={{ paddingLeft: 8 + depth * 14, opacity: children.length ? 1 : 0.5 }}
+                  className="airflow-tree-label"
+                  style={{ paddingLeft: 8 + depth * 14, opacity: 0.5 }}
                   aria-expanded={!collapsed}
-                  onClick={() => {
-                    // 그룹을 누르면 접히면서 그 그룹의 워크플로우 목록이 가운데에 뜬다.
-                    if (children.length) {
-                      toggleNode(nodeKey);
-                    }
-                    onScope({ kind: "etl", groupPgId: node.id, groupName: node.name });
-                  }}>
-            {children.length ? (collapsed ? <RightOutlined /> : <DownOutlined />) : null}
-            {children.length ? (collapsed ? <FolderOutlined /> : <FolderOpenOutlined />) : null}
-            {node.name}
+                  onClick={() => hasChildren && toggleNode(nodeKey)}>
+            {hasChildren ? (collapsed ? <RightOutlined /> : <DownOutlined />) : null}
+            {item.workflow.name}
+            {/* 게시했는데 Airflow 가 아직 DAG 를 안 읽은 짧은 구간. 이름만 자리를 지킨다. */}
+            <span style={{ color: "#888" }}> (DAG 준비 중)</span>
           </button>
         )}
-        {!collapsed && workflowDags.map((workflowDag) => renderDagButton(workflowDag, depth + 1))}
         {renderedChildren}
       </div>
     );
@@ -772,10 +747,6 @@ function BusinessTree({
       <div className="airflow-tree-body">
         {CATEGORY_ORDER.map((category) => {
           const categoryDags = dags.filter((dag) => categoryOf(dag) === category);
-          // 접힘과 무관하게 «트리에 자리가 있는 DAG»를 먼저 모은다(고아 목록 판정용).
-          if (category === "ETL" && groupTree) {
-            collectPlaced(groupTree, categoryDags);
-          }
           const categoryNode = `category:${category}`;
           const categoryCollapsed = collapsedNodes.has(categoryNode);
           return (
@@ -786,38 +757,12 @@ function BusinessTree({
                 {category}
               </button>
               {!categoryCollapsed && category === "CDC" && renderCdcTree()}
-              {!categoryCollapsed && category === "ETL" && groupTree
-                ? renderGroupTree(groupTree, categoryDags, 0)
+              {!categoryCollapsed && category === "ETL"
+                ? workflowHierarchy.map((item) => renderWorkflowTree(item, categoryDags, 0))
                 : null}
-              {!categoryCollapsed && category === "ETL" && !groupTree && categoryDags.map((dag) => (
-                <Dropdown
-                  key={dag.dag_id}
-                  trigger={["contextMenu"]}
-                  menu={{
-                    items: [
-                      { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
-                      ...(canRun ? [{ key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" }] : []),
-                    ],
-                    onClick: ({ key }) => {
-                      if (key === "detail") onDetail(dag);
-                      else onExecution(dag);
-                    },
-                  }}
-                >
-                  <button
-                    type="button"
-                    className={selectedDagId === dag.dag_id ? "airflow-tree-dag active" : "airflow-tree-dag"}
-                    onClick={() => onSelect(dag.dag_id)}
-                    onContextMenu={() => onSelect(dag.dag_id)}
-                  >
-                    <span>{displayName(dag)}</span>
-                    {alertsByDag.has(dag.dag_id) && <Tag color="error">조치</Tag>}
-                  </button>
-                </Dropdown>
-              ))}
-              {!categoryCollapsed && category === "ETL" && groupTree
+              {!categoryCollapsed && category === "ETL"
                 ? categoryDags
-                    // 트리 어딘가에 이미 붙은 DAG는 여기서 또 보여주지 않는다.
+                    // 워크플로우 계층에 이미 붙은 DAG 는 여기서 또 보여주지 않는다.
                     .filter((dag) => !placedDagIds.has(dag.dag_id))
                     .map((dag) => renderDagButton(dag))
                 : null}
@@ -1187,7 +1132,6 @@ function ScopeList({
   pipelines,
   runtimeByPipeline,
   metricByPipeline,
-  workflowsByGroup,
   selectedDagId,
   selectedPipelineId,
   onSelectDag,
@@ -1199,7 +1143,6 @@ function ScopeList({
   pipelines: PipelineResponse[];
   runtimeByPipeline: Map<number, PipelineRuntimeStatusResponse>;
   metricByPipeline: Map<number, RealtimePipelineMetricResponse>;
-  workflowsByGroup: Map<string, Set<string>>;
   selectedDagId?: string;
   selectedPipelineId?: number;
   onSelectDag: (dagId: string) => void;
@@ -1266,10 +1209,7 @@ function ScopeList({
   const latestRun = (dagId: string) => latestRunToday(runsByDag.get(dagId) ?? [], today);
   // cdc 범위는 위에서 이미 반환했으므로 여기서는 남은 세 가지만 다룬다.
   let rows: DashboardDag[] = [];
-  if (scope.kind === "etl") {
-    const dagIds = workflowsByGroup.get(scope.groupPgId) ?? new Set<string>();
-    rows = dags.filter((dag) => dagIds.has(dag.dag_id));
-  } else if (scope.kind === "metric") {
+  if (scope.kind === "metric") {
     // CDC 지표는 위에서 파이프라인 표로 처리했으므로 여기 오는 건 ETL뿐이다.
     rows = dags.filter((dag) => categoryOf(dag) === scope.category
       && matchesMetric(scope.metric, dag, runsByDag.get(dag.dag_id) ?? [], today));
@@ -1782,7 +1722,6 @@ export function AirflowDashboardPage() {
     enabled: !canRunTop || initialSyncQuery.isFetched,
   });
   // ETL 트리를 NiFi 그룹 계층으로 보여주기 위해(ETL 관리 화면과 동일한 구조)
-  const groupTreeQuery = useQuery({ queryKey: ["nifi-pg-tree"], queryFn: getNifiProcessGroupTree });
   // 트리에 워크플로우를 그룹별로 붙이려면 dag_id -> 그룹 매핑이 필요하다.
   const workflowsQuery = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
   // 알림 규칙은 etl_job.id를 감시 대상으로 갖는다. 선택한 워크플로우가 어떤 job을
@@ -1857,26 +1796,6 @@ export function AirflowDashboardPage() {
     : undefined;
 
   // ETL 그룹 -> 그 그룹(하위 포함)에 속한 워크플로우 DAG id.
-  const workflowsByGroup = new Map<string, Set<string>>();
-  (workflowsQuery.data ?? []).forEach((workflow) => {
-    if (!workflow.nifiGroupPgId) {
-      return;
-    }
-    const bucket = workflowsByGroup.get(workflow.nifiGroupPgId) ?? new Set<string>();
-    bucket.add(workflow.dagId);
-    workflowsByGroup.set(workflow.nifiGroupPgId, bucket);
-  });
-  // 상위 그룹을 고르면 하위 그룹 워크플로우까지 함께 보여준다.
-  const rollUp = (node: NifiProcessGroupTreeNode): Set<string> => {
-    const own = new Set(workflowsByGroup.get(node.id) ?? []);
-    (node.children ?? []).forEach((child) => rollUp(child).forEach((id) => own.add(id)));
-    workflowsByGroup.set(node.id, own);
-    return own;
-  };
-  if (groupTreeQuery.data) {
-    rollUp(groupTreeQuery.data);
-  }
-
   /** DAG를 고른다. 같은 DAG를 다시 고르면 이력이 접힌다. */
   const selectDag = (dagId: string) => {
     setSelectedDagId(dagId);
@@ -1907,7 +1826,6 @@ export function AirflowDashboardPage() {
         : scope.scope === "schema" ? `${scope.schema} 파이프라인`
         : scope.scope === "logfile" ? "로그파일 파이프라인"
         : selectedPipeline?.name ?? "파이프라인"
-      : scope.kind === "etl" ? `${scope.groupName} 워크플로우`
       : scope.kind === "dag" ? (selectedDag ? displayName(selectedDag) : scope.dagId)
       : `${scope.category} · ${STATUS_METRIC_LABEL[scope.metric]}`;
 
@@ -1975,7 +1893,7 @@ export function AirflowDashboardPage() {
             ))}
           </div>
           <div className="airflow-dashboard-workspace">
-            <BusinessTree dags={filteredDags} groupTree={groupTreeQuery.data} workflows={workflowsQuery.data ?? []}
+            <BusinessTree dags={filteredDags} workflows={workflowsQuery.data ?? []}
                           pipelines={pipelines} connectionNames={connectionNames} selectedPipelineId={selectedPipelineId}
                           scope={scope} onScope={changeScope}
                           selectedDagId={selectedDagId} search={search} alertsByDag={alertsByDag} onSearch={setSearch}
@@ -1989,7 +1907,7 @@ export function AirflowDashboardPage() {
               {scope
                 ? <ScopeList scope={scope} dags={businessDags} runsByDag={runsByDag} pipelines={pipelines}
                              runtimeByPipeline={runtimeByPipeline} metricByPipeline={metricByPipeline}
-                             workflowsByGroup={workflowsByGroup} selectedDagId={selectedDagId}
+                             selectedDagId={selectedDagId}
                              selectedPipelineId={selectedPipelineId}
                              onSelectDag={selectDag}
                              onSelectPipeline={(id) => {

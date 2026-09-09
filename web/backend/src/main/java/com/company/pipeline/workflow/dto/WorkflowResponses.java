@@ -19,7 +19,6 @@ public final class WorkflowResponses {
             String dagId,
             String name,
             String description,
-            String nifiGroupPgId,
             String scheduleCron,
             String timezone,
             int upstreamCount,
@@ -27,14 +26,23 @@ public final class WorkflowResponses {
             LocalDateTime publishedAt,
             String publishedBy,
             int nodeCount,
+            /** 캔버스에 놓인 JOB 노드 수. nodeCount 는 하위 워크플로우 노드까지 포함한 값이라 다르다. */
+            int jobCount,
+            /** 이 워크플로우 캔버스에 노드로 놓인 하위 워크플로우 id. 목록 화면이 트리를 세울 때 쓴다. */
+            List<Long> childWorkflowIds,
             LocalDateTime updatedAt) {
 
         public static WorkflowSummary from(EtlWorkflow w, int nodeCount, int upstreamCount) {
+            return from(w, nodeCount, upstreamCount, 0, List.of());
+        }
+
+        public static WorkflowSummary from(EtlWorkflow w, int nodeCount, int upstreamCount,
+                                           int jobCount, List<Long> childWorkflowIds) {
             return new WorkflowSummary(
                     w.getId(), w.getWorkflowKey(), w.dagId(), w.getName(), w.getDescription(),
-                    w.getNifiGroupPgId(), w.getScheduleCron(), w.getTimezone(),
+                    w.getScheduleCron(), w.getTimezone(),
                     upstreamCount, w.isPublished(), w.getPublishedAt(), w.getPublishedBy(),
-                    nodeCount, w.getUpdatedAt());
+                    nodeCount, jobCount, childWorkflowIds, w.getUpdatedAt());
         }
     }
 
@@ -50,7 +58,6 @@ public final class WorkflowResponses {
             String dagId,
             String name,
             String description,
-            String nifiGroupPgId,
             String scheduleCron,
             String timezone,
             boolean catchup,
@@ -82,7 +89,7 @@ public final class WorkflowResponses {
                                         List<ParentRef> parents) {
             return new WorkflowDetail(
                     w.getId(), w.getWorkflowKey(), w.dagId(), w.getName(), w.getDescription(),
-                    w.getNifiGroupPgId(), w.getScheduleCron(), w.getTimezone(),
+                    w.getScheduleCron(), w.getTimezone(),
                     w.isCatchup(), w.getMaxActiveRuns(), w.isSuspendOnError(),
                     upstreamWorkflowIds, w.getUpstreamMode(), w.getMemo(), parents,
                     w.isPublished(), w.getPublishedAt(), w.getPublishedBy(), dirty,

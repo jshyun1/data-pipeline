@@ -284,17 +284,22 @@ public class AlertAdminController {
         }
 
         if ("WORKFLOW".equalsIgnoreCase(category)) {
-            // 워크플로우도 NiFi 그룹에 속한다(nifi_group_pg_id) - ETL 과 같은 계층에 얹어
-            // 그룹째 감시가 그대로 된다. 게시 안 한 것은 Airflow 에 DAG 가 없어 제외한다.
-            List<Map<String, Object>> groups = jdbc.queryForList("""
-                    SELECT process_group_id AS pg, process_group_name AS name, parent_group_id AS parent_pg
-                    FROM nifi_process_group_metadata ORDER BY process_group_name""");
-            List<Map<String, Object>> leaves = jdbc.queryForList("""
-                    SELECT id, nifi_group_pg_id AS pg, name
-                    FROM etl_workflow
+            // 워크플로우는 «상하 관계»로 보여준다 - 스케줄링 화면 왼쪽 트리와 같은 모양이다.
+            // 최상단은 누구의 하위도 아닌 워크플로우이고, 그 아래는 캔버스에 노드로 얹어 둔
+            // 하위 워크플로우다. 상위를 고르면 평가 시점에 하위까지 펼쳐 감시한다.
+            //
+            // 예전에는 NiFi 업무 그룹(nifi_group_pg_id) 아래에 얹었는데, 워크플로우에서 업무
+            // 그룹 개념을 걷어내면서 붙일 자리가 없어졌다. 게시 안 한 것은 Airflow 에 DAG 가
+            // 없어 여기서도 제외한다.
+            List<Map<String, Object>> workflows = jdbc.queryForList("""
+                    SELECT id, name FROM etl_workflow
                     WHERE deleted_at IS NULL AND published_at IS NOT NULL
                     ORDER BY name""");
-            return ApiResponse.success(pgTree(groups, leaves));
+            List<Map<String, Object>> links = jdbc.queryForList("""
+                    SELECT DISTINCT n.workflow_id AS parent_id, n.sub_workflow_id AS child_id
+                    FROM etl_workflow_node n
+                    WHERE n.deleted_at IS NULL AND n.sub_workflow_id IS NOT NULL""");
+            return ApiResponse.success(workflowTree(workflows, links));
         }
 
         // 계층은 NiFi 프로세스 그룹 메타(nifi_process_group_metadata)에서 온다 - ETL>관리 화면의
@@ -456,6 +461,66 @@ public class AlertAdminController {
                 siblings.add(self);
             } else {
                 roots.add(self);
+            }
+        }
+        return roots;
+    }
+
+    /**
+     * 워크플로우 상하 계층 트리(알림 감시대상용).
+     *
+     * <p>최상단은 «누구의 하위도 아닌» 워크플로우다. 상위를 고르면 하위까지 감시하도록,
+     * 모든 칸을 워크플로우 id 로 고를 수 있게 둔다(펼치는 것은 평가 시점에 한다 -
+     * 나중에 하위가 추가돼도 규칙을 다시 저장할 필요가 없다).
+     *
+     * <p>순환(A 안에 B, B 안에 A)이 있으면 최상단이 하나도 안 나오므로, 한 번도 못 그린
+     * 워크플로우는 마지막에 최상단으로 올려 붙인다. 목록에서 사라지는 편이 더 나쁘다.
+     */
+    private List<Map<String, Object>> workflowTree(List<Map<String, Object>> workflows,
+                                                   List<Map<String, Object>> links) {
+        Map<Long, Map<String, Object>> byId = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> w : workflows) {
+            byId.put(((Number) w.get("id")).longValue(), w);
+        }
+        Map<Long, List<Long>> childrenOfId = new java.util.LinkedHashMap<>();
+        Set<Long> parented = new java.util.HashSet<>();
+        for (Map<String, Object> link : links) {
+            Long parent = ((Number) link.get("parent_id")).longValue();
+            Long child = ((Number) link.get("child_id")).longValue();
+            if (!byId.containsKey(parent) || !byId.containsKey(child)) {
+                continue;      // 게시 안 한 것은 목록에 없다
+            }
+            childrenOfId.computeIfAbsent(parent, k -> new java.util.ArrayList<>()).add(child);
+            parented.add(child);
+        }
+
+        Set<Long> emitted = new java.util.HashSet<>();
+        java.util.function.BiFunction<Long, Set<Long>, Map<String, Object>> build =
+                new java.util.function.BiFunction<>() {
+                    @Override
+                    public Map<String, Object> apply(Long id, Set<Long> path) {
+                        emitted.add(id);
+                        Set<Long> next = new java.util.HashSet<>(path);
+                        next.add(id);
+                        List<Map<String, Object>> kids = new java.util.ArrayList<>();
+                        for (Long childId : childrenOfId.getOrDefault(id, List.of())) {
+                            if (!next.contains(childId)) {
+                                kids.add(apply(childId, next));
+                            }
+                        }
+                        return node(id, String.valueOf(byId.get(id).get("name")), kids);
+                    }
+                };
+
+        List<Map<String, Object>> roots = new java.util.ArrayList<>();
+        for (Long id : byId.keySet()) {
+            if (!parented.contains(id)) {
+                roots.add(build.apply(id, Set.of()));
+            }
+        }
+        for (Long id : byId.keySet()) {
+            if (!emitted.contains(id)) {
+                roots.add(build.apply(id, Set.of()));
             }
         }
         return roots;

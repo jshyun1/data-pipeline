@@ -9,7 +9,6 @@ export interface WorkflowSummary {
   dagId: string;
   name: string;
   description?: string | null;
-  nifiGroupPgId?: string | null;
   scheduleCron?: string | null;
   timezone: string;
   upstreamCount?: number;
@@ -17,6 +16,10 @@ export interface WorkflowSummary {
   publishedAt?: string | null;
   publishedBy?: string | null;
   nodeCount: number;
+  /** 캔버스에 놓인 JOB 노드 수. nodeCount 는 하위 워크플로우 노드까지 포함해 다르다. */
+  jobCount: number;
+  /** 이 워크플로우 캔버스에 노드로 놓인 하위 워크플로우 id. */
+  childWorkflowIds: number[];
   updatedAt: string;
 }
 
@@ -107,11 +110,10 @@ export async function getWorkflow(id: number): Promise<WorkflowDetail> {
 }
 
 export async function createWorkflow(body: {
-  /** 비워 보내면 서버가 그룹·이름에서 만들어 채운다. 화면은 키를 입력받지 않는다. */
+  /** 비워 보내면 서버가 이름에서 만들어 채운다. 화면은 키를 입력받지 않는다. */
   workflowKey?: string;
   name: string;
   description?: string;
-  nifiGroupPgId?: string;
   scheduleCron?: string;
   timezone?: string;
   maxActiveRuns?: number;
@@ -122,7 +124,6 @@ export async function createWorkflow(body: {
 export async function updateWorkflow(id: number, body: {
   name: string;
   description?: string | null;
-  nifiGroupPgId?: string | null;
   scheduleCron?: string | null;
   timezone?: string;
   catchup?: boolean;

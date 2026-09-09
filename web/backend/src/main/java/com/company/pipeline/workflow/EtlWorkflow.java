@@ -42,9 +42,6 @@ public class EtlWorkflow {
     @Column(name = "description")
     private String description;
 
-    @Column(name = "nifi_group_pg_id", length = 100)
-    private String nifiGroupPgId;
-
     @Column(name = "schedule_cron", length = 120)
     private String scheduleCron;
 
@@ -113,22 +110,22 @@ public class EtlWorkflow {
     }
 
     /** 화면에서 고칠 수 있는 속성만 받는다. workflowKey는 dag_id의 축이라 바꾸지 않는다. */
-    public void updateSettings(String name, String description, String nifiGroupPgId,
+    public void updateSettings(String name, String description,
                                String scheduleCron, String timezone, Boolean catchup,
                                Integer maxActiveRuns, Boolean suspendOnError) {
-        updateSettings(name, description, nifiGroupPgId, scheduleCron, timezone, catchup,
+        updateSettings(name, description, scheduleCron, timezone, catchup,
                 maxActiveRuns, suspendOnError, null, null);
     }
 
-    public void updateSettings(String name, String description, String nifiGroupPgId,
+    public void updateSettings(String name, String description,
                                String scheduleCron, String timezone, Boolean catchup,
                                Integer maxActiveRuns, Boolean suspendOnError,
                                String upstreamWorkflowIds, String upstreamMode) {
-        updateSettings(name, description, nifiGroupPgId, scheduleCron, timezone, catchup,
+        updateSettings(name, description, scheduleCron, timezone, catchup,
                 maxActiveRuns, suspendOnError, upstreamWorkflowIds, upstreamMode, null);
     }
 
-    public void updateSettings(String name, String description, String nifiGroupPgId,
+    public void updateSettings(String name, String description,
                                String scheduleCron, String timezone, Boolean catchup,
                                Integer maxActiveRuns, Boolean suspendOnError,
                                String upstreamWorkflowIds, String upstreamMode, String memo) {
@@ -143,7 +140,6 @@ public class EtlWorkflow {
             this.name = name;
         }
         this.description = description;
-        this.nifiGroupPgId = nifiGroupPgId;
         this.scheduleCron = scheduleCron;
         if (timezone != null) {
             this.timezone = timezone;

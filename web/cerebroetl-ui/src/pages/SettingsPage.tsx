@@ -444,7 +444,8 @@ type ScopeCategory = "ETL_CHAIN" | "ETL" | "CDC" | "WORKFLOW";
 const SCOPE_TYPES: Record<string, ScopeCategory> = {
   JOB_FAILURE: "ETL_CHAIN",
   JOB_NOT_RUN: "ETL",
-  // 워크플로우 규칙은 워크플로우 단위로 고른다(그룹째도 가능 - 워크플로우도 NiFi 그룹에 속한다).
+  // 워크플로우 규칙은 워크플로우 계층에서 고른다. 상위를 고르면 그 아래 하위 워크플로우까지
+  // 함께 감시한다(펼치는 것은 평가 시점 - AlertEngine.workflowScopeOf).
   WORKFLOW_FAILURE: "WORKFLOW",
   WORKFLOW_NOT_COMPLETED: "WORKFLOW",
   CDC_LAG: "CDC",

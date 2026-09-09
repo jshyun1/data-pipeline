@@ -36,16 +36,13 @@ public class WorkflowValidator {
     private final EtlJobRepository jobRepository;
     private final EtlWorkflowRepository workflowRepository;
     private final EtlWorkflowNodeRepository nodeRepository;
-    private final com.company.pipeline.nifi.NifiProcessGroupMetadataRepository pgRepository;
 
     public WorkflowValidator(EtlJobRepository jobRepository,
                              EtlWorkflowRepository workflowRepository,
-                             EtlWorkflowNodeRepository nodeRepository,
-                             com.company.pipeline.nifi.NifiProcessGroupMetadataRepository pgRepository) {
+                             EtlWorkflowNodeRepository nodeRepository) {
         this.jobRepository = jobRepository;
         this.workflowRepository = workflowRepository;
         this.nodeRepository = nodeRepository;
-        this.pgRepository = pgRepository;
     }
 
     public WorkflowValidationResult validate(EtlWorkflow workflow,
@@ -68,7 +65,6 @@ public class WorkflowValidator {
         validateSchedule(workflow, errors);              // V6
         validateJobReuse(workflow, nodes, warnings);     // V7, V9
         validateChaining(workflow, errors, warnings);    // V10, V11
-        validateGroupScope(workflow, nodes, warnings);   // V12
 
         return WorkflowValidationResult.of(errors, warnings);
     }
@@ -135,46 +131,6 @@ public class WorkflowValidator {
         } catch (Exception ex) {
             return List.of();
         }
-    }
-
-    /**
-     * V12 - 소속 그룹 밖의 job을 참조하면 경고.
-     *
-     * <p>그룹별로 워크플로우를 그리는 것이 기본이라(Informatica의 폴더와 같다), 다른 그룹의
-     * job이 섞이면 대개 팔레트를 "전체 보기"로 열어두고 잘못 집은 것이다. 다만 여러 그룹을
-     * 모아 만드는 워크플로우도 정당한 쓰임이므로 막지는 않는다.
-     */
-    private void validateGroupScope(EtlWorkflow workflow, List<EtlWorkflowNode> nodes,
-                                    List<Issue> warnings) {
-        String owner = workflow.getNifiGroupPgId();
-        if (owner == null || owner.isBlank()) {
-            return;
-        }
-        Map<Long, EtlJob> jobs = jobsOf(nodes);
-        for (EtlWorkflowNode node : nodes) {
-            EtlJob job = node.getJobId() == null ? null : jobs.get(node.getJobId());
-            if (job == null || job.getParentPgId() == null || inSubtree(job.getParentPgId(), owner)) {
-                continue;
-            }
-            warnings.add(Issue.at("V12",
-                    "소속 그룹 밖의 job입니다: " + job.getJobName(), node.getNodeKey()));
-        }
-    }
-
-    /** startPgId에서 부모를 따라 올라가며 ancestorPgId를 만나는지. */
-    private boolean inSubtree(String startPgId, String ancestorPgId) {
-        String current = startPgId;
-        // 캔버스가 꼬여 부모가 순환하면 무한루프가 되므로 방문한 그룹을 기억한다.
-        Set<String> seen = new HashSet<>();
-        while (current != null && seen.add(current)) {
-            if (current.equals(ancestorPgId)) {
-                return true;
-            }
-            current = pgRepository.findById(current)
-                    .map(com.company.pipeline.nifi.NifiProcessGroupMetadata::getParentGroupId)
-                    .orElse(null);
-        }
-        return false;
     }
 
     /** V5 - 엣지가 실재하는 노드를 잇는지, 자기 자신을 잇지 않는지. */
