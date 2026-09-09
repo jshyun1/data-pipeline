@@ -18,12 +18,15 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
+  TreeSelect,
   Typography,
 } from "antd";
 import { CheckCircleOutlined, LockOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
-import { listConnections, listConnectionColumns, listConnectionSchemas, listConnectionTables, testConnection } from "../api/connections";
+import { checkCdcTableReadiness, listConnections, listConnectionColumns, listConnectionSchemas, listConnectionTables, testConnection } from "../api/connections";
 import { createLogFilePipeline, createPipeline, createPipelineBatch } from "../api/pipelines";
+import { listPipelineGroups, type PipelineGroupResponse } from "../api/pipelineGroups";
 import type { ConnectionResponse } from "../types/connection";
 import type { LogPipelineCreateRequest, PipelineCreateRequest, PipelineResponse } from "../types/pipeline";
 import { loadModeLabel } from "../types/pipeline";
@@ -96,6 +99,23 @@ function CdcCreateWizard() {
     queryFn: listConnections,
   });
 
+  // 관리 화면 트리의 그룹. 여기서 고른 그룹에 새 파이프라인이 놓인다(안 고르면 그룹 미지정).
+  const { data: pipelineGroups } = useQuery({
+    queryKey: ["pipeline-groups"],
+    queryFn: listPipelineGroups,
+  });
+  interface GroupOption { value: number; title: string; children?: GroupOption[] }
+  const groupTreeData = useMemo(() => {
+    const build = (parentId: number | null): GroupOption[] =>
+      (pipelineGroups ?? [])
+        .filter((group: PipelineGroupResponse) => group.parentId === parentId)
+        .map((group: PipelineGroupResponse) => {
+          const children = build(group.id);
+          return { value: group.id, title: group.name, children: children.length ? children : undefined };
+        });
+    return build(null);
+  }, [pipelineGroups]);
+
   const sourceConnectionId = Form.useWatch("sourceConnectionId", form);
   const targetConnectionId = Form.useWatch("targetConnectionId", form);
   const sourceSchema = Form.useWatch("sourceSchema", form);
@@ -140,6 +160,23 @@ function CdcCreateWizard() {
   const sourceMetadataByTable = useMemo(() => Object.fromEntries(selectedTables.map((table, index) => [
     table, sourceColumnQueries[index]?.data ?? [],
   ])), [selectedTables, sourceColumnQueries]);
+
+  // 테이블별 CDC 캡처 조건(Oracle 보충 로깅 / Postgres REPLICA IDENTITY). 이게 빠지면 UPDATE 의
+  // PK 가 유실되는데 INSERT/DELETE 는 멀쩡해서 한참 뒤에야 드러난다 - 생성 전에 걸러낸다.
+  const sourceReadinessQueries = useQueries({
+    queries: selectedTables.map((table) => ({
+      queryKey: ["cdc-table-readiness", sourceConnectionId, sourceSchema, table],
+      queryFn: () => checkCdcTableReadiness(sourceConnectionId!, sourceSchema!, table),
+      enabled: sourceConnectionId != null && !!sourceSchema,
+      staleTime: 30_000,
+    })),
+  });
+  const readinessByTable = useMemo(() => Object.fromEntries(selectedTables.map((table, index) => [
+    table, sourceReadinessQueries[index]?.data,
+  ])), [selectedTables, sourceReadinessQueries]);
+  const captureBlockedTables = useMemo(
+    () => selectedTables.filter((table) => readinessByTable[table]?.status === "FAIL"),
+    [selectedTables, readinessByTable]);
 
   const sourceConnection = connections?.find((connection) => connection.id === sourceConnectionId);
   const targetConnection = connections?.find((connection) => connection.id === targetConnectionId);
@@ -296,6 +333,17 @@ function CdcCreateWizard() {
                   ]}>
                     <Input placeholder="예: postgres-orders-to-warehouse" />
                   </Form.Item>
+                  {/* 관리 화면 트리에서 놓일 자리. 비워 두면 «전체 파이프라인» 바로 아래에 놓이고,
+                      그룹은 나중에 관리 화면에서 만들어 지정해도 된다. */}
+                  <Form.Item name="groupId" label="그룹"
+                             tooltip="CDC 관리 화면 트리에서 이 파이프라인이 놓일 그룹입니다. 비워 두면 그룹 미지정입니다.">
+                    <TreeSelect
+                      allowClear
+                      treeDefaultExpandAll
+                      placeholder={groupTreeData.length ? "그룹 선택 (선택 안 함 = 그룹 미지정)" : "만들어 둔 그룹이 없습니다"}
+                      treeData={groupTreeData}
+                    />
+                  </Form.Item>
                   <Form.Item label="유형">
                     <Input value="테이블 CDC" disabled />
                   </Form.Item>
@@ -437,8 +485,22 @@ function CdcCreateWizard() {
                       { title: "소스 테이블", dataIndex: "sourceTable", width: "20%", render: (value) => {
                         const metadata = sourceMetadataByTable[value] ?? [];
                         const keys = metadata.filter((column) => column.primaryKey).map((column) => column.name);
-                        return <Space direction="vertical" size={2}><span>{value}</span>{metadata.length > 0 && (keys.length > 0
-                          ? <Tag color="success">PK · {keys.join(", ")}</Tag> : <Tag color="error">PK 없음</Tag>)}</Space>;
+                        const readiness = readinessByTable[value];
+                        return <Space direction="vertical" size={2}>
+                          <span>{value}</span>
+                          {metadata.length > 0 && (keys.length > 0
+                            ? <Tag color="success">PK · {keys.join(", ")}</Tag> : <Tag color="error">PK 없음</Tag>)}
+                          {readiness?.status === "FAIL" && (
+                            <Tooltip title={readiness.guidance ?? undefined}>
+                              <Tag color="error">변경분 캡처 불가 · {readiness.actualValue}</Tag>
+                            </Tooltip>
+                          )}
+                          {readiness?.status === "WARN" && (
+                            <Tooltip title={readiness.guidance ?? undefined}>
+                              <Tag color="warning">삭제 전 값 제한 · {readiness.actualValue}</Tag>
+                            </Tooltip>
+                          )}
+                        </Space>;
                       } },
                       {
                         title: "타깃 테이블",
@@ -512,6 +574,21 @@ function CdcCreateWizard() {
                       },
                     ]}
                   />
+                  {captureBlockedTables.length > 0 && (
+                    <Alert
+                      type="error"
+                      showIcon
+                      message="이 테이블들은 UPDATE 변경분을 캡처할 수 없습니다"
+                      description={<div>
+                        <div>{captureBlockedTables.join(", ")}</div>
+                        <div style={{ marginTop: 6 }}>{readinessByTable[captureBlockedTables[0]]?.guidance}</div>
+                        <div style={{ marginTop: 6 }}>
+                          INSERT·DELETE는 정상 동작해서 문제가 늦게 드러납니다. 소스 DB에 조치한 뒤 다시 진행하세요.
+                        </div>
+                      </div>}
+                      style={{ marginBottom: 16 }}
+                    />
+                  )}
                   {hasMaskedColumns && (
                     <Alert
                       type="warning"
@@ -529,6 +606,8 @@ function CdcCreateWizard() {
                       if (sourceColumnQueries.some((query) => query.isFetching)) { message.info("선택한 테이블의 PK와 컬럼 정보를 조회 중입니다."); return; }
                       const noPrimaryKey = selectedTables.filter((table) => !(sourceMetadataByTable[table] ?? []).some((column) => column.primaryKey));
                       if (noPrimaryKey.length > 0) { message.error(`PK가 없는 테이블은 CDC로 생성할 수 없습니다: ${noPrimaryKey.join(", ")}`); return; }
+                      if (sourceReadinessQueries.some((query) => query.isFetching)) { message.info("선택한 테이블의 변경분 캡처 조건을 확인 중입니다."); return; }
+                      if (captureBlockedTables.length > 0) { message.error(`변경분(UPDATE) 캡처 조건이 갖춰지지 않은 테이블이 있습니다: ${captureBlockedTables.join(", ")}`); return; }
                       if (selectedTables.some((table) => !(targetTableBySource[table] ?? "").trim())) { message.error("선택한 모든 타깃 테이블명을 입력하세요."); return; }
                       completeAndOpen("targets", "options");
                     }}>다음: 실행 옵션</Button>

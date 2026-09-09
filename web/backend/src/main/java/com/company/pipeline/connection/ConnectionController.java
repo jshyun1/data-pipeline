@@ -10,6 +10,7 @@ import com.company.pipeline.connection.dto.ConnectionTestResponse;
 import com.company.pipeline.connection.dto.ConnectionUpdateRequest;
 import com.company.pipeline.connection.dto.ConnectionUsageResponse;
 import com.company.pipeline.connection.dto.CdcPrerequisiteResponse;
+import com.company.pipeline.connection.dto.CdcTableReadinessResponse;
 import com.company.pipeline.connection.dto.ColumnMetadataResponse;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -103,6 +104,13 @@ public class ConnectionController {
     @PostMapping("/{id}/cdc-prerequisites")
     public ApiResponse<CdcPrerequisiteResponse> cdcPrerequisites(@PathVariable Long id) {
         return ApiResponse.success(cdcPrerequisiteService.check(id));
+    }
+
+    /** 선택한 테이블 하나의 CDC 조건(Oracle 보충 로깅 / Postgres REPLICA IDENTITY)을 점검한다. */
+    @GetMapping("/{id}/cdc-table-readiness")
+    public ApiResponse<CdcTableReadinessResponse> cdcTableReadiness(@PathVariable Long id,
+            @RequestParam String schema, @RequestParam String table) {
+        return ApiResponse.success(cdcPrerequisiteService.checkTable(id, schema, table));
     }
 
     @GetMapping("/{id}/schemas")

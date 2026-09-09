@@ -2,13 +2,16 @@ package com.company.pipeline.connection;
 
 import com.company.pipeline.connection.dto.CdcPrerequisiteCheckResponse;
 import com.company.pipeline.connection.dto.CdcPrerequisiteResponse;
+import com.company.pipeline.connection.dto.CdcTableReadinessResponse;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -41,6 +44,101 @@ public class CdcPrerequisiteService {
                 overall(checks), checks);
     }
 
+    /**
+     * CDC 소스로 쓸 <b>개별 테이블</b>의 조건을 점검한다.
+     *
+     * <p><b>Oracle</b>: 테이블별 {@code SUPPLEMENTAL LOG DATA (ALL) COLUMNS} 가 없으면 UPDATE 의
+     * redo 에 «바뀐 컬럼»만 남는다. 그러면 Debezium 이 PK 값을 읽지 못해 이벤트 키가 0(숫자 PK
+     * 기준)으로 나가고, 싱크는 그 0을 키로 upsert 해서 엉뚱한 행 하나에 모든 UPDATE 를 뭉갠다.
+     * INSERT·DELETE 는 redo 에 행 전체가 남아 정상이라 <b>겉보기엔 잘 도는 것처럼 보인다</b> -
+     * 2026-09-05 운영에서 이 조건이 빠진 채 UPDATE 가 조용히 유실된 사례가 있어 FAIL 로 막는다.
+     *
+     * <p><b>PostgreSQL</b>: {@code REPLICA IDENTITY} 가 FULL 이 아니면 DELETE·UPDATE 의 before
+     * 이미지에 PK 만 담긴다. 미러링(UPSERT)에는 지장이 없고 삭제 직전 값이 필요한 델타 적재에서만
+     * 문제라 WARN 으로 둔다 - FULL 은 그 테이블의 WAL 량을 늘리므로 일괄 강제할 조건이 아니다.
+     *
+     * <p><b>MySQL</b>: {@code binlog_row_image} 가 서버 단위라 연결 점검에서 이미 본다.
+     */
+    public CdcTableReadinessResponse checkTable(Long connectionId, String schema, String table) {
+        PipelineConnection saved = connectionRepository.findById(connectionId)
+                .orElseThrow(() -> new ConnectionNotFoundException(connectionId));
+        try (Connection jdbc = schemaDiscoveryService.open(saved)) {
+            return switch (saved.getDbType()) {
+                case ORACLE -> oracleTableCheck(jdbc, saved.getDbType(), schema, table);
+                case POSTGRESQL -> postgresTableCheck(jdbc, saved.getDbType(), schema, table);
+                case MYSQL -> new CdcTableReadinessResponse(schema, table, saved.getDbType(), "PASS",
+                        "테이블 단위 조건 없음",
+                        "MySQL은 binlog_row_image(서버 단위)만 만족하면 되며 연결 점검에서 확인합니다.");
+            };
+        } catch (SQLException ex) {
+            return new CdcTableReadinessResponse(schema, table, saved.getDbType(), "UNKNOWN", null,
+                    "테이블 조건을 조회하지 못했습니다: " + safeMessage(ex));
+        }
+    }
+
+    private CdcTableReadinessResponse oracleTableCheck(Connection jdbc, DbType dbType,
+            String schema, String table) {
+        // DB 전체에 ALL 보충 로깅이 걸려 있으면 테이블별 로그 그룹이 없어도 모든 컬럼이 남는다.
+        try {
+            if ("YES".equalsIgnoreCase(scalar(jdbc, "SELECT SUPPLEMENTAL_LOG_DATA_ALL FROM V$DATABASE"))) {
+                return new CdcTableReadinessResponse(schema, table, dbType, "PASS",
+                        "데이터베이스 전체 ALL 보충 로깅", "테이블별 설정 없이도 모든 컬럼이 redo에 남습니다.");
+            }
+        } catch (SQLException ignored) {
+            // V$DATABASE 조회 권한이 없을 수 있다 - 테이블 로그 그룹만 보고 판단한다.
+        }
+
+        List<String> groupTypes = new ArrayList<>();
+        String sql = "SELECT log_group_type FROM all_log_groups WHERE owner = ? AND table_name = ?";
+        try (PreparedStatement statement = jdbc.prepareStatement(sql)) {
+            statement.setQueryTimeout(5);
+            statement.setString(1, schema.toUpperCase(Locale.ROOT));
+            statement.setString(2, table.toUpperCase(Locale.ROOT));
+            try (ResultSet rs = statement.executeQuery()) {
+                while (rs.next()) groupTypes.add(rs.getString(1));
+            }
+        } catch (SQLException ex) {
+            return new CdcTableReadinessResponse(schema, table, dbType, "UNKNOWN", null,
+                    "ALL_LOG_GROUPS 조회 권한을 확인하세요. (조회 실패: " + safeMessage(ex) + ")");
+        }
+
+        String fix = "ALTER TABLE " + schema.toUpperCase(Locale.ROOT) + "." + table.toUpperCase(Locale.ROOT)
+                + " ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;";
+        if (groupTypes.stream().anyMatch(type -> "ALL COLUMN LOGGING".equalsIgnoreCase(type))) {
+            return new CdcTableReadinessResponse(schema, table, dbType, "PASS", "ALL COLUMN LOGGING", null);
+        }
+        return new CdcTableReadinessResponse(schema, table, dbType, "FAIL",
+                groupTypes.isEmpty() ? "설정 없음" : String.join(", ", groupTypes),
+                "이 테이블은 ALL COLUMNS 보충 로깅이 없어 UPDATE의 PK와 변경되지 않은 컬럼이 유실됩니다"
+                        + "(INSERT/DELETE만 정상이라 문제가 늦게 드러납니다). 다음을 적용하세요: " + fix);
+    }
+
+    private CdcTableReadinessResponse postgresTableCheck(Connection jdbc, DbType dbType,
+            String schema, String table) {
+        String sql = "SELECT CASE c.relreplident WHEN 'f' THEN 'FULL' WHEN 'd' THEN 'DEFAULT' "
+                + "WHEN 'i' THEN 'INDEX' WHEN 'n' THEN 'NOTHING' END "
+                + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                + "WHERE n.nspname = ? AND c.relname = ?";
+        try (PreparedStatement statement = jdbc.prepareStatement(sql)) {
+            statement.setQueryTimeout(5);
+            statement.setString(1, schema);
+            statement.setString(2, table);
+            try (ResultSet rs = statement.executeQuery()) {
+                String identity = rs.next() ? rs.getString(1) : null;
+                if ("FULL".equals(identity)) {
+                    return new CdcTableReadinessResponse(schema, table, dbType, "PASS", identity, null);
+                }
+                return new CdcTableReadinessResponse(schema, table, dbType, "WARN", identity,
+                        "REPLICA IDENTITY가 FULL이 아니라 DELETE 이벤트에 PK 외 컬럼이 NULL로 옵니다. "
+                                + "삭제 직전 값이 필요한 델타 적재라면 ALTER TABLE " + schema + "." + table
+                                + " REPLICA IDENTITY FULL; 을 적용하세요(해당 테이블 WAL 양이 늘어납니다).");
+            }
+        } catch (SQLException ex) {
+            return new CdcTableReadinessResponse(schema, table, dbType, "UNKNOWN", null,
+                    "pg_class 조회 권한을 확인하세요. (조회 실패: " + safeMessage(ex) + ")");
+        }
+    }
+
     private List<CdcPrerequisiteCheckResponse> checkOracle(Connection jdbc, PipelineConnection saved) {
         List<CdcPrerequisiteCheckResponse> checks = new ArrayList<>();
         checks.add(equalsCheck(jdbc, "ORACLE_ARCHIVELOG", "ARCHIVELOG 모드",
@@ -58,6 +156,8 @@ public class CdcPrerequisiteService {
                 "SELECT COUNT(*) FROM SESSION_PRIVS WHERE PRIVILEGE IN "
                         + "('LOGMINING','SELECT ANY TRANSACTION','SELECT ANY DICTIONARY')",
                 3, "LOGMINING, SELECT ANY TRANSACTION, SELECT ANY DICTIONARY 권한을 확인하세요."));
+        // 테이블별 조건이라 연결 단위로는 판정할 수 없다. 실제 판정은 checkTable() 이 하고,
+        // 생성 마법사의 대상 선택 단계와 배포 시점이 그것을 호출한다.
         checks.add(new CdcPrerequisiteCheckResponse(
                 "ORACLE_TABLE_SUPPLEMENTAL", "테이블별 보충 로깅", "WARN", "대상 선택 전",
                 "테이블별 ALL COLUMNS 보충 로깅은 생성 마법사에서 선택한 테이블 기준으로 다시 점검합니다."));

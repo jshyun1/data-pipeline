@@ -1,6 +1,7 @@
 import { apiClient, unwrap, type ApiResponse } from "./client";
 import type {
   CdcPrerequisiteResponse,
+  CdcTableReadinessResponse,
   ConnectionCreateRequest,
   ConnectionResponse,
   ConnectionTestRequest,
@@ -66,6 +67,17 @@ export async function listConnectionSchemas(connectionId: number): Promise<strin
 export async function listConnectionTables(connectionId: number, schema: string): Promise<string[]> {
   const res = await apiClient.get<ApiResponse<string[]>>(`/connections/${connectionId}/tables`, {
     params: { schema },
+  });
+  return unwrap(res.data);
+}
+
+/**
+ * 선택한 테이블이 CDC 로 «변경분을 온전히» 캡처할 수 있는 상태인지 확인한다.
+ * Oracle 은 테이블별 ALL COLUMNS 보충 로깅이 없으면 UPDATE 의 PK 까지 유실된다.
+ */
+export async function checkCdcTableReadiness(connectionId: number, schema: string, table: string): Promise<CdcTableReadinessResponse> {
+  const res = await apiClient.get<ApiResponse<CdcTableReadinessResponse>>(`/connections/${connectionId}/cdc-table-readiness`, {
+    params: { schema, table },
   });
   return unwrap(res.data);
 }
