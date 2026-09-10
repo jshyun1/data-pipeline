@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Card, Empty, Segmented } from "antd";
+import { Card, Segmented } from "antd";
 import { Column } from "@ant-design/plots";
 import type { Dayjs } from "dayjs";
 import { getDashboardTop5, type Top5Item, type Top5Metric } from "../api/dashboard";
+import { ChartEmptyState } from "./ChartEmptyState";
 import { refitAfterLayout } from "./chartFit";
 
 // 하단 Job Top 5 — 건수/소요시간/실패 구분. 상단 RangePicker(from~to) 날짜범위를 그대로 따른다.
@@ -89,9 +90,7 @@ export function JobTop5Card({ title, from, to }: { title: string; from: Dayjs; t
             />
         </div>
       ) : (
-        <div className="empty-chart-placeholder">
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="조회 기간에 집계할 실행이 없습니다." />
-        </div>
+        <ChartEmptyState text="조회 기간에 집계할 실행이 없습니다." />
       )}
     </Card>
   );

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Empty, Modal, Table, Tag } from "antd";
+import { Empty, Modal, Table } from "antd";
 import type { DagCategory } from "../utils/dagHistory";
 
 export interface HistoryEntry {
@@ -11,10 +11,10 @@ export interface HistoryEntry {
   fetchLog?: () => Promise<string>;
 }
 
-const CATEGORY_COLOR: Record<DagCategory, string> = {
-  ETL: "blue",
-  CDC: "purple",
-  기타: "default",
+const CATEGORY_CLASS: Record<DagCategory, string> = {
+  ETL: "history-category-badge",
+  CDC: "history-category-badge history-category-badge--cdc",
+  기타: "history-category-badge history-category-badge--etc",
 };
 
 function formatDateTime(value?: string) {
@@ -58,11 +58,21 @@ interface HistoryModalProps {
 // DAG/태스크/성공/실패/지연 타일을 클릭했을 때 뜨는 공용 상세 내역 모달.
 // 행마다 있는 "상세" 버튼은 팝업을 새로 띄우는 대신 antd Table의 expandedRowRender로
 // 해당 행 바로 아래에 로그를 펼쳐 보여준다(로그는 펼칠 때 처음 한 번만 불러옴).
+// 모양은 디자인 초안의 «ETL 오류 상세» 팝업(펼치면 빨간 접기 버튼 + 어두운 콘솔 상자)을 따른다.
 export function HistoryModal({ open, onClose, title, loading, rows }: HistoryModalProps) {
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
 
   return (
-    <Modal open={open} onCancel={onClose} onOk={onClose} title={title} width={860} footer={null} destroyOnHidden>
+    <Modal
+      open={open}
+      onCancel={onClose}
+      onOk={onClose}
+      title={title}
+      width={860}
+      footer={null}
+      destroyOnHidden
+      rootClassName="cerebro-modal history-modal"
+    >
       {/* 오류 메시지가 공백 없는 한 줄(SQL·스택트레이스)이라 기본 레이아웃에서는 열이 계속
           넓어져 표가 모달 밖으로 삐져나갔다. tableLayout=fixed 로 폭을 못박고 셀 안에서
           줄바꿈시킨다. */}
@@ -85,9 +95,13 @@ export function HistoryModal({ open, onClose, title, loading, rows }: HistoryMod
           expandedRowRender: (record) => <LogPanel entry={record} />,
           expandIcon: ({ expanded, onExpand, record }) =>
             record.fetchLog ? (
-              <Button size="small" onClick={(event) => onExpand(record, event)}>
+              <button
+                type="button"
+                className={expanded ? "btn-etl-detail-toggle active" : "btn-etl-detail-toggle"}
+                onClick={(event) => onExpand(record, event)}
+              >
                 {expanded ? "접기" : "상세"}
-              </Button>
+              </button>
             ) : null,
         }}
         columns={[
@@ -104,7 +118,8 @@ export function HistoryModal({ open, onClose, title, loading, rows }: HistoryMod
             title: "구분",
             dataIndex: "category",
             width: 90,
-            render: (value: DagCategory) => <Tag color={CATEGORY_COLOR[value]}>{value}</Tag>,
+            align: "center",
+            render: (value: DagCategory) => <span className={CATEGORY_CLASS[value]}>{value}</span>,
           },
           { title: "일시", dataIndex: "datetime", width: 190, render: formatDateTime },
         ]}

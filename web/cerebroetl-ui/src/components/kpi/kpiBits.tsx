@@ -12,7 +12,20 @@ import { Tooltip } from "antd";
 export function TimeBadge({ label }: { label: string }) {
   return (
     <span className="kpi-time-badge" title="이 카드의 누적 지표가 기준으로 삼는 기간">
-      ⟲ {label}
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg>
+      {label}
     </span>
   );
 }

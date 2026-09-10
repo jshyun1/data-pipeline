@@ -871,10 +871,7 @@ export function WorkflowCanvasPage() {
             {/* 워크플로우도 하나의 노드로 얹을 수 있다. 그래야 «daily = monthly 끝나면
                 years» 같은 조립이 가능하다. 자기 자신은 넣을 수 없다(무한 중첩).
                 조립이 이 화면의 관심사라 job 목록보다 위에 둔다. */}
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>
-              워크플로우
-              <span style={{ fontWeight: 400, fontSize: 12, color: "#888" }}> · 끌어다 놓기</span>
-            </div>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>워크플로우</div>
             {subWorkflowTree.length === 0 ? (
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 얹을 수 있는 다른 워크플로우가 없습니다.
@@ -888,10 +885,7 @@ export function WorkflowCanvasPage() {
               />
             )}
             <div style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 10 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>
-                ETL 태스크
-                <span style={{ fontWeight: 400, fontSize: 12, color: "#888" }}> · 끌어다 놓기</span>
-              </div>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>ETL 태스크</div>
               {treeQuery.isLoading ? (
                 <Spin size="small" />
               ) : paletteTree.length === 0 ? (
@@ -912,19 +906,14 @@ export function WorkflowCanvasPage() {
                   등록된 CDC 파이프라인이 없습니다.
                 </Typography.Text>
               ) : (
-                <>
-                  <Tree
-                    blockNode
-                    defaultExpandedKeys={cdcOpenKeys}
-                    selectedKeys={[]}
-                    treeData={cdcTree as never}
-                  />
-                  {/* 얹을 수 있게 되기 전까지는 오해하지 않도록 분명히 적어 둔다. */}
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    아직 캔버스에 얹을 수 없습니다(목록 보기 전용). 노드 종류에 CDC 가 없어
-                    지금 얹으면 저장은 되고 게시가 깨집니다.
-                  </Typography.Text>
-                </>
+                // 아직 캔버스에 얹을 수 없다(노드 종류에 CDC 가 없다). 그래서 트리 항목은
+                // selectable:false·draggable 아님으로 두고, 화면에는 따로 적지 않는다.
+                <Tree
+                  blockNode
+                  defaultExpandedKeys={cdcOpenKeys}
+                  selectedKeys={[]}
+                  treeData={cdcTree as never}
+                />
               )}
             </div>
           </Card>
@@ -1059,6 +1048,14 @@ export function WorkflowCanvasPage() {
                     {selectedNode.data.subWorkflowId ? "워크플로우" : "실행 job"}
                   </div>
                   <div>{String(selectedNode.data.label)}</div>
+                  {/* 워크플로우 노드는 이름만으로 «어디에 속한 것인지»를 알 수 없다.
+                      워크플로우 속성창과 같은 자리·같은 모양으로 최상단부터의 경로를 적는다. */}
+                  {selectedNode.data.subWorkflowId ? (() => {
+                    const path = workflowPathOf(allWorkflows, Number(selectedNode.data.subWorkflowId));
+                    return path.length > 1
+                      ? <div style={{ fontSize: 12, color: "#888" }}>{path.join(" > ")}</div>
+                      : null;
+                  })() : null}
                 </div>
                 {/* ETL 관리 화면과 같은 job 속성(마지막 실행·상위 경로·작성자·연결 DAG·대상·로그).
                     계산이 두 벌이 되지 않도록 그쪽 컴포넌트를 그대로 가져다 쓴다. */}
