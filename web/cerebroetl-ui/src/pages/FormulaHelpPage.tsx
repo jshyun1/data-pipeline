@@ -3,8 +3,12 @@ import { Button, Input, message, Spin } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { listFormulaHelp, type FormulaHelpItem } from "../api/formulaHelp";
 
-function initialLetter(value: string) {
-  return value.trim().charAt(0).toUpperCase();
+function syntaxInitialLetter(item: FormulaHelpItem) {
+  return item.syntax.trim().charAt(0).toUpperCase();
+}
+
+function isAlphabetLetter(value: string) {
+  return /^[A-Z]$/.test(value);
 }
 
 function copySyntax(item: FormulaHelpItem) {
@@ -47,7 +51,7 @@ export function FormulaHelpPage() {
   }, []);
 
   const letters = useMemo(() => (
-    Array.from(new Set(items.map((item) => initialLetter(item.functionName)))).sort()
+    Array.from(new Set(items.map(syntaxInitialLetter).filter(isAlphabetLetter))).sort()
   ), [items]);
   const categories = useMemo(() => (
     ["전체", ...Array.from(new Set(items.map((item) => item.category)))]
@@ -60,7 +64,7 @@ export function FormulaHelpPage() {
         item.functionName.toLowerCase().includes(normalizedKeyword) ||
         item.syntax.toLowerCase().includes(normalizedKeyword) ||
         item.summary.toLowerCase().includes(normalizedKeyword);
-      const matchesLetter = !letter || initialLetter(item.functionName) === letter;
+      const matchesLetter = !letter || syntaxInitialLetter(item) === letter;
       const matchesCategory = category === "전체" || item.category === category;
       return matchesKeyword && matchesLetter && matchesCategory;
     });
