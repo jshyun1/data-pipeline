@@ -1,21 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, DatePicker, Descriptions, Dropdown, Empty, Input, message, Modal, Radio, Select, Space, Spin, Table, Tag } from "antd";
+import { Button, ConfigProvider, DatePicker, Descriptions, Dropdown, Empty, Input, message, Modal, Radio, Select, Space, Spin, Table, Tag } from "antd";
 import type { Dayjs } from "dayjs";
 import {
-  CheckCircleFilled,
-  PlusCircleFilled,
-  ClockCircleFilled,
-  CloseCircleFilled,
   DeploymentUnitOutlined,
   DownOutlined,
-  FolderOpenOutlined,
-  FolderOutlined,
   InfoCircleOutlined,
   PlayCircleOutlined,
   ProfileOutlined,
   RightOutlined,
-  SyncOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import { Link, useSearchParams } from "react-router-dom";
@@ -55,6 +48,8 @@ import { getEtlJob, listEtlJobs } from "../api/etlJobs";
 import { categorizeDag, extractKafkaPipelineId, type DagCategory } from "../utils/dagHistory";
 import { scheduleDescription } from "../utils/schedulePreset";
 import { useAuth } from "../auth/AuthContext";
+import { WfIcon, WorkflowPageHeader, type WfIconName } from "../components/WorkflowPageHeader";
+import { cerebroBrandTheme } from "../theme/cerebro";
 
 type BusinessCategory = Exclude<DagCategory, "기타">;
 
@@ -342,29 +337,61 @@ function StatusCard({
     if (matchesMetric("new", dag, runs, today)) fresh += 1;
   }
 
-  const metric = (key: StatusMetric, icon: React.ReactNode | null, label: string, value: number, modifier = "") => (
+  // 초안(workflow-monitoring.html)의 KPI 띠: 도메인 배지 + «아이콘·이름 / 숫자» 칸을 구분선으로 잇는다.
+  // 0 인 칸은 숫자를 흐리게 눌러 둬서 값이 있는 칸이 먼저 눈에 들어오게 한다(전체 작업은 예외).
+  const domain = category === "CDC" ? "cdc" : "etl";
+  const metric = (key: StatusMetric, icon: WfIconName, label: string, value: number, tone: string) => (
     <button
       type="button"
-      className={`airflow-business-metric${modifier}${activeMetric === key ? " active" : ""}`}
+      className={`airflow-business-metric${activeMetric === key ? " active" : ""}`}
+      aria-pressed={activeMetric === key}
       onClick={() => onMetricClick(key)}
     >
-      {icon}
-      <span>{label}<strong>{value}</strong></span>
+      <span className="airflow-business-metric-label">
+        <WfIcon name={icon} size={12} strokeWidth={key === "all" ? 2.5 : 3}
+                className={key === "all" ? undefined : `wf-tone-${tone}`} />
+        {label}
+      </span>
+      <strong className={`airflow-business-metric-value wf-tone-${value === 0 && key !== "all" ? "muted" : tone}`}>
+        {value}
+      </strong>
     </button>
   );
+  const metrics = [
+    metric("all", "grid", "전체 작업", dags.length, domain === "cdc" ? "blue" : "red"),
+    metric("running", "play", "실행 중", active, "blue"),
+    ...(category === "ETL" ? [metric("success", "check", "성공", success, "green")] : []),
+    metric("failed", "x", "실패", failed, "red"),
+    ...(category === "CDC" ? [metric("waiting", "clock", "대기", waiting, "amber")] : []),
+    metric("new", "plus", "신규", fresh, "purple"),
+  ];
 
   return (
-    <section className="airflow-business-card">
-      <strong className="airflow-business-name">{category}</strong>
-      {metric("all", null, "전체 작업", dags.length)}
-      {metric("running", <RightOutlined />, "실행 중", active)}
-      {category === "ETL" && metric("success", <CheckCircleFilled />, "성공", success, " airflow-business-metric--success")}
-      {metric("failed", <CloseCircleFilled />, "실패", failed, " airflow-business-metric--danger")}
-      {category === "CDC" && metric("waiting", <ClockCircleFilled />, "대기", waiting, " airflow-business-metric--waiting")}
-      {metric("new", <PlusCircleFilled />, "신규", fresh, " airflow-business-metric--new")}
+    <section className={`airflow-business-card airflow-business-card--${domain}`}>
+      <strong className={`airflow-business-name airflow-business-name--${domain}`}>
+        <span className="domain-dot" />
+        {category}
+      </strong>
+      <div className="airflow-business-metrics">
+        {metrics.map((item, index) => (
+          <Fragment key={index}>
+            {index > 0 && <span className="airflow-business-sep" aria-hidden="true" />}
+            {item}
+          </Fragment>
+        ))}
+      </div>
     </section>
   );
 }
+
+/**
+ * 트리 줄의 화살표. 잎(없음) / 줄을 누르면 같이 접히는 폴더(row) / 줄과 따로 눌리는 접기 버튼(button).
+ * 마지막은 하위가 있는 게시 워크플로우 - 줄은 «고르기», 화살표는 «접기»라 둘을 떼어 둔다.
+ */
+type TreeArrow =
+  | { kind: "none" }
+  | { kind: "row"; open: boolean }
+  | { kind: "button"; open: boolean; onToggle: () => void };
 
 function BusinessTree({
   dags,
@@ -499,8 +526,78 @@ function BusinessTree({
     });
   };
 
+  /**
+   * 트리 한 줄. 스케줄링 화면 트리와 같은 마크업이다(tree-item-row · ▶ · 폴더/파일 아이콘 · 개수 배지).
+   *
+   * <p>줄 전체가 눌리는 자리라 div + role=button 으로 두고 Enter/Space 도 받는다 - 하위가 있는
+   * 워크플로우 줄에는 접기 버튼이 따로 들어가서 button 안에 button 을 넣을 수 없다.
+   * 이름은 초안처럼 한 줄로 자르고, 전체 이름은 마우스를 올리면(title) 보인다.
+   */
+  const treeRow = ({
+    active = false,
+    pending = false,
+    icon,
+    label,
+    title,
+    arrow,
+    trailing,
+    onClick,
+    onContextMenu,
+  }: {
+    active?: boolean;
+    pending?: boolean;
+    icon: WfIconName;
+    label: React.ReactNode;
+    title?: string;
+    arrow: TreeArrow;
+    trailing?: React.ReactNode;
+    onClick: () => void;
+    onContextMenu?: () => void;
+  }) => (
+    <div
+      className={`tree-item-row${active ? " active" : ""}${pending ? " is-pending" : ""}`}
+      role="button"
+      tabIndex={0}
+      aria-expanded={arrow.kind === "none" ? undefined : arrow.open}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+    >
+      {arrow.kind === "button" ? (
+        <button
+          type="button"
+          className={`tree-toggle-arrow${arrow.open ? " open" : ""}`}
+          aria-label={arrow.open ? "하위 워크플로우 접기" : "하위 워크플로우 펼치기"}
+          onClick={(event) => {
+            // 접기만 한다 - 줄 선택까지 같이 되면 접으려다 화면이 바뀐다.
+            event.stopPropagation();
+            arrow.onToggle();
+          }}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          ▶
+        </button>
+      ) : (
+        <span
+          className={`tree-toggle-arrow${arrow.kind === "row" ? (arrow.open ? " open" : "") : " empty"}`}
+          aria-hidden="true"
+        >
+          ▶
+        </span>
+      )}
+      <WfIcon name={icon} size={15} className="tree-node-icon" />
+      <span className="tree-node-label" title={title}>{label}</span>
+      {trailing}
+    </div>
+  );
+
   /** DAG 하나를 트리 항목으로. 우클릭 메뉴(상세/실행설정/삭제)는 기존과 동일하다. */
-  const renderDagButton = (dag: DashboardDag, depth = 0) => (
+  const renderDagButton = (dag: DashboardDag, arrow: TreeArrow = { kind: "none" }, icon: WfIconName = "file") => (
     <Dropdown
       key={dag.dag_id}
       trigger={["contextMenu"]}
@@ -518,16 +615,16 @@ function BusinessTree({
         },
       }}
     >
-      <button
-        type="button"
-        className={selectedDagId === dag.dag_id ? "airflow-tree-dag active" : "airflow-tree-dag"}
-        style={{ paddingLeft: 12 + depth * 14 }}
-        onClick={() => { onSelect(dag.dag_id); onScope({ kind: "dag", dagId: dag.dag_id }); }}
-        onContextMenu={() => onSelect(dag.dag_id)}
-      >
-        <span>{displayName(dag)}</span>
-        {alertsByDag.has(dag.dag_id) && <Tag color="error">조치</Tag>}
-      </button>
+      {treeRow({
+        active: selectedDagId === dag.dag_id,
+        icon,
+        label: displayName(dag),
+        title: displayName(dag),
+        arrow,
+        trailing: alertsByDag.has(dag.dag_id) ? <span className="tree-action-tag">조치</span> : null,
+        onClick: () => { onSelect(dag.dag_id); onScope({ kind: "dag", dagId: dag.dag_id }); },
+        onContextMenu: () => onSelect(dag.dag_id),
+      })}
     </Dropdown>
   );
 
@@ -552,38 +649,38 @@ function BusinessTree({
    * 예전에는 ETL 항목에만 메뉴가 있어서, 같은 트리인데 CDC만 우클릭이 안 됐다.
    * 대상은 그 파이프라인의 제어 DAG(kafka_pipeline_{id}_control)다.
    */
-  const renderPipelineButton = (pipeline: PipelineResponse, depth: number) => {
+  const renderPipelineButton = (pipeline: PipelineResponse) => {
     const controlDag = dags.find((d) => d.dag_id === `kafka_pipeline_${pipeline.id}_control`);
-    const button = (
-      <button type="button"
-              className={revealPipelineId === pipeline.id
-                ? "airflow-tree-dag active" : "airflow-tree-dag"}
-              style={{ paddingLeft: 12 + depth * 14 }}
-              onClick={() => onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id })}>
-        <span>{pipeline.name}</span>
-      </button>
-    );
+    const row = treeRow({
+      active: revealPipelineId === pipeline.id,
+      icon: "file",
+      label: pipeline.name,
+      title: pipeline.name,
+      arrow: { kind: "none" },
+      onClick: () => onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id }),
+    });
     if (!controlDag) {
-      return <div key={pipeline.id}>{button}</div>;   // 제어 DAG가 없으면 메뉴도 의미가 없다
+      return <div key={pipeline.id} className="tree-node">{row}</div>;   // 제어 DAG가 없으면 메뉴도 의미가 없다
     }
     return (
-      <Dropdown
-        key={pipeline.id}
-        trigger={["contextMenu"]}
-        menu={{
-          items: [
-            { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
-            ...(canRun ? [{ key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" }] : []),
-          ],
-          onClick: ({ key }) => {
-            onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id });
-            if (key === "detail") onDetail(controlDag);
-            else onExecution(controlDag);
-          },
-        }}
-      >
-        {button}
-      </Dropdown>
+      <div key={pipeline.id} className="tree-node">
+        <Dropdown
+          trigger={["contextMenu"]}
+          menu={{
+            items: [
+              { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
+              ...(canRun ? [{ key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" }] : []),
+            ],
+            onClick: ({ key }) => {
+              onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id });
+              if (key === "detail") onDetail(controlDag);
+              else onExecution(controlDag);
+            },
+          }}
+        >
+          {row}
+        </Dropdown>
+      </div>
     );
   };
 
@@ -613,31 +710,31 @@ function BusinessTree({
       byConnection.set(pipeline.sourceConnectionId, schemas);
     }
 
+    /** 폴더 한 칸. 누르면 접기/펼치기와 함께 가운데 목록 범위가 그 폴더로 바뀐다(예전과 같음). */
     const folder = (
-      key: string, label: string, count: number, depth: number,
+      key: string, label: string, count: number,
       selected: boolean, onClick: () => void, children: React.ReactNode,
     ) => {
       const collapsed = collapsedNodes.has(key);
       return (
-        <div key={key}>
-          <button type="button"
-                  className={selected ? "airflow-tree-label active" : "airflow-tree-label"}
-                  style={{ paddingLeft: 8 + depth * 14 }}
-                  aria-expanded={!collapsed}
-                  onClick={() => { toggleNode(key); onClick(); }}>
-            {collapsed ? <RightOutlined /> : <DownOutlined />}
-            {collapsed ? <FolderOutlined /> : <FolderOpenOutlined />}
-            {label}
-            <span style={{ color: "#888" }}> ({count})</span>
-          </button>
-          {!collapsed && children}
+        <div key={key} className="tree-node">
+          {treeRow({
+            active: selected,
+            icon: "folder",
+            label,
+            title: label,
+            arrow: { kind: "row", open: !collapsed },
+            trailing: <span className="tree-node-badge">{count}</span>,
+            onClick: () => { toggleNode(key); onClick(); },
+          })}
+          {!collapsed && <div className="tree-sub-group" role="group">{children}</div>}
         </div>
       );
     };
 
     const total = pipelines.length;
     return folder(
-      "cdc:all", "전체 파이프라인", total, 0,
+      "cdc:all", "전체 파이프라인", total,
       scope?.kind === "cdc" && scope.scope === "all",
       () => onScope({ kind: "cdc", scope: "all" }),
       <>
@@ -645,28 +742,28 @@ function BusinessTree({
           const count = [...schemas.values()].reduce((sum, rows) => sum + rows.length, 0);
           return folder(
             `cdc:connection:${connectionId}`, connectionNames.get(connectionId) ?? `연결 ${connectionId}`,
-            count, 1,
+            count,
             scope?.kind === "cdc" && scope.scope === "connection" && scope.connectionId === connectionId,
             () => onScope({ kind: "cdc", scope: "connection", connectionId }),
             <>
               {[...schemas.entries()].map(([schema, rows]) => folder(
-                `cdc:schema:${connectionId}:${schema}`, schema, rows.length, 2,
+                `cdc:schema:${connectionId}:${schema}`, schema, rows.length,
                 scope?.kind === "cdc" && scope.scope === "schema"
                   && scope.connectionId === connectionId && scope.schema === schema,
                 () => onScope({ kind: "cdc", scope: "schema", connectionId, schema }),
                 <>
-                  {rows.map((pipeline) => renderPipelineButton(pipeline, 3))}
+                  {rows.map((pipeline) => renderPipelineButton(pipeline))}
                 </>,
               ))}
             </>,
           );
         })}
         {logFiles.length > 0 && folder(
-          "cdc:logfile", "로그파일", logFiles.length, 1,
+          "cdc:logfile", "로그파일", logFiles.length,
           scope?.kind === "cdc" && scope.scope === "logfile",
           () => onScope({ kind: "cdc", scope: "logfile" }),
           <>
-            {logFiles.map((pipeline) => renderPipelineButton(pipeline, 2))}
+            {logFiles.map((pipeline) => renderPipelineButton(pipeline))}
           </>,
         )}
       </>,
@@ -685,14 +782,12 @@ function BusinessTree({
    * 워크플로우 한 칸과 그 하위. DAG 가 있으면 그 자리에서 바로 고르고 우클릭 메뉴도 붙는다
    * (게시 전이라 DAG 가 없으면 이름만 보여준다 - 있는데 안 보이는 것보다 낫다).
    */
-  const renderWorkflowTree = (
-    item: WorkflowTreeItem, etlDags: DashboardDag[], depth: number,
-  ): React.ReactNode => {
+  const renderWorkflowTree = (item: WorkflowTreeItem, etlDags: DashboardDag[]): React.ReactNode => {
     const needle = search.trim().toLowerCase();
     const nodeKey = `wf:${item.workflow.id}`;
     const collapsed = collapsedNodes.has(nodeKey);
     const renderedChildren = collapsed ? [] : item.children
-      .map((child) => renderWorkflowTree(child, etlDags, depth + 1))
+      .map((child) => renderWorkflowTree(child, etlDags))
       .filter(Boolean);
     // 검색 중이면 자신 또는 자손이 걸리는 가지만 남긴다.
     const selfMatches = !needle || item.workflow.name.toLowerCase().includes(needle);
@@ -702,70 +797,66 @@ function BusinessTree({
     const dag = etlDags.find((d) => d.dag_id === item.workflow.dagId);
     const hasChildren = item.children.length > 0;
     return (
-      <div key={item.workflow.id}>
+      <div key={item.workflow.id} className="tree-node">
         {/*
-          게시된 워크플로우는 DAG 버튼 그대로 둔다(선택·우클릭 메뉴가 붙어야 한다). 다만
-          하위가 있으면 접기 화살표를 «옆에» 따로 둔다 - 버튼 안에 넣으면 누를 때마다
+          게시된 워크플로우는 DAG 줄 그대로 둔다(선택·우클릭 메뉴가 붙어야 한다). 다만
+          하위가 있으면 접기 화살표를 따로 눌리게 한다 - 줄과 같이 눌리면 누를 때마다
           선택까지 같이 돼서 접으려다 화면이 바뀐다.
         */}
-        {dag ? (
-          <div style={{ display: "flex", alignItems: "center" }}>
-            {hasChildren && (
-              <button type="button" className="airflow-tree-caret"
-                      style={{ paddingLeft: 8 + depth * 14, background: "none", border: "none", cursor: "pointer" }}
-                      aria-expanded={!collapsed}
-                      aria-label={collapsed ? "하위 워크플로우 펼치기" : "하위 워크플로우 접기"}
-                      onClick={() => toggleNode(nodeKey)}>
-                {collapsed ? <RightOutlined /> : <DownOutlined />}
-              </button>
-            )}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              {renderDagButton(dag, hasChildren ? 0 : depth)}
-            </div>
-          </div>
-        ) : (
-          <button type="button"
-                  className="airflow-tree-label"
-                  style={{ paddingLeft: 8 + depth * 14, opacity: 0.5 }}
-                  aria-expanded={!collapsed}
-                  onClick={() => hasChildren && toggleNode(nodeKey)}>
-            {hasChildren ? (collapsed ? <RightOutlined /> : <DownOutlined />) : null}
-            {item.workflow.name}
-            {/* 게시했는데 Airflow 가 아직 DAG 를 안 읽은 짧은 구간. 이름만 자리를 지킨다. */}
-            <span style={{ color: "#888" }}> (DAG 준비 중)</span>
-          </button>
-        )}
-        {renderedChildren}
+        {dag
+          ? renderDagButton(
+              dag,
+              hasChildren ? { kind: "button", open: !collapsed, onToggle: () => toggleNode(nodeKey) } : { kind: "none" },
+              hasChildren ? "folder" : "file",
+            )
+          : treeRow({
+              pending: true,
+              icon: hasChildren ? "folder" : "file",
+              // 게시했는데 Airflow 가 아직 DAG 를 안 읽은 짧은 구간. 이름만 자리를 지킨다.
+              label: <>{item.workflow.name}<span className="tree-node-note"> (DAG 준비 중)</span></>,
+              title: `${item.workflow.name} (DAG 준비 중)`,
+              arrow: hasChildren ? { kind: "row", open: !collapsed } : { kind: "none" },
+              onClick: () => {
+                if (hasChildren) {
+                  toggleNode(nodeKey);
+                }
+              },
+            })}
+        {renderedChildren.length > 0 && <div className="tree-sub-group" role="group">{renderedChildren}</div>}
       </div>
     );
   };
 
   return (
     <aside className="airflow-dashboard-panel airflow-business-tree">
-      <h3>업무별 트리</h3>
-      <Input.Search allowClear placeholder="검색" value={search} onChange={(event) => onSearch(event.target.value)} />
-      <div className="airflow-tree-body">
+      {/* 트리 제목 줄(«업무별 트리»)은 뺐다(사용자 요청) - 스케줄링 트리와 같이 검색칸부터 시작한다. */}
+      <div className="airflow-tree-search">
+        <Input allowClear prefix={<WfIcon name="search" size={13} />} placeholder="검색" aria-label="트리 검색"
+               value={search} onChange={(event) => onSearch(event.target.value)} />
+      </div>
+      <div className="airflow-tree-body" role="tree" aria-label="업무별 트리">
         {CATEGORY_ORDER.map((category) => {
           const categoryDags = dags.filter((dag) => categoryOf(dag) === category);
           const categoryNode = `category:${category}`;
           const categoryCollapsed = collapsedNodes.has(categoryNode);
           return (
-            <section key={category} className="airflow-tree-category">
-              <button type="button" className="airflow-tree-label" aria-expanded={!categoryCollapsed} onClick={() => toggleNode(categoryNode)}>
-                {categoryCollapsed ? <RightOutlined /> : <DownOutlined />}
-                {categoryCollapsed ? <FolderOutlined /> : <FolderOpenOutlined />}
-                {category}
-              </button>
-              {!categoryCollapsed && category === "CDC" && renderCdcTree()}
-              {!categoryCollapsed && category === "ETL"
-                ? workflowHierarchy.map((item) => renderWorkflowTree(item, categoryDags, 0))
-                : null}
-              {!categoryCollapsed && category === "ETL"
-                ? categoryDags
+            <section key={category} className={`tree-node airflow-tree-category airflow-tree-category--${category.toLowerCase()}`}>
+              {treeRow({
+                icon: "folder",
+                label: category,
+                arrow: { kind: "row", open: !categoryCollapsed },
+                onClick: () => toggleNode(categoryNode),
+              })}
+              {!categoryCollapsed && (
+                <div className="tree-sub-group" role="group">
+                  {category === "CDC" && renderCdcTree()}
+                  {category === "ETL" && workflowHierarchy.map((item) => renderWorkflowTree(item, categoryDags))}
+                  {category === "ETL" && categoryDags
                     // 워크플로우 계층에 이미 붙은 DAG 는 여기서 또 보여주지 않는다.
                     .filter((dag) => !placedDagIds.has(dag.dag_id))
-                    .map((dag) => renderDagButton(dag))
-                : null}
+                    .map((dag) => <div key={dag.dag_id} className="tree-node">{renderDagButton(dag)}</div>)}
+                </div>
+              )}
             </section>
           );
         })}
@@ -1396,7 +1487,7 @@ function RunHistoryModal({
 
   return (
     <Modal title={`${dag ? displayName(dag) : "작업"} 실행 이력`} open={open} onCancel={onClose}
-           footer={null} width={1080} destroyOnHidden>
+           footer={null} width={1080} destroyOnHidden rootClassName="cerebro-modal">
       <Space style={{ marginBottom: 12 }} wrap>
         <span>기간</span>
         <DatePicker.RangePicker
@@ -1659,6 +1750,7 @@ function ExecutionSettingsModal({
         <Button disabled={triggering} onClick={onClose}>취소</Button>
       </>}
       destroyOnHidden
+      rootClassName="cerebro-modal"
     >
       <p>Airflow DAG에 전달할 실행 동작을 선택하세요.</p>
       {watching && (
@@ -1868,12 +1960,42 @@ export function AirflowDashboardPage() {
   };
   const initialLoading = !initialSyncQuery.isFetched || dashboardQuery.isLoading;
 
+  const syncBusy = synchronizing || initialSyncQuery.isFetching;
+  // 가운데 목록이 CDC(파이프라인)인지 ETL(워크플로우)인지. 제목·선택 행의 색만 가른다(초안: CDC 파랑 · ETL 빨강).
+  const listDomain = scope?.kind === "cdc" ? "cdc"
+    : scope?.kind === "metric" ? (scope.category === "CDC" ? "cdc" : "etl")
+    : selectedDag && categoryOf(selectedDag) === "CDC" ? "cdc" : "etl";
+
   return (
+    <ConfigProvider theme={cerebroBrandTheme}>
     <div className="airflow-dashboard-page">
-      <header className="airflow-dashboard-heading">
-        <div><h1>실시간 모니터링</h1><p>작업 상태와 실행 이력을 한 화면에서 확인하고 조치합니다.</p></div>
-        <div className="airflow-refresh-controls">{canRunTop && <Button icon={<SyncOutlined />} loading={synchronizing || initialSyncQuery.isFetching} onClick={() => void synchronizeDags()}>동기화</Button>}<span>갱신 주기</span><Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} /><span>마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}</span></div>
-      </header>
+      {/* 초안(workflow-monitoring.html)의 머리줄: 화면 제목 + 워크플로우 하위 탭 ··· 동기화·갱신 주기. */}
+      <WorkflowPageHeader
+        title="실시간 모니터링"
+        icon={<WfIcon name="pulse" size={22} strokeWidth={2.2} />}
+        actions={
+          <div className="airflow-refresh-controls">
+            {canRunTop && (
+              // antd 버튼의 loading 과 같게: 동기화 중에는 누름을 무시하고 아이콘만 돈다.
+              <button type="button" className={syncBusy ? "btn-wf-sync spinning" : "btn-wf-sync"}
+                      aria-busy={syncBusy}
+                      onClick={() => {
+                        if (!syncBusy) {
+                          void synchronizeDags();
+                        }
+                      }}>
+                <WfIcon name="sync" size={15} strokeWidth={2.2} />
+                동기화
+              </button>
+            )}
+            <span className="refresh-label">갱신 주기</span>
+            <Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} aria-label="갱신 주기" />
+            <span className="last-refresh-time">
+              마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}
+            </span>
+          </div>
+        }
+      />
 
       {initialLoading ? <div className="airflow-dashboard-loading"><Spin size="large" /><span>{canRunTop && !initialSyncQuery.isFetched ? "DAG 동기화 중..." : "대시보드 로딩 중..."}</span></div> : dashboardQuery.isError ? <Empty description="Airflow 현황을 불러올 수 없습니다." /> : (
         <>
@@ -1898,11 +2020,12 @@ export function AirflowDashboardPage() {
                           scope={scope} onScope={changeScope}
                           selectedDagId={selectedDagId} search={search} alertsByDag={alertsByDag} onSearch={setSearch}
                           onSelect={selectDag} onDetail={showDagDetail} onExecution={showExecutionSettings} />
-            <main className="airflow-dashboard-panel airflow-jobs-panel">
+            <main className={`airflow-dashboard-panel airflow-jobs-panel airflow-jobs-panel--${listDomain}`}>
               <div className="airflow-jobs-heading">
-                <div>
-                  <h3>{scopeTitle}</h3>
-                </div>
+                <h3>
+                  <WfIcon name={listDomain === "cdc" ? "pulse" : "filter"} size={16} />
+                  {scopeTitle}
+                </h3>
               </div>
               {scope
                 ? <ScopeList scope={scope} dags={businessDags} runsByDag={runsByDag} pipelines={pipelines}
@@ -1943,7 +2066,7 @@ export function AirflowDashboardPage() {
                                   onClose={() => setExecutionOpen(false)} onExecuted={() => { setHistoryOpen(true); void dashboardQuery.refetch(); }} />
           <RunHistoryModal open={historyOpen} dag={selectedPipeline ? pipelineDag : selectedDag}
                            runs={historyRuns} refreshSeconds={refreshSeconds} onClose={() => setHistoryOpen(false)} />
-          <Modal title="DAG 상세" open={detailOpen} footer={null} onCancel={() => setDetailOpen(false)}>
+          <Modal title="DAG 상세" open={detailOpen} footer={null} onCancel={() => setDetailOpen(false)} rootClassName="cerebro-modal">
             {selectedDag && <Descriptions column={1} size="small" bordered>
               <Descriptions.Item label="작업명">{displayName(selectedDag)}</Descriptions.Item>
               <Descriptions.Item label="DAG ID">{selectedDag.dag_id}</Descriptions.Item>
@@ -1956,5 +2079,6 @@ export function AirflowDashboardPage() {
         </>
       )}
     </div>
+    </ConfigProvider>
   );
 }

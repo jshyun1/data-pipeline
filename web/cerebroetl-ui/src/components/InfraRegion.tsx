@@ -47,8 +47,12 @@ function formatBytes(bytes: number) {
   return `${value.toFixed(value >= 100 || unitIndex === 0 ? 0 : 1)}${units[unitIndex]}`;
 }
 
+type ResourceKind = "cpu" | "memory" | "disk";
+
 interface ResourceMeterProps {
   title: string;
+  /** 막대 색 계열(디자인 초안: CPU 파랑·메모리 초록·디스크 청록). 정상일 때만 쓰고 경고·위험은 상태색이 이긴다. */
+  kind: ResourceKind;
   percent: number | null;
   headline: string;
   caption: string;
@@ -62,7 +66,7 @@ interface ResourceMeterProps {
  * <p>원본 5-3 요구 3가지를 여기서 채운다 — 임계 판정 배지, 스파크라인, 그리고 임계를 넘었을 때
  * 조치 대기열로 보내는 링크(원본 표현: "색상 + 배지 + 조치 대기열 연동").
  */
-function ResourceMeter({ title, percent, headline, caption, loading }: ResourceMeterProps) {
+function ResourceMeter({ title, kind, percent, headline, caption, loading }: ResourceMeterProps) {
   const level: Level = percent === null ? "ok" : meterLevel(percent);
   const badge = percent === null ? null : LEVEL_BADGE[level];
   return (
@@ -83,19 +87,22 @@ function ResourceMeter({ title, percent, headline, caption, loading }: ResourceM
           </div>
           <div className="infra-meter" role="img" aria-label={`${title} ${percent.toFixed(1)}%`}>
             <span
-              className={`infra-meter-fill infra-meter-fill--${level}`}
+              className={`infra-meter-fill infra-meter-fill--${level} infra-meter-fill--${kind}`}
               style={{ width: `${Math.min(100, percent)}%` }}
             />
           </div>
-          <div className="infra-tile-headline">{headline}</div>
-          {level !== "ok" ? (
-            <a className="infra-tile-queue-link" href="#action-queue">
-              조치 대기열 보기 →
-            </a>
-          ) : null}
         </>
       )}
-      <div className="infra-tile-caption">{caption}</div>
+      {/* 디자인 초안처럼 요약(왼쪽)과 기준(오른쪽)을 한 줄에 둔다. */}
+      <div className="infra-tile-desc">
+        {percent === null ? null : <span className="infra-tile-headline">{headline}</span>}
+        <span className="infra-tile-caption">{caption}</span>
+      </div>
+      {percent !== null && level !== "ok" ? (
+        <a className="infra-tile-queue-link" href="#action-queue">
+          조치 대기열 보기 →
+        </a>
+      ) : null}
     </Card>
   );
 }
@@ -224,6 +231,7 @@ export function InfraRegion({ resources, resourcesLoading, processes, processesL
     <aside className="dashboard-infra-column">
       <ResourceMeter
         title="CPU 사용률"
+        kind="cpu"
         percent={cpu ? cpu.usedPercent : null}
         headline={cpuHeadline}
         caption="서버(호스트) 기준"
@@ -232,6 +240,7 @@ export function InfraRegion({ resources, resourcesLoading, processes, processesL
       <Card className="infra-tile infra-tile--memory" loading={resourcesLoading}>
         <ResourceMeter
           title="메모리 사용률"
+          kind="memory"
           percent={memory ? memory.usedPercent : null}
           headline={memory ? `${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}` : "-"}
           caption={memory ? `여유 ${formatBytes(memory.availableBytes)}` : "서버(호스트) 기준"}
@@ -242,6 +251,7 @@ export function InfraRegion({ resources, resourcesLoading, processes, processesL
       <Card className="infra-tile infra-tile--disk" loading={resourcesLoading}>
         <ResourceMeter
           title="디스크 사용률"
+          kind="disk"
           percent={disk ? disk.usedPercent : null}
           headline={disk ? `${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}` : "-"}
           caption={disk ? `${disk.mount} · 여유 ${formatBytes(disk.availableBytes)}` : "마운트 조회 불가"}

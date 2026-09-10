@@ -1,8 +1,7 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Empty, Form, Input, message, Modal, Popconfirm, Space, Table, Tag, Tree } from "antd";
-import { PlusOutlined, SyncOutlined } from "@ant-design/icons";
+import { ConfigProvider, Empty, Form, Input, message, Modal, Popconfirm, Table } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useAuth } from "../auth/AuthContext";
@@ -19,6 +18,8 @@ import {
   flattenWorkflowTree,
   type WorkflowTreeItem,
 } from "../utils/workflowTree";
+import { WfIcon, WorkflowPageHeader } from "../components/WorkflowPageHeader";
+import { cerebroBrandTheme } from "../theme/cerebro";
 
 // 워크플로우 목록. 여기서 만들고, 캔버스(설계)로 들어가 job을 배치한다.
 //
@@ -28,6 +29,95 @@ import {
 // 왼쪽 트리는 «워크플로우 계층»이다. 최상단은 누구의 하위도 아닌 워크플로우이고, 그 아래는
 // 캔버스에 노드로 얹어 둔 하위 워크플로우다. 고르면 그 워크플로우와 하위 전부를 표에 보여준다.
 // 워크플로우는 업무 그룹(NiFi 그룹)에 속하지 않는다. 분류는 이 계층이 전부다.
+//
+// 모양은 디자인 초안 workflow-scheduling.html(왼쪽 트리 카드 + 오른쪽 목록 카드)을 따른다.
+
+/**
+ * 워크플로우 계층 트리. 초안의 트리 마크업(tree-node · tree-item-row · tree-sub-group)을 그대로 쓴다 -
+ * antd Tree 로는 초안의 ▶ 화살표·점선 들여쓰기·줄 간격이 맞지 않았다.
+ *
+ * <p>동작은 antd Tree 를 쓰던 때와 같다: 줄을 누르면 고르고(고른 줄을 다시 누르면 해제),
+ * 화살표는 펼치기/접기만 한다. 처음에는 최상단만 펼쳐 둔다 - 부모가 key 를 바꿔 다시 마운트하면
+ * (검색어가 바뀌면) 이 기본 상태로 돌아간다.
+ */
+function WorkflowTreeView({
+  items,
+  selectedId,
+  onSelect,
+}: {
+  items: WorkflowTreeItem[];
+  selectedId?: number;
+  onSelect: (id: number | undefined) => void;
+}) {
+  const [openIds, setOpenIds] = useState<Set<number>>(() => new Set(items.map((item) => item.workflow.id)));
+
+  const toggle = (id: number) => {
+    setOpenIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const renderNode = (item: WorkflowTreeItem): ReactNode => {
+    const id = item.workflow.id;
+    const hasChildren = item.children.length > 0;
+    const open = openIds.has(id);
+    const active = selectedId === id;
+    const select = () => onSelect(active ? undefined : id);
+    return (
+      <div key={id} className="tree-node" role="treeitem" aria-selected={active}
+           aria-expanded={hasChildren ? open : undefined}>
+        <div
+          className={active ? "tree-item-row active" : "tree-item-row"}
+          tabIndex={0}
+          onClick={select}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              select();
+            }
+          }}
+        >
+          <button
+            type="button"
+            className={`tree-toggle-arrow${hasChildren ? (open ? " open" : "") : " empty"}`}
+            tabIndex={hasChildren ? 0 : -1}
+            aria-label={hasChildren ? (open ? "하위 워크플로우 접기" : "하위 워크플로우 펼치기") : undefined}
+            onClick={(event) => {
+              // 화살표는 접기만 한다 - 줄 선택까지 같이 되면 접으려다 표가 바뀐다.
+              event.stopPropagation();
+              if (hasChildren) {
+                toggle(id);
+              }
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            ▶
+          </button>
+          <WfIcon name={hasChildren ? "folder" : "file"} size={15} className="tree-node-icon" />
+          <span className="tree-node-label">{item.workflow.name}</span>
+          <span className="tree-node-badge" title="캔버스에 놓인 job 수">{item.workflow.jobCount}</span>
+        </div>
+        {hasChildren && open ? (
+          <div className="tree-sub-group" role="group">
+            {item.children.map(renderNode)}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  return (
+    <div role="tree" aria-label="워크플로우 계층" className="tree-root">
+      {items.map(renderNode)}
+    </div>
+  );
+}
 
 export function WorkflowDesignPage() {
   const navigate = useNavigate();
@@ -38,6 +128,7 @@ export function WorkflowDesignPage() {
   const canPublish = !permissionsLoaded || can("AIRFLOW", "WRITE");
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<number>();
+  const [treeSearch, setTreeSearch] = useState("");
   const [form] = Form.useForm();
 
   const { data, isLoading } = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
@@ -104,21 +195,18 @@ export function WorkflowDesignPage() {
    */
   const workflowTree = buildWorkflowHierarchy(workflows);
 
-  const toTreeData = (items: WorkflowTreeItem[]): Array<{
-    key: string; title: React.ReactNode; children?: unknown[];
-  }> => items.map((item) => ({
-    key: String(item.workflow.id),
-    title: (
-      <span>
-        {item.workflow.name}
-        <span style={{ color: "#888" }}> ({item.workflow.jobCount})</span>
-      </span>
-    ),
-    children: item.children.length ? toTreeData(item.children) : undefined,
-  }));
-  const workflowTreeData = toTreeData(workflowTree);
-  // 최상단은 펼쳐 둔다(= 하위 워크플로우까지 바로 보인다). 계층이 깊지 않아 이 정도가 낫다.
-  const workflowTreeOpenKeys = workflowTreeData.map((node) => node.key);
+  /** 검색어가 걸리는 워크플로우와 그 조상만 남긴다(자손이 걸리면 부모도 길로 남아야 한다). */
+  const filterTree = (items: WorkflowTreeItem[], needle: string): WorkflowTreeItem[] => {
+    if (!needle) {
+      return items;
+    }
+    return items.flatMap((item) => {
+      const children = filterTree(item.children, needle);
+      const self = item.workflow.name.toLowerCase().includes(needle);
+      return self || children.length ? [{ ...item, children }] : [];
+    });
+  };
+  const visibleTree = filterTree(workflowTree, treeSearch.trim().toLowerCase());
 
   /**
    * 트리에서 워크플로우를 고르면 그 워크플로우와 <b>하위 전부</b>를 표에 보여준다.
@@ -146,27 +234,47 @@ export function WorkflowDesignPage() {
     {
       title: "워크플로우",
       render: (_, row) => (
-        <Space direction="vertical" size={0}>
-          <Button type="link" style={{ padding: 0, height: "auto", fontWeight: 600 }}
-                  onClick={() => navigate(`/workflows/design/${row.id}`)}>
+        <div className="wf-info-cell">
+          <button type="button" className="wf-main-name" onClick={() => navigate(`/workflows/design/${row.id}`)}>
             {row.name}
-          </Button>
-          <span style={{ color: "#888", fontSize: 12 }}>{row.dagId}</span>
-        </Space>
+          </button>
+          <span className="wf-sub-desc">{row.dagId}</span>
+        </div>
       ),
     },
-    { title: "job 수", dataIndex: "jobCount", width: 90 },
+    {
+      title: "job 수",
+      dataIndex: "jobCount",
+      width: 90,
+      align: "center",
+      render: (value: number) => <span className="wf-job-count">{value}</span>,
+    },
     {
       title: "스케줄",
-      width: 160,
+      width: 180,
       render: (_, row) => {
         // 선행이 있으면 시간이 아니라 "앞 워크플로우가 끝나면" 실행된다.
         if (row.upstreamCount) {
-          return <Tag color="blue">선행 {row.upstreamCount}개 완료 후</Tag>;
+          return (
+            <span className="wf-schedule-badge wf-schedule-badge--upstream">
+              <WfIcon name="flow" size={13} />
+              선행 {row.upstreamCount}개 완료 후
+            </span>
+          );
         }
         return row.scheduleCron
-          ? <span>{row.scheduleCron} <span style={{ color: "#888" }}>({row.timezone})</span></span>
-          : <span style={{ color: "#888" }}>수동 실행</span>;
+          ? (
+            <span className="wf-schedule-badge wf-schedule-badge--cron">
+              <WfIcon name="clock" size={13} />
+              {row.scheduleCron} <span className="wf-schedule-tz">({row.timezone})</span>
+            </span>
+          )
+          : (
+            <span className="wf-schedule-badge">
+              <WfIcon name="clock" size={13} />
+              수동 실행
+            </span>
+          );
       },
     },
     {
@@ -174,87 +282,127 @@ export function WorkflowDesignPage() {
       width: 190,
       render: (_, row) => row.published
         ? (
-          <Space direction="vertical" size={0}>
-            <Tag color="success">게시됨</Tag>
-            <span style={{ color: "#888", fontSize: 12 }}>
+          <div className="wf-status-cell">
+            <span className="wf-status-pill">● 게시됨</span>
+            <span className="wf-status-meta">
               {row.publishedAt ? dayjs(row.publishedAt).format("MM-DD HH:mm") : ""}
               {row.publishedBy ? ` · ${row.publishedBy}` : ""}
             </span>
-          </Space>
+          </div>
         )
-        : <Tag>미게시 (DAG 없음)</Tag>,
+        : <span className="wf-status-pill unpublished">미게시 (DAG 없음)</span>,
     },
     {
       title: "관리",
-      width: 190,
+      width: 210,
+      align: "center",
       render: (_, row) => (
-        <Space wrap>
-          <Button size="small" onClick={() => navigate(`/workflows/design/${row.id}`)}>설계</Button>
+        <div className="wf-action-group">
+          <button type="button" className="btn-tbl-action btn-act-design"
+                  onClick={() => navigate(`/workflows/design/${row.id}`)}>설계</button>
           {row.published && (
             <Popconfirm title="게시를 내릴까요?" description="Airflow에서 DAG가 사라집니다."
                         onConfirm={() => unpublishMutation.mutate(row.id)}>
-              <Button size="small" disabled={!canPublish}
-                      title={canPublish ? undefined : "Airflow 쓰기 권한이 없습니다"}>게시 취소</Button>
+              <button type="button" className="btn-tbl-action btn-act-unpublish" disabled={!canPublish}
+                      title={canPublish ? undefined : "Airflow 쓰기 권한이 없습니다"}>게시 취소</button>
             </Popconfirm>
           )}
           <Popconfirm title="이 워크플로우를 삭제할까요?"
                       description={row.published ? "게시 중이면 먼저 게시를 내려야 합니다." : undefined}
                       onConfirm={() => deleteMutation.mutate(row.id)}>
-            <Button size="small" danger disabled={!canWrite}>삭제</Button>
+            <button type="button" className="btn-tbl-action btn-act-delete" disabled={!canWrite}>삭제</button>
           </Popconfirm>
-        </Space>
+        </div>
       ),
     },
   ];
 
   return (
-    <Card
-      className="wf-design-page"
-      title="워크플로우 스케줄링"
-      extra={
-        <Space>
-        <Button size="small" icon={<SyncOutlined />} loading={syncMutation.isPending}
-                onClick={() => syncMutation.mutate()}>
-          동기화
-        </Button>
-        <Button type="primary" icon={<PlusOutlined />} disabled={!canWrite}
-                onClick={() => setCreateOpen(true)}>
-          새 워크플로우
-        </Button>
-        </Space>
-      }
-    >
-      <div className="wf-design-body">
-        <Card size="small" title="워크플로우" style={{ width: 260, flex: "0 0 260px" }}
-              extra={selectedWorkflowId !== undefined
-                ? <Button size="small" type="link" onClick={() => setSelectedWorkflowId(undefined)}>전체</Button>
-                : null}>
-          {isLoading ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="불러오는 중" /> : (
-            <Tree
-              blockNode
-              // 트리 데이터가 실린 뒤에 마운트되므로(위 isLoading 분기) 이 기본값이 그대로 먹는다.
-              defaultExpandedKeys={workflowTreeOpenKeys}
-              selectedKeys={selectedWorkflowId !== undefined ? [String(selectedWorkflowId)] : []}
-              treeData={workflowTreeData as never}
-              onSelect={(keys) => setSelectedWorkflowId(keys.length ? Number(keys[0]) : undefined)}
-            />
-          )}
-        </Card>
+    <ConfigProvider theme={cerebroBrandTheme}>
+    <div className="wf-design-page">
+      <WorkflowPageHeader
+        title="워크플로우 스케줄링"
+        icon={<WfIcon name="calendar" size={22} strokeWidth={2.2} />}
+        actions={
+          <>
+            {/* antd 버튼의 loading 과 같게: 동기화 중에는 누름을 무시하고 아이콘만 돈다. */}
+            <button type="button" className={syncMutation.isPending ? "btn-wf-sync spinning" : "btn-wf-sync"}
+                    aria-busy={syncMutation.isPending}
+                    title="ETL 에서 만든 job 을 기다리지 않고 바로 가져옵니다"
+                    onClick={() => {
+                      if (!syncMutation.isPending) {
+                        syncMutation.mutate();
+                      }
+                    }}>
+              <WfIcon name="sync" size={15} strokeWidth={2.2} />
+              동기화
+            </button>
+            <button type="button" className="btn-wf-create" disabled={!canWrite}
+                    onClick={() => setCreateOpen(true)}>
+              <WfIcon name="plus" size={15} strokeWidth={2.4} />
+              새 워크플로우
+            </button>
+          </>
+        }
+      />
 
-        <Table<WorkflowSummary>
-          rowKey="id"
-          size="middle"
-          className="wf-design-table"
-          loading={isLoading}
-          dataSource={visible}
-          columns={columns}
-          pagination={{ pageSize: 20, showTotal: (total) => `전체 ${total}건` }}
-          locale={{
-            emptyText: (
-              <Empty description="아직 워크플로우가 없습니다. ETL에서 만든 job을 캔버스에 배치해 워크플로우를 구성하세요." />
-            ),
-          }}
-        />
+      <div className="wf-design-body">
+        {/* 트리 카드 제목 줄은 뺐다(사용자 요청) - 화면 제목이 이미 무엇의 트리인지 말한다. */}
+        <aside className="wf-tree-card">
+          <div className="wf-tree-search">
+            <WfIcon name="search" size={13} />
+            <input
+              id="wf-tree-search"
+              className="wf-tree-search-input"
+              aria-label="트리 검색"
+              value={treeSearch}
+              onChange={(event) => setTreeSearch(event.target.value)}
+              placeholder="워크플로우명 검색"
+            />
+          </div>
+          <div className="wf-tree-scroll">
+            {isLoading ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="불러오는 중" /> : (
+              <WorkflowTreeView
+                // 검색어가 바뀌면 트리 모양이 달라지므로 다시 마운트해 펼침 기본값(최상단만)을 새로 먹인다.
+                key={`wf-tree-${treeSearch}-${visibleTree.length}`}
+                items={visibleTree}
+                selectedId={selectedWorkflowId}
+                onSelect={setSelectedWorkflowId}
+              />
+            )}
+          </div>
+        </aside>
+
+        <section className="wf-list-card">
+          <div className="wf-toolbar">
+            <div className="wf-toolbar-left">
+              {/* 지금 표가 무엇을 보여주는지 한 줄로 - 트리에서 고르면 그 워크플로우와 하위 전부다. */}
+              <span className="wf-selected-chip">
+                <span className="chip-dot" />
+                {selectedSubtree ? `${selectedSubtree.workflow.name} · 하위 포함` : "전체 워크플로우"}
+              </span>
+              {/* 트리 제목 줄에 있던 «전체» 버튼. 고른 줄을 다시 눌러도 해제된다. */}
+              {selectedWorkflowId !== undefined && (
+                <button type="button" className="btn-tree-toggle-all"
+                        onClick={() => setSelectedWorkflowId(undefined)}>전체 보기</button>
+              )}
+            </div>
+          </div>
+          <Table<WorkflowSummary>
+            rowKey="id"
+            size="middle"
+            className="wf-design-table"
+            loading={isLoading}
+            dataSource={visible}
+            columns={columns}
+            pagination={{ pageSize: 20, showTotal: (total) => `전체 ${total}건` }}
+            locale={{
+              emptyText: (
+                <Empty description="아직 워크플로우가 없습니다. ETL에서 만든 job을 캔버스에 배치해 워크플로우를 구성하세요." />
+              ),
+            }}
+          />
+        </section>
       </div>
 
       <Modal
@@ -265,6 +413,7 @@ export function WorkflowDesignPage() {
         confirmLoading={createMutation.isPending}
         okText="만들기"
         cancelText="취소"
+        rootClassName="cerebro-modal"
       >
         <Form form={form} layout="vertical" onFinish={(values) => createMutation.mutate(values)}>
           {/* 워크플로우 키(=dag_id의 축)는 서버가 이름에서 만든다. 사용자가 짓게 하면
@@ -278,6 +427,7 @@ export function WorkflowDesignPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </Card>
+    </div>
+    </ConfigProvider>
   );
 }

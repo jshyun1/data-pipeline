@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, Card, Tag, Tooltip } from "antd";
+import { Card, Tag, Tooltip } from "antd";
 import dayjs from "dayjs";
 import type { ProcessGroup, ProcessItem, ProcessStatus } from "../api/infra";
 
@@ -213,9 +213,9 @@ export function ProcessHealthPanel({ groups, loading, dataFlow }: ProcessHealthP
             <span>
               ● 정상 {normal.length}건{collapseStopped && stopped.length > 0 ? ` · 중지 ${stopped.length}건` : ""}
             </span>
-            <Button type="link" size="small" onClick={() => setManuallyOpen(!showCollapsed)}>
+            <button type="button" className="btn-proc-toggle" onClick={() => setManuallyOpen(!showCollapsed)}>
               {showCollapsed ? "접기 ▴" : "펼치기 ▾"}
-            </Button>
+            </button>
           </div>
           {showCollapsed
             ? collapsed.map(({ group, item }) => (

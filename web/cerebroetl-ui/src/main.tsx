@@ -6,6 +6,7 @@ import { ConfigProvider } from "antd";
 import "./index.css";
 import { App } from "./App";
 import { AuthProvider } from "./auth/AuthContext";
+import { appTheme } from "./theme/cerebro";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,7 +21,7 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <ConfigProvider>
+      <ConfigProvider theme={appTheme}>
         <BrowserRouter>
           <AuthProvider>
             <App />
