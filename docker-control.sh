@@ -30,15 +30,25 @@ ensure_env_file() {
     fi
 }
 
+compose_up() {
+    if ! docker compose "$@" -f "$BASE_COMPOSE" up -d --build; then
+        echo "ERROR: docker compose up failed. Recent pipeline-api logs:" >&2
+        docker compose -f "$BASE_COMPOSE" logs --tail=200 pipeline-api >&2 || true
+        echo "ERROR: docker compose status:" >&2
+        docker compose -f "$BASE_COMPOSE" ps >&2 || true
+        exit 1
+    fi
+}
+
 case "$ACTION" in
     up)
         ensure_env_file
         case "$TARGET" in
             dev)
-                docker compose --profile poc -f "$BASE_COMPOSE" up -d --build
+                compose_up --profile poc
                 ;;
             prod)
-                docker compose -f "$BASE_COMPOSE" up -d --build
+                compose_up
                 ;;
             *)
                 usage
