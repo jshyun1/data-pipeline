@@ -44,6 +44,8 @@ dependencies {
     // 대시보드의 Kafka Broker 헬스체크(AdminClient.describeCluster)용. docker-compose의
     // apache/kafka:3.8.0과 버전을 맞춘다.
     implementation("org.apache.kafka:kafka-clients:3.8.0")
+    // NiFi QueryRecord가 쓰는 Apache Calcite SQL 문법을 생성 화면에서 사전 검증한다.
+    implementation("org.apache.calcite:calcite-core:1.37.0")
     implementation("org.apache.poi:poi-ooxml:5.3.0")
 
     compileOnly("org.projectlombok:lombok")

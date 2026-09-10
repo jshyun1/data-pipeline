@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type SyntheticEvent } from "react";
-import { Alert, Button, Result, Spin, message } from "antd";
-import { ReloadOutlined, UploadOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import { Alert, Button, Modal, Result, Spin } from "antd";
+import { ReloadOutlined } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   getEtlJob,
@@ -22,13 +22,13 @@ import {
   acquireNifiProcessorEditLock,
   heartbeatNifiProcessorEditLock,
   releaseNifiProcessorEditLock,
-  uploadNifiInputDirectoryFiles,
   type NifiExecutionLogEntry,
   type NifiProcessorEditLockResponse,
   type NifiProcessorDetailResponse,
   type NifiProcessorRun,
   type NifiProcessGroupTreeNode,
 } from "../api/platform";
+import { getWorkflow, listWorkflows, type WorkflowDetail } from "../api/workflows";
 
 const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
 const CANVAS_SELECTION_SYNC_ATTRIBUTE = "data-cerebro-canvas-selection-sync";
@@ -42,6 +42,10 @@ const NIFI_PANEL_ATTRIBUTE = "data-cerebro-nifi-panel";
 const NIFI_PANEL_EXPANDED_ATTRIBUTE = "data-cerebro-nifi-panel-expanded";
 const NIFI_PANEL_BOUND_ATTRIBUTE = "data-cerebro-nifi-panel-bound";
 const NIFI_AUTO_OPEN_MENU_ATTRIBUTE = "data-cerebro-auto-open-menu";
+const NIFI_TOP_TOOLBAR_ATTRIBUTE = "data-cerebro-top-toolbar";
+const NIFI_TOOL_HIDDEN_ATTRIBUTE = "data-cerebro-tool-hidden";
+const NIFI_TOOL_ALLOWED_ATTRIBUTE = "data-cerebro-tool-allowed";
+const NIFI_MINI_TOOLBAR_ID = "cerebro-nifi-mini-toolbar";
 const LEGACY_NIFI_MINI_CREATE_TOOLBAR_CLEANUP_ATTRIBUTE = "data-cerebro-mini-create-toolbar-cleanup";
 const NIFI_PROCESSOR_LOCK_HEARTBEAT_MS = 20_000;
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
@@ -73,6 +77,96 @@ const HIDE_TOOL_CHROME_CSS = `
   .current-user, .current-user ~ a { display: none !important; }
   [${NIFI_STATUS_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
   [${NIFI_STATUS_BAR_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
+  [${NIFI_TOOL_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
+  #${NIFI_MINI_TOOLBAR_ID} {
+    position: fixed !important;
+    top: auto !important;
+    bottom: 42px !important;
+    left: 8px !important;
+    z-index: 9100 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    min-height: 36px !important;
+    padding: 2px 4px !important;
+    border: 1px solid #d5dbe3 !important;
+    border-radius: 6px !important;
+    background: #ffffff !important;
+    box-shadow: 0 2px 8px rgb(15 23 42 / 12%) !important;
+  }
+  #${NIFI_MINI_TOOLBAR_ID}:empty {
+    display: none !important;
+  }
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    min-height: 32px !important;
+    max-width: 32px !important;
+    max-height: 32px !important;
+    margin: 0 !important;
+    padding: 2px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: #ffffff !important;
+  }
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] i,
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] svg {
+    transform: scale(0.78) !important;
+    transform-origin: center !important;
+  }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] {
+    min-height: 42px !important;
+    height: 42px !important;
+    padding: 4px 8px !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+    gap: 4px !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    box-shadow: none !important;
+  }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    min-height: 32px !important;
+    margin: 0 2px !important;
+    padding: 2px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] i,
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] svg {
+    transform: scale(0.82) !important;
+    transform-origin: center !important;
+  }
+  body,
+  #canvas-container,
+  #canvas,
+  .canvas-container,
+  .canvas-background,
+  .graph-container,
+  .flow-canvas {
+    background: #ffffff !important;
+    background-image: none !important;
+  }
+  mat-toolbar,
+  .mat-toolbar,
+  .mat-mdc-toolbar,
+  .mat-sidenav-content > header,
+  .mat-sidenav-content > nav,
+  .mat-sidenav-content > .toolbar,
+  .mat-sidenav-content > .header,
+  .mat-drawer-content > header,
+  .mat-drawer-content > nav,
+  .mat-drawer-content > .toolbar,
+  .mat-drawer-content > .header {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+  }
   [title="Connected nodes / Total number of nodes in the cluster"],
   [title="연결된 노드 / 클러스터 전체 노드"],
   [title="Total queued data"],
@@ -360,6 +454,24 @@ const HIDDEN_NIFI_STATUS_ICON_CLASSES = [
   "fa-exclamation-circle",
   "fa-question",
 ];
+const ALLOWED_NIFI_CANVAS_TOOLS = new Set(["Processor", "프로세서", "Process Group", "프로세스 그룹"]);
+const HIDDEN_NIFI_CANVAS_TOOLS = new Set([
+  "Remote Process Group",
+  "원격 프로세스 그룹",
+  "Input Port",
+  "입력 포트",
+  "Output Port",
+  "출력 포트",
+  "Funnel",
+  "퍼널",
+  "Label",
+  "라벨",
+  "Template",
+  "템플릿",
+  "Import from Registry",
+  "레지스트리에서 가져오기",
+]);
+const NIFI_MENU_ICON_CLASSES = ["fa-bars", "fa-navicon", "fa-reorder"];
 
 function translateNifiTooltip(value: string) {
   const trimmed = value.trim();
@@ -670,6 +782,104 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     }
   };
 
+  const toolLabel = (element: Element) =>
+    NIFI_TOOLTIP_ATTRIBUTES
+      .map((attributeName) => element.getAttribute(attributeName)?.replace(/\s+/g, " ").trim())
+      .find((value): value is string => Boolean(value));
+
+  const hasToolLabel = (element: Element, labels: Set<string>) => {
+    if (labels.has(toolLabel(element) ?? "")) {
+      return true;
+    }
+    return Array.from(
+      element.querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip]"),
+    ).some((child) => labels.has(toolLabel(child) ?? ""));
+  };
+
+  const miniCanvasToolBar = () => {
+    const existing = doc.getElementById(NIFI_MINI_TOOLBAR_ID);
+    if (existing) {
+      return existing;
+    }
+    const toolbar = doc.createElement("div");
+    toolbar.id = NIFI_MINI_TOOLBAR_ID;
+    toolbar.setAttribute("aria-label", "ETL 캔버스 도구");
+    doc.body.appendChild(toolbar);
+    return toolbar;
+  };
+
+  const keepCanvasToolVisible = (toolItem: Element) => {
+    toolItem.setAttribute(NIFI_TOOL_ALLOWED_ATTRIBUTE, "true");
+    toolItem.removeAttribute(NIFI_TOOL_HIDDEN_ATTRIBUTE);
+    const toolbar = miniCanvasToolBar();
+    if (toolItem.parentElement !== toolbar) {
+      toolbar.appendChild(toolItem);
+    }
+    let current = toolItem.parentElement;
+    for (let depth = 0; depth < 5 && current && current !== doc.body; depth += 1) {
+      if (hasToolLabel(current, ALLOWED_NIFI_CANVAS_TOOLS)) {
+        current.removeAttribute(NIFI_TOOL_HIDDEN_ATTRIBUTE);
+      }
+      current = current.parentElement;
+    }
+  };
+
+  const closestCanvasToolItem = (element: Element) => {
+    let current: Element | null = element;
+    for (let depth = 0; depth < 5 && current && current !== doc.body; depth += 1) {
+      const rect = current.getBoundingClientRect();
+      const role = current.getAttribute("role");
+      const tagName = current.tagName.toLowerCase();
+      const isButtonLike = tagName === "button" || tagName === "a" || role === "button" || current.hasAttribute("title");
+      if (isButtonLike && rect.width > 0 && rect.height > 0 && rect.width <= 96 && rect.height <= 72) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return element;
+  };
+
+  const markCanvasToolBar = (toolItem: Element) => {
+    let current: Element | null = toolItem.parentElement;
+    for (let depth = 0; depth < 8 && current && current !== doc.body; depth += 1) {
+      const rect = current.getBoundingClientRect();
+      const titleCount = current.querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip]").length;
+      const nearTop = rect.top >= -4 && rect.top <= 80;
+      if (nearTop && rect.width >= 160 && rect.height > 0 && rect.height <= 96 && titleCount >= 2) {
+        current.setAttribute(NIFI_TOP_TOOLBAR_ATTRIBUTE, "true");
+      }
+      current = current.parentElement;
+    }
+  };
+
+  const patchCanvasToolVisibility = (element: Element) => {
+    const label = toolLabel(element);
+    const classNames = elementClassName(element).split(/\s+/);
+    const menuIcon = classNames.some((className) => NIFI_MENU_ICON_CLASSES.includes(className))
+      || Boolean(element.querySelector(NIFI_MENU_ICON_CLASSES.map((className) => `.${className}`).join(", ")));
+    if (!label && !menuIcon) {
+      return;
+    }
+
+    const toolItem = closestCanvasToolItem(element);
+    const itemRect = toolItem.getBoundingClientRect();
+    if (itemRect.top < -4 || itemRect.top > 96) {
+      return;
+    }
+
+    if (menuIcon || (label && HIDDEN_NIFI_CANVAS_TOOLS.has(label))) {
+      const hideTarget = hasToolLabel(toolItem, ALLOWED_NIFI_CANVAS_TOOLS) ? element : toolItem;
+      hideTarget.setAttribute(NIFI_TOOL_HIDDEN_ATTRIBUTE, "true");
+      markCanvasToolBar(toolItem);
+      return;
+    }
+
+    if (label && ALLOWED_NIFI_CANVAS_TOOLS.has(label)) {
+      keepCanvasToolVisible(toolItem);
+      markCanvasToolBar(toolItem);
+    }
+  };
+
   const patchStatusTooltipText = (element: Element) => {
     const classNames = elementClassName(element).split(/\s+/);
     const translated = NIFI_STATUS_TOOLTIP_ICON_TEXT.find(([iconClass]) => classNames.includes(iconClass))?.[1];
@@ -703,6 +913,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     patchStatusIconVisibility(element);
     patchStatusTooltipText(element);
     patchStatusBarVisibility(element);
+    patchCanvasToolVisibility(element);
   };
 
   const patchDocument = () => {
@@ -717,6 +928,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
       doc.querySelectorAll(`.${iconClass}`).forEach(patchStatusTooltipText);
     });
     doc.querySelectorAll(".fa-refresh, .fa-play, .fa-stop, .fa-warning, .icon-enable-false, .fa-check").forEach(patchStatusBarVisibility);
+    doc.querySelectorAll(NIFI_MENU_ICON_CLASSES.map((className) => `.${className}`).join(", ")).forEach(patchCanvasToolVisibility);
   };
 
   patchDocument();
@@ -766,6 +978,9 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
         node
           .querySelectorAll(".fa-refresh, .fa-play, .fa-stop, .fa-warning, .icon-enable-false, .fa-check")
           .forEach(patchStatusBarVisibility);
+        node
+          .querySelectorAll(NIFI_MENU_ICON_CLASSES.map((className) => `.${className}`).join(", "))
+          .forEach(patchCanvasToolVisibility);
       });
     }
   });
@@ -1531,6 +1746,20 @@ function formatDateTime(value?: string | null) {
   return `${month}-${day} ${hour}:${minute}`;
 }
 
+function formatDateOnly(value?: string | null) {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value.slice(0, 10).replace(/-/g, ".");
+  }
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}.${month}.${day}`;
+}
+
 function statusText(job: EtlJobResponse | null, node: NifiProcessGroupTreeNode | null) {
   if (node?.jobStatus) {
     return jobStatusText(node.jobStatus);
@@ -1593,57 +1822,6 @@ function localDateString(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-const ADDED_FILE_STORAGE_PREFIX = "nifi-added-files";
-
-interface StoredAddedFiles {
-  date: string;
-  files: string[];
-}
-
-function addedFileStorageKey(jobId: string | number | null | undefined, inputDirectory: string | null | undefined) {
-  if (!jobId || !inputDirectory) {
-    return null;
-  }
-  return `${ADDED_FILE_STORAGE_PREFIX}:${jobId}:${inputDirectory}`;
-}
-
-function loadTodayAddedFiles(storageKey: string | null) {
-  if (!storageKey || typeof window === "undefined") {
-    return [];
-  }
-  try {
-    const rawValue = window.localStorage.getItem(storageKey);
-    if (!rawValue) {
-      return [];
-    }
-    const parsed = JSON.parse(rawValue) as Partial<StoredAddedFiles>;
-    if (parsed.date !== localDateString(new Date()) || !Array.isArray(parsed.files)) {
-      window.localStorage.removeItem(storageKey);
-      return [];
-    }
-    return parsed.files.filter((fileName): fileName is string => typeof fileName === "string" && fileName.length > 0);
-  } catch {
-    return [];
-  }
-}
-
-function saveTodayAddedFiles(storageKey: string | null, files: string[]) {
-  if (!storageKey || typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(
-      storageKey,
-      JSON.stringify({
-        date: localDateString(new Date()),
-        files,
-      } satisfies StoredAddedFiles),
-    );
-  } catch {
-    // 목록 표시 보조 기능이라 저장 실패는 업로드 성공 흐름을 막지 않는다.
-  }
-}
-
 function shiftedDate(days: number) {
   const date = new Date();
   date.setDate(date.getDate() + days);
@@ -1691,6 +1869,7 @@ interface DetailLogSummary {
   label: string;
   from: string;
   to: string;
+  runCount: number;
   processedCount: number;
   errorCount: number;
 }
@@ -1705,7 +1884,7 @@ function recentDetailLogPeriods() {
     periods: [
       { key: "today", label: "오늘", from: today, to: today },
       { key: "yesterday", label: "어제", from: yesterday, to: yesterday },
-      { key: "week", label: "최근 일주일", from: weekStart, to: today },
+      { key: "week", label: "일주일", from: weekStart, to: today },
     ],
   };
 }
@@ -1714,6 +1893,7 @@ function buildDetailLogSummaries(
   keyword: string,
   runRows: NifiProcessorRun[],
   eventRows: NifiExecutionLogEntry[],
+  jobRuns: EtlJobRunResponse[] = [],
 ): DetailLogSummary[] {
   const { periods } = recentDetailLogPeriods();
   const matchedRuns = runRows.filter((row) => matchesRunLogKeyword(row, keyword));
@@ -1722,7 +1902,21 @@ function buildDetailLogSummaries(
     .filter((row) => matchesExecutionLogKeyword(row, keyword));
   return periods.map((period) => ({
     ...period,
-    processedCount: matchedRuns
+    runCount: jobRuns.length > 0 ? jobRuns
+      .filter((row) => {
+        const dateKey = logRowDateKey(row.startedAt);
+        return dateKey >= period.from && dateKey <= period.to;
+      })
+      .length : matchedRuns.filter((row) => {
+        const dateKey = logRowDateKey(row.startedAt);
+        return dateKey >= period.from && dateKey <= period.to;
+      }).length,
+    processedCount: jobRuns.length > 0 ? jobRuns
+      .filter((row) => {
+        const dateKey = logRowDateKey(row.startedAt);
+        return dateKey >= period.from && dateKey <= period.to;
+      })
+      .reduce((sum, row) => sum + row.totalInserted, 0) : matchedRuns
       .filter((row) => {
         const dateKey = logRowDateKey(row.startedAt);
         return dateKey >= period.from && dateKey <= period.to;
@@ -1764,7 +1958,7 @@ function DetailLogRows({
         <div key={item.key} className="nifi-detail-alert-row">
           <span>{item.label}</span>
           <span>
-            처리{" "}
+            {formatCount(item.runCount)}번실행, 적재{" "}
             <button
               type="button"
               className="nifi-detail-link"
@@ -1772,7 +1966,7 @@ function DetailLogRows({
             >
               {formatCount(item.processedCount)}
             </button>
-            건 · 에러{" "}
+            건, ERROR{" "}
             <button
               type="button"
               className="nifi-detail-link"
@@ -1833,6 +2027,23 @@ function directParentName(path?: NifiProcessGroupTreeNode[]) {
     return "-";
   }
   return path[path.length - 2]?.name ?? "-";
+}
+
+function fullGroupPath(path?: NifiProcessGroupTreeNode[]) {
+  if (!path?.length) {
+    return "Root";
+  }
+  const names = path.map((node, index) => index === 0 ? "Root" : node.name).filter(Boolean);
+  return names.join(" / ");
+}
+
+type RelatedWorkflow = Pick<WorkflowDetail, "id" | "name" | "dagId" | "workflowKey" | "published">;
+
+function workflowUsesJob(workflow: WorkflowDetail, job: EtlJobResponse) {
+  return workflow.nodes.some((node) =>
+    node.nodeType === "JOB"
+    && (node.jobId === job.id || (!!node.nifiPgId && node.nifiPgId === job.nifiPgId)),
+  );
 }
 
 function sortProcessorsByPosition(steps: EtlJobStepView[]) {
@@ -1896,17 +2107,6 @@ function pickProperty(props: Record<string, string>, keys: string[]) {
     }
   }
   return null;
-}
-
-function processorTypeIncludes(step: EtlJobStepView, typeName: string) {
-  return (step.stepType ?? "").toLowerCase().includes(typeName.toLowerCase());
-}
-
-function listFileInputDirectory(step?: EtlJobStepView | null) {
-  if (!step || !processorTypeIncludes(step, "ListFile")) {
-    return null;
-  }
-  return pickProperty(stepProperties(step), ["Input Directory", "input-directory"]);
 }
 
 function sqlTableName(rawName: string) {
@@ -2495,13 +2695,13 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const [details, setDetails] = useState<EtlJobDetailResponse[]>([]);
   const [runs, setRuns] = useState<EtlJobRunResponse[]>([]);
   const [logSummaries, setLogSummaries] = useState<DetailLogSummary[]>([]);
+  const [relatedWorkflows, setRelatedWorkflows] = useState<RelatedWorkflow[]>([]);
+  const [workflowLoading, setWorkflowLoading] = useState(false);
+  const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
   const [logsLoading, setLogsLoading] = useState(false);
   const [jobsLoading, setJobsLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [isAddingFiles, setIsAddingFiles] = useState(false);
-  const [addedFiles, setAddedFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const addFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const selected = useMemo(() => findTreeNode(tree, activeGroupId), [activeGroupId, tree]);
   const selectedGroupId = activeGroupId ?? "root";
@@ -2594,8 +2794,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const displayNode = selected?.node ?? null;
   const isJobGroup = displayNode?.groupType === "JOB";
   const isGroupingGroup = displayNode?.groupType === "GROUPING";
-  const directParent = directParentName(selected?.path);
-  const author = displayNode?.createdBy ?? "-";
+  const displayPath = fullGroupPath(selected?.path);
   const displayDetail = details.find((entry) => entry.job.nifiPgId === selectedGroupId)
     ?? (displayJob ? details.find((entry) => entry.job.id === displayJob.id) : null)
     ?? null;
@@ -2604,28 +2803,23 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const firstStep = firstStartProcessor(jobSteps, jobLinks);
   const sourceStep = firstStep;
   const targetStep = lastTerminalProcessor(jobSteps, jobLinks);
-  const listFileStep = jobSteps.find((step) => processorTypeIncludes(step, "ListFile")) ?? null;
-  const inputDirectory = listFileInputDirectory(listFileStep);
   const sourceText = sourceTargetText(sourceStep, "source");
   const targetText = sourceTargetText(targetStep, "target");
-  const dagId = relatedJob?.airflowDagId ?? airflowDags[0] ?? null;
+  const dagId = relatedWorkflows.length === 1 ? relatedWorkflows[0].dagId : relatedJob?.airflowDagId ?? airflowDags[0] ?? null;
   const directGroupingGroups = isGroupingGroup
     ? (displayNode?.children ?? []).filter((entry) => entry.groupType === "GROUPING")
     : [];
   const directJobGroups = isGroupingGroup
     ? (displayNode?.children ?? []).filter((entry) => entry.groupType === "JOB")
     : [];
-  const hasDirectJobStatus = directGroupingGroups.length > 0 || directJobGroups.length > 0;
-  const showHeaderStatus = isJobGroup;
-  const lastRunTime = formatDateTime(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
-  const lastRunCount = formatCount(latestRun?.totalInserted ?? 0);
+  const showGroupingOnlyJobStatus = directGroupingGroups.length > 0 && directJobGroups.length === 0;
+  const lastRunDate = formatDateOnly(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
   const logKeyword = detailLogKeyword(displayJob, displayNode);
-  const addedFilesStorageKey = addedFileStorageKey(displayJob?.id, inputDirectory);
   const titleName = displayJob?.jobName ?? displayNode?.name ?? "선택 없음";
   const headerTitle = isJobGroup
-    ? `Job 명: ${titleName}`
+    ? `Job : ${titleName}`
     : isGroupingGroup
-      ? `그룹명 : ${titleName}`
+      ? `Group : ${titleName}`
       : titleName;
 
   useEffect(() => {
@@ -2648,7 +2842,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
         if (cancelled) {
           return;
         }
-        setLogSummaries(buildDetailLogSummaries(logKeyword, runRows, eventRows));
+        setLogSummaries(buildDetailLogSummaries(logKeyword, runRows, eventRows, runs));
       })
       .catch(() => {
         if (!cancelled) {
@@ -2663,98 +2857,108 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     return () => {
       cancelled = true;
     };
-  }, [displayJob?.id, isJobGroup, logKeyword]);
+  }, [displayJob?.id, isJobGroup, logKeyword, runs]);
 
   useEffect(() => {
-    setAddedFiles(loadTodayAddedFiles(addedFilesStorageKey));
-  }, [addedFilesStorageKey]);
+    let cancelled = false;
+    setRelatedWorkflows([]);
+    setWorkflowModalOpen(false);
+    if (!isJobGroup || !displayJob) {
+      setWorkflowLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
 
-  const handleAddFiles = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.currentTarget.files ?? []);
-    event.currentTarget.value = "";
-    if (!inputDirectory || files.length === 0) {
+    setWorkflowLoading(true);
+    listWorkflows()
+      .then((workflows) => Promise.all(workflows.map((workflow) => getWorkflow(workflow.id))))
+      .then((workflows) => {
+        if (!cancelled) {
+          setRelatedWorkflows(workflows.filter((workflow) => workflowUsesJob(workflow, displayJob)));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRelatedWorkflows([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setWorkflowLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [displayJob?.id, displayJob?.nifiPgId, isJobGroup]);
+
+  const openWorkflow = (workflow: RelatedWorkflow) => {
+    setWorkflowModalOpen(false);
+    navigate(`/workflows/design/${workflow.id}`);
+  };
+
+  const openDagTarget = () => {
+    if (relatedWorkflows.length === 1) {
+      openWorkflow(relatedWorkflows[0]);
       return;
     }
-    setIsAddingFiles(true);
-    try {
-      const result = await uploadNifiInputDirectoryFiles(inputDirectory, files);
-      setAddedFiles((prev) => {
-        const next = [...prev, ...result.storedFiles];
-        saveTodayAddedFiles(addedFilesStorageKey, next);
-        return next;
-      });
-      message.success(`${result.storedFiles.length}개 파일을 추가했습니다.`);
-    } catch (ex) {
-      message.error(ex instanceof Error ? ex.message : "파일 추가에 실패했습니다.");
-    } finally {
-      setIsAddingFiles(false);
+    if (relatedWorkflows.length > 1) {
+      setWorkflowModalOpen(true);
     }
   };
 
   return (
-    <aside className="nifi-detail-panel" aria-label="선택한 프로세스 그룹 상세">
-      <div className="nifi-detail-header">
-        <div className="nifi-detail-title" title={headerTitle}>
-          {headerTitle}
+    <>
+      <aside className="nifi-detail-panel" aria-label="선택한 프로세스 그룹 상세">
+        <div className="nifi-detail-header">
+          <div className="nifi-detail-title" title={headerTitle}>
+            {headerTitle}
+          </div>
         </div>
-        {showHeaderStatus ? (
-          <div className={`nifi-detail-status stacked ${statusClass(displayJob, displayNode)}`}>
+
+        {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
+        {!isLoading && error ? <div className="nifi-detail-message error">조회 실패</div> : null}
+
+        <section className="nifi-detail-section">
+          <h3>■ 정보</h3>
+          <dl>
             <div>
-              <span className="nifi-detail-dot" aria-hidden="true" />
-              <span>{statusText(displayJob, displayNode)}</span>
+              <dt>상태</dt>
+              <dd className={statusClass(displayJob, displayNode)}>{statusText(displayJob, displayNode)}</dd>
             </div>
-            <span>마지막 실행 {lastRunTime} · {lastRunCount}건</span>
-          </div>
-        ) : null}
-        <dl className="nifi-detail-header-info">
-          <div>
-            <dt>상위 경로</dt>
-            <dd>{directParent}</dd>
-          </div>
-          <div>
-            <dt>작성자</dt>
-            <dd>{author}</dd>
-          </div>
-          {isJobGroup ? (
-            <>
+            <div>
+              <dt>경로</dt>
+              <dd>{displayPath}</dd>
+            </div>
+            {isJobGroup ? (
               <div>
-                <dt>연결 DAG</dt>
+                <dt>DAG</dt>
                 <dd>
-                  {dagId ? (
-                    <>
-                      {dagId}{" "}
-                      <button
-                        type="button"
-                        className="nifi-detail-link"
-                        onClick={() => navigate(`/airflow/dashboard?dagId=${encodeURIComponent(dagId)}&detail=1`)}
-                      >
-                        [열기]
-                      </button>
-                    </>
+                  {workflowLoading ? (
+                    "불러오는 중"
+                  ) : relatedWorkflows.length > 0 ? (
+                    <button type="button" className="nifi-detail-link" onClick={openDagTarget}>
+                      {relatedWorkflows.length === 1
+                        ? `${relatedWorkflows[0].name} (${relatedWorkflows[0].dagId})`
+                        : `${relatedWorkflows.length}개 워크플로우`}
+                    </button>
+                  ) : dagId ? (
+                    dagId
                   ) : (
                     "-"
                   )}
                 </dd>
               </div>
-            </>
-          ) : null}
-          {isGroupingGroup ? (
-            <div>
-              <dt>설명</dt>
-              <dd className="nifi-detail-preline">{displayNode?.comments || "-"}</dd>
-            </div>
-          ) : null}
-        </dl>
-      </div>
+            ) : null}
+          </dl>
+        </section>
 
-      {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
-      {!isLoading && error ? <div className="nifi-detail-message error">조회 실패</div> : null}
-
-      {hasDirectJobStatus ? (
-        <section className="nifi-detail-section">
-          <h3>JOB 상태</h3>
-          <div className="nifi-direct-status-list">
-            {directGroupingGroups.length > 0 ? (
+        {showGroupingOnlyJobStatus ? (
+          <section className="nifi-detail-section">
+            <h3>JOB 상태</h3>
+            <div className="nifi-direct-status-list">
               <div className="nifi-grouping-status-table">
                 <div className="nifi-grouping-status-row heading">
                   <span />
@@ -2778,90 +2982,65 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
                   </button>
                 ))}
               </div>
-            ) : null}
-            {directJobGroups.length > 0 ? (
-              <div className="nifi-job-status-list">
-                {directJobGroups.map((entry) => (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className="nifi-job-status-row"
-                    onClick={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(entry.id)}`)}
-                  >
-                    <span className="nifi-job-status-name" title={entry.name}>{entry.name}</span>
-                    <span className={`nifi-job-status-badge ${jobStatusClass(entry.jobStatus)}`}>
-                      <span className="nifi-detail-dot" aria-hidden="true" />
-                      {jobStatusText(entry.jobStatus)}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
-
-      {isJobGroup ? (
-        <>
-          <section className="nifi-detail-section">
-            <h3>대상</h3>
-            <dl className="nifi-detail-target-list">
-              <div>
-                <dt>소스</dt>
-                <dd className="nifi-detail-inline-value" title={sourceText}>
-                  {sourceText}
-                </dd>
-              </div>
-              <div>
-                <dt>타깃</dt>
-                <dd className="nifi-detail-inline-value" title={targetText}>
-                  {targetText}
-                </dd>
-              </div>
-            </dl>
+            </div>
           </section>
+        ) : null}
 
-          <section className="nifi-detail-section">
-            <h3>로그</h3>
-            <DetailLogRows
-              loading={logsLoading}
-              summaries={logSummaries}
-              keyword={logKeyword}
-              onNavigate={navigate}
-            />
-          </section>
-
-          {inputDirectory ? (
+        {isJobGroup ? (
+          <>
             <section className="nifi-detail-section">
-              <Button
-                icon={<UploadOutlined />}
-                loading={isAddingFiles}
-                onClick={() => addFileInputRef.current?.click()}
-                size="small"
-              >
-                파일 추가
-              </Button>
-              <input
-                ref={addFileInputRef}
-                hidden
-                multiple
-                type="file"
-                onChange={handleAddFiles}
-              />
-              {addedFiles.length > 0 ? (
-                <ul className="nifi-added-file-list">
-                  {addedFiles.map((fileName, index) => (
-                    <li key={`${fileName}-${index}`} title={fileName}>
-                      추가된 파일 : {fileName}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
+              <h3>■ 테이블</h3>
+              <dl className="nifi-detail-target-list">
+                <div>
+                  <dt>소스테이블</dt>
+                  <dd className="nifi-detail-inline-value" title={sourceText}>
+                    {sourceText}
+                  </dd>
+                </div>
+                <div>
+                  <dt>타깃테이블</dt>
+                  <dd className="nifi-detail-inline-value" title={targetText}>
+                    {targetText}
+                  </dd>
+                </div>
+              </dl>
             </section>
-          ) : null}
-        </>
-      ) : null}
-    </aside>
+
+            <section className="nifi-detail-section">
+              <h3>■ 실행로그</h3>
+              <div className="nifi-detail-last-run-date">{lastRunDate}</div>
+              <DetailLogRows
+                loading={logsLoading}
+                summaries={logSummaries}
+                keyword={logKeyword}
+                onNavigate={navigate}
+              />
+            </section>
+          </>
+        ) : null}
+      </aside>
+
+      <Modal
+        title="연관 워크플로우"
+        open={workflowModalOpen}
+        footer={null}
+        onCancel={() => setWorkflowModalOpen(false)}
+      >
+        <div className="nifi-related-workflow-list">
+          {relatedWorkflows.map((workflow) => (
+            <button
+              key={workflow.id}
+              type="button"
+              className="nifi-related-workflow-row"
+              onClick={() => openWorkflow(workflow)}
+            >
+              <strong>{workflow.name}</strong>
+              <span>{workflow.dagId}</span>
+            </button>
+          ))}
+        </div>
+      </Modal>
+    </>
   );
 }
 

@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.company.pipeline.common.BusinessException;
 import com.company.pipeline.common.ErrorCode;
 import com.company.pipeline.connection.dto.ConnectionResponse;
+import com.company.pipeline.connection.dto.SqlValidationResponse;
 import com.company.pipeline.user.AppUserRepository;
 import com.company.pipeline.user.security.PipelineJwtAuthenticationFilter;
 import com.company.pipeline.user.security.PipelineJwtService;
@@ -51,6 +52,9 @@ class ConnectionControllerTest {
 
     @MockBean
     private CdcPrerequisiteService cdcPrerequisiteService;
+
+    @MockBean
+    private SqlValidationService sqlValidationService;
 
     // Keycloak을 걷어내면서 SecurityConfig가 PipelineJwtAuthenticationFilter를 생성자로
     // 받게 됐는데, @WebMvcTest는 웹 계층 빈만 올리므로 그 필터도 그 안의 @Component들도
@@ -127,5 +131,21 @@ class ConnectionControllerTest {
         mockMvc.perform(delete("/api/connections/{id}", 1L))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("CONNECTION_IN_USE"));
+    }
+
+    @Test
+    void validateSql_validRequest_returnsResultEnvelope() throws Exception {
+        when(sqlValidationService.validateSelect(eq(1L), eq("SELECT * FROM APP.CUSTOMERS")))
+                .thenReturn(new SqlValidationResponse(true, LocalDateTime.now(), 12, "유효성 체크에 성공했습니다."));
+
+        mockMvc.perform(post("/api/connections/{id}/sql-validation", 1L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sql":"SELECT * FROM APP.CUSTOMERS"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.success").value(true))
+                .andExpect(jsonPath("$.data.message").value("유효성 체크에 성공했습니다."));
     }
 }

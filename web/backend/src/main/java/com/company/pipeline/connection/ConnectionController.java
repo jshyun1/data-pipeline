@@ -12,6 +12,8 @@ import com.company.pipeline.connection.dto.ConnectionUsageResponse;
 import com.company.pipeline.connection.dto.CdcPrerequisiteResponse;
 import com.company.pipeline.connection.dto.CdcTableReadinessResponse;
 import com.company.pipeline.connection.dto.ColumnMetadataResponse;
+import com.company.pipeline.connection.dto.SqlValidationRequest;
+import com.company.pipeline.connection.dto.SqlValidationResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -34,17 +36,20 @@ public class ConnectionController {
     private final ConnectionValidationService connectionValidationService;
     private final ConnectionUsageService connectionUsageService;
     private final CdcPrerequisiteService cdcPrerequisiteService;
+    private final SqlValidationService sqlValidationService;
 
     public ConnectionController(ConnectionService connectionService,
             SchemaDiscoveryService schemaDiscoveryService,
             ConnectionValidationService connectionValidationService,
             ConnectionUsageService connectionUsageService,
-            CdcPrerequisiteService cdcPrerequisiteService) {
+            CdcPrerequisiteService cdcPrerequisiteService,
+            SqlValidationService sqlValidationService) {
         this.connectionService = connectionService;
         this.schemaDiscoveryService = schemaDiscoveryService;
         this.connectionValidationService = connectionValidationService;
         this.connectionUsageService = connectionUsageService;
         this.cdcPrerequisiteService = cdcPrerequisiteService;
+        this.sqlValidationService = sqlValidationService;
     }
 
     @PostMapping
@@ -127,5 +132,11 @@ public class ConnectionController {
     public ApiResponse<List<ColumnMetadataResponse>> listColumns(@PathVariable Long id, @RequestParam String schema,
             @RequestParam String table) {
         return ApiResponse.success(schemaDiscoveryService.listColumns(id, schema, table));
+    }
+
+    @PostMapping("/{id}/sql-validation")
+    public ApiResponse<SqlValidationResponse> validateSql(@PathVariable Long id,
+            @Valid @RequestBody SqlValidationRequest request) {
+        return ApiResponse.success(sqlValidationService.validateSelect(id, request.sql()));
     }
 }

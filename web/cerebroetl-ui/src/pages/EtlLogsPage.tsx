@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, DatePicker, Input, Select, Space, Table, Tag, Tooltip } from "antd";
-import { CheckCircleFilled, CloseCircleFilled, RightOutlined } from "@ant-design/icons";
+import {
+  CheckCircleFilled,
+  CloseCircleFilled,
+  DownOutlined,
+  RightOutlined,
+  UpOutlined,
+} from "@ant-design/icons";
 import dayjs, { type Dayjs } from "dayjs";
 import { Link, useSearchParams } from "react-router-dom";
 import { activeDayPresetByDate } from "../components/dayPreset";
@@ -29,6 +35,7 @@ const EVENT_STATUS_COLOR: Record<string, string> = {
 };
 
 type UnifiedEtlLogKind = "run" | "event";
+type StatusFilter = "ALL" | string;
 
 interface UnifiedEtlLogRow {
   key: string;
@@ -124,6 +131,8 @@ export function EtlLogsPage() {
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(initialRange);
   const [keyword, setKeyword] = useState(searchParams.get("q") ?? "");
   const [groupFilter, setGroupFilter] = useState<string[]>([]);
+  const [dashboardOpen, setDashboardOpen] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
   const from = appliedRange[0].format("YYYY-MM-DD");
   const to = appliedRange[1].format("YYYY-MM-DD");
@@ -219,7 +228,7 @@ export function EtlLogsPage() {
     return [...names].sort().map((name) => ({ value: name, label: name }));
   }, [allRows]);
 
-  const rows = useMemo(() => {
+  const baseRows = useMemo(() => {
     const needle = keyword.trim().toLowerCase();
     return allRows.filter((row) => {
       if (groupFilter.length > 0 && !groupFilter.includes(row.jobName)) {
@@ -234,13 +243,20 @@ export function EtlLogsPage() {
     });
   }, [allRows, keyword, groupFilter]);
 
+  const rows = useMemo(() => {
+    if (statusFilter === "ALL") {
+      return baseRows;
+    }
+    return baseRows.filter((row) => row.status === statusFilter);
+  }, [baseRows, statusFilter]);
+
   const summary = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const row of rows) {
+    for (const row of baseRows) {
       counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
     }
     return {
-      total: rows.length,
+      total: baseRows.length,
       running: counts.get("RUNNING") ?? 0,
       success: counts.get("SUCCESS") ?? 0,
       failed: counts.get("FAILED") ?? 0,
@@ -248,7 +264,7 @@ export function EtlLogsPage() {
         .filter(([status]) => !["RUNNING", "SUCCESS", "FAILED"].includes(status))
         .sort(([a], [b]) => compareText(EVENT_STATUS_LABEL[a] ?? a, EVENT_STATUS_LABEL[b] ?? b)),
     };
-  }, [rows]);
+  }, [baseRows]);
 
   const applyDatePreset = (offsetDays: 0 | 1) => {
     const target = dayjs().subtract(offsetDays, "day");
@@ -296,24 +312,49 @@ export function EtlLogsPage() {
     </Space>
   );
 
-  const metric = (icon: ReactNode | null, label: string, value: number, modifier = "", key?: string) => (
-    <div key={key} className={`etl-log-monitoring-metric${modifier}`}>
+  const metric = (
+    status: StatusFilter,
+    icon: ReactNode | null,
+    label: string,
+    value: number,
+    modifier = "",
+    key?: string,
+  ) => (
+    <button
+      key={key}
+      type="button"
+      className={`etl-log-monitoring-metric${modifier}${statusFilter === status ? " active" : ""}`}
+      onClick={() => setStatusFilter(statusFilter === status && status !== "ALL" ? "ALL" : status)}
+    >
       {icon}
       <span>{label}<strong>{value.toLocaleString()}</strong></span>
-    </div>
+    </button>
   );
 
   return (
     <div>
-      <section className="etl-log-monitoring-card">
-        {metric(null, "전체 작업", summary.total)}
-        {metric(<RightOutlined />, "실행 중", summary.running)}
-        {metric(<CheckCircleFilled />, "성공", summary.success, " etl-log-monitoring-metric--success")}
-        {metric(<CloseCircleFilled />, "실패", summary.failed, " etl-log-monitoring-metric--danger")}
-        {summary.extra.map(([status, count]) =>
-          metric(null, EVENT_STATUS_LABEL[status] ?? status, count, " etl-log-monitoring-metric--extra", status),
-        )}
-      </section>
+      <div className={`etl-log-dashboard-curtain${dashboardOpen ? " open" : " closed"}`}>
+        <button
+          type="button"
+          className="etl-log-dashboard-toggle"
+          onClick={() => setDashboardOpen((open) => !open)}
+          aria-expanded={dashboardOpen}
+        >
+          <span>대시보드</span>
+          {dashboardOpen ? <UpOutlined /> : <DownOutlined />}
+        </button>
+        <div className="etl-log-dashboard-panel">
+          <section className="etl-log-monitoring-card">
+            {metric("ALL", null, "전체 작업", summary.total)}
+            {metric("RUNNING", <RightOutlined />, "실행 중", summary.running)}
+            {metric("SUCCESS", <CheckCircleFilled />, "성공", summary.success, " etl-log-monitoring-metric--success")}
+            {metric("FAILED", <CloseCircleFilled />, "실패", summary.failed, " etl-log-monitoring-metric--danger")}
+            {summary.extra.map(([status, count]) =>
+              metric(status, null, EVENT_STATUS_LABEL[status] ?? status, count, " etl-log-monitoring-metric--extra", status),
+            )}
+          </section>
+        </div>
+      </div>
       {filters}
       <Table<UnifiedEtlLogRow>
         rowKey="key"

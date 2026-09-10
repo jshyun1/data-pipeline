@@ -11,10 +11,31 @@ function isAlphabetLetter(value: string) {
   return /^[A-Z]$/.test(value);
 }
 
+async function copyText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (!copied) {
+    throw new Error("copy failed");
+  }
+}
+
 function copySyntax(item: FormulaHelpItem) {
-  navigator.clipboard.writeText(item.syntax)
-    .then(() => message.success("구문을 복사했습니다."))
-    .catch(() => message.error("복사하지 못했습니다."));
+  copyText(item.syntax)
+    .then(() => message.success("구문이 클립보드에 복사되었습니다."))
+    .catch(() => message.error("구문을 복사하지 못했습니다."));
 }
 
 export function FormulaHelpPage() {

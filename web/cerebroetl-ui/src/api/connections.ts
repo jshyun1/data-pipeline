@@ -90,3 +90,18 @@ export async function listConnectionColumns(connectionId: number, schema: string
   });
   return unwrap(res.data);
 }
+
+export interface SqlValidationResponse {
+  success: boolean;
+  testedAt: string;
+  latencyMs: number;
+  message: string;
+}
+
+export async function validateConnectionSql(connectionId: number, sql: string): Promise<SqlValidationResponse> {
+  const res = await apiClient.post<ApiResponse<SqlValidationResponse>>(
+    `/connections/${connectionId}/sql-validation`,
+    { sql },
+  );
+  return unwrap(res.data);
+}

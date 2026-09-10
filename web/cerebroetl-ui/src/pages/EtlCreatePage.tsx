@@ -17,6 +17,7 @@ import {
   listConnectionColumns,
   listConnectionSchemas,
   listConnectionTables,
+  validateConnectionSql,
   type ColumnMetadataResponse,
 } from "../api/connections";
 import {
@@ -30,6 +31,7 @@ import {
   type NifiProcessGroupTreeNode,
 } from "../api/platform";
 import { syncEtlJobs } from "../api/etlJobs";
+import { validateCalciteSql } from "../api/formulaHelp";
 import type { ConnectionResponse } from "../types/connection";
 import { useNavigate } from "react-router-dom";
 
@@ -133,6 +135,7 @@ interface BasicInfo {
 
 interface ConnectionInfo {
   sourceServiceId: string;
+  sourceConnectionId?: number | null;
   sourceDatabaseType: NifiDatabaseType;
   sourceSchema: string;
   sourceTable: string;
@@ -192,6 +195,7 @@ const DEFAULT_BASIC_INFO: BasicInfo = {
 
 const DEFAULT_CONNECTION_INFO: ConnectionInfo = {
   sourceServiceId: "",
+  sourceConnectionId: null,
   sourceDatabaseType: "PostgreSQL",
   sourceSchema: "",
   sourceTable: "",
@@ -945,10 +949,10 @@ function ConnectionStep({
   const targetDatabaseType = nifiDatabaseTypeFromConnection(targetConnection);
 
   useEffect(() => {
-    if (sourceDatabaseType && value.sourceDatabaseType !== sourceDatabaseType) {
-      onChange({ sourceDatabaseType });
+    if (sourceConnection && (value.sourceDatabaseType !== sourceDatabaseType || value.sourceConnectionId !== sourceConnection.id)) {
+      onChange({ sourceDatabaseType: sourceDatabaseType ?? value.sourceDatabaseType, sourceConnectionId: sourceConnection.id });
     }
-  }, [sourceDatabaseType, value.sourceDatabaseType, onChange]);
+  }, [sourceConnection, sourceDatabaseType, value.sourceConnectionId, value.sourceDatabaseType, onChange]);
 
   useEffect(() => {
     if (targetDatabaseType && value.targetDatabaseType !== targetDatabaseType) {
@@ -1169,9 +1173,11 @@ function ConnectionStep({
   };
 
   const handleSourceServiceChange = (serviceId: string) => {
-    const nextDatabaseType = nifiDatabaseTypeFromConnection(connectionByServiceId(serviceId));
+    const nextConnection = connectionByServiceId(serviceId);
+    const nextDatabaseType = nifiDatabaseTypeFromConnection(nextConnection);
     updateValue({
       sourceServiceId: serviceId,
+      sourceConnectionId: nextConnection?.id ?? null,
       sourceDatabaseType: nextDatabaseType ?? value.sourceDatabaseType,
       sourceSchema: "",
       sourceTable: "",
@@ -1380,6 +1386,7 @@ function QueryStep({
   onShowTruncateSqlChange: (show: boolean) => void;
 }) {
   const sqlPreviewRef = useRef<HTMLPreElement | null>(null);
+  const [validatingSql, setValidatingSql] = useState(false);
 
   const syncSqlScroll = (event: UIEvent<HTMLTextAreaElement>) => {
     if (!sqlPreviewRef.current) {
@@ -1409,6 +1416,30 @@ function QueryStep({
     const formattedSql = formatLoadSqlIndent(loadSql);
     if (formattedSql !== loadSql) {
       onLoadSqlChange(formattedSql);
+    }
+  };
+
+  const validateSql = async () => {
+    if (!connectionInfo.sourceConnectionId) {
+      message.warning("3번 연결 단계에서 소스 연결을 먼저 선택하세요.");
+      return;
+    }
+    if (!loadSql.trim()) {
+      message.warning("적재로직 SQL문을 입력하세요.");
+      return;
+    }
+    setValidatingSql(true);
+    try {
+      const result = await validateConnectionSql(connectionInfo.sourceConnectionId, loadSql);
+      if (result.success) {
+        message.success(`${connectionInfo.sourceDatabaseType} 유효성 체크 성공 (${result.latencyMs}ms)`);
+      } else {
+        message.error(result.message || "유효성 체크에 실패했습니다.");
+      }
+    } catch (ex) {
+      message.error(ex instanceof Error ? ex.message : "유효성 체크에 실패했습니다.");
+    } finally {
+      setValidatingSql(false);
     }
   };
 
@@ -1464,19 +1495,31 @@ function QueryStep({
       ) : null}
       <div className="etl-change-key-column">
         <label>적재로직 SQL문</label>
-        <div className="etl-sql-editor">
-          <pre ref={sqlPreviewRef} aria-hidden="true">
-            {renderSqlText(loadSql)}
-          </pre>
-          <textarea
-            value={loadSql}
-            spellCheck={false}
-            onChange={(event) => onLoadSqlChange(event.target.value)}
-            onBlur={formatSqlOnBlur}
-            onKeyDown={handleSqlKeyDown}
-            onScroll={syncSqlScroll}
-            placeholder={`select\n     as 타겟컬럼1\n    , as 타겟컬럼2\nfrom ${connectionInfo.sourceSchema || "소스스키마"}.소스테이블`}
-          />
+        <div className="etl-sql-cell">
+          <div className="etl-sql-actions">
+            <Button
+              size="small"
+              onClick={validateSql}
+              loading={validatingSql}
+              disabled={!connectionInfo.sourceConnectionId || !loadSql.trim()}
+            >
+              유효성 체크
+            </Button>
+          </div>
+          <div className="etl-sql-editor">
+            <pre ref={sqlPreviewRef} aria-hidden="true">
+              {renderSqlText(loadSql)}
+            </pre>
+            <textarea
+              value={loadSql}
+              spellCheck={false}
+              onChange={(event) => onLoadSqlChange(event.target.value)}
+              onBlur={formatSqlOnBlur}
+              onKeyDown={handleSqlKeyDown}
+              onScroll={syncSqlScroll}
+              placeholder={`select\n     as 타겟컬럼1\n    , as 타겟컬럼2\nfrom ${connectionInfo.sourceSchema || "소스스키마"}.소스테이블`}
+            />
+          </div>
         </div>
         <small className="etl-sql-hint">테이블 간 조인 조건을 추가 바랍니다.</small>
       </div>
@@ -1510,6 +1553,7 @@ function TargetStep({
   const [sourceOrderIds, setSourceOrderIds] = useState<string[]>([]);
   const [draggingSourceKey, setDraggingSourceKey] = useState<string | null>(null);
   const [draggingMappingId, setDraggingMappingId] = useState<string | null>(null);
+  const [validatingCalcite, setValidatingCalcite] = useState(false);
   const selectedSourceTables = commaSeparatedValues(connectionInfo.sourceTable);
   const editingMapping = columnMappings.find((mapping) => mapping.id === editingMappingId) ?? null;
   const mappingDisplayExpression = (mapping: ColumnMapping) => displayMappingExpression(mapping, selectedSourceTables);
@@ -1664,6 +1708,43 @@ function TargetStep({
     setEditingMappingId(null);
     setEditingLogic("");
   };
+
+  const validateCurrentLogic = async () => {
+    if (!editingMapping) {
+      return;
+    }
+    setValidatingCalcite(true);
+    try {
+      const sql = buildQueryRecordSql([{ ...editingMapping, logic: editingLogic }], selectedSourceTables);
+      const result = await validateCalciteSql(sql);
+      if (result.success) {
+        message.success(`Calcite 문법 검증 성공 (${result.latencyMs}ms)`);
+      } else {
+        message.error(result.message || "Calcite 문법 검증에 실패했습니다.");
+      }
+    } catch (ex) {
+      message.error(ex instanceof Error ? ex.message : "Calcite 문법 검증에 실패했습니다.");
+    } finally {
+      setValidatingCalcite(false);
+    }
+  };
+
+  const validateAllMappings = async () => {
+    setValidatingCalcite(true);
+    try {
+      const result = await validateCalciteSql(buildQueryRecordSql(columnMappings, selectedSourceTables));
+      if (result.success) {
+        message.success(`타깃 컬럼 Calcite 문법 검증 성공 (${result.latencyMs}ms)`);
+      } else {
+        message.error(result.message || "Calcite 문법 검증에 실패했습니다.");
+      }
+    } catch (ex) {
+      message.error(ex instanceof Error ? ex.message : "Calcite 문법 검증에 실패했습니다.");
+    } finally {
+      setValidatingCalcite(false);
+    }
+  };
+
   const openFormulaHelp = () => {
     const width = 640;
     const height = 880;
@@ -1681,6 +1762,14 @@ function TargetStep({
       <div className="etl-column-mapping-panel">
         <div className="etl-column-mapping-toolbar">
           <strong>컬럼 매핑</strong>
+          <Button
+            size="small"
+            onClick={validateAllMappings}
+            loading={validatingCalcite}
+            disabled={columnMappings.length === 0}
+          >
+            Calcite 체크
+          </Button>
         </div>
           {selectedSourceTables.length > 1 ? (
             <div className="etl-mapping-alias-hint">
@@ -1876,9 +1965,14 @@ function TargetStep({
               : "예: NVL(column_name, 'N')"}
           />
           <small>* Apache Calcite SQL 문법에 따라 작성해야합니다.</small>
-          <button type="button" className="etl-formula-help-link bounce-animation" onClick={openFormulaHelp}>
-            <QuestionCircleOutlined /> 도움말
-          </button>
+          <div className="etl-logic-modal-actions">
+            <Button size="small" onClick={validateCurrentLogic} loading={validatingCalcite}>
+              유효성 체크
+            </Button>
+            <button type="button" className="etl-formula-help-link bounce-animation" onClick={openFormulaHelp}>
+              <QuestionCircleOutlined /> 도움말
+            </button>
+          </div>
         </div>
       </Modal>
     </div>

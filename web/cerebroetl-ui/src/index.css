@@ -350,9 +350,59 @@ body {
   font-weight: 700;
 }
 
+.etl-log-dashboard-curtain {
+  position: relative;
+  margin-bottom: 12px;
+  padding-top: 15px;
+}
+
+.etl-log-dashboard-toggle {
+  position: absolute;
+  top: 0;
+  right: 12px;
+  z-index: 1;
+  height: 24px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #e1e5eb;
+  border-bottom-color: #fff;
+  border-radius: 8px;
+  background: #fff;
+  color: #4b5563;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.etl-log-dashboard-toggle:hover {
+  color: #1677ff;
+}
+
+.etl-log-dashboard-panel {
+  max-height: 92px;
+  overflow: hidden;
+  opacity: 1;
+  transition: max-height 0.2s ease, opacity 0.16s ease;
+}
+
+.etl-log-dashboard-curtain.closed .etl-log-dashboard-panel {
+  max-height: 0;
+  opacity: 0;
+}
+
+.etl-log-dashboard-curtain.closed {
+  margin-bottom: 8px;
+}
+
+.etl-log-dashboard-curtain.closed .etl-log-dashboard-toggle {
+  border-bottom-color: #e1e5eb;
+}
+
 .etl-log-monitoring-card {
   min-height: 58px;
-  margin-bottom: 12px;
   padding: 8px 14px;
   display: flex;
   align-items: stretch;
@@ -368,8 +418,24 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
   color: #1677ff;
+  cursor: pointer;
+  font-family: inherit;
   font-size: 20px;
+  text-align: left;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.etl-log-monitoring-metric:hover {
+  background: #f1f5f9;
+}
+
+.etl-log-monitoring-metric.active {
+  background: #eff6ff;
+  border-color: #1677ff;
 }
 
 .etl-log-monitoring-metric span {
@@ -391,9 +457,18 @@ body {
   color: #16a34a;
 }
 
+.etl-log-monitoring-metric--success.active {
+  background: #ecfdf3;
+  border-color: #16a34a;
+}
+
 .etl-log-monitoring-metric--danger {
-  border-radius: 8px;
   background: #eef2f7;
+}
+
+.etl-log-monitoring-metric--danger.active {
+  background: #fff1f2;
+  border-color: #dc2626;
 }
 
 .etl-log-monitoring-metric--danger,
@@ -404,6 +479,11 @@ body {
 .etl-log-monitoring-metric--extra,
 .etl-log-monitoring-metric--extra strong {
   color: #7c3aed;
+}
+
+.etl-log-monitoring-metric--extra.active {
+  background: #f5f3ff;
+  border-color: #7c3aed;
 }
 
 /* 하단 «인프라 상태» 줄을 없앤 자리를 이 영역이 가져간다. 헤더·상태카드 높이만 빼고
@@ -1316,8 +1396,14 @@ button.airflow-tree-label:hover {
   line-height: 1.4;
 }
 
-.etl-formula-help-link {
+.etl-logic-modal-actions {
   grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.etl-formula-help-link {
   justify-self: start;
   display: inline-flex;
   align-items: center;
@@ -1376,6 +1462,20 @@ button.airflow-tree-label:hover {
   border: 0;
   border-radius: 0;
   box-shadow: none;
+}
+
+.etl-sql-cell {
+  min-width: 0;
+}
+
+.etl-sql-actions {
+  min-height: 38px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  border-bottom: 1px solid #eceff3;
+  background: #ffffff;
 }
 
 .etl-sql-editor {
@@ -2998,22 +3098,23 @@ button.airflow-tree-label:hover {
   flex: 0 1 285px;
   width: clamp(235px, 18vw, 285px);
   min-width: 235px;
-  height: calc(100vh - 128px);
+  height: auto;
   max-height: calc(100vh - 128px);
   align-self: flex-start;
   overflow: auto;
-  border: 1px solid #9aa3ad;
-  border-radius: 0;
+  border: 1px solid #d5dbe3;
+  border-radius: 8px;
   background: #f8fafc;
+  box-shadow: 0 8px 20px rgb(15 23 42 / 8%);
   color: #1f2937;
   font-size: 14px;
   line-height: 1.25;
 }
 
 .nifi-detail-header {
-  padding: 14px 30px;
-  border-bottom: 1px solid #9aa3ad;
-  background: #f8fafc;
+  padding: 14px 24px;
+  border-bottom: 1px solid #d5dbe3;
+  background: #ffffff;
 }
 
 .nifi-detail-title {
@@ -3114,7 +3215,11 @@ button.airflow-tree-label:hover {
 
 .nifi-detail-section {
   padding: 11px 24px;
-  border-bottom: 1px solid #9aa3ad;
+  border-bottom: 1px solid #d5dbe3;
+}
+
+.nifi-detail-section:last-child {
+  border-bottom: 0;
 }
 
 .nifi-detail-section h3 {
@@ -3132,7 +3237,7 @@ button.airflow-tree-label:hover {
 
 .nifi-detail-section dl > div {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
+  grid-template-columns: 72px minmax(0, 1fr);
   align-items: start;
   column-gap: 7px;
 }
@@ -3150,6 +3255,33 @@ button.airflow-tree-label:hover {
   font-weight: 400;
 }
 
+.nifi-detail-section dd.running {
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.nifi-detail-section dd.error {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.nifi-detail-section dd.stopped {
+  color: #475569;
+  font-weight: 700;
+}
+
+.nifi-detail-section dd.done {
+  color: #166534;
+  font-weight: 700;
+}
+
+.nifi-detail-last-run-date {
+  margin-bottom: 6px;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .nifi-detail-section dd.nifi-detail-inline-value {
   overflow: visible;
   text-overflow: clip;
@@ -3157,8 +3289,41 @@ button.airflow-tree-label:hover {
 }
 
 .nifi-detail-target-list > div {
-  grid-template-columns: 34px minmax(0, 1fr) !important;
-  column-gap: 4px !important;
+  grid-template-columns: 72px minmax(0, 1fr) !important;
+  column-gap: 7px !important;
+}
+
+.nifi-related-workflow-list {
+  display: grid;
+  gap: 0;
+}
+
+.nifi-related-workflow-row {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid #e5e7eb;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.nifi-related-workflow-row:last-child {
+  border-bottom: 0;
+}
+
+.nifi-related-workflow-row strong {
+  color: #0f62fe;
+  font-size: 13px;
+}
+
+.nifi-related-workflow-row span {
+  color: #475569;
+  font-size: 12px;
 }
 
 .nifi-detail-preline {
