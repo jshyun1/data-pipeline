@@ -14,6 +14,8 @@ import com.company.pipeline.nifi.dto.NifiExecutionLogResponse;
 import com.company.pipeline.nifi.dto.NifiFileLoadCreateRequest;
 import com.company.pipeline.nifi.dto.NifiFileUploadResponse;
 import com.company.pipeline.nifi.dto.NifiInitialDbToDbCreateRequest;
+import com.company.pipeline.nifi.dto.NifiParameterContextResponse;
+import com.company.pipeline.nifi.dto.NifiParameterContextSaveRequest;
 import com.company.pipeline.nifi.dto.NifiProcessorEditLockRequest;
 import com.company.pipeline.nifi.dto.NifiProcessorEditLockResponse;
 import com.company.pipeline.nifi.dto.NifiProcessGroupTreeResponse;
@@ -54,6 +56,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -316,6 +319,30 @@ public class NifiController {
     @GetMapping("/processors/{processorId}")
     public ApiResponse<NifiProcessorDetailResponse> processor(@PathVariable String processorId) {
         return ApiResponse.success(nifiClient.getProcessor(processorId));
+    }
+
+    @GetMapping("/parameter-contexts")
+    public ApiResponse<List<NifiParameterContextResponse>> parameterContexts() {
+        return ApiResponse.success(nifiClient.listParameterContexts());
+    }
+
+    @PostMapping("/parameter-contexts")
+    public ApiResponse<NifiParameterContextResponse> createParameterContext(
+            @Valid @RequestBody NifiParameterContextSaveRequest request) {
+        return ApiResponse.success(nifiClient.createParameterContext(request));
+    }
+
+    @PutMapping("/parameter-contexts/{parameterContextId}")
+    public ApiResponse<NifiParameterContextResponse> updateParameterContext(
+            @PathVariable String parameterContextId,
+            @Valid @RequestBody NifiParameterContextSaveRequest request) {
+        return ApiResponse.success(nifiClient.updateParameterContext(parameterContextId, request));
+    }
+
+    @DeleteMapping("/parameter-contexts/{parameterContextId}")
+    public ApiResponse<Void> deleteParameterContext(@PathVariable String parameterContextId) {
+        nifiClient.deleteParameterContext(parameterContextId);
+        return ApiResponse.success(null);
     }
 
     @PostMapping("/processors/{processorId}/edit-lock")

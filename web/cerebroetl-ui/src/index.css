@@ -1316,6 +1316,37 @@ button.airflow-tree-label:hover {
   line-height: 1.4;
 }
 
+.etl-formula-help-link {
+  grid-column: 2;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  color: #1677ff;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.bounce-animation {
+  animation: formula-help-bounce 1.45s ease-in-out infinite;
+}
+
+@keyframes formula-help-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  45% {
+    transform: translateY(-4px);
+  }
+}
+
 .etl-change-key-column {
   width: 100%;
   margin-top: 14px;
@@ -1407,6 +1438,211 @@ button.airflow-tree-label:hover {
 
 .etl-target-preview {
   width: 100%;
+}
+
+.formula-help-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #f6f8fb;
+  color: #172033;
+}
+
+.formula-help-titlebar {
+  height: 52px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #e5e9f0;
+  background: #ffffff;
+}
+
+.formula-help-titlebar strong {
+  color: #111827;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.formula-help-controls {
+  padding: 14px 16px 12px;
+  display: grid;
+  gap: 14px;
+  border-bottom: 1px solid #cfd8e3;
+  background: #ffffff;
+}
+
+.formula-help-letters,
+.formula-help-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.formula-help-letters button,
+.formula-help-categories button {
+  min-width: 24px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid #c8d6e6;
+  border-radius: 4px;
+  color: #2f455b;
+  background: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.formula-help-categories button {
+  min-width: 0;
+}
+
+.formula-help-letters button.active,
+.formula-help-categories button.active {
+  border-color: #ffb4ad;
+  color: #fa4d43;
+  background: #fff0ee;
+}
+
+.formula-help-list {
+  flex: 1;
+  min-height: 0;
+  padding: 14px 16px;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  overflow: auto;
+}
+
+.formula-help-state {
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  color: #6b7280;
+}
+
+.formula-help-item {
+  overflow: hidden;
+  border: 1px solid #d2d8e1;
+  border-radius: 5px;
+  background: #ffffff;
+}
+
+.formula-help-item-toolbar {
+  min-height: 44px;
+  padding: 7px 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  background: #2f4a5b;
+}
+
+.formula-help-item-toolbar .ant-btn {
+  height: 29px;
+  color: #ffffff;
+  border-color: #ffffff;
+  background: transparent;
+  font-weight: 800;
+}
+
+.formula-help-item-toolbar .ant-btn:hover,
+.formula-help-item-toolbar .ant-btn:focus-visible {
+  color: #173142;
+  border-color: #ffffff;
+  background: #ffffff;
+}
+
+.formula-help-summary {
+  margin: 0;
+  padding: 16px 16px 17px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: #111827;
+  line-height: 1.55;
+}
+
+.formula-help-summary strong {
+  font-weight: 900;
+}
+
+.formula-help-summary span {
+  color: #a3aab5;
+}
+
+.formula-help-curtain {
+  padding: 16px;
+  border-top: 1px solid #cfd8e3;
+  animation: formula-help-curtain 160ms ease-out;
+}
+
+@keyframes formula-help-curtain {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.formula-help-curtain h2 {
+  margin: 14px 0 9px;
+  color: #172033;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.formula-help-curtain h2:first-child {
+  margin-top: 0;
+}
+
+.formula-help-curtain p {
+  margin: 0;
+  color: #293442;
+  line-height: 1.65;
+}
+
+.formula-help-curtain pre {
+  margin: 0;
+  padding: 9px 10px;
+  overflow: auto;
+  border: 1px solid #d8dee7;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #111827;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.formula-help-curtain table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  color: #111827;
+  font-size: 13px;
+}
+
+.formula-help-curtain th,
+.formula-help-curtain td {
+  padding: 10px;
+  border: 1px solid #d8dee7;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.formula-help-curtain th {
+  background: #fbfcfd;
+  font-weight: 900;
+}
+
+.formula-help-close {
+  padding-top: 16px;
+  display: flex;
+  justify-content: center;
 }
 
 .etl-file-columns {
@@ -2565,8 +2801,48 @@ button.airflow-tree-label:hover {
   flex: 1;
 }
 
+.nifi-settings-frame > .ant-card {
+  min-height: 100%;
+}
+
 .nifi-settings-frame .console-page {
   height: 100%;
+}
+
+.nifi-parameter-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 4px 0 12px;
+}
+
+.nifi-context-modal-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: -10px -24px 18px;
+  border-bottom: 1px solid #d9dee5;
+  color: #1f2937;
+  font-size: 14px;
+}
+
+.nifi-context-modal-tabs span {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nifi-context-modal-tabs .active {
+  border-bottom: 2px solid #00656b;
+  color: #111827;
+}
+
+.nifi-context-form .ant-form-item-label > label,
+.nifi-parameter-form .ant-form-item-label > label {
+  color: #4b5563;
+}
+
+.nifi-checkbox-item {
+  margin-top: -8px;
 }
 
 .nifi-settings-empty {

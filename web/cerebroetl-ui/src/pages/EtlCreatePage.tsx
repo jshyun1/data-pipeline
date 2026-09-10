@@ -4,6 +4,7 @@ import {
   CloseOutlined,
   DownOutlined,
   EditOutlined,
+  QuestionCircleOutlined,
   LockOutlined,
   UpOutlined,
   UploadOutlined,
@@ -1663,6 +1664,17 @@ function TargetStep({
     setEditingMappingId(null);
     setEditingLogic("");
   };
+  const openFormulaHelp = () => {
+    const width = 640;
+    const height = 880;
+    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
+    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
+    window.open(
+      "/etl/formula-help",
+      "cerebroEtlFormulaHelp",
+      `popup=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`,
+    );
+  };
 
   return (
     <div className="etl-target-preview">
@@ -1864,6 +1876,9 @@ function TargetStep({
               : "예: NVL(column_name, 'N')"}
           />
           <small>* Apache Calcite SQL 문법에 따라 작성해야합니다.</small>
+          <button type="button" className="etl-formula-help-link bounce-animation" onClick={openFormulaHelp}>
+            <QuestionCircleOutlined /> 도움말
+          </button>
         </div>
       </Modal>
     </div>

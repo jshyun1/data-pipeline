@@ -21,6 +21,7 @@ import { EtlLogsPage } from "./pages/EtlLogsPage";
 import { NifiSettingsPage } from "./pages/NifiSettingsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PipelinesPage } from "./pages/PipelinesPage";
+import { FormulaHelpPage } from "./pages/FormulaHelpPage";
 
 function AirflowManagePage() {
   const [searchParams] = useSearchParams();
@@ -42,6 +43,7 @@ export function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<RequireAuth />}>
+        <Route path="/etl/formula-help" element={<FormulaHelpPage />} />
         <Route element={<AppLayout />}>
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />

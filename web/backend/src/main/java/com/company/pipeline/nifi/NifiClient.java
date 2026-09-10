@@ -7,7 +7,9 @@ import com.company.pipeline.nifi.dto.NifiFileLoadCreateRequest;
 import com.company.pipeline.nifi.dto.NifiFlowResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
 import com.company.pipeline.nifi.dto.NifiInitialDbToDbCreateRequest;
+import com.company.pipeline.nifi.dto.NifiParameterContextListResponse;
 import com.company.pipeline.nifi.dto.NifiParameterContextResponse;
+import com.company.pipeline.nifi.dto.NifiParameterContextSaveRequest;
 import com.company.pipeline.nifi.dto.NifiProcessGroupEntity;
 import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
 import com.company.pipeline.nifi.dto.NifiProcessorDetailResponse;
@@ -535,6 +537,120 @@ public class NifiClient {
         } catch (RestClientException ex) {
             throw new NifiClientException("NiFi 파라미터 컨텍스트 조회 실패: " + ex.getMessage(), ex);
         }
+    }
+
+    public List<NifiParameterContextResponse> listParameterContexts() {
+        String token = getToken();
+        try {
+            NifiParameterContextListResponse response = restClient.get()
+                    .uri("/nifi-api/flow/parameter-contexts")
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .body(NifiParameterContextListResponse.class);
+            if (response == null || response.parameterContexts() == null) {
+                return List.of();
+            }
+            return response.parameterContexts().stream()
+                    .filter(context -> context != null && StringUtils.hasText(context.id()))
+                    .map(context -> getParameterContext(context.id()))
+                    .toList();
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 파라미터 컨텍스트 목록 조회 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    public NifiParameterContextResponse createParameterContext(NifiParameterContextSaveRequest request) {
+        String token = getToken();
+        Map<String, Object> body = Map.of(
+                "revision", Map.of(
+                        "clientId", UUID.randomUUID().toString(),
+                        "version", 0
+                ),
+                "component", parameterContextComponent(null, request)
+        );
+
+        try {
+            return restClient.post()
+                    .uri("/nifi-api/parameter-contexts")
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .body(NifiParameterContextResponse.class);
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 파라미터 컨텍스트 생성 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    public NifiParameterContextResponse updateParameterContext(String parameterContextId,
+            NifiParameterContextSaveRequest request) {
+        String token = getToken();
+        NifiParameterContextResponse current = getParameterContext(parameterContextId);
+        Map<String, Object> body = Map.of(
+                "revision", revisionBody(current.revision()),
+                "component", parameterContextComponent(parameterContextId, request)
+        );
+
+        try {
+            return restClient.put()
+                    .uri("/nifi-api/parameter-contexts/{id}", parameterContextId)
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .body(NifiParameterContextResponse.class);
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 파라미터 컨텍스트 수정 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    public void deleteParameterContext(String parameterContextId) {
+        String token = getToken();
+        NifiParameterContextResponse current = getParameterContext(parameterContextId);
+        long version = current.revision() == null || current.revision().version() == null
+                ? 0L
+                : current.revision().version();
+        try {
+            restClient.delete()
+                    .uri(uri -> uri.path("/nifi-api/parameter-contexts/{id}")
+                            .queryParam("version", version)
+                            .queryParam("clientId", UUID.randomUUID().toString())
+                            .build(parameterContextId))
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 파라미터 컨텍스트 삭제 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    private Map<String, Object> revisionBody(NifiParameterContextResponse.Revision revision) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("clientId", UUID.randomUUID().toString());
+        body.put("version", revision == null || revision.version() == null ? 0L : revision.version());
+        return body;
+    }
+
+    private Map<String, Object> parameterContextComponent(String id, NifiParameterContextSaveRequest request) {
+        Map<String, Object> component = new LinkedHashMap<>();
+        if (StringUtils.hasText(id)) {
+            component.put("id", id);
+        }
+        component.put("name", request.name().trim());
+        component.put("description", nullToBlank(request.description()));
+        component.put("parameters", request.parameters().stream()
+                .map(this::parameterEntity)
+                .toList());
+        return component;
+    }
+
+    private Map<String, Object> parameterEntity(NifiParameterContextSaveRequest.ParameterRequest request) {
+        Map<String, Object> parameter = new LinkedHashMap<>();
+        parameter.put("name", request.name().trim());
+        parameter.put("value", request.value() == null ? null : request.value());
+        parameter.put("sensitive", Boolean.TRUE.equals(request.sensitive()));
+        parameter.put("description", nullToBlank(request.description()));
+        return Map.of("parameter", parameter);
     }
 
     /** 적재 건수 집계용 - PutDatabaseRecord 등이 등록한 누적 카운터(재시작 전까지 유지). */

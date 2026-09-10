@@ -10,7 +10,11 @@ import java.util.List;
  * 값 없이 이름만 남긴다.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record NifiParameterContextResponse(String id, Component component) {
+public record NifiParameterContextResponse(String id, Revision revision, Component component) {
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Revision(String clientId, Long version) {
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Component(String id, String name, String description,
