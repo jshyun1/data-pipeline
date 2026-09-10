@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type SyntheticEvent } from "react";
 import { Alert, Button, Modal, Result, Spin, message } from "antd";
-import { ReloadOutlined, UploadOutlined } from "@ant-design/icons";
+import { FileOutlined, FolderOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   getEtlJob,
@@ -1556,8 +1556,10 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
     navigate(`/etl/manage?processGroupId=${encodeURIComponent(groupId)}`);
   };
 
-  const treeIconClass = (node: NifiProcessGroupTreeNode) =>
-    node.groupType === "JOB" ? "nifi-tree-kind nifi-tree-kind--job" : "nifi-tree-kind nifi-tree-kind--group";
+  const treeIcon = (node: NifiProcessGroupTreeNode) =>
+    node.groupType === "JOB"
+      ? <FileOutlined className="nifi-tree-kind nifi-tree-kind--job" />
+      : <FolderOutlined className="nifi-tree-kind nifi-tree-kind--group" />;
 
   const toggle = (groupId: string) => {
     setExpandedIds((previous) => {
@@ -1610,7 +1612,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
             {hasChildren ? (expanded ? "▼" : "▶") : ""}
           </button>
           <button type="button" className="nifi-tree-label" title={node.name} onClick={() => openGroup(node.id)}>
-            <span className={treeIconClass(node)} aria-hidden="true" />
+            {treeIcon(node)}
             <span className="nifi-tree-name">{node.name}</span>
           </button>
         </div>
