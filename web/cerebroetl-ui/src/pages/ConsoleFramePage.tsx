@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
-import { Alert, Button, Modal, Result, Spin } from "antd";
-import { ReloadOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type SyntheticEvent } from "react";
+import { Alert, Button, Modal, Result, Spin, message } from "antd";
+import { ReloadOutlined, UploadOutlined } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   getEtlJob,
@@ -22,6 +22,7 @@ import {
   acquireNifiProcessorEditLock,
   heartbeatNifiProcessorEditLock,
   releaseNifiProcessorEditLock,
+  uploadNifiInputDirectoryFiles,
   type NifiExecutionLogEntry,
   type NifiProcessorEditLockResponse,
   type NifiProcessorDetailResponse,
@@ -1555,6 +1556,9 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
     navigate(`/etl/manage?processGroupId=${encodeURIComponent(groupId)}`);
   };
 
+  const treeIconClass = (node: NifiProcessGroupTreeNode) =>
+    node.groupType === "JOB" ? "nifi-tree-kind nifi-tree-kind--job" : "nifi-tree-kind nifi-tree-kind--group";
+
   const toggle = (groupId: string) => {
     setExpandedIds((previous) => {
       const next = new Set(previous);
@@ -1606,6 +1610,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
             {hasChildren ? (expanded ? "▼" : "▶") : ""}
           </button>
           <button type="button" className="nifi-tree-label" title={node.name} onClick={() => openGroup(node.id)}>
+            <span className={treeIconClass(node)} aria-hidden="true" />
             <span className="nifi-tree-name">{node.name}</span>
           </button>
         </div>
@@ -1820,6 +1825,57 @@ function localDateString(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+const ADDED_FILE_STORAGE_PREFIX = "nifi-added-files";
+
+interface StoredAddedFiles {
+  date: string;
+  files: string[];
+}
+
+function addedFileStorageKey(jobId: string | number | null | undefined, inputDirectory: string | null | undefined) {
+  if (!jobId || !inputDirectory) {
+    return null;
+  }
+  return `${ADDED_FILE_STORAGE_PREFIX}:${jobId}:${inputDirectory}`;
+}
+
+function loadTodayAddedFiles(storageKey: string | null) {
+  if (!storageKey || typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const rawValue = window.localStorage.getItem(storageKey);
+    if (!rawValue) {
+      return [];
+    }
+    const parsed = JSON.parse(rawValue) as Partial<StoredAddedFiles>;
+    if (parsed.date !== localDateString(new Date()) || !Array.isArray(parsed.files)) {
+      window.localStorage.removeItem(storageKey);
+      return [];
+    }
+    return parsed.files.filter((fileName): fileName is string => typeof fileName === "string" && fileName.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function saveTodayAddedFiles(storageKey: string | null, files: string[]) {
+  if (!storageKey || typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        date: localDateString(new Date()),
+        files,
+      } satisfies StoredAddedFiles),
+    );
+  } catch {
+    // 파일 목록 표시는 보조 기능이라 저장 실패가 업로드 흐름을 막지 않는다.
+  }
 }
 
 function shiftedDate(days: number) {
@@ -2107,6 +2163,25 @@ function pickProperty(props: Record<string, string>, keys: string[]) {
     }
   }
   return null;
+}
+
+function processorTypeIncludes(step: EtlJobStepView | null, typeName: string) {
+  return (step?.stepType ?? "").toLowerCase().includes(typeName.toLowerCase());
+}
+
+function listFileInputDirectory(step?: EtlJobStepView | null) {
+  if (!step || !processorTypeIncludes(step, "ListFile")) {
+    return null;
+  }
+  return pickProperty(stepProperties(step), ["Input Directory", "input-directory"]);
+}
+
+function fileSourceText(inputDirectory: string | null, files: string[]) {
+  const base = inputDirectory?.trim() || "-";
+  if (files.length === 0) {
+    return base;
+  }
+  return [base, ...files.map((fileName) => `- ${fileName}`)].join("\n");
 }
 
 function sqlTableName(rawName: string) {
@@ -2701,7 +2776,10 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const [logsLoading, setLogsLoading] = useState(false);
   const [jobsLoading, setJobsLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [isAddingFiles, setIsAddingFiles] = useState(false);
+  const [addedFiles, setAddedFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const addFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const selected = useMemo(() => findTreeNode(tree, activeGroupId), [activeGroupId, tree]);
   const selectedGroupId = activeGroupId ?? "root";
@@ -2801,9 +2879,12 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const jobSteps = displayDetail?.steps ?? [];
   const jobLinks = displayDetail?.links ?? [];
   const firstStep = firstStartProcessor(jobSteps, jobLinks);
+  const isListFileSource = processorTypeIncludes(firstStep, "ListFile");
   const sourceStep = firstStep;
   const targetStep = lastTerminalProcessor(jobSteps, jobLinks);
-  const sourceText = sourceTargetText(sourceStep, "source");
+  const listFileStep = jobSteps.find((step) => processorTypeIncludes(step, "ListFile")) ?? null;
+  const inputDirectory = listFileInputDirectory(listFileStep);
+  const sourceText = isListFileSource ? fileSourceText(inputDirectory, addedFiles) : sourceTargetText(sourceStep, "source");
   const targetText = sourceTargetText(targetStep, "target");
   const dagId = relatedWorkflows.length === 1 ? relatedWorkflows[0].dagId : relatedJob?.airflowDagId ?? airflowDags[0] ?? null;
   const directGroupingGroups = isGroupingGroup
@@ -2815,6 +2896,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const showGroupingOnlyJobStatus = directGroupingGroups.length > 0 && directJobGroups.length === 0;
   const lastRunDate = formatDateOnly(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
   const logKeyword = detailLogKeyword(displayJob, displayNode);
+  const addedFilesStorageKey = addedFileStorageKey(displayJob?.id, inputDirectory);
   const titleName = displayJob?.jobName ?? displayNode?.name ?? "선택 없음";
   const headerTitle = isJobGroup
     ? `Job : ${titleName}`
@@ -2909,6 +2991,32 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     }
   };
 
+  useEffect(() => {
+    setAddedFiles(loadTodayAddedFiles(addedFilesStorageKey));
+  }, [addedFilesStorageKey]);
+
+  const handleAddFiles = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.currentTarget.files ?? []);
+    event.currentTarget.value = "";
+    if (!inputDirectory || files.length === 0) {
+      return;
+    }
+    setIsAddingFiles(true);
+    try {
+      const result = await uploadNifiInputDirectoryFiles(inputDirectory, files);
+      setAddedFiles((prev) => {
+        const next = [...prev, ...result.storedFiles];
+        saveTodayAddedFiles(addedFilesStorageKey, next);
+        return next;
+      });
+      message.success(`${result.storedFiles.length}개 파일을 추가했습니다.`);
+    } catch (ex) {
+      message.error(ex instanceof Error ? ex.message : "파일 추가에 실패했습니다.");
+    } finally {
+      setIsAddingFiles(false);
+    }
+  };
+
   return (
     <>
       <aside className="nifi-detail-panel" aria-label="선택한 프로세스 그룹 상세">
@@ -2993,7 +3101,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
               <dl className="nifi-detail-target-list">
                 <div>
                   <dt>소스테이블</dt>
-                  <dd className="nifi-detail-inline-value" title={sourceText}>
+                  <dd className="nifi-detail-inline-value nifi-detail-preline" title={sourceText}>
                     {sourceText}
                   </dd>
                 </div>
@@ -3004,6 +3112,34 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
                   </dd>
                 </div>
               </dl>
+              {inputDirectory ? (
+                <div className="nifi-file-add-panel">
+                  <Button
+                    icon={<UploadOutlined />}
+                    loading={isAddingFiles}
+                    onClick={() => addFileInputRef.current?.click()}
+                    size="small"
+                  >
+                    파일 추가
+                  </Button>
+                  <input
+                    ref={addFileInputRef}
+                    hidden
+                    multiple
+                    type="file"
+                    onChange={handleAddFiles}
+                  />
+                  {addedFiles.length > 0 ? (
+                    <ul className="nifi-added-file-list">
+                      {addedFiles.map((fileName, index) => (
+                        <li key={`${fileName}-${index}`} title={fileName}>
+                          - {fileName}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
             </section>
 
             <section className="nifi-detail-section">
