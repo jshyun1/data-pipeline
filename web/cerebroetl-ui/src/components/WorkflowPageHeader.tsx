@@ -67,9 +67,11 @@ const WORKFLOW_TABS: Array<{
   system: SystemCode;
   action: AccessAction;
 }> = [
-  { path: "/workflows/design", label: "스케줄링", icon: "clock", system: "NIFI", action: "READ" },
-  { path: "/airflow/dashboard", label: "실시간 모니터링", icon: "pulse", system: "AIRFLOW", action: "READ" },
-  { path: "/airflow/manage", label: "관리", icon: "gear", system: "AIRFLOW", action: "READ" },
+  // 상단 메뉴(AppLayout)와 같은 이름·순서를 유지한다.
+  { path: "/workflows/create", label: "생성", icon: "plus", system: "NIFI", action: "WRITE" },
+  { path: "/workflows/design", label: "관리", icon: "clock", system: "NIFI", action: "READ" },
+  { path: "/airflow/dashboard", label: "로그", icon: "pulse", system: "AIRFLOW", action: "READ" },
+  { path: "/airflow/manage", label: "상세 관리", icon: "gear", system: "AIRFLOW", action: "READ" },
 ];
 
 /**

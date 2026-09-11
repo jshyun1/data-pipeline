@@ -129,9 +129,11 @@ const NAV_ITEMS: NavItem[] = [
       </LineIcon>
     ),
     children: [
-      { path: "/workflows/design", label: "스케줄링", system: "NIFI", action: "READ" },
-      { path: "/airflow/dashboard", label: "실시간 모니터링", system: "AIRFLOW", action: "READ" },
-      { path: "/airflow/manage", label: "관리", system: "AIRFLOW", action: "READ" },
+      // ETL·CDC 와 같은 «생성 / 관리 / 로그» 꼴로 맞춘다(2026-09-10).
+      { path: "/workflows/create", label: "생성", system: "NIFI", action: "WRITE" },
+      { path: "/workflows/design", label: "관리", system: "NIFI", action: "READ" },
+      { path: "/airflow/dashboard", label: "로그", system: "AIRFLOW", action: "READ" },
+      { path: "/airflow/manage", label: "상세 관리", system: "AIRFLOW", action: "READ" },
     ],
   },
   {
@@ -178,12 +180,12 @@ const NAV_ITEMS: NavItem[] = [
       // 알림/발송 관리의 API(AlertAdminController·NotificationAdminController)는 ADMIN 이다.
       // 여기가 COMMON 이면 모든 역할이 COMMON=1 을 갖고 있어 «설정» 그룹이 절대 안 숨겨지고,
       // 조회자가 눌러도 API 가 403 을 주는 불일치가 생긴다.
-      { path: "/settings", label: "알림/발송 관리", system: "ADMIN", action: "READ" },
+      { path: "/settings", label: "알림/발송", system: "ADMIN", action: "READ" },
       // 연결정보는 CDC(KAFKA)와 ETL(NIFI)이 함께 쓰는 공용 정보라 한쪽 권한만 있어도 필요하다.
       { path: "/settings/connections", label: "연결정보", anySystems: ["KAFKA", "NIFI"], action: "READ" },
-      { path: "/admin/users", label: "계정 관리", system: "ADMIN", action: "READ" },
+      { path: "/admin/users", label: "계정", system: "ADMIN", action: "READ" },
       { path: "/admin/roles", label: "역할 및 권한", system: "ADMIN", action: "READ" },
-      { path: "/admin/audit", label: "감사 로그", system: "ADMIN", action: "READ" },
+      { path: "/admin/audit", label: "감사", system: "ADMIN", action: "READ" },
     ],
   },
 ];

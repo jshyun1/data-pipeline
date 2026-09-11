@@ -1,13 +1,12 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ConfigProvider, Empty, Form, Input, message, Modal, Popconfirm, Table } from "antd";
+import { ConfigProvider, Empty, message, Popconfirm, Table } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useAuth } from "../auth/AuthContext";
 import { syncEtlJobs } from "../api/etlJobs";
 import {
-  createWorkflow,
   deleteWorkflow,
   listWorkflows,
   unpublishWorkflow,
@@ -19,6 +18,7 @@ import {
   type WorkflowTreeItem,
 } from "../utils/workflowTree";
 import { WfIcon, WorkflowPageHeader } from "../components/WorkflowPageHeader";
+import { cronToKoreanText, parseCronToPreset } from "../utils/schedulePreset";
 import { cerebroBrandTheme } from "../theme/cerebro";
 
 // 워크플로우 목록. 여기서 만들고, 캔버스(설계)로 들어가 job을 배치한다.
@@ -31,6 +31,44 @@ import { cerebroBrandTheme } from "../theme/cerebro";
 // 워크플로우는 업무 그룹(NiFi 그룹)에 속하지 않는다. 분류는 이 계층이 전부다.
 //
 // 모양은 디자인 초안 workflow-scheduling.html(왼쪽 트리 카드 + 오른쪽 목록 카드)을 따른다.
+
+/**
+ * 목록 표의 열별 정렬(2026-09-11 요청). antd 는 오름차순 비교 하나만 받고 내림차순은 뒤집어 쓴다.
+ * 값이 같으면 이름으로 한 번 더 갈라서, 누를 때마다 같은 값끼리 순서가 흔들리지 않게 한다.
+ */
+const compareName = (a: WorkflowSummary, b: WorkflowSummary) => a.name.localeCompare(b.name, "ko");
+
+/**
+ * 스케줄 열의 정렬 기준: 정기 실행, 선행 완료 후, 수동 실행 순이다.
+ *
+ * <p>정기 실행끼리는 매시간·매일·매주(요일 순) 묶음 안에서 이른 시각이 앞이다. 크론 문자열 그대로 비교하면
+ * «10 14 * * *»(14:10)가 «30 10 * * *»(10:30)보다 앞에 와서 시각 순이 아니다. 프리셋으로 못 읽는
+ * 크론은 정기 실행 맨 뒤에 둔다.
+ */
+function scheduleSortKey(row: WorkflowSummary): number[] {
+  if (row.upstreamCount) return [1, row.upstreamCount];
+  if (!row.scheduleCron) return [2];
+  const parsed = parseCronToPreset(row.scheduleCron);
+  if (!parsed.matched) return [0, 3];
+  const group = parsed.preset === "hourly" ? 0 : parsed.preset === "daily" ? 1 : 2;
+  return [0, group, parsed.preset === "weekly" ? parsed.weekday : 0, parsed.hour * 60 + parsed.minute];
+}
+
+function compareSchedule(a: WorkflowSummary, b: WorkflowSummary): number {
+  const ka = scheduleSortKey(a);
+  const kb = scheduleSortKey(b);
+  for (let index = 0; index < Math.max(ka.length, kb.length); index += 1) {
+    const diff = (ka[index] ?? 0) - (kb[index] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return (a.scheduleCron ?? "").localeCompare(b.scheduleCron ?? "") || compareName(a, b);
+}
+
+/** 게시 상태 열: 미게시가 앞, 게시됨은 게시 시각이 이른 것부터. 내림차순이면 최근 게시가 맨 위다. */
+function comparePublish(a: WorkflowSummary, b: WorkflowSummary): number {
+  const time = (row: WorkflowSummary) => (row.published && row.publishedAt ? dayjs(row.publishedAt).valueOf() : 0);
+  return Number(a.published) - Number(b.published) || time(a) - time(b) || compareName(a, b);
+}
 
 /**
  * 워크플로우 계층 트리. 초안의 트리 마크업(tree-node · tree-item-row · tree-sub-group)을 그대로 쓴다 -
@@ -126,10 +164,8 @@ export function WorkflowDesignPage() {
   // 생성·삭제는 설계(NIFI 쓰기), 게시 취소는 DAG 를 없애는 운영 동작(AIRFLOW 쓰기).
   const canWrite = !permissionsLoaded || can("NIFI", "WRITE");
   const canPublish = !permissionsLoaded || can("AIRFLOW", "WRITE");
-  const [createOpen, setCreateOpen] = useState(false);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<number>();
   const [treeSearch, setTreeSearch] = useState("");
-  const [form] = Form.useForm();
 
   const { data, isLoading } = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
 
@@ -151,18 +187,6 @@ export function WorkflowDesignPage() {
     onSettled: () => {
       void refresh();
     },
-  });
-
-  const createMutation = useMutation({
-    mutationFn: createWorkflow,
-    onSuccess: (created) => {
-      message.success("워크플로우를 만들었습니다. 캔버스에서 job을 배치해주세요.");
-      setCreateOpen(false);
-      form.resetFields();
-      void refresh();
-      navigate(`/workflows/design/${created.id}`);
-    },
-    onError: (error: Error) => message.error(error.message),
   });
 
   const unpublishMutation = useMutation({
@@ -233,18 +257,20 @@ export function WorkflowDesignPage() {
   const columns: ColumnsType<WorkflowSummary> = [
     {
       title: "워크플로우",
+      sorter: compareName,
       render: (_, row) => (
         <div className="wf-info-cell">
           <button type="button" className="wf-main-name" onClick={() => navigate(`/workflows/design/${row.id}`)}>
             {row.name}
           </button>
-          <span className="wf-sub-desc">{row.dagId}</span>
+          {/* DAG ID(etl_wf_…) 아래 줄은 이름과 겹쳐 보여 뺐다(2026-09-11 요청). 로그 화면 속성창에서 볼 수 있다. */}
         </div>
       ),
     },
     {
       title: "job 수",
       dataIndex: "jobCount",
+      sorter: (a, b) => a.jobCount - b.jobCount || compareName(a, b),
       width: 90,
       align: "center",
       render: (value: number) => <span className="wf-job-count">{value}</span>,
@@ -252,6 +278,7 @@ export function WorkflowDesignPage() {
     {
       title: "스케줄",
       width: 180,
+      sorter: compareSchedule,
       render: (_, row) => {
         // 선행이 있으면 시간이 아니라 "앞 워크플로우가 끝나면" 실행된다.
         if (row.upstreamCount) {
@@ -266,7 +293,8 @@ export function WorkflowDesignPage() {
           ? (
             <span className="wf-schedule-badge wf-schedule-badge--cron">
               <WfIcon name="clock" size={13} />
-              {row.scheduleCron} <span className="wf-schedule-tz">({row.timezone})</span>
+              {/* 크론 문자열 대신 «매일 오전 10시 30분» 꼴(2026-09-11 요청). */}
+              {cronToKoreanText(row.scheduleCron)}
             </span>
           )
           : (
@@ -280,6 +308,7 @@ export function WorkflowDesignPage() {
     {
       title: "게시 상태",
       width: 190,
+      sorter: comparePublish,
       render: (_, row) => row.published
         ? (
           <div className="wf-status-cell">
@@ -299,7 +328,7 @@ export function WorkflowDesignPage() {
       render: (_, row) => (
         <div className="wf-action-group">
           <button type="button" className="btn-tbl-action btn-act-design"
-                  onClick={() => navigate(`/workflows/design/${row.id}`)}>설계</button>
+                  onClick={() => navigate(`/workflows/design/${row.id}`)}>수정</button>
           {row.published && (
             <Popconfirm title="게시를 내릴까요?" description="Airflow에서 DAG가 사라집니다."
                         onConfirm={() => unpublishMutation.mutate(row.id)}>
@@ -321,7 +350,7 @@ export function WorkflowDesignPage() {
     <ConfigProvider theme={cerebroBrandTheme}>
     <div className="wf-design-page">
       <WorkflowPageHeader
-        title="워크플로우 스케줄링"
+        title="워크플로우 관리"
         icon={<WfIcon name="calendar" size={22} strokeWidth={2.2} />}
         actions={
           <>
@@ -337,8 +366,9 @@ export function WorkflowDesignPage() {
               <WfIcon name="sync" size={15} strokeWidth={2.2} />
               동기화
             </button>
+            {/* 생성은 이름 없이 빈 캔버스에서 시작한다(«생성» 메뉴와 같은 길). */}
             <button type="button" className="btn-wf-create" disabled={!canWrite}
-                    onClick={() => setCreateOpen(true)}>
+                    onClick={() => navigate("/workflows/create")}>
               <WfIcon name="plus" size={15} strokeWidth={2.4} />
               새 워크플로우
             </button>
@@ -374,20 +404,8 @@ export function WorkflowDesignPage() {
         </aside>
 
         <section className="wf-list-card">
-          <div className="wf-toolbar">
-            <div className="wf-toolbar-left">
-              {/* 지금 표가 무엇을 보여주는지 한 줄로 - 트리에서 고르면 그 워크플로우와 하위 전부다. */}
-              <span className="wf-selected-chip">
-                <span className="chip-dot" />
-                {selectedSubtree ? `${selectedSubtree.workflow.name} · 하위 포함` : "전체 워크플로우"}
-              </span>
-              {/* 트리 제목 줄에 있던 «전체» 버튼. 고른 줄을 다시 눌러도 해제된다. */}
-              {selectedWorkflowId !== undefined && (
-                <button type="button" className="btn-tree-toggle-all"
-                        onClick={() => setSelectedWorkflowId(undefined)}>전체 보기</button>
-              )}
-            </div>
-          </div>
+          {/* 표 위 «○○ · 하위 포함 / 전체 보기» 줄은 뺐다(2026-09-11 요청) - 무엇을 골랐는지는 왼쪽 트리가
+              이미 보여준다. 선택 해제는 트리에서 고른 줄을 다시 누르면 된다. */}
           <Table<WorkflowSummary>
             rowKey="id"
             size="middle"
@@ -395,8 +413,19 @@ export function WorkflowDesignPage() {
             loading={isLoading}
             dataSource={visible}
             columns={columns}
-            pagination={{ pageSize: 20, showTotal: (total) => `전체 ${total}건` }}
+            // 페이지당 건수를 고를 수 있게 한다(2026-09-11 요청). 처음 값만 20 으로 주고(defaultPageSize)
+            // 이후 선택은 표가 기억한다. 앱에 antd 한국어 설정이 없어서 이번에 생긴 문구만 한국어로 준다.
+            pagination={{
+              defaultPageSize: 20,
+              showSizeChanger: true,
+              pageSizeOptions: [10, 20, 50, 100],
+              showTotal: (total) => `전체 ${total}건`,
+              locale: { items_per_page: "/ 페이지" },
+            }}
             locale={{
+              triggerAsc: "오름차순 정렬",
+              triggerDesc: "내림차순 정렬",
+              cancelSort: "정렬 해제",
               emptyText: (
                 <Empty description="아직 워크플로우가 없습니다. ETL에서 만든 job을 캔버스에 배치해 워크플로우를 구성하세요." />
               ),
@@ -405,28 +434,6 @@ export function WorkflowDesignPage() {
         </section>
       </div>
 
-      <Modal
-        title="새 워크플로우"
-        open={createOpen}
-        onCancel={() => setCreateOpen(false)}
-        onOk={() => form.submit()}
-        confirmLoading={createMutation.isPending}
-        okText="만들기"
-        cancelText="취소"
-        rootClassName="cerebro-modal"
-      >
-        <Form form={form} layout="vertical" onFinish={(values) => createMutation.mutate(values)}>
-          {/* 워크플로우 키(=dag_id의 축)는 서버가 이름에서 만든다. 사용자가 짓게 하면
-              규칙을 어긴 값이 게시 때 터진다. */}
-          <Form.Item name="name" label="이름" rules={[{ required: true, message: "이름을 입력해주세요." }]}>
-            <Input placeholder="DW 일배치" />
-          </Form.Item>
-          <Form.Item name="scheduleCron" label="스케줄"
-                     extra="비워두면 수동 실행 전용입니다. 예: 0 2 * * * (매일 새벽 2시)">
-            <Input placeholder="0 2 * * *" />
-          </Form.Item>
-        </Form>
-      </Modal>
     </div>
     </ConfigProvider>
   );

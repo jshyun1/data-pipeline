@@ -13,11 +13,37 @@ export function presetCron(preset: SchedulePreset, hour: number, minute: number,
   return `${minute} ${hour} * * *`;
 }
 
+/**
+ * «오전 10시 30분» 꼴 시각. 정각이면 분을 적지 않는다(«오후 2시»). 0시는 오전 12시, 12시는 오후 12시다.
+ *
+ * <p>워크플로우 화면의 스케줄 문구는 모두 이 꼴로 적는다(2026-09-11 요청) - 크론 문자열이나
+ * «14시 10분» 같은 24시 표기가 섞여 있으면 읽는 사람이 한 번 더 계산해야 했다.
+ */
+export function koreanClock(hour: number, minute: number) {
+  const period = hour < 12 ? "오전" : "오후";
+  const h = hour % 12 === 0 ? 12 : hour % 12;
+  return minute === 0 ? `${period} ${h}시` : `${period} ${h}시 ${minute}분`;
+}
+
 export function presetDescription(preset: SchedulePreset, hour: number, minute: number, weekday: number) {
-  const time = `${String(hour).padStart(2, "0")}시 ${String(minute).padStart(2, "0")}분`;
-  if (preset === "hourly") return `매시간 ${String(minute).padStart(2, "0")}분`;
+  if (preset === "hourly") return minute === 0 ? "매시간 정각" : `매시간 ${minute}분`;
+  const time = koreanClock(hour, minute);
   if (preset === "weekly") return `매주 ${WEEKDAY_LABELS[weekday]}요일 ${time}`;
   return `매일 ${time}`;
+}
+
+/**
+ * 저장된 크론을 사람이 읽는 문구로 바꾼다. 예: «30 10 * * *» 는 «매일 오전 10시 30분».
+ *
+ * <p>매시간·매일·매주로 읽히지 않는 크론은 뜻을 지어내지 않고 크론 문자열 그대로 돌려준다.
+ * 비어 있으면(수동 실행 워크플로우) «수동 실행».
+ */
+export function cronToKoreanText(cron?: string | null) {
+  if (!cron || !cron.trim()) return "수동 실행";
+  const parsed = parseCronToPreset(cron);
+  return parsed.matched
+    ? presetDescription(parsed.preset, parsed.hour, parsed.minute, parsed.weekday)
+    : cron.trim();
 }
 
 /**

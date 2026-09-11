@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -17,12 +17,12 @@ import {
   Table,
   Tabs,
   Tag,
-  Tree,
   Typography,
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { Dropdown, Form, Modal } from "antd";
-import type { TreeProps } from "antd";
+import type { MenuProps } from "antd";
+import { WfIcon } from "../components/WorkflowPageHeader";
 import { useNavigate } from "react-router-dom";
 import { listConnections } from "../api/connections";
 import {
@@ -213,7 +213,7 @@ export function PipelinesPage() {
    * 생성»이 되고 수정·삭제는 없다. 그룹을 아직 하나도 안 만들었으면 파이프라인이 전부
    * 뿌리 바로 밑에 놓여 예전과 비슷하게 보인다.
    */
-  const pipelineTreeData = useMemo(() => {
+  const pipelineTree = useMemo((): PipelineTreeNode => {
     const search = treeSearch.trim().toLowerCase();
     const connectionNameById = new Map((connections ?? []).map((connection) => [connection.id, connection.name]));
 
@@ -234,42 +234,38 @@ export function PipelinesPage() {
       byGroup.set(groupId, [...(byGroup.get(groupId) ?? []), pipeline]);
     });
 
-    const pipelineNode = (pipeline: PipelineResponse) => ({
+    const pipelineNode = (pipeline: PipelineResponse): PipelineTreeNode => ({
       key: `pipeline:${pipeline.id}`,
-      title: (
-        <Space size={4}>
-          <span>{pipeline.name}</span>
-          <Tag color={RUNTIME_STATUS_COLOR[runtimeByPipeline.get(pipeline.id)?.runtimeStatus ?? ""] ?? "default"}>
-            {pipeline.sourceTable ?? pipeline.targetTable}
-          </Tag>
-        </Space>
-      ),
-      isLeaf: true,
+      label: pipeline.name,
+      kind: "pipeline",
+      count: 0,
+      table: pipeline.sourceTable ?? pipeline.targetTable ?? null,
+      statusColor: RUNTIME_STATUS_COLOR[runtimeByPipeline.get(pipeline.id)?.runtimeStatus ?? ""] ?? "default",
+      children: [],
     });
 
     /** 그룹 한 칸과 그 아래(하위 그룹 + 그 그룹의 파이프라인). 숫자는 하위까지 합친 수다. */
-    const groupNode = (group: PipelineGroupResponse): { node: NonNullable<TreeProps["treeData"]>[number]; count: number } => {
+    const groupNode = (group: PipelineGroupResponse): PipelineTreeNode => {
       const subs = (groups ?? []).filter((g) => g.parentId === group.id).map(groupNode);
       const own = byGroup.get(group.id) ?? [];
-      const count = own.length + subs.reduce((sum, sub) => sum + sub.count, 0);
       return {
-        count,
-        node: {
-          key: `group:${group.id}`,
-          title: <Space size={4}><span>{group.name}</span><Tag>{count}</Tag></Space>,
-          children: [...subs.map((sub) => sub.node), ...own.map(pipelineNode)],
-        },
+        key: `group:${group.id}`,
+        label: group.name,
+        kind: "group",
+        count: own.length + subs.reduce((sum, sub) => sum + sub.count, 0),
+        children: [...subs, ...own.map(pipelineNode)],
       };
     };
 
     const rootGroups = (groups ?? []).filter((g) => g.parentId === null).map(groupNode);
     const ungrouped = (byGroup.get(null) ?? []).map(pipelineNode);
-    const children: NonNullable<TreeProps["treeData"]> = [
-      ...rootGroups.map((root) => root.node),
-      ...ungrouped,
-    ];
-    const visibleCount = (pipelines ?? []).length;
-    return [{ key: "all", title: <Space size={4}><span>전체 파이프라인</span><Tag>{visibleCount}</Tag></Space>, children }];
+    return {
+      key: "all",
+      label: "전체 파이프라인",
+      kind: "root",
+      count: (pipelines ?? []).length,
+      children: [...rootGroups, ...ungrouped],
+    };
   }, [pipelines, connections, groups, groupById, treeSearch, runtimeByPipeline]);
 
   /**
@@ -432,44 +428,29 @@ export function PipelinesPage() {
           />
         ))}
         <div style={{ display: "grid", gridTemplateColumns: "290px minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
-          <Card size="small" title="파이프라인 탐색" styles={{ body: { padding: 12, overflowX: "auto" } }}>
-            <Input.Search
-              allowClear
-              placeholder="이름·스키마·테이블 검색"
-              value={treeSearch}
-              onChange={(event) => setTreeSearch(event.target.value)}
-              style={{ marginBottom: 12 }}
-            />
-            <Tree
-              blockNode
-              // treeData 가 조회 후에 채워지므로 defaultExpandAll 만으로는 첫 렌더(빈 트리)에
-              // 걸려 아무것도 안 펼쳐진다. 데이터가 들어오면 key 가 바뀌어 다시 마운트되게 한다.
-              key={`pipeline-tree-${(pipelines ?? []).length}-${(groups ?? []).length}`}
-              defaultExpandAll
-              autoExpandParent={Boolean(treeSearch)}
-              treeData={pipelineTreeData}
-              selectedKeys={[selectedTreeKey]}
-              onSelect={(keys) => {
-                // 트리에서 파이프라인을 선택하면 목록(내역)만 그 파이프라인으로 좁힌다.
-                // 상세창(Drawer)은 '상세' 버튼으로만 열도록 하여 선택만으로 열리지 않게 한다.
-                const key = String(keys[0] ?? "all");
-                setSelectedTreeKey(key);
-              }}
-              titleRender={(node) => {
-                const key = String((node as { key: React.Key }).key);
-                const title = (node as { title: React.ReactNode }).title;
-                const items = treeMenuItems(key);
-                // 파이프라인 줄에는 메뉴가 없다 - 그룹만 만들고 고치고 지운다.
-                if (!items.length) {
-                  return <span>{title}</span>;
-                }
-                return (
-                  <Dropdown trigger={["contextMenu"]} menu={{ items, onClick: ({ key: action }) => onTreeMenu(key, action) }}>
-                    <span>{title}</span>
-                  </Dropdown>
-                );
-              }}
-            />
+          <Card size="small" title="파이프라인 탐색" className="cdc-tree-card" styles={{ body: { padding: 0 } }}>
+            {/* 검색칸·트리는 워크플로우 관리 화면 트리 카드와 같은 마크업·클래스다(2026-09-11 요청). */}
+            <div className="wf-tree-search">
+              <WfIcon name="search" size={13} />
+              <input
+                className="wf-tree-search-input"
+                aria-label="트리 검색"
+                value={treeSearch}
+                onChange={(event) => setTreeSearch(event.target.value)}
+                placeholder="이름·스키마·테이블 검색"
+              />
+            </div>
+            <div className="wf-tree-scroll cdc-tree-scroll">
+              <PipelineTreeView
+                root={pipelineTree}
+                selectedKey={selectedTreeKey}
+                searching={Boolean(treeSearch.trim())}
+                // 트리에서 고르면 목록(내역)만 그 범위로 좁힌다. 상세창(Drawer)은 '상세' 버튼으로만 연다.
+                onSelect={setSelectedTreeKey}
+                menuItemsOf={treeMenuItems}
+                onMenu={onTreeMenu}
+              />
+            </div>
           </Card>
           <div style={{ minWidth: 0 }}>
         <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
@@ -805,6 +786,128 @@ export function PipelinesPage() {
           </Form.Item>
         </Form>
       </Modal>
+    </div>
+  );
+}
+
+/** CDC 관리 트리 한 칸. 뿌리(전체 파이프라인)·그룹·파이프라인 셋 중 하나다. */
+interface PipelineTreeNode {
+  key: string;
+  label: string;
+  kind: "root" | "group" | "pipeline";
+  /** 뿌리·그룹 줄 배지. 그룹은 하위 그룹까지 합친 수(검색에 걸린 것만), 뿌리는 전체 수다. */
+  count: number;
+  /** 파이프라인 줄 오른쪽 태그: 소스(없으면 타깃) 테이블. */
+  table?: string | null;
+  /** 파이프라인 태그 색 = 실행 상태(antd Tag color). */
+  statusColor?: string;
+  children: PipelineTreeNode[];
+}
+
+/**
+ * CDC 관리 트리. 워크플로우 관리 화면 트리와 같은 마크업(tree-node · tree-item-row · ▶ · 폴더/파일 아이콘 ·
+ * 개수 배지 · tree-sub-group 점선)을 쓰고, 감싸는 칸도 같은 클래스(.wf-tree-scroll)라 줄 모양 CSS 가 그대로
+ * 적용된다(2026-09-11 요청). antd Tree 로는 그 화살표·점선·줄 간격이 나오지 않았다.
+ *
+ * <p>동작은 antd Tree 때와 같다.
+ * <ul>
+ *   <li>줄을 누르면 오른쪽 목록이 그 칸 범위로 좁혀지고, 고른 줄을 다시 누르면 전체로 돌아간다.</li>
+ *   <li>▶ 는 접기/펼치기만 한다 - 누른다고 목록이 바뀌지 않는다.</li>
+ *   <li>처음엔 전부 펼쳐 둔다. 검색 중에는 걸린 파이프라인이 보여야 하므로 접어 둔 칸도 펼쳐 보인다.</li>
+ *   <li>뿌리·그룹 줄에는 우클릭 메뉴(하위 그룹 생성·그룹 수정·그룹 삭제)가 그대로 붙는다.</li>
+ * </ul>
+ */
+function PipelineTreeView({
+  root,
+  selectedKey,
+  searching,
+  onSelect,
+  menuItemsOf,
+  onMenu,
+}: {
+  root: PipelineTreeNode;
+  selectedKey: string;
+  searching: boolean;
+  onSelect: (key: string) => void;
+  menuItemsOf: (key: string) => MenuProps["items"];
+  onMenu: (key: string, action: string) => void;
+}) {
+  // 접어 둔 칸만 기억한다 - 새로 생긴 그룹은 따로 챙기지 않아도 펼친 채로 나온다.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+
+  const toggle = (key: string) => {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const renderNode = (node: PipelineTreeNode): ReactNode => {
+    const hasChildren = node.children.length > 0;
+    const open = hasChildren && (searching || !collapsed.has(node.key));
+    const active = selectedKey === node.key;
+    // antd Tree 와 같게 고른 줄을 다시 누르면 해제된다 - 해제는 곧 «전체 파이프라인»이다.
+    const select = () => onSelect(active ? "all" : node.key);
+    const items = menuItemsOf(node.key) ?? [];
+    const row = (
+      <div
+        className={active ? "tree-item-row active" : "tree-item-row"}
+        tabIndex={0}
+        title={node.table ? `${node.label} · ${node.table}` : node.label}
+        onClick={select}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            select();
+          }
+        }}
+      >
+        <button
+          type="button"
+          className={`tree-toggle-arrow${hasChildren ? (open ? " open" : "") : " empty"}`}
+          tabIndex={hasChildren ? 0 : -1}
+          aria-label={hasChildren ? (open ? "하위 접기" : "하위 펼치기") : undefined}
+          onClick={(event) => {
+            // 접기만 한다 - 줄 선택까지 같이 되면 접으려다 목록이 바뀐다.
+            event.stopPropagation();
+            if (hasChildren) toggle(node.key);
+          }}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          ▶
+        </button>
+        <WfIcon name={node.kind === "pipeline" ? "file" : "folder"} size={15} className="tree-node-icon" />
+        <span className="tree-node-label">{node.label}</span>
+        {node.kind === "pipeline"
+          ? (node.table ? <Tag color={node.statusColor} className="cdc-tree-table-tag">{node.table}</Tag> : null)
+          : <span className="tree-node-badge">{node.count}</span>}
+      </div>
+    );
+    return (
+      <div key={node.key} className="tree-node" role="treeitem" aria-selected={active}
+           aria-expanded={hasChildren ? open : undefined}>
+        {items.length > 0 ? (
+          <Dropdown trigger={["contextMenu"]} menu={{ items, onClick: ({ key: action }) => onMenu(node.key, action) }}>
+            {row}
+          </Dropdown>
+        ) : row}
+        {open ? (
+          <div className="tree-sub-group" role="group">
+            {node.children.map(renderNode)}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  return (
+    <div role="tree" aria-label="파이프라인 그룹" className="tree-root">
+      {renderNode(root)}
     </div>
   );
 }

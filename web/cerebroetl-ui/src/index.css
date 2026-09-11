@@ -550,7 +550,6 @@ body {
 .btn-wf-sync:focus-visible,
 .btn-wf-create:focus-visible,
 .workflow-sub-tab:focus-visible,
-.btn-tree-toggle-all:focus-visible,
 .wf-main-name:focus-visible,
 .btn-tbl-action:focus-visible,
 .airflow-business-metric:focus-visible,
@@ -998,7 +997,7 @@ body {
   color: #94a3b8;
 }
 
-/* 트리 줄 모양은 스케줄링 트리와 같은 규칙(:is(.wf-tree-scroll, .airflow-tree-body) .tree-*)을 쓴다. */
+/* 트리 줄 모양은 스케줄링 트리와 같은 규칙(:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-*)을 쓴다. */
 .airflow-tree-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -1234,6 +1233,112 @@ body {
   overflow: hidden;
   color: #dc2626;
   text-overflow: ellipsis;
+}
+
+/* «적재/실패» 칸의 «로그» 버튼(실패한 job·단계). 줄 높이가 튀지 않게 작게 둔다. */
+.airflow-task-row .airflow-task-log-button {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+/* 실패 로그 창(TaskFailureLogModal) - 실패 원인(예외)을 먼저, 그 아래 걸러 낸 실행 로그를 원문 그대로. */
+.failure-log-task + .failure-log-task {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.failure-log-task-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.failure-log-label {
+  margin: 10px 0 6px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.failure-log-label span {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.failure-log-exception,
+.failure-log-lines {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "D2Coding", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.failure-log-exception {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.failure-log-exception + .failure-log-exception {
+  margin-top: 6px;
+}
+
+.failure-log-lines {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #334155;
+}
+
+.failure-log-line.is-error,
+.failure-log-line.is-critical {
+  color: #b91c1c;
+}
+
+.failure-log-line.is-warning {
+  color: #b45309;
+}
+
+.failure-log-time {
+  margin-right: 10px;
+  color: #94a3b8;
+}
+
+.failure-log-empty {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.failure-log-child {
+  margin-top: 12px;
+  padding-left: 14px;
+  border-left: 2px solid #e2e8f0;
+}
+
+.failure-log-attempt + .failure-log-attempt {
+  margin-top: 10px;
+}
+
+.failure-log-attempt-head {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.failure-log-note {
+  margin-top: 8px;
+  color: #b45309;
+  font-size: 12px;
 }
 
 .airflow-alert-reason {
@@ -5610,6 +5715,81 @@ button.alert-compact-trigger.is-clear:hover {
   overflow-y: auto;
 }
 
+/* 설계 화면 노드 속성창(job·워크플로우 노드) - ETL 관리 job 속성창과 같은 «제목 + 아래 구분선» 구역(2026-09-11 요청).
+   구역 모양은 .nifi-detail-section 을 그대로 쓰고, 좁은 카드 안이라 좌우 여백만 뺀다.
+   ETL 관리 쪽은 마지막 구역 선을 지우지만 여기서는 남겨 그 아래 «실행 조건»과 나눈다. */
+.wf-node-detail .nifi-detail-section,
+.wf-node-detail .nifi-detail-section:last-child {
+  padding: 10px 0;
+  border-bottom: 1px solid #d5dbe3;
+}
+
+.wf-node-detail .nifi-detail-section:first-child {
+  padding-top: 0;
+}
+
+.wf-node-detail .nifi-detail-message {
+  padding: 0 0 10px;
+  border-bottom: 1px solid #d5dbe3;
+}
+
+.wf-node-detail-controls {
+  padding-top: 12px;
+}
+
+.wf-node-detail-value {
+  color: #111827;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.wf-node-detail-sub {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.wf-node-detail-sub strong {
+  color: #475569;
+  font-weight: 400;
+}
+
+.wf-node-detail-sub-inline {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.wf-node-detail-memo {
+  white-space: pre-wrap;
+}
+
+/* 글꼴·크기는 캔버스 속성창 그대로다(2026-09-11 요청) - ETL 관리 속성창에서는 내용과 구분선만 가져온다.
+   구역 제목은 «실행 조건» 라벨과 같은 12px 회색, 값은 13px, 굵은 글씨는 쓰지 않는다(상태 색은 남긴다). */
+.wf-node-detail .nifi-detail-section h3 {
+  margin: 0 0 6px;
+  color: #888;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.wf-node-detail .nifi-detail-section dt,
+.wf-node-detail .nifi-detail-section dd,
+.wf-node-detail .nifi-detail-section dd.running,
+.wf-node-detail .nifi-detail-section dd.error,
+.wf-node-detail .nifi-detail-section dd.stopped,
+.wf-node-detail .nifi-detail-section dd.done,
+.wf-node-detail .nifi-detail-last-run-date,
+.wf-node-detail .nifi-detail-alert-row,
+.wf-node-detail .nifi-detail-empty {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.wf-node-detail .nifi-detail-last-run-date {
+  margin-bottom: 4px;
+}
+
 /* ===== 워크플로우 스케줄링 (WorkflowDesignPage) — 초안 workflow-scheduling.html =====
  * 실시간 모니터링과 같은 방식으로 높이를 뷰포트에 못박는다(--app-offset). 예전에는 내용 높이만큼만
  * 차지해서, 워크플로우가 몇 개 없으면 카드 아래로 화면 절반이 빈 띠로 남았다. */
@@ -5650,24 +5830,6 @@ button.alert-compact-trigger.is-clear:hover {
   min-width: 0;
 }
 
-.btn-tree-toggle-all {
-  padding: 2px 8px;
-  border: 1px solid #e2e8f0;
-  border-radius: 4px;
-  background: #f8fafc;
-  color: #64748b;
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.btn-tree-toggle-all:hover {
-  background: #f1f5f9;
-  color: #0f172a;
-}
-
 .wf-tree-search {
   position: relative;
   flex-shrink: 0;
@@ -5704,7 +5866,7 @@ button.alert-compact-trigger.is-clear:hover {
   box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.12);
 }
 
-/* 트리 — 초안 css/workflow.css 의 트리 규칙 그대로(스케줄링·실시간 모니터링 트리 공통).
+/* 트리 — 초안 css/workflow.css 의 트리 규칙 그대로(워크플로우 관리·로그 트리, 설계 화면 팔레트 공통).
    ▶ 화살표(펼치면 90° 회전), 15px 폴더/파일 아이콘, 하위는 점선 세로줄로 들여쓴다. */
 .wf-tree-scroll {
   flex: 1 1 auto;
@@ -5714,19 +5876,19 @@ button.alert-compact-trigger.is-clear:hover {
   overflow-y: auto;
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-root {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-root {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-node {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-node {
   display: flex;
   flex-direction: column;
 }
 
 /* 초안 base.css 는 전체 줄 높이가 1.5 다. 우리 body 는 기본값(약 1.2)이라 줄이 27px 로 낮았다 - 트리 줄만 맞춘다. */
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-item-row {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row {
   position: relative;
   padding: 6px 8px;
   line-height: 1.5;
@@ -5742,18 +5904,18 @@ button.alert-compact-trigger.is-clear:hover {
   transition: all 0.12s ease;
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-item-row:hover {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row:hover {
   background: #f1f5f9;
   color: #0f172a;
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-item-row.active {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row.active {
   background: #fff1f0;
   color: var(--color-primary);
   font-weight: 700;
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-item-row.active::before {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row.active::before {
   position: absolute;
   top: 4px;
   bottom: 4px;
@@ -5764,7 +5926,7 @@ button.alert-compact-trigger.is-clear:hover {
   content: "";
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-toggle-arrow {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-toggle-arrow {
   flex-shrink: 0;
   width: 14px;
   height: 14px;
@@ -5781,27 +5943,27 @@ button.alert-compact-trigger.is-clear:hover {
   transition: transform 0.15s ease;
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-toggle-arrow.open {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-toggle-arrow.open {
   transform: rotate(90deg);
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-toggle-arrow.empty {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-toggle-arrow.empty {
   visibility: hidden;
   pointer-events: none;
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-node-icon {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-node-icon {
   flex-shrink: 0;
   width: 15px;
   height: 15px;
   color: #64748b;
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-item-row.active .tree-node-icon {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row.active .tree-node-icon {
   color: var(--color-primary);
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-node-label {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-node-label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -5809,19 +5971,19 @@ button.alert-compact-trigger.is-clear:hover {
   white-space: nowrap;
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-node-badge {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-node-badge {
   margin-left: 0;
   padding: 1px 5px;
   border-radius: 10px;
   line-height: normal;
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-item-row.active .tree-node-badge {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row.active .tree-node-badge {
   background: #fee2e2;
   color: var(--color-primary);
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-sub-group {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-sub-group {
   margin-top: 2px;
   margin-left: 7px;
   padding-left: 18px;
@@ -5831,45 +5993,91 @@ button.alert-compact-trigger.is-clear:hover {
   border-left: 1px dashed #e2e8f0;
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-item-row:focus-visible,
-:is(.wf-tree-scroll, .airflow-tree-body) .tree-toggle-arrow:focus-visible {
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row:focus-visible,
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-toggle-arrow:focus-visible {
   outline: 2px solid rgba(255, 59, 48, 0.45);
   outline-offset: -2px;
 }
 
-.wf-toolbar {
-  flex-shrink: 0;
-  padding: 12px 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-bottom: 1px solid #f1f5f9;
+
+/* 설계 화면 팔레트(components/PaletteTree) — 줄 모양은 위 공통 규칙 그대로다(2026-09-11).
+   팔레트에만 있는 것만 여기 둔다: 구역 머리글 · 끌기만 하는 줄(손바닥) · 누를 일 없는 줄 · 흐린 줄. */
+.wf-palette-section + .wf-palette-section {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #f1f5f9;
 }
 
-.wf-toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.wf-selected-chip {
-  padding: 4px 10px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border-radius: 6px;
-  background: #f1f5f9;
-  color: #334155;
+.wf-palette-section-title {
+  padding: 0 8px 4px;
+  color: #475569;
   font-size: 12px;
   font-weight: 700;
 }
 
-.wf-selected-chip .chip-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-primary);
+.wf-palette-tree .tree-item-row.is-drag-only {
+  cursor: grab;
+}
+
+.wf-palette-tree .tree-item-row.is-drag-only:active {
+  cursor: grabbing;
+}
+
+/* CDC 파이프라인·빈 그룹처럼 누를 일이 없는 줄은 손가락 커서도, 올렸을 때 바탕색도 주지 않는다. */
+.wf-palette-tree .tree-item-row.is-inert {
+  cursor: default;
+}
+
+.wf-palette-tree .tree-item-row.is-inert:not(.active):hover {
+  background: transparent;
+  color: #334155;
+}
+
+.wf-palette-tree .tree-item-row.is-muted {
+  opacity: 0.5;
+}
+
+/* CDC 관리 트리(PipelinesPage) — 감싸는 칸이 .wf-tree-scroll 이라 줄 모양은 위 공통 규칙을 그대로 쓴다(2026-09-11).
+   여기엔 CDC 에만 있는 것만 둔다: 파이프라인 줄 오른쪽 테이블 태그(색 = 실행 상태)와 고른 줄 색. */
+.cdc-tree-scroll .tree-item-row .cdc-tree-table-tag {
+  flex-shrink: 0;
+  max-width: 116px;
+  margin: 0;
+  padding: 0 6px;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+/* 고른 줄은 로그 화면 CDC 트리와 같은 파랑이다(ETL·워크플로우는 빨강). 공통 규칙보다 한 단계 구체적으로 쓴다. */
+.wf-tree-scroll.cdc-tree-scroll .tree-item-row.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.wf-tree-scroll.cdc-tree-scroll .tree-item-row.active::before {
+  background: #2563eb;
+}
+
+.wf-tree-scroll.cdc-tree-scroll .tree-item-row.active .tree-node-icon {
+  color: #2563eb;
+}
+
+.wf-tree-scroll.cdc-tree-scroll .tree-item-row.active .tree-node-badge {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.cdc-tree-card .wf-tree-search-input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+
+/* 키보드 포커스 테두리도 CDC 파랑으로(공통 규칙은 빨강). 우클릭 메뉴를 Esc 로 닫으면 그 줄에 테두리가 남는다. */
+.wf-tree-scroll.cdc-tree-scroll .tree-item-row:focus-visible,
+.wf-tree-scroll.cdc-tree-scroll .tree-toggle-arrow:focus-visible {
+  outline-color: rgba(37, 99, 235, 0.45);
 }
 
 /* 목록 표: 표만 안에서 스크롤하고, «전체 N건 · 페이지»는 카드 아래에 붙어 있다. */
@@ -5965,12 +6173,6 @@ button.alert-compact-trigger.is-clear:hover {
   text-decoration: underline;
 }
 
-.wf-sub-desc {
-  color: #64748b;
-  font-size: 11.5px;
-  font-weight: 500;
-}
-
 .wf-job-count {
   color: #0f172a;
   font-size: 13px;
@@ -5990,11 +6192,6 @@ button.alert-compact-trigger.is-clear:hover {
 
 .wf-schedule-badge--cron {
   color: #0f172a;
-}
-
-.wf-schedule-tz {
-  color: #94a3b8;
-  font-weight: 500;
 }
 
 .wf-schedule-badge--upstream {

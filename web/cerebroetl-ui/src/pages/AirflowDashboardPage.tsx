@@ -50,6 +50,7 @@ import { scheduleDescription } from "../utils/schedulePreset";
 import { useAuth } from "../auth/AuthContext";
 import { WfIcon, WorkflowPageHeader, type WfIconName } from "../components/WorkflowPageHeader";
 import { cerebroBrandTheme } from "../theme/cerebro";
+import { TaskFailureLogModal, type FailureLogTarget } from "../components/TaskFailureLogModal";
 
 type BusinessCategory = Exclude<DagCategory, "기타">;
 
@@ -885,6 +886,8 @@ function TaskRows({
 }) {
   const [retryingTaskId, setRetryingTaskId] = useState<string>();
   const [expandedJobKey, setExpandedJobKey] = useState<string>();
+  // «적재/실패» 칸의 «로그» 버튼으로 여는 실패 로그 창의 대상.
+  const [failureLog, setFailureLog] = useState<FailureLogTarget>();
   const tasksQuery = useQuery({
     queryKey: ["airflow-dashboard-tasks", dag.dag_id, run?.dag_run_id],
     queryFn: () => listAirflowTaskInstances(dag.dag_id, run!.dag_run_id),
@@ -897,7 +900,9 @@ function TaskRows({
     enabled: configured && Boolean(dag.etl_job_id),
     refetchInterval: refreshSeconds * 1000,
   });
-  const completedTasks = (tasksQuery.data ?? []).filter((task) => task.state === "success" || task.state === "failed");
+  // 적재 건수를 읽으려고 성공한 task 로그만 미리 받는다. 실패 로그는 «로그» 버튼을 누를 때 창에서 따로 받는다
+  // (예전에는 실패 사유 한 줄을 뽑으려고 실패 task 로그까지 전부 받았다).
+  const completedTasks = (tasksQuery.data ?? []).filter((task) => task.state === "success");
   const logsQuery = useQuery({
     queryKey: ["airflow-dashboard-task-logs", dag.dag_id, run?.dag_run_id, completedTasks.map((task) => `${task.task_id}:${task.try_number}`).join(",")],
     queryFn: async () => Object.fromEntries(await Promise.all(completedTasks.map(async (task): Promise<[string, string]> => [
@@ -924,23 +929,9 @@ function TaskRows({
       return counts.at(-1) ? `${counts.at(-1)![1]}행` : "-";
     }
     if (state === "upstream_failed") return "선행 작업 실패로 미실행";
-    if (state !== "failed") return "-";
-    const lines = log.split("\n").map((line) => line.trim()).filter(Boolean);
-    // 도움말 URL(https://docs.oracle.com/error-help/db/ora-12170/)만 있는 줄은 사유가 아니다.
-    // 예전 규칙은 대소문자 무시로 "ora-12170"을 원인 코드로 착각해 URL을 사유로 띄웠다.
-    const meaningful = lines.filter((line) => !/^https?:\/\//.test(line));
-    // 1순위: 원인 코드가 붙은 줄(ORA-01234: …). 2순위: Exception/Error 줄. 3순위: 마지막 줄.
-    // Airflow 로그는 JSON 한 줄에 메시지 전체가 담긴다. 줄 단위로 고르면 원인 코드가
-    // 180자 뒤로 밀려 잘린다. 코드가 있으면 그 지점부터 잘라 원인이 앞에 오게 한다.
-    const code = meaningful.map((line) => {
-      const hit = line.match(/\b[A-Z]{2,5}-\d{3,5}:.*/);
-      return hit ? hit[0] : "";
-    }).find(Boolean);
-    const reason = code
-      ?? [...meaningful].reverse().find((line) => /(?:Exception|Error):|실패/.test(line))
-      ?? meaningful.at(-1);
-    return reason?.replace(/^\[[^\]]+\]\s*/, "").replace(/^-\s*Caused by:\s*/, "").slice(0, 180)
-      || "실패 사유를 확인할 수 없습니다.";
+    // 실패는 사유 문구 대신 «로그» 버튼을 그린다(2026-09-11 요청). 로그 한 줄을 180자로 잘라 보여 주던
+    // 예전 방식은 원인이 잘리거나 엉뚱한 줄을 집었다 - 실패 원인은 TaskFailureLogModal 이 원문으로 보여 준다.
+    return "-";
   };
   /** job 키(= TaskGroup 이름). 화면에 보이는 단위와 같게 맞춘다. */
   const jobKeyOf = (taskId: string) => {
@@ -1078,6 +1069,7 @@ function TaskRows({
   if (!run || !tasksQuery.data?.length) {
     return <tr className="airflow-task-loading"><td colSpan={8}>실행 단계가 없습니다.</td></tr>;
   }
+  const runId = run.dag_run_id;
   /**
    * job 1개 = 한 줄. TaskGroup(=job) 안의 단계(open_run/start_pg/await/stop_pg/verify)를
    * 하나로 접는다. 5개 job이면 21줄이 아니라 5줄이다 - 사용자가 보고 싶은 단위는 job이다.
@@ -1135,7 +1127,7 @@ function TaskRows({
     return states.find(Boolean) ?? undefined;
   };
 
-  return order.flatMap((key, index) => {
+  const rows = order.flatMap((key, index) => {
     const steps = byJob.get(key)!;
     const state = rollUpState(steps);
     const failed = steps.find((step) => step.state === "failed");
@@ -1147,7 +1139,8 @@ function TaskRows({
     // 적재 건수는 await 단계 로그에 찍힌다("이번 실행 적재 건수 (총 N건)").
     // 마지막 단계(verify/stop_pg) 로그를 보면 건수가 없어 늘 0건으로 나온다.
     const counted = steps.find((step) => step.task_id.endsWith(".await")) ?? steps.at(-1)!;
-    const detail = failed ? outcomeDetail(failed.task_id, "failed")
+    // 실패한 job 은 문구 대신 «로그» 버튼을 그린다(아래 셀) - 실패한 단계들의 로그를 창으로 연다.
+    const detail = failed ? ""
       : state === "upstream_failed" ? "선행 작업 실패로 미실행"
       : state === "success" ? outcomeDetail(counted.task_id, "success")
       : "-";
@@ -1171,8 +1164,20 @@ function TaskRows({
         <td><ProfileOutlined /> {isJob ? `JOB (${steps.length}단계)` : "워크플로우 종단"}</td>
         <td>{startedAt ? dayjs(startedAt).format("YYYY-MM-DD HH:mm") : "-"}</td>
         <td><Tag color={stateColor(state)}>{stateLabel(state)}</Tag></td>
-        {/* 열 폭을 넘으면 CSS 가 잘라내므로, 전체 문구는 셀 title 로 남긴다. */}
-        <td title={detail}>{state === "failed" ? <small>{detail}</small> : detail}</td>
+        {/* 성공이면 적재 건수, 실패면 «로그» 버튼(2026-09-11 요청). 열 폭을 넘는 문구는 셀 title 로 남긴다. */}
+        <td title={failed ? undefined : detail}>
+          {failed ? (
+            <Button size="small" danger className="airflow-task-log-button"
+                    onClick={() => setFailureLog({
+                      title: `${String(index + 1).padStart(2, "0")} ${key}`,
+                      dagId: dag.dag_id,
+                      runId,
+                      tasks: steps.filter((step) => step.state === "failed"),
+                    })}>
+              로그
+            </Button>
+          ) : detail}
+        </td>
         <td>{duration(startedAt, endedAt)}</td>
         {auxColumn && <td>-</td>}
         <td>
@@ -1206,7 +1211,19 @@ function TaskRows({
           <td>단계</td>
           <td>{step.start_date ? dayjs(step.start_date).format("HH:mm:ss") : "-"}</td>
           <td><Tag color={stateColor(step.state)}>{stateLabel(step.state)}</Tag></td>
-          <td>{step.state === "failed" ? <small title={stepDetail}>{stepDetail}</small> : stepDetail}</td>
+          <td>
+            {step.state === "failed" ? (
+              <Button size="small" danger className="airflow-task-log-button"
+                      onClick={() => setFailureLog({
+                        title: `${key} · ${step.task_id.split(".").at(-1)}`,
+                        dagId: dag.dag_id,
+                        runId,
+                        tasks: [step],
+                      })}>
+                로그
+              </Button>
+            ) : stepDetail}
+          </td>
           <td>{duration(step.start_date, step.end_date)}</td>
           {auxColumn && <td>-</td>}
           <td>{Math.max(0, (step.try_number ?? 1) - 1)}회</td>
@@ -1214,6 +1231,11 @@ function TaskRows({
       );
     })];
   });
+  return [
+    ...rows,
+    // 실패 로그 창. antd Modal 은 body 로 포털되므로 표(tbody) 안에 두어도 DOM 은 표 밖에 생긴다.
+    <TaskFailureLogModal key="failure-log" target={failureLog} onClose={() => setFailureLog(undefined)} />,
+  ];
 }
 
 function ScopeList({
@@ -1430,7 +1452,7 @@ function RunHistoryTable({ dag, runs, refreshSeconds }: { dag?: DashboardDag; ru
     <div className="airflow-job-table-wrap">
       <table className="airflow-job-table">
         {/* 실행 ID(dag_run_id)는 사람이 쓸 일이 없고 문자열이 길어 표를 가로로 밀어냈다. */}
-        <thead><tr><th>작업명</th><th>실행 유형</th><th>실행 일시</th><th>최종 결과</th><th>적재/실패 사유</th><th>소요</th><th>재시도/재시작</th></tr></thead>
+        <thead><tr><th>작업명</th><th>실행 유형</th><th>실행 일시</th><th>최종 결과</th><th>적재/실패</th><th>소요</th><th>재시도/재시작</th></tr></thead>
         <tbody>
           {runs.flatMap((run) => {
             const expanded = expandedRunId === run.dag_run_id;
@@ -1971,7 +1993,7 @@ export function AirflowDashboardPage() {
     <div className="airflow-dashboard-page">
       {/* 초안(workflow-monitoring.html)의 머리줄: 화면 제목 + 워크플로우 하위 탭 ··· 동기화·갱신 주기. */}
       <WorkflowPageHeader
-        title="실시간 모니터링"
+        title="워크플로우 로그"
         icon={<WfIcon name="pulse" size={22} strokeWidth={2.2} />}
         actions={
           <div className="airflow-refresh-controls">
@@ -2043,7 +2065,7 @@ export function AirflowDashboardPage() {
               {selectedDag && expandedDagId === selectedDag.dag_id && categoryOf(selectedDag) === "ETL" && (
                 <div className="airflow-job-table-wrap" style={{ marginTop: 12 }}>
                   <table className="airflow-job-table">
-                    <thead><tr><th>작업(Task)</th><th>유형</th><th>시작</th><th>상태</th><th>적재/실패 사유</th><th>소요</th><th>스케줄</th><th>재실행</th></tr></thead>
+                    <thead><tr><th>작업(Task)</th><th>유형</th><th>시작</th><th>상태</th><th>적재/실패</th><th>소요</th><th>스케줄</th><th>재실행</th></tr></thead>
                     <tbody>
                       <TaskRows dag={selectedDag} run={selectedRunToday} refreshSeconds={refreshSeconds} />
                     </tbody>

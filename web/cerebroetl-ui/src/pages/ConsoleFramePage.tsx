@@ -1738,21 +1738,6 @@ function resolveProcessGroupIdByCanvasText(
   return match?.id ?? null;
 }
 
-function formatDateTime(value?: string | null) {
-  if (!value) {
-    return "-";
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  const month = String(parsed.getMonth() + 1).padStart(2, "0");
-  const day = String(parsed.getDate()).padStart(2, "0");
-  const hour = String(parsed.getHours()).padStart(2, "0");
-  const minute = String(parsed.getMinutes()).padStart(2, "0");
-  return `${month}-${day} ${hour}:${minute}`;
-}
-
 function formatDateOnly(value?: string | null) {
   if (!value) {
     return "-";
@@ -2078,13 +2063,6 @@ function displayValue(value: unknown) {
     return value.length ? value.join(", ") : "-";
   }
   return String(value);
-}
-
-function directParentName(path?: NifiProcessGroupTreeNode[]) {
-  if (!path || path.length < 2) {
-    return "-";
-  }
-  return path[path.length - 2]?.name ?? "-";
 }
 
 function fullGroupPath(path?: NifiProcessGroupTreeNode[]) {
@@ -2654,19 +2632,31 @@ interface ProcessGroupDetailPanelProps {
 }
 
 /**
- * 워크플로우 설계 캔버스의 노드 패널이 쓰는 job 요약(마지막 실행·상위 경로·작성자·연결 DAG).
+ * 워크플로우 설계 캔버스의 job 노드 속성창 본문. ETL 관리 화면 job 속성창(ProcessGroupDetailPanel)과 같은
+ * 구역(정보 · 테이블 · 실행로그)과 같은 계산을 쓰고, 연결 DAG 만 뺀다(2026-09-11 요청).
+ * 글꼴·크기는 캔버스 속성창 것을 그대로 쓴다(제목 앞 ■·굵은 글씨 없음) - 모양은 index.css .wf-node-detail.
  *
- * <p>«대상»(소스/타깃)과 «로그» 구역은 2026-09-03 에 뺐다 - 캔버스에서는 배치와 연결이
- * 관심사라 그 두 구역이 패널만 길게 만들었고, 로그 조회 때문에 노드를 누를 때마다
- * NiFi 실행이력 두 벌을 더 불러오고 있었다. 같은 내용은 ETL 관리 화면의 상세에서 본다.
+ * <p>2026-09-03 에는 캔버스 패널을 짧게 하려고 «대상»·«로그» 구역을 뺐었는데, 두 화면의 job 속성이 달라
+ * 보이지 않게 다시 같은 구성으로 맞췄다. 계산이 두 벌이 되지 않도록 이 파일의 도우미(statusText ·
+ * fullGroupPath · sourceTargetText · buildDetailLogSummaries …)를 그대로 쓴다. 파일 추가 같은 조작은
+ * ETL 관리 화면에만 둔다 - 캔버스에서는 보기만 한다.
+ *
+ * @param onNavigate 실행로그 숫자를 눌렀을 때의 이동. 캔버스는 저장 안 한 변경 확인(leaveTo)을 거쳐야 한다.
  */
-export function EtlJobSummary({ jobId, nifiPgId }: { jobId: number; nifiPgId?: string | null }) {
+export function EtlJobSummary({ jobId, nifiPgId, onNavigate }: {
+  jobId: number;
+  nifiPgId?: string | null;
+  onNavigate?: (path: string) => void;
+}) {
   const navigate = useNavigate();
+  const go = onNavigate ?? navigate;
   const [detail, setDetail] = useState<EtlJobDetailResponse | null>(null);
   const [runs, setRuns] = useState<EtlJobRunResponse[]>([]);
   const [group, setGroup] = useState<ReturnType<typeof findTreeNode>>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [logSummaries, setLogSummaries] = useState<DetailLogSummary[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -2694,8 +2684,7 @@ export function EtlJobSummary({ jobId, nifiPgId }: { jobId: number; nifiPgId?: s
     return () => { cancelled = true; };
   }, [jobId]);
 
-  // 상위 경로와 작성자는 job 응답에 없고 NiFi 프로세스 그룹 트리에만 있다
-  // (job.parentGroupName 은 비어 있는 경우가 있어 ETL 관리 화면도 트리 경로를 쓴다).
+  // 상태·경로는 job 응답만으로는 모자라 NiFi 프로세스 그룹 트리를 함께 본다(ETL 관리 화면과 같다).
   // 실패해도 나머지는 보여준다.
   useEffect(() => {
     let cancelled = false;
@@ -2715,6 +2704,36 @@ export function EtlJobSummary({ jobId, nifiPgId }: { jobId: number; nifiPgId?: s
 
   const job = detail?.job ?? null;
   const groupNode = group?.node ?? null;
+  const logKeyword = detailLogKeyword(job, groupNode);
+
+  // 실행로그: ETL 관리 화면과 같게 최근 일주일치 NiFi 실행·오류 기록과 이 job 의 실행 기록을 모은다.
+  useEffect(() => {
+    let cancelled = false;
+    setLogSummaries([]);
+    if (!job) {
+      setLogsLoading(false);
+      return () => { cancelled = true; };
+    }
+    const { queryFrom, queryTo } = recentDetailLogPeriods();
+    setLogsLoading(true);
+    Promise.all([listNifiProcessorRuns(queryFrom, queryTo), listNifiExecutionLogs(queryFrom, queryTo)])
+      .then(([runRows, eventRows]) => {
+        if (!cancelled) {
+          setLogSummaries(buildDetailLogSummaries(logKeyword, runRows, eventRows, runs));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLogSummaries([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLogsLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [job?.id, logKeyword, runs]);
 
   if (loading) {
     return <div className="nifi-detail-message">불러오는 중</div>;
@@ -2723,45 +2742,51 @@ export function EtlJobSummary({ jobId, nifiPgId }: { jobId: number; nifiPgId?: s
     return <div className="nifi-detail-message error">조회 실패</div>;
   }
 
+  const steps = detail?.steps ?? [];
+  const links = detail?.links ?? [];
+  const firstStep = firstStartProcessor(steps, links);
+  const listFileStep = steps.find((step) => processorTypeIncludes(step, "ListFile")) ?? null;
+  const inputDirectory = listFileInputDirectory(listFileStep);
+  const sourceText = processorTypeIncludes(firstStep, "ListFile")
+    ? fileSourceText(inputDirectory, loadTodayAddedFiles(addedFileStorageKey(job.id, inputDirectory)))
+    : sourceTargetText(firstStep, "source");
+  const targetText = sourceTargetText(lastTerminalProcessor(steps, links), "target");
   const latestRun = runs[0] ?? null;
-  const lastRunTime = formatDateTime(latestRun?.endedAt ?? latestRun?.startedAt ?? job.lastSyncedAt);
-  const lastRunCount = formatCount(latestRun?.totalInserted ?? 0);
-  const dagId = job.airflowDagId ?? null;
+  const lastRunDate = formatDateOnly(latestRun?.endedAt ?? latestRun?.startedAt ?? job.lastSyncedAt);
 
   return (
     <div className="etl-job-summary">
-      <div className="nifi-detail-status stacked">
-        <span>마지막 실행 {lastRunTime} · {lastRunCount}건</span>
-      </div>
-      <dl className="nifi-detail-header-info">
-        <div>
-          <dt>상위 경로</dt>
-          <dd>{directParentName(group?.path)}</dd>
-        </div>
-        <div>
-          <dt>작성자</dt>
-          <dd>{groupNode?.createdBy ?? "-"}</dd>
-        </div>
-        <div>
-          <dt>연결 DAG</dt>
-          <dd>
-            {dagId ? (
-              <>
-                {dagId}{" "}
-                <button
-                  type="button"
-                  className="nifi-detail-link"
-                  onClick={() => navigate(`/airflow/dashboard?dagId=${encodeURIComponent(dagId)}&detail=1`)}
-                >
-                  [열기]
-                </button>
-              </>
-            ) : (
-              "-"
-            )}
-          </dd>
-        </div>
-      </dl>
+      <section className="nifi-detail-section">
+        <h3>정보</h3>
+        <dl>
+          <div>
+            <dt>상태</dt>
+            <dd className={statusClass(job, groupNode)}>{statusText(job, groupNode)}</dd>
+          </div>
+          <div>
+            <dt>경로</dt>
+            <dd>{fullGroupPath(group?.path)}</dd>
+          </div>
+        </dl>
+      </section>
+      <section className="nifi-detail-section">
+        <h3>테이블</h3>
+        <dl className="nifi-detail-target-list">
+          <div>
+            <dt>소스테이블</dt>
+            <dd className="nifi-detail-inline-value nifi-detail-preline" title={sourceText}>{sourceText}</dd>
+          </div>
+          <div>
+            <dt>타깃테이블</dt>
+            <dd className="nifi-detail-inline-value" title={targetText}>{targetText}</dd>
+          </div>
+        </dl>
+      </section>
+      <section className="nifi-detail-section">
+        <h3>실행로그</h3>
+        <div className="nifi-detail-last-run-date">{lastRunDate}</div>
+        <DetailLogRows loading={logsLoading} summaries={logSummaries} keyword={logKeyword} onNavigate={go} />
+      </section>
     </div>
   );
 }

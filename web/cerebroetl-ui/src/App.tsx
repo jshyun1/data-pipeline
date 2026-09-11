@@ -59,6 +59,8 @@ export function App() {
         </Route>
         <Route path="/self-check" element={<SelfCheckPage />} />
         <Route path="/airflow" element={<Navigate to="/airflow/dashboard" replace />} />
+        {/* «생성» 메뉴. id 없는 캔버스(초안)를 열고, 이름을 적어 «저장»하면 그때 만든다. */}
+        <Route path="/workflows/create" element={<WorkflowCanvasPage />} />
         <Route path="/workflows/design" element={<WorkflowDesignPage />} />
         <Route path="/workflows/design/:id" element={<WorkflowCanvasPage />} />
         <Route path="/airflow/dashboard" element={<AirflowDashboardPage />} />

@@ -558,6 +558,65 @@ interface AirflowLogMessage {
   error_detail?: Array<{ exc_type?: string; exc_value?: string }>;
 }
 
+/**
+ * Airflow 3 구조화 로그 한 줄. 필드는 로그를 남긴 쪽마다 다르다(TriggerDagRunOperator 는 trigger_dag_id 등).
+ * 실패 로그 창이 level·logger 로 잡음을 거르고 error_detail 에서 실패 원인을 읽는다.
+ */
+export interface AirflowLogEntry {
+  timestamp?: string;
+  event?: string;
+  level?: string;
+  logger?: string;
+  error_detail?: Array<{
+    exc_type?: string;
+    exc_value?: string;
+    frames?: Array<{ filename?: string; lineno?: number; name?: string }>;
+  }>;
+  trigger_dag_id?: string;
+  [key: string]: unknown;
+}
+
+/** task 로그를 가공하지 않은 줄 목록으로 받는다(글자로 이어 붙이는 getAirflowTaskLog 와 달리 필드가 살아 있다). */
+export async function getAirflowTaskLogEntries(
+  dagId: string,
+  dagRunId: string,
+  taskId: string,
+  tryNumber = 1,
+): Promise<AirflowLogEntry[]> {
+  const res = await axios.get<{ content?: Array<AirflowLogEntry | string> }>(
+    `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/dagRuns/${encodeURIComponent(dagRunId)}/taskInstances/${encodeURIComponent(taskId)}/logs/${tryNumber}`,
+    { params: { full_content: true } },
+  );
+  return (res.data.content ?? []).map((entry) => (typeof entry === "string" ? { event: entry } : entry));
+}
+
+/** Airflow 기록(event log) 한 건. 스케줄러·실행기가 남긴 상태 변화와 그 사유(extra)가 있다. */
+export interface AirflowEventLog {
+  when?: string;
+  event?: string;
+  owner?: string | null;
+  extra?: string | null;
+  try_number?: number | null;
+}
+
+/**
+ * 한 task 실행의 Airflow 기록을 최근 것부터 받는다.
+ *
+ * <p>작업 로그에는 원인이 없고 여기에만 남는 실패가 있다 - 실행기가 «실패로 끝났다»고 보고했는데 task 상태가
+ * 어긋난 경우(state mismatch) 등. 실측 2026-09-11: CDC 제어 DAG monitor_cdc_runtime 09-03 실패.
+ */
+export async function listAirflowTaskEventLogs(
+  dagId: string,
+  dagRunId: string,
+  taskId: string,
+  limit = 50,
+): Promise<AirflowEventLog[]> {
+  const res = await axios.get<{ event_logs?: AirflowEventLog[] }>(`${AIRFLOW_API_BASE}/eventLogs`, {
+    params: { dag_id: dagId, task_id: taskId, run_id: dagRunId, limit, order_by: "-when" },
+  });
+  return res.data.event_logs ?? [];
+}
+
 export async function getAirflowTaskLog(
   dagId: string,
   dagRunId: string,

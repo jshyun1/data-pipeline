@@ -88,3 +88,14 @@ export function workflowPathOf(workflows: WorkflowSummary[], targetId: number): 
   }
   return names;
 }
+
+/**
+ * 이 워크플로우를 품은 상위 워크플로우들의 경로. 자기 이름은 뺀다. 예: dz_com_daily 는 ["total"].
+ *
+ * <p>설계 화면의 경로는 늘 이름 바로 옆·위에 붙어 있어서, 끝에 자기 이름을 또 적으면 같은 이름이
+ * 두 번 보인다(2026-09-11 요청). 그래서 머리줄·워크플로우 속성창·워크플로우 노드 속성창은 이 함수로
+ * «상위까지만» 적는다. 최상단 워크플로우이거나 목록에 없으면 빈 배열이다.
+ */
+export function parentWorkflowPathOf(workflows: WorkflowSummary[], targetId: number): string[] {
+  return workflowPathOf(workflows, targetId).slice(0, -1);
+}
