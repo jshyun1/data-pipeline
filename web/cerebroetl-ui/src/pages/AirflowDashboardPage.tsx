@@ -14,9 +14,6 @@ import dayjs from "dayjs";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   getAirflowTaskLog,
-  acknowledgeAirflowDagAlert,
-  listAirflowDagAlertHistory,
-  listAirflowDagAlerts,
   listAirflowDagCatalog,
   listAirflowDags,
   listAirflowTaskInstances,
@@ -26,7 +23,6 @@ import {
   syncAirflowDagCatalog,
   triggerAirflowDag,
   type AirflowDag,
-  type AirflowDagAlert,
   type AirflowDagRun,
 } from "../api/platform";
 import { getProcessHealth, type ProcessGroup } from "../api/infra";
@@ -78,8 +74,6 @@ interface DashboardDag extends AirflowDag {
 interface DashboardData {
   dags: DashboardDag[];
   runs: AirflowDagRun[];
-  alerts: AirflowDagAlert[];
-  alertHistory: AirflowDagAlert[];
   processGroups: ProcessGroup[];
 }
 
@@ -177,32 +171,11 @@ function groupRuns(runs: AirflowDagRun[]) {
   return grouped;
 }
 
-const ALERT_RULE_LABEL: Record<AirflowDagAlert["ruleType"], string> = {
-  CONSECUTIVE_FAILURE: "연속 실패",
-  STALE: "정체",
-  DURATION_ANOMALY: "실행시간 이상",
-  SLA_EXCEEDED: "SLA 초과",
-};
-
-const ALERT_SEVERITY_LABEL: Record<AirflowDagAlert["severity"], string> = {
-  DANGER: "위험",
-  WARNING: "경고",
-  INFO: "정보",
-};
-
-function alertColor(severity: AirflowDagAlert["severity"]) {
-  if (severity === "DANGER") return "error";
-  if (severity === "WARNING") return "warning";
-  return "processing";
-}
-
 async function loadDashboard(): Promise<DashboardData> {
-  const [airflowDags, catalog, runs, alerts, alertHistory, processHealth, etlJobs] = await Promise.all([
+  const [airflowDags, catalog, runs, processHealth, etlJobs] = await Promise.all([
     listAirflowDags(),
     listAirflowDagCatalog(),
     listAllAirflowDagRuns({ maxRuns: 2000 }),
-    listAirflowDagAlerts(),
-    listAirflowDagAlertHistory(),
     getProcessHealth().catch(() => ({ collectedAt: "", groups: [] })),
     listEtlJobs().catch(() => []),
   ]);
@@ -238,8 +211,6 @@ async function loadDashboard(): Promise<DashboardData> {
   return {
     dags: [...catalogDags, ...discoveredDags],
     runs,
-    alerts,
-    alertHistory,
     processGroups: processHealth.groups,
   };
 }
@@ -398,7 +369,6 @@ function BusinessTree({
   dags,
   selectedDagId,
   search,
-  alertsByDag,
   onSearch,
   workflows,
   pipelines,
@@ -422,7 +392,6 @@ function BusinessTree({
   onScope: (scope: ListScope) => void;
   selectedDagId?: string;
   search: string;
-  alertsByDag: Map<string, AirflowDagAlert[]>;
   onSearch: (value: string) => void;
   onSelect: (dagId: string) => void;
   onDetail: (dag: DashboardDag) => void;
@@ -622,7 +591,6 @@ function BusinessTree({
         label: displayName(dag),
         title: displayName(dag),
         arrow,
-        trailing: alertsByDag.has(dag.dag_id) ? <span className="tree-action-tag">조치</span> : null,
         onClick: () => { onSelect(dag.dag_id); onScope({ kind: "dag", dagId: dag.dag_id }); },
         onContextMenu: () => onSelect(dag.dag_id),
       })}
@@ -1391,14 +1359,12 @@ function ScopeList({
 function JobsTable({
   dags,
   runsByDag,
-  alertsByDag,
   selectedDagId,
   refreshSeconds,
   onSelect,
 }: {
   dags: DashboardDag[];
   runsByDag: Map<string, AirflowDagRun[]>;
-  alertsByDag: Map<string, AirflowDagAlert[]>;
   selectedDagId?: string;
   refreshSeconds: number;
   onSelect: (dagId: string) => void;
@@ -1409,17 +1375,16 @@ function JobsTable({
   return (
     <div className="airflow-job-table-wrap">
       <table className="airflow-job-table">
-        <thead><tr><th>작업명</th><th>유형</th><th>최근 실행</th><th>최종 결과</th><th>적재/실패 사유</th><th>소요</th><th>다음 실행</th><th>재시도/재시작</th></tr></thead>
+        <thead><tr><th>작업명</th><th>유형</th><th>최근 실행</th><th>최종 결과</th><th>소요</th><th>다음 실행</th><th>재시도/재시작</th></tr></thead>
         <tbody>
           {CATEGORY_ORDER.map((category) => {
             const categoryDags = dags.filter((dag) => categoryOf(dag) === category);
             if (!categoryDags.length) return null;
             return [
-              <tr key={`${category}-heading`} className="airflow-job-group"><td colSpan={8}>{category}</td></tr>,
+              <tr key={`${category}-heading`} className="airflow-job-group"><td colSpan={7}>{category}</td></tr>,
               ...categoryDags.flatMap((dag) => {
                 const runs = runsByDag.get(dag.dag_id) ?? [];
                 const latest = runs[0];
-                const alert = alertsByDag.get(dag.dag_id)?.[0];
                 const selected = dag.dag_id === selectedDagId;
                 return [
                   <tr key={dag.dag_id} className={selected ? "airflow-dag-row selected" : "airflow-dag-row"} onClick={() => onSelect(dag.dag_id)}>
@@ -1427,7 +1392,6 @@ function JobsTable({
                     <td><DagIcon /> DAG</td>
                     <td>{runAt(latest) ? dayjs(runAt(latest)).format("YYYY-MM-DD HH:mm") : "-"}</td>
                     <td><Tag color={stateColor(latest?.state)}>{stateLabel(latest?.state)}</Tag></td>
-                    <td>{alert ? <span className="airflow-alert-reason"><Tag color={alertColor(alert.severity)}>{ALERT_RULE_LABEL[alert.ruleType]}</Tag>{alert.message}</span> : "-"}</td>
                     <td>{duration(latest?.start_date, latest?.end_date)}</td>
                     <td>{dag.next_dagrun ?? dag.next_dagrun_run_after ? dayjs(dag.next_dagrun ?? dag.next_dagrun_run_after).format("YYYY-MM-DD HH:mm") : "-"}</td>
                     <td>{selected ? <DownOutlined /> : "-"}</td>
@@ -1580,40 +1544,21 @@ function PropertyPanel({
   pipeline,
   runtime,
   etlJobIds,
-  alerts = [],
   inline = false,
   onOpenExecution,
   onOpenHistory,
-  onChanged,
 }: {
   dag?: DashboardDag;
   pipeline?: PipelineResponse;
   runtime?: PipelineRuntimeStatusResponse;
   etlJobIds?: number[];
-  alerts?: AirflowDagAlert[];
   inline?: boolean;
   onOpenExecution?: () => void;
   onOpenHistory?: () => void;
-  onChanged?: () => void;
 }) {
   // 실행 설정(트리거·스케줄 변경)은 Airflow 쓰기 권한이 있어야 한다.
   const { can, permissionsLoaded } = useAuth();
   const canRun = !permissionsLoaded || can("AIRFLOW", "WRITE");
-  const [acknowledgingId, setAcknowledgingId] = useState<number>();
-
-  const acknowledge = async (alert: AirflowDagAlert) => {
-    setAcknowledgingId(alert.id);
-    try {
-      await acknowledgeAirflowDagAlert(alert.id);
-      message.success("경보를 확인 처리했습니다.");
-      onChanged?.();
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "경보 확인 처리에 실패했습니다.");
-    } finally {
-      setAcknowledgingId(undefined);
-    }
-  };
-
   // CDC 파이프라인을 골랐을 때. CDC 관리 화면의 «기본정보»와 같은 항목을 보여준다.
   if (!inline && pipeline) {
     return (
@@ -1682,17 +1627,6 @@ function PropertyPanel({
         </div>
       </section>}
       {!inline && category === "ETL" && <WatchingRules target="ETL" ids={etlJobIds ?? []} />}
-      {inline && <section>
-        <strong>조치 필요 {alerts.length}건</strong>
-        {alerts.length ? <div className="airflow-alert-list">{alerts.map((alert) => (
-          <article key={alert.id}>
-            <div><Tag color={alertColor(alert.severity)}>{ALERT_SEVERITY_LABEL[alert.severity]}</Tag><b>{ALERT_RULE_LABEL[alert.ruleType]}</b></div>
-            <p>{alert.message}</p>
-            <small>{dayjs(alert.lastDetectedAt).format("YYYY-MM-DD HH:mm:ss")}</small>
-            <Button size="small" disabled={alert.status === "ACKNOWLEDGED"} loading={acknowledgingId === alert.id} onClick={() => void acknowledge(alert)}>{alert.status === "ACKNOWLEDGED" ? "확인됨" : "확인 처리"}</Button>
-          </article>
-        ))}</div> : <p>현재 감지된 이상이 없습니다.</p>}
-      </section>}
       {!inline && <section><strong>바로가기</strong><div className="airflow-resource-links"><Link to={`/airflow/manage?dagId=${encodeURIComponent(dag.dag_id)}`}>상세보기</Link>{category === "ETL" ? <Link to={dag.nifi_process_group_id ? `/etl/manage?processGroupId=${encodeURIComponent(dag.nifi_process_group_id)}` : "/etl/manage"}>ETL 캔버스</Link> : <Link to="/cdc/pipelines">CDC 파이프라인</Link>}</div></section>}
     </aside>
   );
@@ -1861,11 +1795,6 @@ export function AirflowDashboardPage() {
     refetchInterval: refreshSeconds * 1000,
   });
   const runsByDag = useMemo(() => groupRuns(dashboardQuery.data?.runs ?? []), [dashboardQuery.data?.runs]);
-  const alertsByDag = useMemo(() => {
-    const grouped = new Map<string, AirflowDagAlert[]>();
-    (dashboardQuery.data?.alerts ?? []).forEach((alert) => grouped.set(alert.dagId, [...(grouped.get(alert.dagId) ?? []), alert]));
-    return grouped;
-  }, [dashboardQuery.data?.alerts]);
   const businessDags = useMemo(
     () => (dashboardQuery.data?.dags ?? []).filter((dag) => categoryOf(dag) !== "기타"),
     [dashboardQuery.data?.dags],
@@ -1953,7 +1882,6 @@ export function AirflowDashboardPage() {
   // 목록과 같은 기준으로 맞춘다. 목록이 «실행 없음»인데 하단에 어제 실행의 단계가
   // 펼쳐지면 둘이 어긋나 보인다.
   const selectedRunToday = latestRunToday(selectedRuns);
-  const selectedAlerts = selectedDagId ? (alertsByDag.get(selectedDagId) ?? []) : [];
   const historyDagId = selectedPipeline ? pipelineDag?.dag_id : selectedDagId;
   const historyRuns = historyDagId ? (runsByDag.get(historyDagId) ?? []) : [];
   const showExecutionSettings = (dag: DashboardDag) => {
@@ -2040,7 +1968,7 @@ export function AirflowDashboardPage() {
             <BusinessTree dags={filteredDags} workflows={workflowsQuery.data ?? []}
                           pipelines={pipelines} connectionNames={connectionNames} selectedPipelineId={selectedPipelineId}
                           scope={scope} onScope={changeScope}
-                          selectedDagId={selectedDagId} search={search} alertsByDag={alertsByDag} onSearch={setSearch}
+                          selectedDagId={selectedDagId} search={search} onSearch={setSearch}
                           onSelect={selectDag} onDetail={showDagDetail} onExecution={showExecutionSettings} />
             <main className={`airflow-dashboard-panel airflow-jobs-panel airflow-jobs-panel--${listDomain}`}>
               <div className="airflow-jobs-heading">
@@ -2060,7 +1988,7 @@ export function AirflowDashboardPage() {
                                setSelectedDagId(undefined);
                                setExpandedDagId(undefined);
                              }} />
-                : <JobsTable dags={selectedDag ? [selectedDag] : []} runsByDag={runsByDag} alertsByDag={alertsByDag} selectedDagId={selectedDagId} refreshSeconds={refreshSeconds} onSelect={setSelectedDagId} />}
+                : <JobsTable dags={selectedDag ? [selectedDag] : []} runsByDag={runsByDag} selectedDagId={selectedDagId} refreshSeconds={refreshSeconds} onSelect={setSelectedDagId} />}
               {/* ETL은 각 task(job)이 중요하다. DAG를 고르면 최근 실행의 task를 바로 펼친다. */}
               {selectedDag && expandedDagId === selectedDag.dag_id && categoryOf(selectedDag) === "ETL" && (
                 <div className="airflow-job-table-wrap" style={{ marginTop: 12 }}>
@@ -2075,10 +2003,9 @@ export function AirflowDashboardPage() {
             </main>
             <PropertyPanel dag={selectedPipeline ? pipelineDag : selectedDag} pipeline={selectedPipeline}
                            runtime={selectedPipeline ? runtimeByPipeline.get(selectedPipeline.id) : undefined}
-                           etlJobIds={etlJobIdsOfSelected} alerts={selectedAlerts}
+                           etlJobIds={etlJobIdsOfSelected}
                            onOpenExecution={() => setExecutionOpen(true)}
-                           onOpenHistory={() => setHistoryOpen(true)}
-                           onChanged={() => void dashboardQuery.refetch()} />
+                           onOpenHistory={() => setHistoryOpen(true)} />
           </div>
           {/* 파이프라인을 골랐으면 그 파이프라인의 제어 DAG를 넘긴다. 속성창·이력창은
               이미 그렇게 하는데 여기만 selectedDag를 쓰고 있어서, CDC 파이프라인을 고른

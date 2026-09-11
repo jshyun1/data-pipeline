@@ -76,29 +76,6 @@ export interface AirflowMonitoringSettings {
   slaMinutes: number | null;
 }
 
-export interface AirflowDagAlert {
-  id: number;
-  dagId: string;
-  ruleType: "CONSECUTIVE_FAILURE" | "STALE" | "DURATION_ANOMALY" | "SLA_EXCEEDED";
-  severity: "DANGER" | "WARNING" | "INFO";
-  status: "OPEN" | "ACKNOWLEDGED" | "RESOLVED";
-  message: string;
-  detectedAt: string;
-  lastDetectedAt: string;
-  acknowledgedAt?: string | null;
-  resolvedAt?: string | null;
-}
-
-export async function listAirflowDagAlerts(): Promise<AirflowDagAlert[]> {
-  const res = await apiClient.get<ApiResponse<AirflowDagAlert[]>>("/airflow/alerts");
-  return unwrap(res.data);
-}
-
-export async function listAirflowDagAlertHistory(): Promise<AirflowDagAlert[]> {
-  const res = await apiClient.get<ApiResponse<AirflowDagAlert[]>>("/airflow/alerts/history");
-  return unwrap(res.data);
-}
-
 export async function saveAirflowMonitoringSettings(
   dagId: string,
   settings: Omit<AirflowMonitoringSettings, "dagId">,
@@ -107,11 +84,6 @@ export async function saveAirflowMonitoringSettings(
     `/airflow/dag-catalog/${encodeURIComponent(dagId)}/monitoring`,
     settings,
   );
-  return unwrap(res.data);
-}
-
-export async function acknowledgeAirflowDagAlert(id: number): Promise<AirflowDagAlert> {
-  const res = await apiClient.patch<ApiResponse<AirflowDagAlert>>(`/airflow/alerts/${id}/acknowledge`);
   return unwrap(res.data);
 }
 
