@@ -51,6 +51,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/nifi/processors/*/edit-lock/**").authenticated()
                         .requestMatchers("/api/nifi/processors/*/edit-lock").authenticated()
                         .requestMatchers("/api/cdc/logs/dlq/replay-requests/**").authenticated()
+                        // GPT 설정은 외부 API 키를 다룬다. DAG 가 부를 일도 없어 레거시 개방 규칙을 따를 이유가 없다 -
+                        // 인가 스위치(authz.enforcement)가 꺼진 서버에서도 최소한 로그인은 요구한다.
+                        .requestMatchers("/api/llm/**").authenticated()
                         // 나머지 업무 API는 이번 단계에선 개방 유지(위 주석 참고)
                         .anyRequest().permitAll())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)

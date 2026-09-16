@@ -133,6 +133,7 @@ const NAV_ITEMS: NavItem[] = [
       { path: "/workflows/create", label: "생성", system: "NIFI", action: "WRITE" },
       { path: "/workflows/design", label: "관리", system: "NIFI", action: "READ" },
       { path: "/airflow/dashboard", label: "로그", system: "AIRFLOW", action: "READ" },
+      { path: "/workflows/logs2", label: "로그2", system: "AIRFLOW", action: "READ" },
       { path: "/airflow/manage", label: "상세 관리", system: "AIRFLOW", action: "READ" },
     ],
   },
@@ -165,6 +166,25 @@ const NAV_ITEMS: NavItem[] = [
       { path: "/cdc/create", label: "생성", system: "KAFKA", action: "WRITE" },
       { path: "/cdc/pipelines", label: "관리", system: "KAFKA", action: "READ" },
       { path: "/cdc/logs", label: "로그", system: "KAFKA", action: "READ" },
+    ],
+  },
+  {
+    // 속성창 GPT 탭·오류 분석이 쓸 LLM 을 등록·선택한다(docs/2026-09-13-gpt-settings-design.md).
+    // 설정은 ADMIN 만. 사용(GPT 탭·분석 버튼)은 각 화면 권한을 따르므로 여기와 무관하다.
+    path: "/gpt/manage",
+    label: "GPT 설정",
+    icon: (
+      <LineIcon className="menu-icon">
+        <rect x="4" y="7" width="16" height="12" rx="2" />
+        <path d="M12 3v4" />
+        <circle cx="9" cy="13" r="1" />
+        <circle cx="15" cy="13" r="1" />
+        <path d="M9 16.5h6" />
+      </LineIcon>
+    ),
+    children: [
+      { path: "/gpt/register", label: "등록", system: "ADMIN", action: "WRITE" },
+      { path: "/gpt/manage", label: "관리", system: "ADMIN", action: "READ" },
     ],
   },
   {

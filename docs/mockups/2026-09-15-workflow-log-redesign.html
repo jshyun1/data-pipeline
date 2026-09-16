@@ -1,0 +1,810 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>워크플로우 로그 — 재구성 예시 (인포매티카 모니터 참고)</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.css" />
+<style>
+/* =====================================================================
+ * 예시 화면(목업). 앱 코드와 무관한 정적 HTML - 데이터는 로컬 환경 이름을 빌린 가짜 값이다.
+ * 색·글꼴·카드 모양은 CEREBRO 디자인 초안(css/variables.css · workflow.css)을 따른다.
+ * ===================================================================== */
+:root {
+  --red: #ff3b30; --red-h: #e02b21; --red-l: #fff1f0;
+  --blue: #2563eb; --blue-d: #1d4ed8; --blue-l: #eff6ff;
+  --green: #16a34a; --green-l: #dcfce7; --amber: #d97706; --amber-l: #fffbeb; --purple: #7c3aed;
+  --tx: #1e293b; --tx2: #64748b; --tx3: #94a3b8; --line: #e2e8f0; --line2: #f1f5f9;
+  --bg: #f4f6f9; --card: #fff;
+  --font: "Pretendard Variable", Pretendard, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font-family: var(--font); color: var(--tx); background: var(--bg); font-size: 13px; -webkit-font-smoothing: antialiased; min-width: 1280px; }
+button { font: inherit; cursor: pointer; }
+::-webkit-scrollbar { width: 6px; height: 6px; } ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+/* ---------- GNB (정적) ---------- */
+.gnb { height: 56px; padding: 0 24px; display: flex; align-items: center; gap: 36px; background: #fff; border-bottom: 1px solid var(--line); }
+.logo { font-size: 20px; font-weight: 700; letter-spacing: -.5px; } .logo b { color: var(--red); font-weight: 800; }
+.logo small { margin-left: 8px; padding-left: 8px; border-left: 1px solid var(--line); color: var(--tx3); font-size: 11.5px; font-weight: 600; }
+.gnb-menu { display: flex; gap: 4px; height: 100%; }
+.gnb-menu span { display: flex; align-items: center; padding: 0 16px; color: var(--tx2); font-size: 14px; font-weight: 500; position: relative; }
+.gnb-menu span.on { color: var(--red); font-weight: 700; }
+.gnb-menu span.on::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: 0; height: 3px; background: var(--red); border-radius: 3px 3px 0 0; }
+.gnb-right { margin-left: auto; display: flex; gap: 12px; align-items: center; color: var(--tx2); font-size: 12.5px; }
+
+/* ---------- 페이지 ---------- */
+.page { height: calc(100vh - 56px); padding: 12px 24px 14px; display: flex; flex-direction: column; gap: 10px; }
+.page-head { display: flex; align-items: center; justify-content: space-between; }
+.page-title { display: flex; align-items: center; gap: 20px; }
+.page-title h1 { margin: 0; font-size: 19px; font-weight: 800; letter-spacing: -.4px; display: flex; gap: 8px; align-items: center; }
+.subtabs { display: inline-flex; gap: 2px; padding: 3px; background: #e9edf2; border-radius: 8px; }
+.subtabs span { padding: 5px 12px; border-radius: 6px; color: var(--tx2); font-size: 12.5px; font-weight: 600; }
+.subtabs span.on { background: #fff; color: var(--red); font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.head-tools { display: flex; align-items: center; gap: 8px; color: var(--tx2); font-size: 12px; }
+.btn { height: 32px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #334155; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.btn:hover { border-color: #94a3b8; background: #f8fafc; }
+.btn.sm { height: 26px; padding: 0 9px; font-size: 11.5px; border-radius: 5px; }
+.btn.primary { background: var(--red); border-color: var(--red); color: #fff; box-shadow: 0 2px 6px rgba(255,59,48,.22); }
+.btn.primary:hover { background: var(--red-h); }
+.btn.danger { background: #fff5f5; border-color: #fecaca; color: #ef4444; }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--tx2); }
+.btn.ghost:hover { background: var(--line2); }
+.select { height: 32px; padding: 0 26px 0 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; font: inherit; font-size: 12.5px; }
+
+/* ---------- ① 커튼형 현황 ---------- */
+.curtain { position: relative; flex-shrink: 0; }
+.curtain-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; max-height: 96px; overflow: hidden; transition: max-height .28s cubic-bezier(.4,0,.2,1), opacity .2s ease; }
+.curtain.closed .curtain-body { max-height: 0; opacity: 0; }
+.kpi-card { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #fff; border: 1px solid var(--line); border-radius: 12px; }
+.dom { flex-shrink: 0; padding: 6px 12px; border: 1px solid; border-radius: 8px; font-size: 13px; font-weight: 800; letter-spacing: .5px; display: flex; align-items: center; gap: 6px; }
+.dom i { width: 7px; height: 7px; border-radius: 50%; }
+.dom.cdc { color: var(--blue-d); border-color: #bfdbfe; background: linear-gradient(135deg,#eff6ff,#dbeafe); } .dom.cdc i { background: var(--blue); }
+.dom.etl { color: #dc2626; border-color: #fecaca; background: linear-gradient(135deg,#fff5f5,#fee2e2); } .dom.etl i { background: var(--red); }
+.metrics { flex: 1; display: flex; align-items: center; }
+.metric { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px; border: 1.5px solid transparent; border-radius: 8px; background: none; }
+.metric:hover { background: #f8fafc; border-color: #cbd5e1; }
+.metric span { color: var(--tx2); font-size: 12px; font-weight: 600; }
+.metric b { font-size: 18px; font-weight: 800; }
+.sep { width: 1px; height: 26px; background: var(--line); }
+.c-blue { color: var(--blue); } .c-red { color: #ef4444; } .c-green { color: var(--green); } .c-amber { color: var(--amber); } .c-purple { color: var(--purple); } .c-mute { color: var(--tx3); }
+/* 커튼 손잡이: 펼친 상태에서는 카드 아래 작은 탭, 접으면 한 줄 요약 막대 */
+.curtain-handle { display: flex; align-items: center; gap: 14px; width: 100%; height: 34px; margin-top: 8px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--tx2); font-size: 12px; text-align: left; }
+.curtain.open .curtain-handle { width: 150px; height: 20px; margin: 0 auto; padding: 0; justify-content: center; border-top: 0; border-radius: 0 0 8px 8px; background: #fff; }
+.curtain.open .mini { display: none; }
+.mini { display: flex; align-items: center; gap: 10px; }
+.mini .dom { padding: 1px 7px; font-size: 11px; border-radius: 5px; }
+.mini em { font-style: normal; font-weight: 700; color: var(--tx); }
+.mini .bad { color: #ef4444; font-weight: 800; }
+.mini .dotsep { color: #cbd5e1; }
+.handle-label { margin-left: auto; font-weight: 700; color: var(--tx2); display: flex; gap: 4px; align-items: center; }
+.curtain.open .handle-label { margin: 0; font-size: 11px; }
+
+/* ---------- 작업 공간 ---------- */
+.workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 250px minmax(0,1fr); gap: 14px; }
+.card { position: relative; background: #fff; border: 1px solid var(--line); border-radius: 12px; min-height: 0; }
+
+/* ② 네비게이터 트리 (현재 트리 규칙 그대로 + 마지막 실행 상태 점) */
+.nav { display: flex; flex-direction: column; overflow: hidden; }
+.nav-search { padding: 8px 12px; border-bottom: 1px solid var(--line2); background: #fafbfc; }
+.nav-search input { width: 100%; height: 30px; padding: 0 8px 0 28px; border: 1px solid var(--line); border-radius: 6px; font: inherit; font-size: 12px; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' fill='none' stroke='%2394a3b8' stroke-width='2' viewBox='0 0 24 24'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") no-repeat 9px center; }
+.tree { flex: 1; overflow: auto; padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+.row { position: relative; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 6px; line-height: 1.5; font-size: 12.5px; color: #334155; cursor: pointer; user-select: none; }
+.row:hover { background: var(--line2); }
+.row.on { background: var(--red-l); color: var(--red); font-weight: 700; }
+.row.on::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 3px; background: currentColor; border-radius: 0 2px 2px 0; }
+.cdc .row.on { background: var(--blue-l); color: var(--blue-d); }
+.arr { width: 14px; color: var(--tx2); font-size: 11px; transition: transform .15s; display: inline-flex; justify-content: center; }
+.arr.open { transform: rotate(90deg); } .arr.empty { visibility: hidden; }
+.ico { width: 15px; height: 15px; flex-shrink: 0; color: var(--tx2); }
+.row.on .ico { color: currentColor; }
+.lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cnt { padding: 1px 5px; border-radius: 10px; background: var(--line2); color: var(--tx3); font-size: 11px; font-weight: 600; }
+.sub { margin: 2px 0 0 7px; padding-left: 18px; border-left: 1px dashed var(--line); display: flex; flex-direction: column; gap: 2px; }
+.sd { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.sd.success { background: var(--green); } .sd.failed { background: #ef4444; } .sd.running { background: var(--blue); box-shadow: 0 0 0 3px #dbeafe; } .sd.warn { background: var(--amber); } .sd.none { background: #cbd5e1; }
+.act-tag { padding: 0 4px; border: 1px solid #fca5a5; border-radius: 3px; background: #fee2e2; color: #ef4444; font-size: 10px; font-weight: 800; }
+.nav-legend { padding: 8px 12px; border-top: 1px solid var(--line2); display: flex; gap: 10px; color: var(--tx3); font-size: 11px; }
+.nav-legend span { display: inline-flex; align-items: center; gap: 4px; }
+
+/* ③ 메인: 컨텍스트 바 */
+.main { display: flex; flex-direction: column; overflow: hidden; }
+.ctx { position: relative; flex-shrink: 0; padding: 10px 14px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line2); flex-wrap: wrap; }
+.crumb { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; min-width: 0; }
+.crumb .dom { padding: 2px 8px; font-size: 11px; }
+.crumb .path { color: var(--tx3); font-weight: 500; }
+.crumb .cur { white-space: nowrap; }
+.seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--line2); border: 1px solid var(--line); border-radius: 7px; }
+.seg button { height: 26px; padding: 0 10px; border: 0; border-radius: 5px; background: none; color: var(--tx2); font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
+.seg button.on { background: #fff; color: var(--red); font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.seg button:disabled { opacity: .4; cursor: default; }
+.chips { display: inline-flex; gap: 4px; }
+.chip { height: 26px; padding: 0 9px; border: 1px solid var(--line); border-radius: 13px; background: #fff; color: var(--tx2); font-size: 11.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
+.chip.on { border-color: #94a3b8; background: #f1f5f9; color: var(--tx); }
+.chip i { width: 6px; height: 6px; border-radius: 50%; }
+.ctx-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.ctx .search { width: 190px; height: 28px; padding: 0 8px; border: 1px solid #cbd5e1; border-radius: 6px; font: inherit; font-size: 12px; }
+.ctx-label { color: var(--tx3); font-size: 11.5px; font-weight: 600; }
+
+/* ④ 목록 + ⑥ 상세 분할 */
+.split { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.grid-area { flex: 1; min-height: 120px; overflow: auto; position: relative; }
+.split-handle { flex-shrink: 0; height: 9px; cursor: row-resize; background: linear-gradient(#fff,#fff) center/100% 1px no-repeat, var(--line2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); position: relative; }
+.split-handle::after { content: ""; position: absolute; left: 50%; top: 2px; width: 36px; height: 3px; margin-left: -18px; border-radius: 3px; background: #cbd5e1; }
+.detail { height: var(--detail-h, 330px); flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+.split.detail-closed .detail { height: 42px; }
+.split.detail-closed .detail-tabs, .split.detail-closed .detail-body { display: none; }
+
+table.grid { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.grid th { position: sticky; top: 0; z-index: 2; padding: 9px 12px; background: #f8fafc; color: #475569; font-size: 12px; font-weight: 700; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.grid td { padding: 8px 12px; border-bottom: 1px solid var(--line2); white-space: nowrap; }
+.grid tr.r { cursor: pointer; }
+.grid tr.r:hover td { background: #fafbfc; }
+.grid tr.sel td { background: var(--red-l) !important; }
+.grid tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--red); }
+.cdc-mode .grid tr.sel td { background: var(--blue-l) !important; }
+.cdc-mode .grid tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
+.grid tr.k-run td { background: #fcfdff; }
+.grid tr.k-run td:first-child { font-weight: 700; color: #0f172a; }
+.grid tr.k-step td { color: #475569; font-size: 12px; background: #fbfcfd; }
+.grid tr.f-failed td:first-child { box-shadow: inset 3px 0 0 #fca5a5; }
+.nm { display: flex; align-items: center; gap: 6px; }
+.tg { width: 16px; height: 16px; border: 0; background: none; color: var(--tx2); padding: 0; font-size: 10px; transition: transform .15s; }
+.tg.open { transform: rotate(90deg); } .tg.empty { visibility: hidden; }
+.kind { padding: 0 6px; border-radius: 4px; background: var(--line2); color: var(--tx2); font-size: 10.5px; font-weight: 700; }
+.kind.run { background: #eef2ff; color: #4f46e5; } .kind.call { background: #faf5ff; color: var(--purple); }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 4px; border: 1px solid; font-size: 11px; font-weight: 700; }
+.badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.s-success { color: var(--green); background: var(--green-l); border-color: #bbf7d0; }
+.s-failed { color: #ef4444; background: #fee2e2; border-color: #fca5a5; }
+.s-running { color: var(--blue); background: #dbeafe; border-color: #bfdbfe; }
+.s-waiting { color: var(--amber); background: var(--amber-l); border-color: #fde68a; }
+.s-upstream { color: #b45309; background: #fff7ed; border-color: #fed7aa; }
+.s-none { color: var(--tx2); background: var(--line2); border-color: var(--line); }
+.dur { display: flex; align-items: center; gap: 6px; }
+.dur-bar { width: 60px; height: 5px; border-radius: 3px; background: var(--line2); overflow: hidden; }
+.dur-bar i { display: block; height: 100%; background: #94a3b8; border-radius: 3px; }
+.f-failed .dur-bar i { background: #f87171; }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--tx3); }
+.acts { display: flex; gap: 4px; opacity: 0; transition: opacity .12s; }
+tr.r:hover .acts, tr.sel .acts, tr.f-failed .acts { opacity: 1; }
+.src { display: flex; flex-direction: column; line-height: 1.35; } .src small { color: var(--tx2); font-size: 11.5px; }
+.lag-warn { color: var(--amber); font-weight: 700; }
+
+/* ⑤ 타임라인 */
+.tl { min-width: 900px; }
+.tl-head, .tl-row { display: grid; grid-template-columns: 280px 1fr; }
+.tl-head { position: sticky; top: 0; z-index: 2; background: #f8fafc; border-bottom: 1px solid var(--line); }
+.tl-head .lab { padding: 9px 12px; font-size: 12px; font-weight: 700; color: #475569; }
+.axis { position: relative; height: 36px; }
+.tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line); font-size: 10.5px; color: var(--tx3); padding: 10px 0 0 4px; }
+.tl-row { border-bottom: 1px solid var(--line2); cursor: pointer; }
+.tl-row:hover { background: #fafbfc; }
+.tl-row.sel { background: var(--red-l); }
+.tl-row .lab { padding: 7px 12px; font-size: 12px; display: flex; gap: 6px; align-items: center; overflow: hidden; white-space: nowrap; }
+.track { position: relative; height: 32px; background-image: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), #f1f5f9 calc(10% - 1px), #f1f5f9 10%); }
+.bar { position: absolute; top: 8px; height: 16px; border-radius: 4px; font-size: 10.5px; color: #fff; padding: 0 6px; overflow: hidden; white-space: nowrap; line-height: 16px; font-weight: 700; }
+.bar.success { background: #22c55e; } .bar.failed { background: #ef4444; } .bar.running { background: var(--blue); } .bar.upstream_failed { background: repeating-linear-gradient(45deg,#fdba74 0 4px,#fed7aa 4px 8px); color: #9a3412; } .bar.run { top: 6px; height: 20px; opacity: .92; }
+.now { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px dashed var(--red); z-index: 1; }
+.tl-legend { display: flex; gap: 12px; padding: 8px 12px; color: var(--tx2); font-size: 11.5px; }
+.tl-legend span { display: inline-flex; gap: 5px; align-items: center; } .tl-legend i { width: 14px; height: 8px; border-radius: 2px; }
+
+/* ⑥ 상세 창 */
+.detail-head { flex-shrink: 0; min-height: 42px; padding: 6px 14px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line2); }
+.detail-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.detail-title b { font-size: 14px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.detail-title small { color: var(--tx2); font-size: 12px; white-space: nowrap; }
+.detail-acts { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.detail-tabs { flex-shrink: 0; display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+.detail-tabs button { position: relative; height: 34px; padding: 0 12px; border: 0; background: none; color: var(--tx2); font-size: 12.5px; font-weight: 600; }
+.detail-tabs button.on { color: var(--red); font-weight: 700; }
+.detail-tabs button.on::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px; background: var(--red); }
+.detail-tabs button:disabled { color: #cbd5e1; cursor: default; }
+.detail-tabs em { margin-left: 4px; padding: 0 5px; border-radius: 8px; background: var(--line2); color: var(--tx2); font-style: normal; font-size: 10.5px; }
+.detail-tabs .on em { background: #fee2e2; color: var(--red); }
+.detail-body { flex: 1; overflow: auto; padding: 12px 14px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.tile { padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; }
+.tile span { display: block; color: var(--tx2); font-size: 11.5px; font-weight: 600; margin-bottom: 3px; }
+.tile b { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.tile.bad { background: #fff5f5; border-color: #fecaca; } .tile.bad b { color: #ef4444; }
+.errbox { margin-top: 10px; padding: 10px 12px; border: 1px solid #fecaca; border-radius: 8px; background: #fff5f5; display: flex; gap: 10px; align-items: flex-start; }
+.errbox .t { font-weight: 800; color: #dc2626; margin-bottom: 3px; }
+.errbox code { font-family: Consolas, Monaco, monospace; font-size: 12px; color: #7f1d1d; white-space: pre-wrap; }
+.two { display: grid; grid-template-columns: 230px 1fr; gap: 12px; height: 100%; }
+.loglist { border: 1px solid var(--line); border-radius: 8px; overflow: auto; }
+.loglist div { padding: 8px 10px; border-bottom: 1px solid var(--line2); cursor: pointer; font-size: 12px; }
+.loglist div.on { background: var(--red-l); color: var(--red); font-weight: 700; }
+.console { position: relative; border-radius: 8px; background: #0d1522; color: #e2e8f0; padding: 12px 14px; font-family: Consolas, Monaco, monospace; font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; overflow: auto; }
+.console .hl { color: #fca5a5; font-weight: 700; }
+.console-tools { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; }
+.console-tools button { height: 22px; padding: 0 8px; border: 1px solid #334155; border-radius: 4px; background: #111c2e; color: #cbd5e1; font-size: 11px; }
+dl.props { margin: 0; display: grid; grid-template-columns: 110px 1fr 110px 1fr; gap: 9px 14px; font-size: 12.5px; }
+dl.props dt { color: var(--tx2); } dl.props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
+.rules { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap: 8px; }
+.rule { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; }
+.rule .t { display: flex; gap: 6px; align-items: center; font-weight: 700; }
+.rule small { display: block; margin-top: 4px; color: var(--tx2); }
+.type { padding: 0 6px; border-radius: 4px; border: 1px solid #bfdbfe; background: var(--blue-l); color: var(--blue); font-size: 10.5px; font-weight: 700; }
+.links { margin-top: 12px; display: flex; gap: 8px; }
+.menu { position: absolute; z-index: 30; min-width: 190px; padding: 6px 0; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 25px -4px rgba(15,23,42,.14); }
+.menu div { padding: 8px 14px; font-size: 12.5px; cursor: pointer; } .menu div:hover { background: var(--red-l); color: var(--red); }
+.menu div small { display: block; color: var(--tx3); font-size: 11px; font-weight: 400; }
+.menu div.dis { color: #cbd5e1; cursor: not-allowed; } .menu div.dis:hover { background: none; color: #cbd5e1; }
+.empty-hint { padding: 24px; color: var(--tx3); text-align: center; }
+
+/* ---------- 설계 포인트 표시 ---------- */
+.pin { display: none; position: absolute; z-index: 40; width: 22px; height: 22px; border-radius: 50%; background: #111827; color: #fff; font-size: 12px; font-weight: 800; align-items: center; justify-content: center; box-shadow: 0 0 0 3px rgba(255,255,255,.9), 0 4px 10px rgba(0,0,0,.25); }
+body.notes-on .pin { display: flex; }
+.notes { position: fixed; right: 0; top: 56px; bottom: 0; width: 430px; z-index: 50; background: #fff; border-left: 1px solid var(--line); box-shadow: -12px 0 30px rgba(15,23,42,.08); transform: translateX(100%); transition: transform .25s ease; display: flex; flex-direction: column; }
+body.notes-on .notes { transform: none; }
+.notes header { padding: 14px 18px; border-bottom: 1px solid var(--line2); display: flex; align-items: center; }
+.notes header b { font-size: 15px; }
+.notes .body { flex: 1; overflow: auto; padding: 14px 18px 24px; }
+.note { display: flex; gap: 10px; margin-bottom: 14px; }
+.note .n { flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background: #111827; color: #fff; font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.note h4 { margin: 0 0 3px; font-size: 13px; } .note p { margin: 0; color: #475569; font-size: 12.5px; line-height: 1.55; }
+.map { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+.map th, .map td { padding: 6px 8px; border-bottom: 1px solid var(--line2); text-align: left; vertical-align: top; }
+.map th { background: #f8fafc; color: #475569; }
+.notes-toggle { position: fixed; right: 20px; bottom: 20px; z-index: 60; height: 38px; padding: 0 16px; border: 0; border-radius: 19px; background: #111827; color: #fff; font-weight: 700; box-shadow: 0 8px 20px rgba(0,0,0,.25); }
+.mock-ribbon { position: fixed; left: 50%; top: 6px; transform: translateX(-50%); z-index: 70; padding: 3px 12px; border-radius: 12px; background: #111827; color: #fff; font-size: 11px; font-weight: 700; opacity: .85; }
+</style>
+</head>
+<body>
+<div class="mock-ribbon">예시 화면(목업) · 데이터는 가짜 값 · 오른쪽 아래 «설계 포인트»에서 변경점 확인</div>
+
+<nav class="gnb">
+  <div class="logo">CEREBRO <b>ETL</b><small>(주)데이터월드</small></div>
+  <div class="gnb-menu"><span>대시보드</span><span class="on">워크플로우 ▾</span><span>ETL ▾</span><span>CDC ▾</span><span>설정 ▾</span></div>
+  <div class="gnb-right">🔔 admin (관리자) · 비밀번호 변경 · 로그아웃</div>
+</nav>
+
+<main class="page">
+  <header class="page-head">
+    <div class="page-title">
+      <h1>〰 워크플로우 로그</h1>
+      <div class="subtabs"><span>＋ 생성</span><span>관리</span><span class="on">로그</span><span>상세 관리</span></div>
+    </div>
+    <div class="head-tools">
+      <button class="btn">⟳ 동기화</button>
+      갱신 주기 <select class="select"><option>10초</option><option selected>30초</option><option>1분</option></select>
+      <span class="muted">마지막 갱신 10:52:30</span>
+    </div>
+  </header>
+
+  <!-- ① 커튼형 현황 -->
+  <section class="curtain open" id="curtain">
+    <span class="pin" style="left:-8px;top:-8px">1</span>
+    <div class="curtain-body">
+      <div class="kpi-card">
+        <span class="dom cdc"><i></i>CDC</span>
+        <div class="metrics">
+          <button class="metric" data-filter="cdc:all"><span>▦ 전체 작업</span><b class="c-blue">2</b></button><i class="sep"></i>
+          <button class="metric" data-filter="cdc:running"><span class="c-blue">▶ 실행 중</span><b class="c-blue">2</b></button><i class="sep"></i>
+          <button class="metric" data-filter="cdc:failed"><span class="c-red">✕ 실패</span><b class="c-mute">0</b></button><i class="sep"></i>
+          <button class="metric" data-filter="cdc:waiting"><span class="c-amber">◷ 대기</span><b class="c-mute">0</b></button><i class="sep"></i>
+          <button class="metric" data-filter="cdc:new"><span class="c-purple">＋ 신규</span><b class="c-mute">0</b></button>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <span class="dom etl"><i></i>ETL</span>
+        <div class="metrics">
+          <button class="metric" data-filter="etl:all"><span>▦ 전체 작업</span><b class="c-red">3</b></button><i class="sep"></i>
+          <button class="metric" data-filter="etl:running"><span class="c-blue">▶ 실행 중</span><b class="c-mute">0</b></button><i class="sep"></i>
+          <button class="metric" data-filter="etl:success"><span class="c-green">✓ 성공</span><b class="c-green">1</b></button><i class="sep"></i>
+          <button class="metric" data-filter="etl:failed"><span class="c-red">✕ 실패</span><b class="c-red">2</b></button><i class="sep"></i>
+          <button class="metric" data-filter="etl:new"><span class="c-purple">＋ 신규</span><b class="c-mute">0</b></button>
+        </div>
+      </div>
+    </div>
+    <button class="curtain-handle" id="curtainToggle" type="button" aria-expanded="true">
+      <span class="mini">
+        <span class="dom cdc"><i></i>CDC</span> 실행 중 <em>2</em><span class="dotsep">·</span>실패 <em>0</em><span class="dotsep">·</span>대기 <em>0</em>
+        <span class="dotsep">│</span>
+        <span class="dom etl"><i></i>ETL</span> 성공 <em>1</em><span class="dotsep">·</span>실패 <span class="bad">2</span><span class="dotsep">·</span>실행 중 <em>0</em>
+      </span>
+      <span class="handle-label" id="handleLabel">접기 ▴</span>
+    </button>
+  </section>
+
+  <div class="workspace">
+    <!-- ② 네비게이터 트리 -->
+    <aside class="card nav">
+      <span class="pin" style="right:8px;top:8px">2</span>
+      <div class="nav-search"><input placeholder="검색" /></div>
+      <div class="tree" id="tree"></div>
+      <div class="nav-legend"><span><i class="sd success"></i>성공</span><span><i class="sd failed"></i>실패</span><span><i class="sd running"></i>실행 중</span><span><i class="sd none"></i>오늘 실행 없음</span></div>
+    </aside>
+
+    <section class="card main" id="main">
+      <!-- ③ 컨텍스트 바 -->
+      <div class="ctx" id="ctx">
+        <span class="pin" style="left:4px;top:-4px">3</span>
+        <div class="crumb" id="crumb"></div>
+        <div class="seg" id="viewSeg">
+          <button type="button" data-view="list" class="on">☰ 실행 목록</button>
+          <button type="button" data-view="timeline">▭ 타임라인</button>
+        </div>
+        <div class="ctx-right">
+          <span class="ctx-label">기간</span>
+          <div class="seg" id="periodSeg">
+            <button type="button" data-period="today" class="on">오늘</button>
+            <button type="button" data-period="yesterday">어제</button>
+            <button type="button" data-period="7d">최근 7일</button>
+            <button type="button" data-period="30d">최근 30일</button>
+            <button type="button" data-period="custom">📅 기간 지정</button>
+          </div>
+          <span class="ctx-label">상태</span>
+          <div class="chips" id="stateChips">
+            <button class="chip on" data-st="all">전체</button>
+            <button class="chip" data-st="running"><i style="background:var(--blue)"></i>실행 중</button>
+            <button class="chip" data-st="success"><i style="background:var(--green)"></i>성공</button>
+            <button class="chip" data-st="failed"><i style="background:#ef4444"></i>실패</button>
+            <button class="chip" data-st="queued"><i style="background:var(--amber)"></i>대기</button>
+          </div>
+          <input class="search" id="gridSearch" placeholder="작업·파이프라인 검색" />
+        </div>
+      </div>
+
+      <div class="split" id="split">
+        <div class="grid-area" id="gridArea">
+          <span class="pin" style="right:10px;top:44px">4</span>
+          <div id="gridHost"></div>
+        </div>
+        <div class="split-handle" id="splitHandle" title="끌어서 상세 창 높이 조절"></div>
+        <!-- ⑥ 상세 창 -->
+        <section class="detail" id="detail">
+          <span class="pin" style="left:6px;top:8px">6</span>
+          <div class="detail-head" id="detailHead"></div>
+          <div class="detail-tabs" id="detailTabs"></div>
+          <div class="detail-body" id="detailBody"></div>
+        </section>
+      </div>
+    </section>
+  </div>
+</main>
+
+<aside class="notes" id="notes">
+  <header><b>설계 포인트 — 인포매티카 모니터 참고</b><button class="btn ghost sm" style="margin-left:auto" onclick="document.body.classList.remove('notes-on')">닫기 ✕</button></header>
+  <div class="body">
+    <div class="note"><span class="n">1</span><div><h4>커튼형 현황 요약</h4><p>펼치면 지금 카드 그대로(누르면 목록이 좁혀지는 동작 포함). 접으면 한 줄 요약만 남고 <b>실패 수는 빨간 숫자</b>로 계속 보인다. 접힘 상태는 브라우저에 기억해 다음에도 유지.</p></div></div>
+    <div class="note"><span class="n">2</span><div><h4>네비게이터 트리 (유지)</h4><p>지금 트리 구조·검색·우클릭 메뉴·«조치» 표시 그대로. <b>제안</b>: 이름 앞에 오늘 마지막 실행 상태 점(인포매티카 Navigator 의 상태 아이콘) - 트리만 훑어도 어디가 실패인지 보인다.</p></div></div>
+    <div class="note"><span class="n">3</span><div><h4>컨텍스트 바</h4><p>지금 보는 범위(경로) · 보기 방식 · <b>기간</b> · 상태 필터 · 검색을 목록 위 한 줄에. 기본 기간은 지금처럼 «오늘». 실행 이력 창에만 있던 기간 선택(오늘/7일/30일)을 여기로 올려 <b>팝업 없이</b> 과거 실행도 같은 표에서 본다.</p></div></div>
+    <div class="note"><span class="n">4</span><div><h4>실행 목록 = 인포매티카 Task View</h4><p>한 표에서 <b>워크플로우 실행 → (하위 워크플로우 호출) → Job → 단계</b> 순서로 펼친다. 지금은 가운데 목록(오늘 마지막 실행 1줄) · 아래 Task 표 · 실행 이력 팝업이 따로였는데 하나로 합쳤다. 실행이 여러 번이면 실행마다 한 줄. 실패 경로는 기본으로 펼쳐 둔다. 행 끝 동작(로그 · 이 작업만 실행 · 이 작업부터 실행)은 마우스를 올리거나 실패 행이면 보인다.</p></div></div>
+    <div class="note"><span class="n">5</span><div><h4>타임라인 = Gantt Chart View</h4><p>같은 데이터를 시간축으로. 워크플로우와 Job 이 <b>언제·얼마나·겹쳐서</b> 돌았는지, 선행 실패로 못 돈 구간(빗금)이 한눈에 보인다. 막대를 누르면 목록과 같이 아래 상세가 바뀐다.</p></div></div>
+    <div class="note"><span class="n">6</span><div><h4>하단 상세 창 = Properties 창</h4><p>오른쪽 좁은 속성창(320px) 대신 <b>목록 아래 넓은 창</b>(높이 끌어서 조절 · 접기 가능). 탭: <b>요약 · 작업/단계 · 로그 · 실행 이력 · 알림 규칙 · 속성</b>. 실패 로그 창 · 실행 이력 창 · DAG 상세 창이 전부 탭으로 들어와 팝업이 없어진다. 실행 설정(배포/시작/중지/감시 재개)은 상세 머리의 메뉴 버튼.</p></div></div>
+
+    <h4 style="margin:18px 0 4px">지금 화면의 정보 → 새 위치</h4>
+    <table class="map">
+      <tr><th>지금</th><th>새 화면</th></tr>
+      <tr><td>동기화 · 갱신 주기 · 마지막 갱신</td><td>머리줄 오른쪽 (그대로)</td></tr>
+      <tr><td>CDC·ETL 상태 카드 + 지표 누르면 필터</td><td>① 커튼 (펼침: 그대로 / 접힘: 한 줄 요약)</td></tr>
+      <tr><td>업무별 트리 · 검색 · 우클릭(상세/실행 설정) · 조치</td><td>② 트리 (그대로 + 상태 점)</td></tr>
+      <tr><td>CDC 목록: 이름·유형·소스→타깃·Topic·상태·지연(해소 예상)·마지막 처리</td><td>④ CDC 모드 표 (열 그대로)</td></tr>
+      <tr><td>ETL 목록: 워크플로우·DAG ID·시작·종료·소요·상태</td><td>④ 실행 행</td></tr>
+      <tr><td>Task 표: 작업·유형·시작·상태·적재/실패(로그)·소요·스케줄·재시도·이 작업만/부터 실행 · 단계 펼침</td><td>④ Job·단계 행 + ⑥ 작업/단계 탭</td></tr>
+      <tr><td>실패 로그 창</td><td>⑥ 로그 탭 (실패 단계 목록 + 콘솔)</td></tr>
+      <tr><td>실행 이력 창 (기간 · 오늘/7일/30일 · 건수 · 실행별 Task 펼침)</td><td>③ 기간 필터 + ④ 실행 행 / ⑥ 실행 이력 탭</td></tr>
+      <tr><td>실행 설정 창 (배포·시작·중지·감시 재개, 감시 중이면 잠금)</td><td>⑥ 머리 «실행 설정 ▾» 메뉴 (잠금 사유 표시)</td></tr>
+      <tr><td>속성창 기본정보 (CDC 11항목 / ETL 7항목)</td><td>⑥ 속성 탭 (2열 표로 넓게)</td></tr>
+      <tr><td>커넥터 상태(Source·Sink)</td><td>⑥ 요약 탭 타일 + 속성 탭</td></tr>
+      <tr><td>알림 규칙 N건 · 알림 규칙 관리 바로가기</td><td>⑥ 알림 규칙 탭</td></tr>
+      <tr><td>바로가기 (상세보기 · ETL 캔버스 / CDC 파이프라인)</td><td>⑥ 속성 탭 아래 + 머리 버튼</td></tr>
+      <tr><td>DAG 상세 창</td><td>⑥ 속성 탭으로 흡수</td></tr>
+    </table>
+    <p style="color:#64748b;font-size:12px;margin-top:12px">이 파일은 예시일 뿐 앱 코드와 무관합니다. 확정되면 기존 조회·권한·재실행 규칙을 그대로 둔 채 화면만 옮깁니다.</p>
+  </div>
+</aside>
+<button class="notes-toggle" type="button" onclick="document.body.classList.toggle('notes-on')">📌 설계 포인트</button>
+
+<script>
+/* ========================= 가짜 데이터 ========================= */
+const STATE = {
+  success: ["성공", "s-success"], failed: ["실패", "s-failed"], running: ["실행 중", "s-running"],
+  queued: ["대기", "s-waiting"], upstream_failed: ["선행 실패", "s-upstream"], none: ["실행 없음", "s-none"],
+};
+const badge = (st) => `<span class="badge ${STATE[st][1]}">${STATE[st][0]}</span>`;
+const secs = (mmss) => { if (!mmss || mmss === "-") return 0; const p = mmss.split(":").map(Number); return p.length === 3 ? p[0]*3600+p[1]*60+p[2] : p[0]*60+p[1]; };
+
+const step = (name, st, start, dur, result = "-", retry = 0) => ({ kind: "step", name, type: "단계", st, start, end: "", dur, result, retry });
+const job = (no, name, st, start, end, dur, result, retry, steps) =>
+  ({ kind: "job", name: `${no} ${name}`, jobKey: name, type: `JOB (${steps.length}단계)`, st, start, end, dur, result, retry, children: steps });
+const done = (no, st, result) => ({ kind: "end", name: `${no} workflow_done`, type: "워크플로우 종단", st, start: "-", end: "-", dur: "-", result, retry: 0 });
+
+const LOG_POP002 = `[2026-09-15 10:37:02] INFO  - open_run: run_id=manual__2026-09-15T01:36:15 job=DZ_POP002M
+[2026-09-15 10:37:03] INFO  - start_pg: NiFi process group 8ef671b6 started
+[2026-09-15 10:37:05] INFO  - await: waiting for flowfiles (timeout 900s)
+[2026-09-15 10:39:10] WARN  - PutDatabaseRecord[03_타깃테이블] connection retry 1/3
+<span class="hl">[2026-09-15 10:41:26] ERROR - ORA-12170: TNS:Connect timeout occurred
+  Host: 10.20.104.12:1521 / Service: DZPOP
+  at oracle.jdbc.driver.T4CConnection.logon(T4CConnection.java:497)
+  - Caused by: java.net.SocketTimeoutException: connect timed out</span>
+[2026-09-15 10:41:28] ERROR - await: job DZ_POP002M failed (try 2/2)`;
+
+const DZCOM = (day, date, start, ok = true) => ({
+  kind: "run", wf: "dz_com_daily", dag: "etl_wf_dz_com_daily", day, date, runType: "선행 완료 (total)", st: "success",
+  start, end: "10:36:12", dur: "06:07", result: "112,074행", retry: 0,
+  children: [
+    job("01", "DZ_COM001M", "success", "10:30:08", "10:34:19", "04:11", "99,594행", 0, [
+      step("open_run", "success", "10:30:08", "00:03"), step("start_pg", "success", "10:30:11", "00:05"),
+      step("await", "success", "10:30:16", "04:00", "99,594행"), step("stop_pg", "success", "10:34:16", "00:02"), step("verify", "success", "10:34:18", "00:01")]),
+    job("02", "DZ_COM002M", "success", "10:34:20", "10:36:10", "01:50", "12,480행", 0, [
+      step("open_run", "success", "10:34:20", "00:02"), step("start_pg", "success", "10:34:22", "00:04"),
+      step("await", "success", "10:34:26", "01:40", "12,480행"), step("stop_pg", "success", "10:36:06", "00:02"), step("verify", "success", "10:36:08", "00:02")]),
+  ],
+});
+const DZPOP_TODAY = {
+  kind: "run", wf: "dz_pop_daily", dag: "etl_wf_dz_pop_daily", day: "today", date: "09-15", runType: "선행 완료 (total)", st: "failed",
+  start: "10:36:15", end: "10:41:30", dur: "05:15", result: "1건 실패", retry: 0,
+  children: [
+    job("01", "DZ_POP001M", "success", "10:36:18", "10:37:00", "00:42", "45,210행", 0, [
+      step("open_run", "success", "10:36:18", "00:02"), step("start_pg", "success", "10:36:20", "00:03"),
+      step("await", "success", "10:36:23", "00:33", "45,210행"), step("stop_pg", "success", "10:36:56", "00:02"), step("verify", "success", "10:36:58", "00:02")]),
+    job("02", "DZ_POP002M", "failed", "10:37:02", "10:41:28", "04:26", "LOG", 1, [
+      step("open_run", "success", "10:37:02", "00:01"), step("start_pg", "success", "10:37:03", "00:02"),
+      step("await", "failed", "10:37:05", "04:23", "LOG", 1), step("stop_pg", "upstream_failed", "-", "-", "선행 작업 실패로 미실행"), step("verify", "upstream_failed", "-", "-", "선행 작업 실패로 미실행")]),
+    done("03", "upstream_failed", "선행 작업 실패로 미실행"),
+  ],
+};
+const DZPOP_Y = { ...DZPOP_TODAY, day: "yesterday", date: "09-14", st: "success", start: "10:35:40", end: "10:38:55", dur: "03:15", result: "57,904행",
+  children: [job("01", "DZ_POP001M", "success", "10:35:43", "10:36:20", "00:37", "44,980행", 0, []), job("02", "DZ_POP002M", "success", "10:36:22", "10:38:50", "02:28", "12,924행", 0, [])] };
+const DZPOP_WEEK = { ...DZPOP_TODAY, day: "week", date: "09-12", runType: "수동 실행", st: "failed", start: "14:02:10", end: "14:05:40", dur: "03:30", result: "1건 실패",
+  children: [job("01", "DZ_POP001M", "success", "14:02:13", "14:02:55", "00:42", "45,002행", 0, []), job("02", "DZ_POP002M", "failed", "14:02:58", "14:05:38", "02:40", "LOG", 0, [])] };
+const DZCOM_TODAY = DZCOM("today", "09-15", "10:30:05");
+const DZCOM_Y = { ...DZCOM("yesterday", "09-14", "10:30:04"), end: "10:35:31", dur: "05:27", result: "111,860행" };
+
+const asCall = (no, run) => ({ ...run, kind: "call", name: `${no} ${run.wf}`, type: "워크플로우 호출" });
+const TOTAL_TODAY = {
+  kind: "run", wf: "total", dag: "etl_wf_etl_root_total", day: "today", date: "09-15", runType: "스케줄 (매일 10:30)", st: "failed",
+  start: "10:30:00", end: "10:41:37", dur: "11:37", result: "하위 1건 실패", retry: 0,
+  children: [asCall("01", DZCOM_TODAY), asCall("02", DZPOP_TODAY), done("03", "upstream_failed", "선행 작업 실패로 미실행")],
+};
+const TOTAL_Y = { ...TOTAL_TODAY, day: "yesterday", date: "09-14", st: "success", end: "10:39:02", dur: "09:02", result: "169,764행",
+  children: [asCall("01", DZCOM_Y), asCall("02", DZPOP_Y), done("03", "success", "-")] };
+
+const RUNS_BY_NODE = {
+  "etl-root": [TOTAL_TODAY, TOTAL_Y, DZPOP_WEEK],
+  total: [TOTAL_TODAY, TOTAL_Y],
+  dz_com_daily: [DZCOM_TODAY, DZCOM_Y],
+  dz_pop_daily: [DZPOP_TODAY, DZPOP_Y, DZPOP_WEEK],
+};
+const WF_PROPS = {
+  total: { schedule: "매일 10:30", folder: "ETL Root", desc: "일배치 루트 - dz_com_daily·dz_pop_daily 순서 실행" },
+  dz_com_daily: { schedule: "선행 완료 후 (total)", folder: "DZ", desc: "공통 코드 적재" },
+  dz_pop_daily: { schedule: "선행 완료 후 (total)", folder: "DZ", desc: "인구 통계 적재" },
+};
+
+const PIPELINES = [
+  { id: "p060l", name: "AAA-tb_imp060l", ptype: "TABLE_CDC", source: "ORACLE · CSB.TB_IMP060L", target: "POSTGRESQL · public.tb_imp060l", topic: "oracle-cdc",
+    st: "running", lag: "0", recovery: "", last: "3분 전", tput: "12.4 rows/s", runtime: ["실행 중", "RUNNING", "RUNNING"], snapshot: "초기 적재 후 CDC", load: "동기화 upsert",
+    desc: "-", created: "2026-08-24 14:31:20", updated: "2026-09-08 05:02:24", dag: "kafka_pipeline_20_control" },
+  { id: "p018m", name: "AAA-tb_imp018m", ptype: "TABLE_CDC", source: "ORACLE · CSB.TB_IMP018M", target: "POSTGRESQL · public.lw_imp018m", topic: "oracle-cdc",
+    st: "running", lag: "1,240", recovery: "약 2분", last: "방금 전", tput: "9.8 rows/s", runtime: ["부분 이상", "RUNNING", "PAUSED"], snapshot: "초기 적재 후 CDC", load: "델타 적재 (CDC_OP)",
+    desc: "보험 청구 델타", created: "2026-08-24 14:31:20", updated: "2026-09-08 05:02:24", dag: "kafka_pipeline_21_control" },
+];
+
+/* ========================= 화면 상태 ========================= */
+const S = {
+  node: "total", mode: "etl", view: "list", period: "today", st: "all", q: "",
+  expanded: new Set(["0", "0.1", "0.1.1"]),   // total 오늘 실행 → dz_pop_daily 호출 → DZ_POP002M
+  selected: "0.1.1", tab: "summary", detailOpen: true,
+};
+
+/* ========================= ② 트리 ========================= */
+const icon = (folder) => folder
+  ? `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`
+  : `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+function treeRow(id, label, { folder = false, open = false, count, dot, tag } = {}) {
+  return `<div class="row${S.node === id ? " on" : ""}" data-node="${id}">
+    <span class="arr${folder ? (open ? " open" : "") : " empty"}">▶</span>
+    ${dot ? `<i class="sd ${dot}" title="오늘 마지막 실행"></i>` : ""}${icon(folder)}
+    <span class="lbl">${label}</span>${count != null ? `<span class="cnt">${count}</span>` : ""}${tag ? `<span class="act-tag">조치</span>` : ""}</div>`;
+}
+function renderTree() {
+  document.getElementById("tree").innerHTML = `
+    <div class="cdc">${treeRow("cdc", "CDC", { folder: true, open: true })}
+      <div class="sub">${treeRow("cdc-all", "전체 파이프라인", { folder: true, open: true, count: 2 })}
+        <div class="sub">${treeRow("cdc-conn", "oracle-source", { folder: true, open: true, count: 2 })}
+          <div class="sub">${treeRow("cdc-schema", "CSB", { folder: true, open: true, count: 2 })}
+            <div class="sub">${treeRow("p060l", "AAA-tb_imp060l", { dot: "running" })}${treeRow("p018m", "AAA-tb_imp018m", { dot: "warn" })}</div>
+          </div></div></div></div>
+    <div>${treeRow("etl-root", "ETL", { folder: true, open: true })}
+      <div class="sub">${treeRow("total", "total", { folder: true, open: true, dot: "failed", tag: true })}
+        <div class="sub">${treeRow("dz_com_daily", "dz_com_daily", { dot: "success" })}${treeRow("dz_pop_daily", "dz_pop_daily", { dot: "failed" })}</div>
+      </div></div>`;
+}
+
+/* ========================= ③ 경로 ========================= */
+const PATHS = {
+  cdc: ["CDC", "전체"], "cdc-all": ["CDC", "전체 파이프라인"], "cdc-conn": ["CDC › 전체 파이프라인", "oracle-source"], "cdc-schema": ["CDC › oracle-source", "CSB"],
+  p060l: ["CDC › oracle-source › CSB", "AAA-tb_imp060l"], p018m: ["CDC › oracle-source › CSB", "AAA-tb_imp018m"],
+  "etl-root": ["ETL", "전체 워크플로우"], total: ["ETL", "total"], dz_com_daily: ["ETL › total", "dz_com_daily"], dz_pop_daily: ["ETL › total", "dz_pop_daily"],
+};
+function renderCrumb() {
+  const [path, cur] = PATHS[S.node];
+  const dom = S.mode === "cdc" ? `<span class="dom cdc"><i></i>CDC</span>` : `<span class="dom etl"><i></i>ETL</span>`;
+  const sub = S.mode === "etl" && ["total"].includes(S.node) ? `<span class="path" style="font-size:12px">· 하위 워크플로우 포함</span>` : "";
+  document.getElementById("crumb").innerHTML = `${dom}<span class="path">${path.replace(/^(CDC|ETL)( › )?/, "")}${path.includes("›") ? " ›" : ""}</span><span class="cur">${cur}</span>${sub}`;
+  document.querySelector('#viewSeg [data-view="timeline"]').disabled = S.mode === "cdc";
+}
+
+/* ========================= ④ 실행 목록 ========================= */
+const PERIOD_DAYS = { today: ["today"], yesterday: ["yesterday"], "7d": ["today", "yesterday", "week"], "30d": ["today", "yesterday", "week"], custom: ["today", "yesterday", "week"] };
+function topRuns() {
+  return (RUNS_BY_NODE[S.node] ?? []).filter((r) => PERIOD_DAYS[S.period].includes(r.day))
+    .filter((r) => S.st === "all" || r.st === S.st)
+    .filter((r) => !S.q || JSON.stringify(r).toLowerCase().includes(S.q));
+}
+function flatten() {
+  const out = [];
+  const walk = (items, prefix, depth) => items.forEach((item, i) => {
+    const id = prefix === "" ? String(i) : `${prefix}.${i}`;
+    out.push({ id, depth, item });
+    if (item.children?.length && S.expanded.has(id)) walk(item.children, id, depth + 1);
+  });
+  walk(topRuns(), "", 0);
+  return out;
+}
+function findRow(id) {
+  const parts = id.split(".").map(Number);
+  let item = topRuns()[parts[0]]; const chain = [item];
+  for (const p of parts.slice(1)) { item = item?.children?.[p]; chain.push(item); }
+  return item ? { item, chain } : null;
+}
+function resultCell(it, id) {
+  if (it.result === "LOG") return `<button class="btn sm danger" data-log="${id}">로그</button>`;
+  return `<span class="${it.st === "upstream_failed" ? "muted" : "num"}">${it.result}</span>`;
+}
+function renderEtlGrid() {
+  const rows = flatten();
+  if (!rows.length) return `<div class="empty-hint">이 범위·기간에 실행이 없습니다. 기간을 넓혀 보세요.</div>`;
+  const maxDur = Math.max(...rows.map((r) => secs(r.item.dur)), 1);
+  return `<table class="grid"><thead><tr>
+    <th style="width:30%">이름</th><th>유형</th><th>상태</th><th>시작</th><th>종료</th><th>소요</th><th>적재 / 결과</th><th>재시도</th><th>실행 유형</th><th style="width:1%">동작</th>
+  </tr></thead><tbody>${rows.map(({ id, depth, item: it }) => {
+    const hasKids = it.children?.length > 0;
+    const label = it.kind === "run" ? `${it.wf} <span class="muted" style="font-weight:500">· ${it.date} ${it.start}</span>` : it.name;
+    const kind = it.kind === "run" ? `<span class="kind run">실행</span>` : it.kind === "call" ? `<span class="kind call">호출</span>` : "";
+    const acts = it.kind === "job"
+      ? `<div class="acts">${it.st === "failed" ? `<button class="btn sm danger" data-log="${id}">로그</button>` : ""}<button class="btn sm">이 작업만 실행</button><button class="btn sm ${it.st === "failed" ? "primary" : ""}">이 작업부터 실행</button></div>`
+      : it.kind === "run" ? `<div class="acts"><button class="btn sm">실행 이력</button></div>` : "";
+    return `<tr class="r k-${it.kind} f-${it.st}${S.selected === id ? " sel" : ""}" data-row="${id}">
+      <td><div class="nm" style="padding-left:${depth * 20}px"><button class="tg${hasKids ? (S.expanded.has(id) ? " open" : "") : " empty"}" data-toggle="${id}">▶</button>${kind}<span>${label}</span></div></td>
+      <td class="muted">${it.kind === "run" ? "워크플로우" : it.type}</td>
+      <td>${badge(it.st)}</td>
+      <td class="num">${it.start}</td><td class="num">${it.end || "-"}</td>
+      <td><div class="dur"><span class="num">${it.dur}</span>${secs(it.dur) ? `<span class="dur-bar"><i style="width:${Math.max(4, secs(it.dur) / maxDur * 100)}%"></i></span>` : ""}</div></td>
+      <td>${resultCell(it, id)}</td>
+      <td class="num">${it.retry}회</td>
+      <td class="muted">${it.kind === "run" || it.kind === "call" ? it.runType : "-"}</td>
+      <td>${acts}</td></tr>`;
+  }).join("")}</tbody></table>`;
+}
+function renderCdcGrid() {
+  const list = S.node === "p060l" || S.node === "p018m" ? PIPELINES.filter((p) => p.id === S.node) : PIPELINES;
+  return `<table class="grid"><thead><tr><th>이름</th><th>유형</th><th>소스 → 타깃</th><th>Topic</th><th>상태</th><th>지연</th><th>마지막 처리</th><th style="width:1%">동작</th></tr></thead><tbody>
+  ${list.map((p) => `<tr class="r${S.selected === p.id ? " sel" : ""}" data-row="${p.id}">
+    <td><b>${p.name}</b></td><td><span class="type">${p.ptype}</span></td>
+    <td><div class="src">${p.source}<small>→ ${p.target}</small></div></td><td>${p.topic}</td><td>${badge(p.st)}</td>
+    <td>${p.lag === "0" ? `<span class="num">0</span>` : `<div class="src"><span class="lag-warn num">${p.lag}</span><small>${p.recovery}</small></div>`}</td>
+    <td class="muted">${p.last}</td><td><div class="acts"><button class="btn sm">실행 설정 ▾</button><button class="btn sm">실행 이력</button></div></td></tr>`).join("")}
+  </tbody></table>`;
+}
+
+/* ========================= ⑤ 타임라인 ========================= */
+const toMin = (hms) => { const [h, m, s] = hms.split(":").map(Number); return h * 60 + m + (s || 0) / 60; };
+function renderTimeline() {
+  const runs = topRuns().filter((r) => r.day === topRuns()[0]?.day);
+  if (!runs.length) return `<div class="empty-hint">표시할 실행이 없습니다.</div>`;
+  const rows = [];
+  runs.forEach((r, i) => {
+    rows.push({ id: String(i), depth: 0, it: r });
+    (r.children ?? []).forEach((c, j) => {
+      rows.push({ id: `${i}.${j}`, depth: 1, it: c });
+      if (c.kind === "call") (c.children ?? []).forEach((g, k) => rows.push({ id: `${i}.${j}.${k}`, depth: 2, it: g }));
+    });
+  });
+  const times = rows.flatMap(({ it }) => [it.start, it.end]).filter((t) => t && t !== "-").map(toMin);
+  const lo = Math.floor(Math.min(...times)) - 1, hi = Math.ceil(Math.max(...times)) + 2, span = hi - lo;
+  const pct = (m) => ((m - lo) / span * 100).toFixed(2);
+  const ticks = []; for (let m = Math.ceil(lo / 2) * 2; m <= hi; m += 2) ticks.push(`<span class="tick" style="left:${pct(m)}%">${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}</span>`);
+  const nowM = toMin("10:52:30");
+  return `<div class="tl"><div class="tl-head"><div class="lab">워크플로우 / Job  <span class="muted" style="font-weight:500">(${runs[0].date})</span></div><div class="axis">${ticks.join("")}</div></div>
+    ${rows.map(({ id, depth, it }) => {
+      const label = it.kind === "run" ? `<b>${it.wf}</b>` : it.name;
+      let bar = "";
+      if (it.start && it.start !== "-") {
+        const a = toMin(it.start), b = toMin(it.end || it.start);
+        bar = `<span class="bar ${it.st}${it.kind === "run" ? " run" : ""}" style="left:${pct(a)}%;width:${Math.max(0.6, (b - a) / span * 100).toFixed(2)}%" title="${it.name || it.wf} ${it.start}–${it.end} (${it.dur})">${it.dur}</span>`;
+      } else {
+        bar = `<span class="bar upstream_failed" style="left:${pct(toMin("10:41:30"))}%;width:6%">미실행</span>`;
+      }
+      return `<div class="tl-row${S.selected === id ? " sel" : ""}" data-row="${id}"><div class="lab" style="padding-left:${12 + depth * 18}px">${badge(it.st)} ${label}</div><div class="track">${bar}${nowM <= hi ? `<i class="now" style="left:${pct(nowM)}%"></i>` : ""}</div></div>`;
+    }).join("")}
+    <div class="tl-legend"><span><i style="background:#22c55e"></i>성공</span><span><i style="background:#ef4444"></i>실패</span><span><i style="background:var(--blue)"></i>실행 중</span><span><i style="background:repeating-linear-gradient(45deg,#fdba74 0 3px,#fed7aa 3px 6px)"></i>선행 실패로 미실행</span><span style="color:var(--red)">┆ 지금</span></div>
+    <span class="pin" style="left:6px;top:6px">5</span></div>`;
+}
+
+/* ========================= ⑥ 상세 창 ========================= */
+const tile = (label, value, bad = false) => `<div class="tile${bad ? " bad" : ""}"><span>${label}</span><b>${value}</b></div>`;
+const RULES_ETL = `<div class="rules">
+  <div class="rule"><div class="t"><span class="type">Job 실패</span>ETL Job 실패 즉시 알림</div><small>심각도 CRITICAL · 즉시</small></div>
+  <div class="rule"><div class="t"><span class="type">적재 0건</span>일배치 적재 0건 감시</div><small>심각도 WARNING · 매일 11:00</small></div>
+</div><div class="links"><button class="btn sm">알림 규칙 관리 바로가기 ↗</button></div>`;
+function historyTable(runs) {
+  return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><span class="ctx-label">기간</span>
+    <div class="seg"><button class="on">오늘</button><button>최근 7일</button><button>최근 30일</button><button>📅 지정</button></div><span class="muted">${runs.length}건</span></div>
+    <table class="grid"><thead><tr><th>작업명</th><th>실행 유형</th><th>실행 일시</th><th>최종 결과</th><th>적재/실패</th><th>소요</th><th>재시도/재시작</th></tr></thead><tbody>
+    ${runs.map((r) => `<tr class="r"><td>▸ ${r.wf}</td><td>${r.runType}</td><td class="num">2026-${r.date} ${r.start}</td><td>${badge(r.st)}</td><td>${r.st === "failed" ? `<button class="btn sm danger">로그</button>` : r.result}</td><td class="num">${r.dur}</td><td>0회</td></tr>`).join("")}
+    </tbody></table>`;
+}
+function logPane(targets, active = 0) {
+  return `<div class="two"><div class="loglist">${targets.map((t, i) => `<div class="${i === active ? "on" : ""}">${t}</div>`).join("")}</div>
+    <div class="console"><div class="console-tools"><button>복사</button><button>새 창</button><button>내려받기</button></div>${LOG_POP002}</div></div>`;
+}
+function renderDetail() {
+  const head = document.getElementById("detailHead"), tabs = document.getElementById("detailTabs"), body = document.getElementById("detailBody");
+  const collapse = `<button class="btn ghost sm" id="detailToggle" title="상세 창 접기/펼치기">${S.detailOpen ? "▾ 접기" : "▴ 펼치기"}</button>`;
+  const execMenuBtn = (cdc) => `<button class="btn sm" data-exec="${cdc ? "cdc" : "etl"}">실행 설정 ▾</button>`;
+
+  if (S.mode === "cdc") {
+    const p = PIPELINES.find((x) => x.id === S.selected);
+    if (!p) { head.innerHTML = `<div class="detail-title"><b class="muted">파이프라인을 선택하세요</b></div>${collapse}`; tabs.innerHTML = ""; body.innerHTML = ""; return; }
+    head.innerHTML = `<div class="detail-title"><span class="dom cdc" style="padding:1px 7px;font-size:11px"><i></i>CDC</span><b>${p.name}</b>${badge(p.st)}<small>제어 DAG ${p.dag}</small></div>
+      <div class="detail-acts">${execMenuBtn(true)}<button class="btn sm">상세보기 ↗</button><button class="btn sm">CDC 파이프라인 ↗</button>${collapse}</div>`;
+    const T = [["summary", "요약"], ["history", "실행 이력", 3], ["rules", "알림 규칙", 1], ["props", "속성"]];
+    if (!T.some(([k]) => k === S.tab)) S.tab = "summary";
+    tabs.innerHTML = T.map(([k, l, n]) => `<button data-tab="${k}" class="${S.tab === k ? "on" : ""}">${l}${n ? `<em>${n}</em>` : ""}</button>`).join("");
+    body.innerHTML = {
+      summary: `<div class="tiles">${tile("제어 DAG 상태", STATE[p.st][0])}${tile("커넥터 상태", p.runtime[0], p.runtime[0] !== "실행 중")}${tile("Source", p.runtime[1])}${tile("Sink", p.runtime[2], p.runtime[2] !== "RUNNING")}${tile("지연", p.lag + (p.recovery ? ` · ${p.recovery}` : ""), p.lag !== "0")}${tile("처리율", p.tput)}${tile("마지막 처리", p.last)}${tile("Topic", p.topic)}</div>`,
+      history: historyTable([{ wf: "시작 (Start) · 감시", runType: "수동 실행", date: "09-08", start: "05:02:24", st: "running", result: "-", dur: "진행 중" }, { wf: "배포 (Deploy)", runType: "수동 실행", date: "09-08", start: "05:01:10", st: "success", result: "-", dur: "00:48" }, { wf: "중지 (Stop)", runType: "수동 실행", date: "09-08", start: "04:58:02", st: "success", result: "-", dur: "00:20" }]),
+      rules: `<div class="rules"><div class="rule"><div class="t"><span class="type">커넥터 FAILED</span>커넥터 FAILED</div><small>심각도 CRITICAL · 즉시</small></div></div><div class="links"><button class="btn sm">알림 규칙 관리 바로가기 ↗</button></div>`,
+      props: `<dl class="props"><dt>이름</dt><dd>${p.name}</dd><dt>유형</dt><dd>${p.ptype}</dd><dt>소스</dt><dd>${p.source}</dd><dt>타겟</dt><dd>${p.target}</dd><dt>Topic</dt><dd>${p.topic}</dd><dt>스냅샷 모드</dt><dd>${p.snapshot}</dd><dt>적재 방식</dt><dd>${p.load}</dd><dt>커넥터 상태</dt><dd>${p.runtime[0]} · Source ${p.runtime[1]} · Sink ${p.runtime[2]}</dd><dt>설명</dt><dd>${p.desc}</dd><dt>생성 시각</dt><dd>${p.created}</dd><dt>수정 시각</dt><dd>${p.updated}</dd></dl>
+        <div class="links"><button class="btn sm">상세보기 ↗</button><button class="btn sm">CDC 파이프라인 ↗</button></div>`,
+    }[S.tab];
+    return;
+  }
+
+  const found = S.selected ? findRow(S.selected) : null;
+  if (!found) { head.innerHTML = `<div class="detail-title"><b class="muted">목록에서 실행·작업을 선택하세요</b></div>${collapse}`; tabs.innerHTML = ""; body.innerHTML = ""; return; }
+  const { item: it, chain } = found;
+  const run = [...chain].reverse().find((c) => c.kind === "run" || c.kind === "call") ?? chain[0];
+  const wfName = run.wf;
+  const kindLabel = { run: "워크플로우 실행", call: "하위 워크플로우 실행", job: "Job", step: "단계", end: "워크플로우 종단" }[it.kind];
+  const title = it.kind === "run" ? `${it.wf} · 2026-${it.date} ${it.start}` : it.name;
+  const sub = it.kind === "run" ? it.dag : `${wfName} · 2026-${run.date} ${run.start} 실행`;
+  const jobActs = it.kind === "job" ? `${it.st === "failed" ? `<button class="btn sm danger" data-tab-go="log">로그</button>` : ""}<button class="btn sm">이 작업만 실행</button><button class="btn sm ${it.st === "failed" ? "primary" : ""}">이 작업부터 실행</button>` : "";
+  head.innerHTML = `<div class="detail-title"><span class="kind ${it.kind === "run" ? "run" : it.kind === "call" ? "call" : ""}">${kindLabel}</span><b>${title}</b>${badge(it.st)}<small>${sub}</small></div>
+    <div class="detail-acts">${jobActs}${it.kind !== "step" && it.kind !== "end" ? execMenuBtn(false) : ""}<button class="btn sm">상세보기 ↗</button><button class="btn sm">ETL 캔버스 ↗</button>${collapse}</div>`;
+
+  const kids = it.children ?? [];
+  const failedSteps = it.kind === "step" ? (it.st === "failed" ? [it] : []) : collectFailed(it);
+  const T = [
+    ["summary", "요약"],
+    ["children", it.kind === "job" ? "단계" : "작업", kids.length, !kids.length],
+    ["log", "로그", failedSteps.length, !failedSteps.length],
+    ["history", "실행 이력", (RUNS_BY_NODE[wfName] ?? []).length, it.kind === "step" || it.kind === "end"],
+    ["rules", "알림 규칙", 2, it.kind === "step" || it.kind === "end"],
+    ["props", "속성", 0, it.kind === "step" || it.kind === "end"],
+  ];
+  if (T.find(([k, , , dis]) => k === S.tab && dis)) S.tab = "summary";
+  tabs.innerHTML = T.map(([k, l, n, dis]) => `<button data-tab="${k}" class="${S.tab === k ? "on" : ""}" ${dis ? "disabled" : ""}>${l}${n ? `<em>${n}</em>` : ""}</button>`).join("");
+
+  const okJobs = kids.filter((k) => k.st === "success").length, badJobs = kids.filter((k) => k.st === "failed").length;
+  const summary = it.kind === "run" || it.kind === "call"
+    ? `<div class="tiles">${tile("상태", STATE[it.st][0], it.st === "failed")}${tile("실행 유형", it.runType)}${tile("시작", it.start)}${tile("종료", it.end)}${tile("소요", it.dur)}${tile("작업 성공 / 실패", `${okJobs} / ${badJobs}`, badJobs > 0)}${tile("적재 / 결과", it.result)}${tile("다음 실행", "2026-09-16 10:30")}</div>
+       ${failedSteps.length ? `<div class="errbox"><div><div class="t">실패 ${failedSteps.length}건 — DZ_POP002M · await</div><code>ORA-12170: TNS:Connect timeout occurred</code><div style="margin-top:6px"><button class="btn sm danger" data-tab-go="log">로그 보기</button></div></div></div>` : ""}`
+    : `<div class="tiles">${tile("상태", STATE[it.st][0], it.st === "failed")}${tile("유형", it.type)}${tile("시작", it.start)}${tile("종료", it.end || "-")}${tile("소요", it.dur)}${tile("적재 건수", it.result === "LOG" ? "0행" : it.result)}${tile("재시도", `${it.retry}회`)}${it.kind === "job" ? tile("실패 단계", failedSteps.map((s) => s.name).join(", ") || "-", failedSteps.length > 0) : ""}</div>
+       ${it.st === "failed" ? `<div class="errbox"><div><div class="t">실패 원인</div><code>ORA-12170: TNS:Connect timeout occurred\nHost: 10.20.104.12:1521 / Service: DZPOP</code><div style="margin-top:6px"><button class="btn sm danger" data-tab-go="log">전체 로그 보기</button><button class="btn sm primary" style="margin-left:4px">이 작업부터 실행</button></div></div></div>` : ""}
+       ${it.st === "upstream_failed" ? `<div class="errbox" style="background:#fff7ed;border-color:#fed7aa"><div><div class="t" style="color:#b45309">선행 작업 실패로 미실행</div><code style="color:#9a3412">앞 작업(DZ_POP002M)이 실패해 이 단계는 돌지 않았습니다.</code></div></div>` : ""}`;
+
+  body.innerHTML = {
+    summary,
+    children: `<table class="grid"><thead><tr><th>${it.kind === "job" ? "단계" : "작업(Task)"}</th><th>유형</th><th>시작</th><th>상태</th><th>적재/실패</th><th>소요</th><th>재시도</th></tr></thead><tbody>
+      ${kids.map((k) => `<tr class="r f-${k.st}"><td>${k.name}</td><td class="muted">${k.type}</td><td class="num">${k.start}</td><td>${badge(k.st)}</td><td>${k.result === "LOG" ? `<button class="btn sm danger" data-tab-go="log">로그</button>` : k.result}</td><td class="num">${k.dur}</td><td>${k.retry}회</td></tr>`).join("")}</tbody></table>`,
+    log: logPane(failedSteps.map((s) => `${s.parentName ? s.parentName + " · " : ""}${s.name} <span class="muted">(시도 ${s.retry + 1})</span>`)),
+    history: historyTable(RUNS_BY_NODE[wfName] ?? []),
+    rules: RULES_ETL,
+    props: `<dl class="props"><dt>이름</dt><dd>${wfName}</dd><dt>DAG ID</dt><dd>${run.dag}</dd><dt>업무 구분</dt><dd>ETL</dd><dt>업무 폴더</dt><dd>${WF_PROPS[wfName]?.folder ?? "-"}</dd><dt>스케줄</dt><dd>${WF_PROPS[wfName]?.schedule ?? "-"}</dd><dt>상태</dt><dd>활성</dd><dt>설명</dt><dd>${WF_PROPS[wfName]?.desc ?? "-"}</dd></dl>
+      <div class="links"><button class="btn sm">상세보기 (Airflow) ↗</button><button class="btn sm">ETL 캔버스 ↗</button></div>`,
+  }[S.tab];
+}
+function collectFailed(item, parentName = "") {
+  const out = [];
+  (item.children ?? []).forEach((c) => {
+    if (c.kind === "step" && c.st === "failed") out.push({ ...c, parentName: parentName || item.jobKey || "" });
+    else out.push(...collectFailed(c, c.jobKey || parentName));
+  });
+  if (!out.length && item.kind === "job" && item.st === "failed") out.push({ ...item, name: "job", parentName: item.jobKey });
+  return out;
+}
+
+/* ========================= 실행 설정 메뉴 ========================= */
+function openExecMenu(btn, kind) {
+  closeMenu();
+  const m = document.createElement("div");
+  m.className = "menu"; m.id = "execMenu";
+  m.innerHTML = kind === "cdc"
+    ? `<div>배포 (Deploy)</div><div class="dis">시작 (Start)<small>이미 감시 중인 실행이 있어 선택할 수 없음</small></div><div>중지 (Stop)</div><div class="dis">감시 재개<small>이미 감시 중 · 중지 후 시작</small></div>`
+    : `<div>시작 (Start)<small>워크플로우를 지금 한 번 실행</small></div><div>중지 (Stop)</div>`;
+  const r = btn.getBoundingClientRect();
+  m.style.left = `${Math.min(r.left, innerWidth - 220)}px`; m.style.top = `${r.bottom + 4}px`; m.style.position = "fixed";
+  document.body.appendChild(m);
+}
+function closeMenu() { document.getElementById("execMenu")?.remove(); }
+
+/* ========================= 렌더 · 이벤트 ========================= */
+function render() {
+  document.getElementById("main").classList.toggle("cdc-mode", S.mode === "cdc");
+  renderTree(); renderCrumb();
+  document.getElementById("gridHost").innerHTML = S.mode === "cdc" ? renderCdcGrid() : S.view === "timeline" ? renderTimeline() : renderEtlGrid();
+  renderDetail();
+  document.getElementById("split").classList.toggle("detail-closed", !S.detailOpen);
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target;
+  if (!t.closest(".menu") && !t.closest("[data-exec]")) closeMenu();
+  const exec = t.closest("[data-exec]"); if (exec) { openExecMenu(exec, exec.dataset.exec); return; }
+  const node = t.closest("[data-node]");
+  if (node) {
+    const id = node.dataset.node;
+    if (id === "cdc" || id === "etl-root" && false) return;
+    S.node = id; S.mode = id.startsWith("cdc") || id.startsWith("p0") ? "cdc" : "etl";
+    if (S.mode === "cdc") { S.view = "list"; S.selected = id.startsWith("p0") ? id : "p018m"; }
+    else { S.expanded = new Set(["0"]); S.selected = "0"; }
+    S.tab = "summary"; syncSeg(); render(); return;
+  }
+  const tg = t.closest("[data-toggle]");
+  if (tg) { const id = tg.dataset.toggle; S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); render(); e.stopPropagation(); return; }
+  const go = t.closest("[data-tab-go]"); if (go) { S.tab = go.dataset.tabGo; S.detailOpen = true; render(); return; }
+  const log = t.closest("[data-log]"); if (log) { S.selected = log.dataset.log; S.tab = "log"; S.detailOpen = true; render(); return; }
+  const row = t.closest("[data-row]");
+  if (row && !t.closest(".acts")) { S.selected = row.dataset.row; S.detailOpen = true; render(); return; }
+  const tab = t.closest("[data-tab]"); if (tab && !tab.disabled) { S.tab = tab.dataset.tab; render(); return; }
+  const view = t.closest("[data-view]"); if (view && !view.disabled) { S.view = view.dataset.view; syncSeg(); render(); return; }
+  const period = t.closest("[data-period]"); if (period) { S.period = period.dataset.period; S.selected = "0"; S.expanded = new Set(["0"]); syncSeg(); render(); return; }
+  const chip = t.closest("[data-st]"); if (chip) { S.st = chip.dataset.st; S.selected = "0"; syncSeg(); render(); return; }
+  const metric = t.closest("[data-filter]");
+  if (metric) {
+    const [dom, st] = metric.dataset.filter.split(":");
+    S.node = dom === "cdc" ? "cdc-all" : "etl-root"; S.mode = dom === "cdc" ? "cdc" : "etl";
+    S.st = ["running", "success", "failed"].includes(st) ? st : st === "waiting" ? "queued" : "all";
+    S.selected = dom === "cdc" ? "p018m" : "0"; S.expanded = new Set(["0"]); syncSeg(); render(); return;
+  }
+  if (t.closest("#detailToggle")) { S.detailOpen = !S.detailOpen; render(); }
+});
+function syncSeg() {
+  document.querySelectorAll("#viewSeg button").forEach((b) => b.classList.toggle("on", b.dataset.view === S.view));
+  document.querySelectorAll("#periodSeg button").forEach((b) => b.classList.toggle("on", b.dataset.period === S.period));
+  document.querySelectorAll("#stateChips .chip").forEach((b) => b.classList.toggle("on", b.dataset.st === S.st));
+}
+document.getElementById("gridSearch").addEventListener("input", (e) => { S.q = e.target.value.trim().toLowerCase(); render(); });
+
+/* ① 커튼 */
+const curtain = document.getElementById("curtain");
+function setCurtain(open) {
+  curtain.classList.toggle("open", open); curtain.classList.toggle("closed", !open);
+  document.getElementById("handleLabel").textContent = open ? "접기 ▴" : "현황 펼치기 ▾";
+  document.getElementById("curtainToggle").setAttribute("aria-expanded", String(open));
+  try { localStorage.setItem("wfLogCurtain", open ? "open" : "closed"); } catch {}
+}
+document.getElementById("curtainToggle").addEventListener("click", () => setCurtain(!curtain.classList.contains("open")));
+try { if (localStorage.getItem("wfLogCurtain") === "closed") setCurtain(false); } catch {}
+
+/* ⑥ 분할 높이 끌기 */
+(() => {
+  const handle = document.getElementById("splitHandle"), detail = document.getElementById("detail"), split = document.getElementById("split");
+  let startY = 0, startH = 0;
+  const move = (ev) => { const h = Math.min(split.clientHeight - 140, Math.max(160, startH - (ev.clientY - startY))); detail.style.setProperty("--detail-h", `${h}px`); };
+  handle.addEventListener("mousedown", (ev) => { startY = ev.clientY; startH = detail.offsetHeight; S.detailOpen = true; split.classList.remove("detail-closed");
+    document.addEventListener("mousemove", move); document.addEventListener("mouseup", () => document.removeEventListener("mousemove", move), { once: true }); });
+})();
+
+render();
+</script>
+</body>
+</html>

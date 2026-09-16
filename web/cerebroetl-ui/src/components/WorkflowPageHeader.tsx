@@ -71,6 +71,7 @@ const WORKFLOW_TABS: Array<{
   { path: "/workflows/create", label: "생성", icon: "plus", system: "NIFI", action: "WRITE" },
   { path: "/workflows/design", label: "관리", icon: "clock", system: "NIFI", action: "READ" },
   { path: "/airflow/dashboard", label: "로그", icon: "pulse", system: "AIRFLOW", action: "READ" },
+  { path: "/workflows/logs2", label: "로그2", icon: "pulse", system: "AIRFLOW", action: "READ" },
   { path: "/airflow/manage", label: "상세 관리", icon: "gear", system: "AIRFLOW", action: "READ" },
 ];
 

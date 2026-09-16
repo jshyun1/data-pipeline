@@ -43,7 +43,8 @@ public class PermissionAspect {
     private static final java.util.Set<String> ACTION_SEGMENTS = java.util.Set.of(
             "deploy", "start", "stop", "pause", "restart", "resume", "run", "trigger",
             "schedule", "sync", "approve", "reject", "unlock", "enable", "disable",
-            "retry", "replay", "cancel", "rollback", "dismiss-drift", "sync-identities");
+            "retry", "replay", "cancel", "rollback", "dismiss-drift", "sync-identities",
+            "activate", "deactivate");
 
     // 고빈도·무의미 엔드포인트(편집잠금 heartbeat, 수동 스냅샷 등)는 감사 소음이라 제외한다.
     private static final java.util.Set<String> SKIP_SEGMENTS = java.util.Set.of(

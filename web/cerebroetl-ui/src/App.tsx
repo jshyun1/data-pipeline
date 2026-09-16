@@ -5,12 +5,15 @@ import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { CdcLogsPage } from "./pages/CdcLogsPage";
 import { CdcCreatePage } from "./pages/CdcCreatePage";
 import { AirflowDashboardPage } from "./pages/AirflowDashboardPage";
+import { WorkflowLogV2Page } from "./pages/workflowLogV2/WorkflowLogV2Page";
 import { ConsoleFramePage } from "./pages/ConsoleFramePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { AccountManagementPage } from "./pages/admin/AccountManagementPage";
 import { RolePermissionPage } from "./pages/admin/RolePermissionPage";
 import { AuditLogPage } from "./pages/admin/AuditLogPage";
+import { GptManagePage } from "./pages/gpt/GptManagePage";
+import { GptRegisterPage } from "./pages/gpt/GptRegisterPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { RequirePermissionRoute } from "./auth/RequirePermissionRoute";
 import { WorkflowCanvasPage } from "./pages/WorkflowCanvasPage";
@@ -56,6 +59,9 @@ export function App() {
           <Route path="/admin/roles" element={<RolePermissionPage />} />
           <Route path="/admin/assign" element={<Navigate to="/admin/users" replace />} />
           <Route path="/admin/audit" element={<AuditLogPage />} />
+          <Route path="/gpt" element={<Navigate to="/gpt/manage" replace />} />
+          <Route path="/gpt/register" element={<GptRegisterPage />} />
+          <Route path="/gpt/manage" element={<GptManagePage />} />
         </Route>
         <Route path="/self-check" element={<SelfCheckPage />} />
         <Route path="/airflow" element={<Navigate to="/airflow/dashboard" replace />} />
@@ -64,6 +70,8 @@ export function App() {
         <Route path="/workflows/design" element={<WorkflowDesignPage />} />
         <Route path="/workflows/design/:id" element={<WorkflowCanvasPage />} />
         <Route path="/airflow/dashboard" element={<AirflowDashboardPage />} />
+        {/* 로그2: 기존 로그와 나란히 두고 관리자가 하나를 고르기 위한 시안(2026-09-16). nginx 가 /airflow/ 를 가로채므로 밖에 둔다. */}
+        <Route path="/workflows/logs2" element={<WorkflowLogV2Page />} />
         <Route
           path="/airflow/manage"
           element={<AirflowManagePage />}
