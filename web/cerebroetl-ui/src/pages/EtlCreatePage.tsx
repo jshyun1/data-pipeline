@@ -1,15 +1,14 @@
 import {
-  CheckCircleOutlined,
   CheckOutlined,
   CloseOutlined,
   DownOutlined,
   EditOutlined,
   QuestionCircleOutlined,
-  LockOutlined,
+  SaveOutlined,
   UpOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
-import { Button, Collapse, Input, message, Modal, Radio, Select, Space, Tag } from "antd";
+import { Button, Input, message, Modal, Radio, Select, Tag } from "antd";
 import type { DragEvent, KeyboardEvent, ReactNode, UIEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -38,9 +37,9 @@ import { useNavigate } from "react-router-dom";
 const WIZARD_STEPS = [
   { id: "type", label: "유형 선택" },
   { id: "basic", label: "기본 정보" },
-  { id: "connection", label: "연결" },
-  { id: "query", label: "적재쿼리" },
-  { id: "target", label: "컬럼매핑" },
+  { id: "connection", label: "연결 설정" },
+  { id: "query", label: "적재 쿼리" },
+  { id: "target", label: "컬럼 매핑" },
 ] as const;
 
 type WizardStepId = (typeof WIZARD_STEPS)[number]["id"];
@@ -667,24 +666,124 @@ function defaultTruncateSql(targetSchema: string, targetTable: string) {
   return `TRUNCATE TABLE ${targetSchema.trim()}.${targetTable.trim()}`;
 }
 
-function StepLabel({
+function stepIndex(step: WizardStepId) {
+  return WIZARD_STEPS.findIndex((item) => item.id === step);
+}
+
+function stepState(step: WizardStepId, activeStep: WizardStepId, completedSteps: WizardStepId[]) {
+  if (step === activeStep) {
+    return "active";
+  }
+  if (completedSteps.includes(step)) {
+    return "completed";
+  }
+  return "pending";
+}
+
+function selectedTypeLabel(type: EtlType) {
+  return TYPE_OPTIONS.find((option) => option.value === type)?.title ?? "";
+}
+
+function stepSummary(step: WizardStepId, options: {
+  etlType: EtlType;
+  basicInfo: BasicInfo;
+  connectionInfo: ConnectionInfo;
+  loadMode: LoadMode;
+}) {
+  if (step === "type") {
+    return `[선택됨: ${selectedTypeLabel(options.etlType)}]`;
+  }
+  if (step === "basic" && options.basicInfo.jobName.trim()) {
+    return `[${options.basicInfo.jobName.trim()}]`;
+  }
+  if (step === "connection" && options.connectionInfo.targetDatabaseType) {
+    return `[타깃: ${options.connectionInfo.targetDatabaseType}]`;
+  }
+  if (step === "query") {
+    return `[${options.loadMode}]`;
+  }
+  return "";
+}
+
+function CreateStepper({
+  activeStep,
+  completedSteps,
+  onStepClick,
+}: {
+  activeStep: WizardStepId;
+  completedSteps: WizardStepId[];
+  onStepClick: (step: WizardStepId) => void;
+}) {
+  const activeIndex = stepIndex(activeStep);
+  const progressWidth = `${(Math.max(0, activeIndex) / Math.max(1, WIZARD_STEPS.length - 1)) * 100}%`;
+
+  return (
+    <div className="etl-stepper-wrap">
+      <div className="etl-stepper">
+        <div className="etl-stepper-line" />
+        <div className="etl-stepper-progress" style={{ width: progressWidth }} />
+        {WIZARD_STEPS.map((step) => {
+          const state = stepState(step.id, activeStep, completedSteps);
+          return (
+            <button
+              key={step.id}
+              type="button"
+              className={`stepper-item ${state === "active" ? "active" : state === "completed" ? "completed" : ""}`}
+              onClick={() => onStepClick(step.id)}
+            >
+              <span className="stepper-circle">{STEP_NUMBER[step.id]}</span>
+              <span className="stepper-label">{step.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WizardStepCard({
   step,
   title,
-  completed,
-  unlocked,
+  activeStep,
+  completedSteps,
+  summary,
+  onOpen,
+  children,
 }: {
   step: WizardStepId;
   title: string;
-  completed: boolean;
-  unlocked: boolean;
+  activeStep: WizardStepId;
+  completedSteps: WizardStepId[];
+  summary?: string;
+  onOpen: (step: WizardStepId) => void;
+  children: ReactNode;
 }) {
+  const state = stepState(step, activeStep, completedSteps);
+  const active = state === "active";
+  const completed = state === "completed";
+
   return (
-    <Space>
-      <Tag color={completed ? "success" : unlocked ? "blue" : "default"}>{STEP_NUMBER[step]}</Tag>
-      <span>{title}</span>
-      {completed && <CheckCircleOutlined style={{ color: "#52c41a" }} />}
-      {!unlocked && <LockOutlined style={{ color: "#999" }} />}
-    </Space>
+    <section
+      className={`wizard-step-card${active ? " active open" : ""}${completed ? " completed" : ""}`}
+      data-step={STEP_NUMBER[step]}
+    >
+      <button type="button" className="wizard-step-header" onClick={() => onOpen(step)}>
+        <span className="header-left">
+          <span className="step-number-badge">{STEP_NUMBER[step]}</span>
+          <span className="step-title">{title}</span>
+          {summary ? <span className="step-selected-summary">{summary}</span> : null}
+        </span>
+        <span className="header-right">
+          <span className={`step-status-tag${active ? " active" : completed ? " done" : ""}`}>
+            {active ? "작성 중" : completed ? "완료" : "대기"}
+          </span>
+          <span className="header-chevron" aria-hidden="true">
+            <DownOutlined />
+          </span>
+        </span>
+      </button>
+      <div className="wizard-step-body">{children}</div>
+    </section>
   );
 }
 
@@ -699,24 +798,69 @@ function TypeStep({
 }) {
   return (
     <>
-      <div className="etl-wizard-type-grid">
+      <p className="step-guide-text">수집 및 적재할 데이터 소스와 대상 환경에 최적화된 ETL 전송 유형을 선택해 주세요.</p>
+      <div className="type-card-grid">
         {TYPE_OPTIONS.map((option) => (
           <button
             key={option.value}
             type="button"
             disabled={option.disabled}
-            className={selectedType === option.value ? "etl-type-card selected" : "etl-type-card"}
+            className={`type-card${selectedType === option.value ? " selected" : ""}${option.disabled ? " disabled" : ""}`}
             onClick={() => onTypeChange(option.value)}
           >
-            <strong>{option.title}</strong>
-            <span>{option.description}</span>
+            <span className="type-card-top">
+              <span className="type-icon-box" aria-hidden="true">
+                {option.value === "DB_TO_DB" ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <ellipse cx="12" cy="5" rx="9" ry="3" />
+                    <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+                    <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+                  </svg>
+                ) : option.value === "FILE_LOAD" ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                    <polyline points="10 9 9 9 8 9" />
+                  </svg>
+                ) : option.value === "HTTP" ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+                  </svg>
+                ) : option.value === "UNSTRUCTURED" ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <polyline points="21 15 16 10 5 21" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <polyline points="16 18 22 12 16 6" />
+                    <polyline points="8 6 2 12 8 18" />
+                  </svg>
+                )}
+              </span>
+              <span className="type-check-badge" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </span>
+            </span>
+            <span className="type-card-body">
+              <strong>{option.title}</strong>
+              <span className="type-subtext">{option.description}</span>
+            </span>
           </button>
         ))}
       </div>
-      <div className="etl-step-complete-actions">
-        <Button type="primary" onClick={onComplete}>
-          다음
-        </Button>
+      <div className="step-actions-bar">
+        <div className="actions-left" />
+        <div className="actions-right">
+          <button type="button" className="btn-step-next" onClick={onComplete}>
+            다음
+          </button>
+        </div>
       </div>
     </>
   );
@@ -768,82 +912,105 @@ function BasicStep({
 
   return (
     <>
-      <div className="etl-wizard-form-table">
-        <div className="form-row">
-          <label>작업명</label>
-          <input
-            value={value.jobName}
-            onChange={(event) => onChange({ jobName: event.target.value })}
-            placeholder="작업명을 입력하세요"
-          />
-        </div>
-        <div className="form-row">
-          <label>상위 그룹</label>
-          <select
-            value={value.parentGroupId}
-            disabled={!groupTree || !!groupError}
-            onChange={(event) => {
-              const selectedGroup = processGroupOptions.find((group) => group.id === event.target.value);
-              onChange({
-                parentGroupId: event.target.value,
-                parentGroupPath: selectedGroup?.label ?? "",
-              });
-            }}
-          >
-            <option value="" disabled>
-              {groupError ? "Processor Group 조회 실패" : groupTree ? "Processor Group을 선택하세요" : "Processor Group 조회 중"}
-            </option>
-            {processGroupOptions.map((group) => (
-              <option key={group.id} value={group.id}>
-                {group.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="form-row">
-          <label>설명</label>
-          <textarea
-            value={value.comments}
-            onChange={(event) => onChange({ comments: event.target.value })}
-            placeholder="설명을 입력하세요"
-          />
-        </div>
-        {isFileLoad ? (
-          <>
-            <div className="form-row">
-              <label>파일확장자</label>
-              <div className="etl-radio-cell">
-                <Radio.Group
-                  value={value.fileExtension}
-                  options={FILE_EXTENSION_OPTIONS}
-                  onChange={(event) => onChange({ fileExtension: event.target.value, files: [] })}
-                />
-              </div>
-            </div>
-            <div className="form-row">
-              <label>파일 추가</label>
-              <div className="etl-file-cell">
-                <Button icon={<UploadOutlined />} onClick={() => document.getElementById("etl-file-load-input")?.click()}>
-                  파일선택
-                </Button>
-                <input
-                  id="etl-file-load-input"
-                  type="file"
-                  multiple
-                  accept={value.fileExtension === "csv" ? ".csv" : value.fileExtension === "excel" ? ".xlsx,.xls" : undefined}
-                  onChange={(event) => onChange({ files: Array.from(event.target.files ?? []) })}
-                />
-                <span>{value.files.length > 0 ? `${value.files.length}개 파일 선택됨` : "선택된 파일 없음"}</span>
-              </div>
-            </div>
-          </>
-        ) : null}
-      </div>
+      <table className="etl-spec-table">
+        <tbody>
+          <tr>
+            <th>작업명</th>
+            <td>
+              <input
+                className="spec-input"
+                value={value.jobName}
+                onChange={(event) => onChange({ jobName: event.target.value })}
+                placeholder="작업명을 입력하세요"
+              />
+            </td>
+          </tr>
+          <tr>
+            <th>상위 그룹</th>
+            <td>
+              <select
+                className="spec-select"
+                value={value.parentGroupId}
+                disabled={!groupTree || !!groupError}
+                onChange={(event) => {
+                  const selectedGroup = processGroupOptions.find((group) => group.id === event.target.value);
+                  onChange({
+                    parentGroupId: event.target.value,
+                    parentGroupPath: selectedGroup?.label ?? "",
+                  });
+                }}
+              >
+                <option value="" disabled>
+                  {groupError ? "Processor Group 조회 실패" : groupTree ? "Processor Group을 선택하세요" : "Processor Group 조회 중"}
+                </option>
+                {processGroupOptions.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.label}
+                  </option>
+                ))}
+              </select>
+            </td>
+          </tr>
+          <tr>
+            <th>설명</th>
+            <td>
+              <input
+                className="spec-input"
+                value={value.comments}
+                onChange={(event) => onChange({ comments: event.target.value })}
+                placeholder="설명을 입력하세요"
+              />
+            </td>
+          </tr>
+          {isFileLoad ? (
+            <>
+              <tr>
+                <th>파일확장자</th>
+                <td>
+                  <div className="spec-radio-group">
+                    <Radio.Group
+                      value={value.fileExtension}
+                      options={FILE_EXTENSION_OPTIONS}
+                      onChange={(event) => onChange({ fileExtension: event.target.value, files: [] })}
+                    />
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <th>파일 추가</th>
+                <td>
+                  <div className="spec-file-upload">
+                    <button
+                      type="button"
+                      className="btn-file-select"
+                      onClick={() => document.getElementById("etl-file-load-input")?.click()}
+                    >
+                      <UploadOutlined /> 파일선택
+                    </button>
+                    <input
+                      id="etl-file-load-input"
+                      type="file"
+                      multiple
+                      accept={value.fileExtension === "csv" ? ".csv" : value.fileExtension === "excel" ? ".xlsx,.xls" : undefined}
+                      onChange={(event) => onChange({ files: Array.from(event.target.files ?? []) })}
+                    />
+                    <span className="file-chosen-text">
+                      {value.files.length > 0 ? `${value.files.length}개 파일 선택됨` : "선택된 파일 없음"}
+                    </span>
+                  </div>
+                </td>
+              </tr>
+            </>
+          ) : null}
+        </tbody>
+      </table>
 
-      <div className="etl-step-complete-actions">
-        <Button type="primary" disabled={!canComplete} onClick={onComplete}>
-          다음
-        </Button>
+      <div className="step-actions-bar etl-actions-end">
+        <div className="actions-right">
+          <button type="button" className="btn-step-next" disabled={!canComplete} onClick={onComplete}>
+            다음
+          </button>
+        </div>
       </div>
     </>
   );
@@ -1236,15 +1403,90 @@ function ConnectionStep({
   const targetTableOptions = targetTables.map((table) => ({ label: table, value: table }));
 
   return (
-    <div className="etl-wizard-form-table compact">
-      <div className={sourceEnabled ? "form-row two-column" : "form-row"}>
+    <table className="etl-spec-table">
+      <tbody>
         {sourceEnabled ? (
           <>
-            <label>소스 연결</label>
+            <tr>
+              <th>소스 연결</th>
+              <td>
+                <select
+                  className="spec-select"
+                  value={value.sourceServiceId}
+                  disabled={services.length === 0 || !!serviceError}
+                  onChange={(event) => handleSourceServiceChange(event.target.value)}
+                >
+                  <option value="" disabled>
+                    {servicePlaceholder}
+                  </option>
+                  {services.map((service) => (
+                    <option key={service.id} value={service.id}>
+                      {service.displayName}
+                    </option>
+                  ))}
+                </select>
+              </td>
+            </tr>
+            <tr>
+              <th>소스 데이터베이스</th>
+              <td>
+                <select
+                  className="spec-select"
+                  value={value.sourceDatabaseType}
+                  disabled={!!sourceDatabaseType}
+                  onChange={(event) => updateValue({ sourceDatabaseType: event.target.value as NifiDatabaseType })}
+                >
+                  {DATABASE_TYPE_OPTIONS.map((databaseType) => (
+                    <option key={databaseType} value={databaseType}>
+                      {databaseType}
+                    </option>
+                  ))}
+                </select>
+              </td>
+            </tr>
+            <tr>
+              <th>소스 스키마</th>
+              <td>
+                <Select
+                  className="spec-ant-select"
+                  showSearch
+                  value={value.sourceSchema || undefined}
+                  placeholder={sourceSchemaPlaceholder}
+                  disabled={!sourceConnectionReady || sourceSchemaLoading || !!sourceSchemaError || sourceSchemas.length === 0}
+                  loading={sourceSchemaLoading}
+                  options={sourceSchemaOptions}
+                  filterOption={matchesSelectOption}
+                  onChange={(nextSchema) => updateValue({ sourceSchema: nextSchema, sourceTable: "" })}
+                />
+              </td>
+            </tr>
+            <tr>
+              <th>소스 테이블</th>
+              <td>
+                <Select
+                  className="spec-ant-select"
+                  mode="multiple"
+                  showSearch
+                  value={commaSeparatedValues(value.sourceTable)}
+                  placeholder={sourceTablePlaceholder}
+                  disabled={!value.sourceSchema.trim() || sourceTableLoading || !!sourceTableError || sourceTables.length === 0}
+                  loading={sourceTableLoading}
+                  options={sourceTableOptions}
+                  filterOption={matchesSelectOption}
+                  onChange={(nextTables) => updateValue({ sourceTable: nextTables.join(",") })}
+                />
+              </td>
+            </tr>
+          </>
+        ) : null}
+        <tr>
+          <th>타깃 연결</th>
+          <td>
             <select
-              value={value.sourceServiceId}
+              className="spec-select"
+              value={value.targetServiceId}
               disabled={services.length === 0 || !!serviceError}
-              onChange={(event) => handleSourceServiceChange(event.target.value)}
+              onChange={(event) => handleTargetServiceChange(event.target.value)}
             >
               <option value="" disabled>
                 {servicePlaceholder}
@@ -1255,32 +1497,16 @@ function ConnectionStep({
                 </option>
               ))}
             </select>
-          </>
-        ) : null}
-        <label>타깃 연결</label>
-        <select
-          value={value.targetServiceId}
-          disabled={services.length === 0 || !!serviceError}
-          onChange={(event) => handleTargetServiceChange(event.target.value)}
-        >
-          <option value="" disabled>
-            {servicePlaceholder}
-          </option>
-          {services.map((service) => (
-            <option key={service.id} value={service.id}>
-              {service.displayName}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className={sourceEnabled ? "form-row two-column" : "form-row"}>
-        {sourceEnabled ? (
-          <>
-            <label>소스 데이터베이스</label>
+          </td>
+        </tr>
+        <tr>
+          <th>타깃 데이터베이스</th>
+          <td>
             <select
-              value={value.sourceDatabaseType}
-              disabled={!!sourceDatabaseType}
-              onChange={(event) => updateValue({ sourceDatabaseType: event.target.value as NifiDatabaseType })}
+              className="spec-select"
+              value={value.targetDatabaseType}
+              disabled={!!targetDatabaseType}
+              onChange={(event) => updateValue({ targetDatabaseType: event.target.value as NifiDatabaseType })}
             >
               {DATABASE_TYPE_OPTIONS.map((databaseType) => (
                 <option key={databaseType} value={databaseType}>
@@ -1288,79 +1514,42 @@ function ConnectionStep({
                 </option>
               ))}
             </select>
-          </>
-        ) : null}
-        <label>타깃 데이터베이스</label>
-        <select
-          value={value.targetDatabaseType}
-          disabled={!!targetDatabaseType}
-          onChange={(event) => updateValue({ targetDatabaseType: event.target.value as NifiDatabaseType })}
-        >
-          {DATABASE_TYPE_OPTIONS.map((databaseType) => (
-            <option key={databaseType} value={databaseType}>
-              {databaseType}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className={sourceEnabled ? "form-row two-column" : "form-row"}>
-        {sourceEnabled ? (
-          <>
-            <label>소스 스키마</label>
+          </td>
+        </tr>
+        <tr>
+          <th>타깃 스키마</th>
+          <td>
             <Select
+              className="spec-ant-select"
               showSearch
-              value={value.sourceSchema || undefined}
-              placeholder={sourceSchemaPlaceholder}
-              disabled={!sourceConnectionReady || sourceSchemaLoading || !!sourceSchemaError || sourceSchemas.length === 0}
-              loading={sourceSchemaLoading}
-              options={sourceSchemaOptions}
+              value={value.targetSchema || undefined}
+              placeholder={targetSchemaPlaceholder}
+              disabled={!targetConnectionReady || targetSchemaLoading || !!targetSchemaError || targetSchemas.length === 0}
+              loading={targetSchemaLoading}
+              options={targetSchemaOptions}
               filterOption={matchesSelectOption}
-              onChange={(nextSchema) => updateValue({ sourceSchema: nextSchema, sourceTable: "" })}
+              onChange={(nextSchema) => updateValue({ targetSchema: nextSchema, targetTable: "" })}
             />
-          </>
-        ) : null}
-        <label>타깃 스키마</label>
-        <Select
-          showSearch
-          value={value.targetSchema || undefined}
-          placeholder={targetSchemaPlaceholder}
-          disabled={!targetConnectionReady || targetSchemaLoading || !!targetSchemaError || targetSchemas.length === 0}
-          loading={targetSchemaLoading}
-          options={targetSchemaOptions}
-          filterOption={matchesSelectOption}
-          onChange={(nextSchema) => updateValue({ targetSchema: nextSchema, targetTable: "" })}
-        />
-      </div>
-      <div className={sourceEnabled ? "form-row two-column" : "form-row"}>
-        {sourceEnabled ? (
-          <>
-            <label>소스 테이블</label>
+          </td>
+        </tr>
+        <tr>
+          <th>타깃 테이블</th>
+          <td>
             <Select
-              mode="multiple"
+              className="spec-ant-select"
               showSearch
-              value={commaSeparatedValues(value.sourceTable)}
-              placeholder={sourceTablePlaceholder}
-              disabled={!value.sourceSchema.trim() || sourceTableLoading || !!sourceTableError || sourceTables.length === 0}
-              loading={sourceTableLoading}
-              options={sourceTableOptions}
+              value={value.targetTable || undefined}
+              placeholder={targetTablePlaceholder}
+              disabled={!value.targetSchema.trim() || targetTableLoading || !!targetTableError || targetTables.length === 0}
+              loading={targetTableLoading}
+              options={targetTableOptions}
               filterOption={matchesSelectOption}
-              onChange={(nextTables) => updateValue({ sourceTable: nextTables.join(",") })}
+              onChange={(nextTable) => updateValue({ targetTable: nextTable })}
             />
-          </>
-        ) : null}
-        <label>타깃 테이블</label>
-        <Select
-          showSearch
-          value={value.targetTable || undefined}
-          placeholder={targetTablePlaceholder}
-          disabled={!value.targetSchema.trim() || targetTableLoading || !!targetTableError || targetTables.length === 0}
-          loading={targetTableLoading}
-          options={targetTableOptions}
-          filterOption={matchesSelectOption}
-          onChange={(nextTable) => updateValue({ targetTable: nextTable })}
-        />
-      </div>
-    </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
   );
 }
 
@@ -1445,36 +1634,44 @@ function QueryStep({
 
   return (
     <div className="etl-target-preview">
-      <div className="etl-load-mode">
-        <span>적재 방식</span>
-        <label>
-          <input
-            type="radio"
-            name="etl-load-mode"
-            checked={loadMode === "INSERT"}
-            onChange={() => onLoadModeChange("INSERT")}
-          />{" "}
-          INSERT
-        </label>
-        <label>
-          <input
-            type="radio"
-            name="etl-load-mode"
-            checked={loadMode === "TRUNCATE"}
-            onChange={() => onLoadModeChange("TRUNCATE")}
-          />{" "}
-          TRUNCATE 후 적재
-        </label>
-        <label>
-          <input
-            type="radio"
-            name="etl-load-mode"
-            checked={loadMode === "UPSERT"}
-            onChange={() => onLoadModeChange("UPSERT")}
-          />{" "}
-          UPSERT
-        </label>
-      </div>
+      <table className="etl-spec-table">
+        <tbody>
+          <tr>
+            <th>적재 방식</th>
+            <td>
+              <div className="spec-radio-group">
+                <label className="spec-radio-label">
+                  <input
+                    type="radio"
+                    name="etl-load-mode"
+                    checked={loadMode === "INSERT"}
+                    onChange={() => onLoadModeChange("INSERT")}
+                  />
+                  <span>INSERT</span>
+                </label>
+                <label className="spec-radio-label">
+                  <input
+                    type="radio"
+                    name="etl-load-mode"
+                    checked={loadMode === "TRUNCATE"}
+                    onChange={() => onLoadModeChange("TRUNCATE")}
+                  />
+                  <span>TRUNCATE 후 적재</span>
+                </label>
+                <label className="spec-radio-label">
+                  <input
+                    type="radio"
+                    name="etl-load-mode"
+                    checked={loadMode === "UPSERT"}
+                    onChange={() => onLoadModeChange("UPSERT")}
+                  />
+                  <span>UPSERT</span>
+                </label>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
       {loadMode === "TRUNCATE" ? (
         <div className="etl-truncate-sql">
           <button
@@ -1982,12 +2179,21 @@ function TargetStep({
 function FileTargetStep({ columns }: { columns: string[] }) {
   return (
     <div className="etl-target-preview">
-      <div className="etl-load-mode">
-        <span>적재 방식</span>
-        <label>
-          <input type="radio" checked readOnly /> INSERT
-        </label>
-      </div>
+      <table className="etl-spec-table">
+        <tbody>
+          <tr>
+            <th>적재 방식</th>
+            <td>
+              <div className="spec-radio-group">
+                <label className="spec-radio-label">
+                  <input type="radio" checked readOnly />
+                  <span>INSERT</span>
+                </label>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
       {columns.length > 0 ? (
         <div className="etl-file-columns">
           {columns.map((column) => (
@@ -2420,8 +2626,10 @@ export function EtlCreatePage() {
     ),
   } satisfies Record<WizardStepId, ReactNode>;
 
+  const summaryOptions = { etlType, basicInfo, connectionInfo, loadMode };
+
   return (
-    <div className="etl-create-page">
+    <div className="etl-create-page etl-create-wrap">
       {completed && completionSummary ? (
         <CompletionView
           summary={completionSummary}
@@ -2429,88 +2637,126 @@ export function EtlCreatePage() {
           onOpenDag={() => navigate("/airflow/manage")}
         />
       ) : (
-        <Collapse
-          accordion
-          activeKey={activeStep}
-          onChange={(key) => {
-            const requested = Array.isArray(key) ? key[0] : key;
-            if (requested) {
-              setActiveStep(requested as WizardStepId);
-            }
-          }}
-          items={[
-            {
-              key: "type",
-              label: <StepLabel step="type" title="유형선택" completed={completedSteps.includes("type")} unlocked />,
-              children: content.type,
-            },
-            {
-              key: "basic",
-              label: <StepLabel step="basic" title="기본 정보" completed={completedSteps.includes("basic")} unlocked />,
-              children: content.basic,
-            },
-            {
-              key: "connection",
-              label: <StepLabel step="connection" title="연결" completed={completedSteps.includes("connection")} unlocked />,
-              children: (
-                <>
-                  {content.connection}
-                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
-                    <Button onClick={() => setActiveStep("basic")}>이전</Button>
-                    <Button
-                      type="primary"
-                      disabled={!canCompleteConnection}
-                      onClick={() => completeAndOpen("connection", "query")}
-                    >
-                      다음
-                    </Button>
-                  </div>
-                </>
-              ),
-            },
-            {
-              key: "query",
-              label: <StepLabel step="query" title="적재쿼리" completed={completedSteps.includes("query")} unlocked />,
-              children: (
-                <>
-                  {content.query}
-                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
-                    <Button onClick={() => setActiveStep("connection")}>이전</Button>
-                    <Button
-                      type="primary"
-                      disabled={!isFileLoad && (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()}
-                      onClick={completeQueryStep}
-                    >
-                      다음
-                    </Button>
-                  </div>
-                </>
-              ),
-            },
-            {
-              key: "target",
-              label: <StepLabel step="target" title="컬럼매핑" completed={completedSteps.includes("target")} unlocked />,
-              children: (
-                <>
-                  {content.target}
-                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
-                    <Button onClick={() => setActiveStep("query")}>이전</Button>
-                    <Button
-                      type="primary"
-                      loading={isCreating}
-                      disabled={!isFileLoad && (
-                        (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()
-                      )}
-                      onClick={completeWizard}
-                    >
-                      완료
-                    </Button>
-                  </div>
-                </>
-              ),
-            },
-          ]}
-        />
+        <>
+          <div className="etl-create-toolbar">
+            <button type="button" className="btn-header-outline" onClick={() => message.info("도움말 가이드는 아직 연결되지 않았습니다.")}>
+              <QuestionCircleOutlined /> 도움말 가이드
+            </button>
+            <button type="button" className="btn-header-outline" onClick={() => message.info("임시 저장 불러오기는 아직 연결되지 않았습니다.")}>
+              <SaveOutlined /> 임시 저장 불러오기
+            </button>
+          </div>
+
+          <CreateStepper
+            activeStep={activeStep}
+            completedSteps={completedSteps}
+            onStepClick={setActiveStep}
+          />
+
+          <div className="etl-wizard-wrap">
+            <WizardStepCard
+              step="type"
+              title="유형 선택"
+              activeStep={activeStep}
+              completedSteps={completedSteps}
+              summary={stepSummary("type", summaryOptions)}
+              onOpen={setActiveStep}
+            >
+              {content.type}
+            </WizardStepCard>
+
+            <WizardStepCard
+              step="basic"
+              title="기본 정보"
+              activeStep={activeStep}
+              completedSteps={completedSteps}
+              summary={stepSummary("basic", summaryOptions)}
+              onOpen={setActiveStep}
+            >
+              {content.basic}
+            </WizardStepCard>
+
+            <WizardStepCard
+              step="connection"
+              title="연결"
+              activeStep={activeStep}
+              completedSteps={completedSteps}
+              summary={stepSummary("connection", summaryOptions)}
+              onOpen={setActiveStep}
+            >
+              {content.connection}
+              <div className="step-actions-bar">
+                <div className="actions-left">
+                  <button type="button" className="btn-step-prev" onClick={() => setActiveStep("basic")}>이전</button>
+                </div>
+                <div className="actions-right">
+                  <button
+                    type="button"
+                    className="btn-step-next"
+                    disabled={!canCompleteConnection}
+                    onClick={() => completeAndOpen("connection", "query")}
+                  >
+                    다음
+                  </button>
+                </div>
+              </div>
+            </WizardStepCard>
+
+            <WizardStepCard
+              step="query"
+              title="적재쿼리"
+              activeStep={activeStep}
+              completedSteps={completedSteps}
+              summary={stepSummary("query", summaryOptions)}
+              onOpen={setActiveStep}
+            >
+              {content.query}
+              <div className="step-actions-bar">
+                <div className="actions-left">
+                  <button type="button" className="btn-step-prev" onClick={() => setActiveStep("connection")}>이전</button>
+                </div>
+                <div className="actions-right">
+                  <button
+                    type="button"
+                    className="btn-step-next"
+                    disabled={!isFileLoad && (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()}
+                    onClick={completeQueryStep}
+                  >
+                    다음
+                  </button>
+                </div>
+              </div>
+            </WizardStepCard>
+
+            <WizardStepCard
+              step="target"
+              title="컬럼매핑"
+              activeStep={activeStep}
+              completedSteps={completedSteps}
+              summary={stepSummary("target", summaryOptions)}
+              onOpen={setActiveStep}
+            >
+              {content.target}
+              <div className="step-actions-bar">
+                <div className="actions-left">
+                  <button type="button" className="btn-step-prev" onClick={() => setActiveStep("query")}>이전</button>
+                </div>
+                <div className="actions-right">
+                  <Button
+                    className="btn-step-next"
+                    loading={isCreating}
+                    disabled={!isFileLoad && (
+                      (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()
+                    )}
+                    onClick={completeWizard}
+                  >
+                    완료
+                  </Button>
+                </div>
+              </div>
+            </WizardStepCard>
+          </div>
+        </>
       )}
     </div>
   );

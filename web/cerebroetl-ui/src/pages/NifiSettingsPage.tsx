@@ -1,6 +1,6 @@
 import { DeleteOutlined, EditOutlined, PlusOutlined, SettingOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Radio, Space, Table, Tag, message } from "antd";
+import { Button, Checkbox, Form, Input, Modal, Popconfirm, Radio, Space, Table, Tag, message } from "antd";
 import { useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -218,17 +218,20 @@ export function NifiSettingsPage() {
     setDraftParameters((current) => current.filter((parameter) => parameter.id !== id));
   };
 
+  const contextRows = contexts ?? [];
+
   return (
-    <div className="nifi-settings-page">
-      <aside className="nifi-settings-list" aria-label="ETL 관리 설정 목록">
+    <div className="etl-setting-wrap">
+      <div className="etl-setting-grid">
+      <aside className="setting-side-card" aria-label="ETL 관리 설정 목록">
         {NIFI_SETTINGS_ITEMS.map((item) => (
           <button
             key={item.key}
             type="button"
-            className={item.key === selectedKey ? "nifi-settings-list-item active" : "nifi-settings-list-item"}
+            className={item.key === selectedKey ? "setting-nav-item active" : "setting-nav-item"}
             onClick={() => selectItem(item.key)}
           >
-            <span className="nifi-settings-list-icon" aria-hidden="true">
+            <span className="setting-nav-icon" aria-hidden="true">
               {item.icon}
             </span>
             <span>{item.label}</span>
@@ -236,57 +239,106 @@ export function NifiSettingsPage() {
         ))}
       </aside>
 
-      <section className="nifi-settings-frame" aria-label={selectedItem.label}>
-        <Card title={selectedItem.label}>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateContextModal}>
+      <section className="setting-main-card" aria-label={selectedItem.label}>
+        <div className="setting-card-header">
+          <h2 className="setting-card-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+              <polyline points="16 18 22 12 16 6" />
+              <polyline points="8 6 2 12 8 18" />
+            </svg>
+            {selectedItem.label}
+          </h2>
+          <div className="setting-header-actions">
+            <button type="button" className="btn-setting-create" onClick={openCreateContextModal}>
+              <PlusOutlined />
               신규 등록
-            </Button>
+            </button>
           </div>
+        </div>
 
-          <Table<NifiParameterContextResponse>
-            rowKey="id"
-            loading={isLoading}
-            dataSource={contexts}
-            pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
-            columns={[
-              { title: "이름", render: (_, record) => record.component.name },
-              {
-                title: "설명",
-                render: (_, record) => record.component.description || "-",
-              },
-              {
-                title: "파라미터",
-                render: (_, record) => <Tag color="blue">{record.component.parameters?.length ?? 0}개</Tag>,
-              },
-              {
-                title: "관리",
-                render: (_, record) => (
-                  <Space wrap>
-                    <Button size="small" icon={<EditOutlined />} onClick={() => openEditContextModal(record)}>
-                      수정
-                    </Button>
-                    <Popconfirm
-                      title="이 파라미터 컨텍스트를 삭제할까요?"
-                      description="NiFi에서도 함께 삭제됩니다."
-                      onConfirm={() => deleteMutation.mutate(record.id)}
-                    >
-                      <Button
-                        danger
-                        size="small"
-                        icon={<DeleteOutlined />}
-                        loading={deleteMutation.isPending && deleteMutation.variables === record.id}
-                      >
-                        삭제
-                      </Button>
-                    </Popconfirm>
-                  </Space>
-                ),
-              },
-            ]}
-          />
-        </Card>
+        <div className="setting-table-wrap">
+          <table className="setting-data-table">
+            <thead>
+              <tr>
+                <th style={{ width: "25%" }}>이름</th>
+                <th style={{ width: "35%" }}>설명</th>
+                <th style={{ width: "18%" }}>파라미터</th>
+                <th style={{ width: "22%" }}>관리</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr>
+                  <td colSpan={4} className="setting-empty-cell">불러오는 중입니다.</td>
+                </tr>
+              ) : contextRows.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="setting-empty-cell">등록된 전역변수가 없습니다.</td>
+                </tr>
+              ) : (
+                contextRows.map((record) => (
+                  <tr key={record.id}>
+                    <td>
+                      <span className="var-name-text">{record.component.name}</span>
+                    </td>
+                    <td>
+                      <span className="var-desc-text">{record.component.description || "-"}</span>
+                    </td>
+                    <td>
+                      <button type="button" className="param-count-badge" onClick={() => openEditContextModal(record)}>
+                        {record.component.parameters?.length ?? 0}개
+                      </button>
+                    </td>
+                    <td>
+                      <div className="table-action-group">
+                        <button type="button" className="btn-action-edit" onClick={() => openEditContextModal(record)}>
+                          <EditOutlined /> 수정
+                        </button>
+                        <Popconfirm
+                          title="이 파라미터 컨텍스트를 삭제할까요?"
+                          description="NiFi에서도 함께 삭제됩니다."
+                          onConfirm={() => deleteMutation.mutate(record.id)}
+                        >
+                          <button
+                            type="button"
+                            className="btn-action-delete"
+                            disabled={deleteMutation.isPending && deleteMutation.variables === record.id}
+                          >
+                            <DeleteOutlined /> 삭제
+                          </button>
+                        </Popconfirm>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="setting-pagination-bar">
+          <div className="pagination-total-info">전체 {contextRows.length}건</div>
+          <div className="pagination-controls">
+            <button type="button" className="btn-page-arrow" disabled title="이전 페이지">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+            <span className="page-number-box">1</span>
+            <button type="button" className="btn-page-arrow" disabled title="다음 페이지">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+          </div>
+          <select className="page-size-select" defaultValue="10" aria-label="페이지 크기">
+            <option value="10">10 / page</option>
+            <option value="20">20 / page</option>
+            <option value="50">50 / page</option>
+          </select>
+        </div>
       </section>
+      </div>
 
       <Modal
         title={editingContextId === null ? "전역변수 신규등록" : "전역변수 수정"}

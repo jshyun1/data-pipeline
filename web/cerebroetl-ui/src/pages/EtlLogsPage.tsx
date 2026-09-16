@@ -276,7 +276,7 @@ export function EtlLogsPage() {
   const selectedPreset = activeDayPresetByDate(appliedRange[0], appliedRange[1]);
 
   const filters = (
-    <Space style={{ marginBottom: 16 }} wrap>
+    <Space className="etl-log-filter-toolbar" wrap>
       <Space.Compact>
         <Button type={selectedPreset === 0 ? "primary" : "default"} onClick={() => applyDatePreset(0)}>당일</Button>
         <Button type={selectedPreset === 1 ? "primary" : "default"} onClick={() => applyDatePreset(1)}>전일</Button>
@@ -332,7 +332,7 @@ export function EtlLogsPage() {
   );
 
   return (
-    <div>
+    <div className="etl-log-page">
       <div className={`etl-log-dashboard-curtain${dashboardOpen ? " open" : " closed"}`}>
         <button
           type="button"
@@ -357,6 +357,7 @@ export function EtlLogsPage() {
       </div>
       {filters}
       <Table<UnifiedEtlLogRow>
+        className="etl-log-table"
         rowKey="key"
         size="small"
         loading={(runsQuery.isLoading && !runsQuery.data) || (eventsQuery.isLoading && !eventsQuery.data)}
