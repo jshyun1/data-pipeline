@@ -11,6 +11,8 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { AccountManagementPage } from "./pages/admin/AccountManagementPage";
 import { RolePermissionPage } from "./pages/admin/RolePermissionPage";
 import { AuditLogPage } from "./pages/admin/AuditLogPage";
+import { GptManagePage } from "./pages/gpt/GptManagePage";
+import { GptRegisterPage } from "./pages/gpt/GptRegisterPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { RequirePermissionRoute } from "./auth/RequirePermissionRoute";
 import { WorkflowCanvasPage } from "./pages/WorkflowCanvasPage";
@@ -56,6 +58,9 @@ export function App() {
           <Route path="/admin/roles" element={<RolePermissionPage />} />
           <Route path="/admin/assign" element={<Navigate to="/admin/users" replace />} />
           <Route path="/admin/audit" element={<AuditLogPage />} />
+          <Route path="/gpt" element={<Navigate to="/gpt/manage" replace />} />
+          <Route path="/gpt/register" element={<GptRegisterPage />} />
+          <Route path="/gpt/manage" element={<GptManagePage />} />
         </Route>
         <Route path="/self-check" element={<SelfCheckPage />} />
         <Route path="/airflow" element={<Navigate to="/airflow/dashboard" replace />} />
