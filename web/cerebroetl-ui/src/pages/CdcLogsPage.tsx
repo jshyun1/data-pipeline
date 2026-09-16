@@ -1,43 +1,41 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, DatePicker, Drawer, Input, message, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
-import { InfoCircleFilled } from "@ant-design/icons";
-import { Line } from "@ant-design/plots";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Button, DatePicker, Input, Select, Space, Table, Tag, Tooltip } from "antd";
+import {
+  CheckCircleFilled,
+  CloseCircleFilled,
+  DownOutlined,
+  RightOutlined,
+  UpOutlined,
+} from "@ant-design/icons";
 import dayjs, { type Dayjs } from "dayjs";
+import { Link, useSearchParams } from "react-router-dom";
+import { activeDayPresetByDate } from "../components/dayPreset";
 import {
   listCdcEventLogs,
   listCdcProcessingLogs,
-  getDlqRecordDetail,
-  listDlqRecords,
-  approveDlqReplay,
-  listDlqReplayRequests,
-  requestDlqReplay,
   type CdcEventLogEntry,
   type CdcProcessingLogEntry,
-  type DlqRecordEntry,
-  type DlqReplayRequestEntry,
 } from "../api/cdcLogs";
 import { listPipelines } from "../api/pipelines";
-import { useAuth } from "../auth/AuthContext";
+import { listPipelineGroups } from "../api/pipelineGroups";
 
 const { RangePicker } = DatePicker;
 
 const STATUS_LABEL: Record<string, string> = {
-  SUCCESS: "정상",
+  RUNNING: "진행 중",
+  SUCCESS: "성공",
   DELAYED: "지연",
   STOPPED: "중지",
   FAILED: "실패",
 };
 
 const STATUS_COLOR: Record<string, string> = {
+  RUNNING: "processing",
   SUCCESS: "success",
   DELAYED: "warning",
   STOPPED: "default",
   FAILED: "error",
-  RUNNING: "success",
-  PAUSED: "warning",
-  UNASSIGNED: "default",
-  UNKNOWN: "default",
 };
 
 const COMMAND_LABEL: Record<string, string> = {
@@ -52,6 +50,26 @@ const COMMAND_LABEL: Record<string, string> = {
   RUNTIME_MONITOR: "런타임 감시",
   DISMISS_DRIFT: "불일치 확인",
 };
+
+type StatusFilter = "ALL" | string;
+
+interface UnifiedCdcLogRow {
+  key: string;
+  kind: "processing" | "event";
+  status: string;
+  pipelineId: number;
+  pipelineName: string;
+  /** «처리»(1분 처리 구간) 또는 이벤트 이름(배포·시작·중지 …). */
+  kindLabel: string;
+  startedAt: string;
+  endedAt?: string | null;
+  durationSeconds?: number | null;
+  processedCount?: number | null;
+  path: string;
+  message?: string | null;
+  processing?: CdcProcessingLogEntry;
+  event?: CdcEventLogEntry;
+}
 
 function formatDateTime(value?: string | null) {
   if (!value) {
@@ -69,431 +87,394 @@ function formatDateTime(value?: string | null) {
 }
 
 function formatCount(value?: number | null) {
-  return (value ?? 0).toLocaleString("ko-KR");
+  return value == null ? "-" : value.toLocaleString();
 }
 
-function StateTag({ value }: { value: string | null }) {
-  // 로그 파이프라인의 Source처럼 "원래 없는" 항목은 태그 대신 "-"로 둔다.
-  // UNKNOWN 태그로 보이면 "상태를 못 읽었다"는 뜻으로 오해된다.
-  if (!value) {
-    return <span style={{ color: "#999" }}>-</span>;
+function compareText(a?: string | null, b?: string | null) {
+  return (a ?? "").localeCompare(b ?? "", "ko");
+}
+
+function compareDate(a?: string | null, b?: string | null) {
+  return (a ? new Date(a).getTime() : 0) - (b ? new Date(b).getTime() : 0);
+}
+
+function compareNumber(a?: number | null, b?: number | null) {
+  return (a ?? -1) - (b ?? -1);
+}
+
+/** 733초를 "12분 13초"처럼. */
+function formatDuration(seconds?: number | null) {
+  if (seconds == null) {
+    return "-";
   }
-  return <Tag color={STATUS_COLOR[value] ?? (value === "FAILED" ? "error" : "default")}>{value}</Tag>;
+  if (seconds < 60) {
+    return `${seconds}초`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (minutes < 60) {
+    return rest === 0 ? `${minutes}분` : `${minutes}분 ${rest}초`;
+  }
+  const hours = Math.floor(minutes / 60);
+  return `${hours}시간 ${minutes % 60}분`;
 }
 
-function ConnectorStateTitle({ label, description }: { label: string; description: string }) {
+/** 펼친 줄. 표 열에서 뺀 처리 구간의 세부 값(소스·타깃·Topic·커넥터 상태·Lag)과 메시지를 보여준다. */
+function DetailRow({ row }: { row: UnifiedCdcLogRow }) {
+  const lines: Array<[string, ReactNode]> = [];
+  if (row.processing) {
+    const p = row.processing;
+    lines.push(["소스 → 타깃", `${p.source} → ${p.target}`]);
+    lines.push(["Topic", p.topicName || "-"]);
+    // 로그 파이프라인은 소스가 Filebeat(외부 에이전트)라 Source 커넥터가 없다 -> "-".
+    lines.push(["커넥터 상태", `Source ${p.sourceState ?? "-"} · Sink ${p.sinkState ?? "-"}`]);
+    lines.push(["Lag", formatCount(p.consumerLag)]);
+    lines.push(["일 누적 처리", formatCount(p.dailyProcessedCount)]);
+  }
+  if (row.event) {
+    lines.push(["요청자", row.event.requestedBy ?? "시스템"]);
+  }
   return (
-    <Tooltip title={description}>
-      <span
-        tabIndex={0}
-        aria-label={`${label} 컬럼 설명`}
-        style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "help" }}
-      >
-        {label}
-        <InfoCircleFilled style={{ color: "#1677ff", fontSize: 13 }} />
-      </span>
-    </Tooltip>
+    <div style={{ fontSize: 12 }}>
+      {lines.map(([label, value]) => (
+        <div key={label} style={{ display: "flex", gap: 12, lineHeight: 1.8 }}>
+          <span style={{ width: 90, color: "#888", flexShrink: 0 }}>{label}</span>
+          <span>{value}</span>
+        </div>
+      ))}
+      {row.message ? (
+        <pre style={{ whiteSpace: "pre-wrap", margin: lines.length ? "6px 0 0" : 0, fontSize: 12 }}>{row.message}</pre>
+      ) : null}
+    </div>
   );
 }
 
+/**
+ * CDC 로그. ETL 로그 화면(EtlLogsPage)과 같은 구성이다(2026-09-13 요청) - 접히는 상태별 건수 대시보드,
+ * 당일·전일·기간·검색·파이프라인 필터, 그리고 한 장의 표.
+ *
+ * <p>예전에는 «처리 이력 / 오류·상태 이력 / 실패 데이터(DLQ)» 탭으로 나뉘어 있었다. 두 이력은 한 표로 합치고
+ * (시각 역순), DLQ 는 화면에서 뺐다 - 싱크 실패 정책을 «버리고 계속»에서 «멈춤»으로 바꾸기로 해서 DLQ 는 쓰이지
+ * 않게 된다(docs/2026-09-09-cdc-error-policy-dlq.md). 백엔드의 DLQ·재처리 API 는 정책 전환 때 함께 정리한다.
+ * Lag 추이 차트와 자동 갱신도 ETL 로그 화면에 없어 뺐고, 처리 구간의 세부 값은 줄을 펼쳐 본다.
+ *
+ * <ul>
+ *   <li>처리 이력: 백엔드가 1분 구간마다 처리량·Lag·상태 변화가 있을 때만 남긴다(변화 없는 heartbeat 제외).
+ *       처리 건수는 Sink committed offset 증가량 기준 추정치다.</li>
+ *   <li>오류·상태 이력: 배포·시작·중지 같은 명령과 그 결과. 결과가 아직 없으면 «진행 중»이다.</li>
+ * </ul>
+ */
 export function CdcLogsPage() {
-  const queryClient = useQueryClient();
-  const { user } = useAuth();
-  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs().startOf("day"), dayjs().endOf("day")]);
-  const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(dateRange);
-  const [keyword, setKeyword] = useState("");
-  const [activeTab, setActiveTab] = useState("processing");
-  const [processingStatuses, setProcessingStatuses] = useState<string[]>([]);
-  const [eventResults, setEventResults] = useState<string[]>([]);
-  const [selectedPipelineId, setSelectedPipelineId] = useState<number | undefined>();
-  const [refreshSeconds, setRefreshSeconds] = useState(30);
-  const [selectedDlqRecord, setSelectedDlqRecord] = useState<DlqRecordEntry | null>(null);
-  const [replayReason, setReplayReason] = useState("");
+  const [searchParams] = useSearchParams();
+  const initialFrom = searchParams.get("from");
+  const initialTo = searchParams.get("to");
+  const today = dayjs();
+  const initialRange: [Dayjs, Dayjs] = [
+    initialFrom ? dayjs(initialFrom) : today,
+    initialTo ? dayjs(initialTo) : today,
+  ];
+  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>(initialRange);
+  const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(initialRange);
+  const [keyword, setKeyword] = useState(searchParams.get("q") ?? "");
+  const [pipelineFilter, setPipelineFilter] = useState<number[]>([]);
+  const [dashboardOpen, setDashboardOpen] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
   const from = appliedRange[0].format("YYYY-MM-DD");
   const to = appliedRange[1].format("YYYY-MM-DD");
+
+  useEffect(() => {
+    const nextFrom = searchParams.get("from");
+    const nextTo = searchParams.get("to");
+    if (nextFrom && nextTo) {
+      const nextRange: [Dayjs, Dayjs] = [dayjs(nextFrom), dayjs(nextTo)];
+      setDateRange(nextRange);
+      setAppliedRange(nextRange);
+    }
+    setKeyword(searchParams.get("q") ?? "");
+  }, [searchParams]);
+
   const processingQuery = useQuery({
     queryKey: ["cdc-processing-logs", from, to],
     queryFn: () => listCdcProcessingLogs(from, to),
-    placeholderData: (previousData) => previousData,
-    refetchInterval: refreshSeconds > 0 ? refreshSeconds * 1000 : false,
+    placeholderData: (previous) => previous,
   });
   const eventsQuery = useQuery({
     queryKey: ["cdc-event-logs", from, to],
     queryFn: () => listCdcEventLogs(from, to),
-    placeholderData: (previousData) => previousData,
-    refetchInterval: refreshSeconds > 0 ? refreshSeconds * 1000 : false,
+    placeholderData: (previous) => previous,
   });
   const pipelinesQuery = useQuery({ queryKey: ["pipelines"], queryFn: listPipelines });
-  const dlqQuery = useQuery({
-    queryKey: ["cdc-dlq", selectedPipelineId, appliedRange[0].toISOString(), appliedRange[1].toISOString()],
-    queryFn: () => listDlqRecords(selectedPipelineId!, appliedRange[0].toISOString(), appliedRange[1].toISOString()),
-    enabled: activeTab === "dlq" && selectedPipelineId != null,
-    refetchInterval: activeTab === "dlq" && refreshSeconds > 0 ? refreshSeconds * 1000 : false,
-  });
-  const dlqDetailQuery = useQuery({
-    queryKey: ["cdc-dlq-detail", selectedDlqRecord?.pipelineId, selectedDlqRecord?.partition, selectedDlqRecord?.offset],
-    queryFn: () => getDlqRecordDetail(selectedDlqRecord!.pipelineId, selectedDlqRecord!.partition, selectedDlqRecord!.offset),
-    enabled: selectedDlqRecord != null,
-  });
-  const replayRequestsQuery = useQuery({
-    queryKey: ["cdc-dlq-replay-requests"], queryFn: listDlqReplayRequests, enabled: activeTab === "dlq",
-  });
-  const replayMutation = useMutation({
-    mutationFn: requestDlqReplay,
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["cdc-dlq-replay-requests"] });
-      setReplayReason(""); setSelectedDlqRecord(null);
-      message.success(result.status === "SUCCEEDED" ? "재처리가 완료되었습니다." : "재처리 승인 요청이 등록되었습니다.");
-    },
-    onError: (error: Error) => message.error(error.message),
-  });
-  const approveMutation = useMutation({
-    mutationFn: approveDlqReplay,
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["cdc-dlq-replay-requests"] }); message.success("승인 및 재처리를 완료했습니다."); },
-    onError: (error: Error) => message.error(error.message),
-  });
+  const groupsQuery = useQuery({ queryKey: ["pipeline-groups"], queryFn: listPipelineGroups });
 
-  const normalizedKeyword = keyword.trim().toLowerCase();
-  const inAppliedRange = (occurredAt: string) => {
-    const occurred = dayjs(occurredAt);
-    return !occurred.isBefore(appliedRange[0]) && !occurred.isAfter(appliedRange[1]);
-  };
-  const processingRows = useMemo(
-    () =>
-      (processingQuery.data ?? []).filter((row) => {
-        const matchesKeyword =
-          !normalizedKeyword ||
-          row.pipelineName.toLowerCase().includes(normalizedKeyword) ||
-          row.source.toLowerCase().includes(normalizedKeyword) ||
-          row.target.toLowerCase().includes(normalizedKeyword) ||
-          (row.topicName ?? "").toLowerCase().includes(normalizedKeyword);
-        return inAppliedRange(row.occurredAt)
-          && (selectedPipelineId == null || row.pipelineId === selectedPipelineId)
-          && matchesKeyword
-          && (processingStatuses.length === 0 || processingStatuses.includes(row.status));
-      }),
-    [appliedRange, normalizedKeyword, processingQuery.data, processingStatuses, selectedPipelineId],
-  );
-  const eventRows = useMemo(
-    () =>
-      (eventsQuery.data ?? []).filter((row) => {
-        const matchesKeyword =
-          !normalizedKeyword ||
-          row.pipelineName.toLowerCase().includes(normalizedKeyword) ||
-          (row.message ?? "").toLowerCase().includes(normalizedKeyword);
-        return inAppliedRange(row.occurredAt)
-          && (selectedPipelineId == null || row.pipelineId === selectedPipelineId)
-          && matchesKeyword
-          && (eventResults.length === 0 || eventResults.includes(row.result ?? ""));
-      }),
-    [appliedRange, eventResults, eventsQuery.data, normalizedKeyword, selectedPipelineId],
-  );
+  /** 파이프라인 → «전체 파이프라인 > 그룹 > 하위 그룹» 경로. CDC 관리 트리와 같은 계층이다. */
+  const pathByPipelineId = useMemo(() => {
+    const groups = new Map((groupsQuery.data ?? []).map((group) => [group.id, group]));
+    const groupPath = (groupId: number | null | undefined) => {
+      const names: string[] = [];
+      const seen = new Set<number>();
+      let current = groupId != null ? groups.get(groupId) : undefined;
+      while (current && !seen.has(current.id)) {
+        seen.add(current.id);
+        names.unshift(current.name);
+        current = current.parentId != null ? groups.get(current.parentId) : undefined;
+      }
+      return ["전체 파이프라인", ...names].join(" > ");
+    };
+    return new Map((pipelinesQuery.data ?? []).map((pipeline) => [pipeline.id, groupPath(pipeline.groupId)]));
+  }, [groupsQuery.data, pipelinesQuery.data]);
+
+  const allRows = useMemo<UnifiedCdcLogRow[]>(() => {
+    const processingRows: UnifiedCdcLogRow[] = (processingQuery.data ?? []).map((row) => ({
+      key: `processing-${row.pipelineId}-${row.occurredAt}`,
+      kind: "processing",
+      status: row.status,
+      pipelineId: row.pipelineId,
+      pipelineName: row.pipelineName,
+      kindLabel: "처리",
+      startedAt: row.occurredAt,
+      endedAt: null,
+      durationSeconds: null,
+      processedCount: row.processedCount,
+      path: pathByPipelineId.get(row.pipelineId) ?? "전체 파이프라인",
+      message: row.message,
+      processing: row,
+    }));
+    const eventRows: UnifiedCdcLogRow[] = (eventsQuery.data ?? []).map((row) => ({
+      key: `event-${row.id}`,
+      kind: "event",
+      status: row.result ?? "RUNNING",
+      pipelineId: row.pipelineId,
+      pipelineName: row.pipelineName,
+      kindLabel: COMMAND_LABEL[row.command] ?? row.command,
+      startedAt: row.occurredAt,
+      endedAt: row.completedAt,
+      durationSeconds: row.completedAt
+        ? Math.max(0, dayjs(row.completedAt).diff(dayjs(row.occurredAt), "second"))
+        : null,
+      processedCount: null,
+      path: pathByPipelineId.get(row.pipelineId) ?? "전체 파이프라인",
+      message: row.message,
+      event: row,
+    }));
+    return [...processingRows, ...eventRows].sort((a, b) => compareDate(b.startedAt, a.startedAt));
+  }, [processingQuery.data, eventsQuery.data, pathByPipelineId]);
+
+  // 파이프라인 필터 후보: 등록된 파이프라인 + 로그에만 남은(삭제된) 파이프라인.
   const pipelineOptions = useMemo(() => {
-    const rows = [...(processingQuery.data ?? []), ...(eventsQuery.data ?? [])];
-    const names = new Map(rows.map((row) => [row.pipelineId, row.pipelineName]));
+    const names = new Map<number, string>(allRows.map((row) => [row.pipelineId, row.pipelineName]));
     for (const pipeline of pipelinesQuery.data ?? []) names.set(pipeline.id, pipeline.name);
     return [...names.entries()]
       .map(([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [eventsQuery.data, pipelinesQuery.data, processingQuery.data]);
-  const lagTrend = useMemo(() => {
-    // 차트는 분 단위가 아니라 시간 단위로 집계한다. 파이프라인·시간별 최대 Lag를 대표값으로 표시한다
-    // (처리 이력 표는 그대로 분 단위를 유지한다).
-    const byBucket = new Map<string, { occurredAt: string; consumerLag: number; pipelineName: string }>();
-    for (const row of processingRows) {
-      const hourKey = dayjs(row.occurredAt).format("YYYY-MM-DDTHH:00:00");
-      const key = `${row.pipelineName} ${hourKey}`;
-      const existing = byBucket.get(key);
-      if (!existing || row.consumerLag > existing.consumerLag) {
-        byBucket.set(key, { occurredAt: hourKey, consumerLag: row.consumerLag, pipelineName: row.pipelineName });
-      }
-    }
-    return [...byBucket.values()]
-      .sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
-  }, [processingRows]);
+      .sort((a, b) => compareText(a.label, b.label));
+  }, [allRows, pipelinesQuery.data]);
 
-  // 전일자/당일 프리셋: 해당 날짜 하루로 조회기간을 즉시 맞춘다.
-  const applyDayPreset = (offsetDays: 0 | 1) => {
-    const day = dayjs().subtract(offsetDays, "day");
-    const range: [Dayjs, Dayjs] = [day.startOf("day"), day.endOf("day")];
+  const baseRows = useMemo(() => {
+    const needle = keyword.trim().toLowerCase();
+    return allRows.filter((row) => {
+      if (pipelineFilter.length > 0 && !pipelineFilter.includes(row.pipelineId)) {
+        return false;
+      }
+      if (!needle) {
+        return true;
+      }
+      return [
+        row.pipelineName, row.kindLabel, row.path, row.message,
+        row.processing?.source, row.processing?.target, row.processing?.topicName,
+      ].some((text) => (text ?? "").toLowerCase().includes(needle));
+    });
+  }, [allRows, keyword, pipelineFilter]);
+
+  const rows = useMemo(
+    () => (statusFilter === "ALL" ? baseRows : baseRows.filter((row) => row.status === statusFilter)),
+    [baseRows, statusFilter],
+  );
+
+  const summary = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of baseRows) {
+      counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
+    }
+    return {
+      total: baseRows.length,
+      running: counts.get("RUNNING") ?? 0,
+      success: counts.get("SUCCESS") ?? 0,
+      failed: counts.get("FAILED") ?? 0,
+      extra: [...counts.entries()]
+        .filter(([status]) => !["RUNNING", "SUCCESS", "FAILED"].includes(status))
+        .sort(([a], [b]) => compareText(STATUS_LABEL[a] ?? a, STATUS_LABEL[b] ?? b)),
+    };
+  }, [baseRows]);
+
+  const applyDatePreset = (offsetDays: 0 | 1) => {
+    const target = dayjs().subtract(offsetDays, "day");
+    const range: [Dayjs, Dayjs] = [target, target];
     setDateRange(range);
     setAppliedRange(range);
   };
+  const selectedPreset = activeDayPresetByDate(appliedRange[0], appliedRange[1]);
 
   const filters = (
     <Space style={{ marginBottom: 16 }} wrap>
       <Space.Compact>
-        <Button onClick={() => applyDayPreset(1)}>전일자</Button>
-        <Button onClick={() => applyDayPreset(0)}>당일</Button>
+        <Button type={selectedPreset === 0 ? "primary" : "default"} onClick={() => applyDatePreset(0)}>당일</Button>
+        <Button type={selectedPreset === 1 ? "primary" : "default"} onClick={() => applyDatePreset(1)}>전일</Button>
       </Space.Compact>
       <RangePicker
         value={dateRange}
         onChange={(value) => {
-          if (value?.[0] && value[1]) {
+          if (value && value[0] && value[1]) {
             setDateRange([value[0], value[1]]);
           }
         }}
         allowClear={false}
       />
       <Input
-        placeholder="파이프라인/Topic 검색"
+        placeholder="파이프라인/Topic/메시지 검색"
         allowClear
-        style={{ width: 220 }}
+        style={{ width: 240 }}
         value={keyword}
         onChange={(event) => setKeyword(event.target.value)}
       />
-      <Select allowClear showSearch optionFilterProp="label" placeholder="파이프라인" style={{ minWidth: 180 }} value={selectedPipelineId} onChange={setSelectedPipelineId} options={pipelineOptions} />
       <Select
         mode="multiple"
         allowClear
-        placeholder="상태"
-        style={{ minWidth: 160 }}
-        value={activeTab === "processing" ? processingStatuses : eventResults}
-        onChange={activeTab === "processing" ? setProcessingStatuses : setEventResults}
-        options={
-          activeTab === "processing"
-            ? [
-                { value: "SUCCESS", label: "정상" },
-                { value: "DELAYED", label: "지연" },
-                { value: "STOPPED", label: "중지" },
-                { value: "FAILED", label: "실패" },
-              ]
-            : [
-                { value: "SUCCESS", label: "성공" },
-                { value: "FAILED", label: "실패" },
-              ]
-        }
+        showSearch
+        optionFilterProp="label"
+        placeholder="파이프라인"
+        style={{ minWidth: 200 }}
+        options={pipelineOptions}
+        value={pipelineFilter}
+        onChange={setPipelineFilter}
       />
       <Button type="primary" onClick={() => setAppliedRange(dateRange)}>
         조회
       </Button>
-      <Select
-        value={refreshSeconds}
-        onChange={setRefreshSeconds}
-        style={{ width: 130 }}
-        options={[{ value: 0, label: "자동갱신 끔" }, { value: 10, label: "10초 갱신" }, { value: 30, label: "30초 갱신" }, { value: 60, label: "60초 갱신" }]}
-      />
-      <Tooltip
-        placement="right"
-        title={
-          <>
-            <div>처리 건수는 CDC Sink의 committed offset 증가량을 기준으로 한 추정치입니다.</div>
-            <div style={{ marginTop: 6 }}>
-              일 누적 처리는 파이프라인별로 한국 시간 자정부터 해당 시각까지의 처리 건수를 합산합니다.
-            </div>
-            <div style={{ marginTop: 6 }}>
-              원본 데이터의 컬럼값은 표시하지 않으며, 중지 상태에서는 Source가 계속 수집하므로 Lag 증가가
-              정상적인 적재 대기일 수 있습니다.
-            </div>
-          </>
-        }
-      >
-        <InfoCircleFilled
-          aria-label="CDC 처리 건수 안내"
-          tabIndex={0}
-          style={{ color: "#1677ff", cursor: "help", fontSize: 18 }}
-        />
-      </Tooltip>
     </Space>
+  );
+
+  const metric = (
+    status: StatusFilter,
+    icon: ReactNode | null,
+    label: string,
+    value: number,
+    modifier = "",
+    key?: string,
+  ) => (
+    <button
+      key={key}
+      type="button"
+      className={`etl-log-monitoring-metric${modifier}${statusFilter === status ? " active" : ""}`}
+      onClick={() => setStatusFilter(statusFilter === status && status !== "ALL" ? "ALL" : status)}
+    >
+      {icon}
+      <span>{label}<strong>{value.toLocaleString()}</strong></span>
+    </button>
   );
 
   return (
     <div>
-      <Card title="CDC 처리 로그">
-        {filters}
-        <Card size="small" title="Sink 소비 Lag 추이" style={{ marginBottom: 16 }}>
-          <Typography.Text type="secondary">CDC Sink consumer의 미처리 offset 추정치이며 타깃 DB의 E2E 지연 시간은 아닙니다.</Typography.Text>
-          {lagTrend.length > 0 ? (
-            <Line
-              data={lagTrend}
-              xField="occurredAt"
-              yField="consumerLag"
-              colorField="pipelineName"
-              height={260}
-              axis={{ x: { labelFormatter: (value: string) => dayjs(value).format("MM-DD HH:mm") }, y: { labelFormatter: (value: number) => Number(value).toLocaleString("ko-KR") } }}
-              tooltip={{ title: (datum: { occurredAt: string }) => formatDateTime(datum.occurredAt) }}
-            />
-          ) : <div style={{ padding: 48, textAlign: "center", color: "#999" }}>선택한 기간의 Lag 데이터가 없습니다.</div>}
-        </Card>
-        <Tabs
-          activeKey={activeTab}
-          onChange={setActiveTab}
-          items={[
-            {
-              key: "processing",
-              label: "처리 이력",
-              children: (
-                <>
-                  <Typography.Text type="secondary">
-                    변화 없는 정상 heartbeat는 제외하고 처리량, Lag 또는 상태 변화가 있는 1분 구간을 표시합니다.
-                  </Typography.Text>
-                  <Table<CdcProcessingLogEntry>
-                    rowKey={(row) => `${row.pipelineId}-${row.occurredAt}`}
-                    style={{ marginTop: 12 }}
-                    size="small"
-                    loading={processingQuery.isLoading && !processingQuery.data}
-                    dataSource={processingRows}
-                    pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
-                    scroll={{ x: 1540 }}
-                    columns={[
-                      { title: "발생 시각", dataIndex: "occurredAt", width: 180, render: formatDateTime },
-                      { title: "파이프라인", dataIndex: "pipelineName", width: 160, fixed: "left" },
-                      {
-                        title: "소스 → 타깃",
-                        width: 330,
-                        render: (_, row) => (
-                          <span>
-                            {row.source}
-                            <br />
-                            <Typography.Text type="secondary">→ {row.target}</Typography.Text>
-                          </span>
-                        ),
-                      },
-                      { title: "Topic", dataIndex: "topicName", width: 210 },
-                      {
-                        title: "상태",
-                        dataIndex: "status",
-                        width: 90,
-                        render: (value: string) => (
-                          <Tag color={STATUS_COLOR[value] ?? "default"}>{STATUS_LABEL[value] ?? value}</Tag>
-                        ),
-                      },
-                      {
-                        title: (
-                          <ConnectorStateTitle
-                            label="Source"
-                            description="원본 시스템의 변경 데이터를 읽어 중간 전송 채널로 보내는 Source 커넥터의 현재 상태입니다. 로그 파이프라인은 소스가 Filebeat(외부 에이전트)라 Source 커넥터가 없어 -로 표시됩니다."
-                          />
-                        ),
-                        dataIndex: "sourceState",
-                        width: 110,
-                        render: (value: string | null) => <StateTag value={value} />,
-                      },
-                      {
-                        title: (
-                          <ConnectorStateTitle
-                            label="Sink"
-                            description="중간 전송 채널의 데이터를 읽어 대상 시스템에 반영하는 Sink 커넥터의 현재 상태입니다."
-                          />
-                        ),
-                        dataIndex: "sinkState",
-                        width: 110,
-                        render: (value: string) => <StateTag value={value} />,
-                      },
-                      { title: "처리 건수", dataIndex: "processedCount", width: 110, align: "right", render: formatCount },
-                      {
-                        title: "일 누적 처리",
-                        dataIndex: "dailyProcessedCount",
-                        width: 120,
-                        align: "right",
-                        render: formatCount,
-                      },
-                      {
-                        title: "Lag",
-                        dataIndex: "consumerLag",
-                        width: 100,
-                        align: "right",
-                        render: (value: number) =>
-                          value > 0 ? <Tag color={value >= 1000 ? "warning" : "processing"}>{formatCount(value)}</Tag> : "0",
-                      },
-                      { title: "메시지", dataIndex: "message", width: 260, render: (value?: string | null) => value ?? "-" },
-                    ]}
-                  />
-                </>
-              ),
-            },
-            {
-              key: "events",
-              label: "오류·상태 이력",
-              children: (
-                <Table<CdcEventLogEntry>
-                  rowKey="id"
-                  size="small"
-                  loading={eventsQuery.isLoading && !eventsQuery.data}
-                  dataSource={eventRows}
-                  pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
-                  columns={[
-                    { title: "발생 시각", dataIndex: "occurredAt", width: 190, render: formatDateTime },
-                    { title: "파이프라인", dataIndex: "pipelineName" },
-                    {
-                      title: "이벤트",
-                      dataIndex: "command",
-                      width: 140,
-                      render: (value: string) => COMMAND_LABEL[value] ?? value,
-                    },
-                    {
-                      title: "결과",
-                      dataIndex: "result",
-                      width: 100,
-                      render: (value?: string | null) =>
-                        value ? <Tag color={STATUS_COLOR[value] ?? "default"}>{STATUS_LABEL[value] ?? value}</Tag> : "-",
-                    },
-                    { title: "요청자", dataIndex: "requestedBy", width: 120, render: (value?: string | null) => value ?? "시스템" },
-                    { title: "메시지", dataIndex: "message", render: (value?: string | null) => value ?? "-" },
-                  ]}
-                />
-              ),
-            },
-            {
-              key: "dlq",
-              label: "실패 데이터",
-              children: (
-                <>
-                  <Alert type="warning" showIcon message="DLQ 조회 전용" description="현재는 실패 원인과 원문 확인만 지원합니다. 중복·순서 역전을 막을 승인 및 멱등성 정책이 마련되기 전까지 재처리는 제공하지 않습니다." style={{ marginBottom: 12 }} />
-                  {selectedPipelineId == null ? (
-                    <div style={{ padding: 48, textAlign: "center", color: "#999" }}>상단에서 파이프라인을 선택하세요.</div>
-                  ) : (
-                    <Table<DlqRecordEntry>
-                      rowKey={(row) => `${row.topic}-${row.partition}-${row.offset}`}
-                      size="small"
-                      loading={dlqQuery.isLoading}
-                      dataSource={dlqQuery.data}
-                      pagination={{ pageSize: 20 }}
-                      scroll={{ x: 1000 }}
-                      columns={[
-                        { title: "발생 시각", dataIndex: "occurredAt", width: 180, render: formatDateTime },
-                        { title: "파이프라인", dataIndex: "pipelineName", width: 160 },
-                        { title: "Connector", dataIndex: "connectorName", width: 190, render: (value: string | null) => value ?? "—" },
-                        { title: "오류 유형", dataIndex: "errorClass", width: 220, render: (value: string | null) => value ?? "—" },
-                        { title: "오류 메시지", dataIndex: "errorMessage", ellipsis: true, render: (value: string | null) => value ?? "—" },
-                        { title: "원문", width: 80, render: (_, row) => <Button size="small" onClick={() => setSelectedDlqRecord(row)}>보기</Button> },
-                      ]}
-                    />
-                  )}
-                  <Typography.Title level={5} style={{ marginTop: 20 }}>재처리 요청 및 감사 이력</Typography.Title>
-                  <Table<DlqReplayRequestEntry>
-                    rowKey="id" size="small" loading={replayRequestsQuery.isLoading}
-                    dataSource={replayRequestsQuery.data} pagination={{ pageSize: 10 }} scroll={{ x: 1100 }}
-                    columns={[
-                      { title: "요청 시각", dataIndex: "requestedAt", width: 180, render: formatDateTime },
-                      { title: "요청자", dataIndex: "requestedBy", width: 110 },
-                      { title: "위험도", dataIndex: "riskLevel", width: 90, render: (value: string) => <Tag color={value === "HIGH" ? "error" : "blue"}>{value}</Tag> },
-                      { title: "대상", width: 170, render: (_, row) => `${row.dlqPartition}:${row.dlqOffset}` },
-                      { title: "사유", dataIndex: "reason", width: 220, ellipsis: true },
-                      { title: "상태", dataIndex: "status", width: 150, render: (value: string) => <Tag color={value === "SUCCEEDED" ? "success" : value === "FAILED" ? "error" : "warning"}>{value}</Tag> },
-                      { title: "승인/실행", width: 120, render: (_, row) => row.status.startsWith("PENDING") && user?.admin && row.requestedBy !== user.userId ? <Button size="small" type="primary" loading={approveMutation.isPending} onClick={() => approveMutation.mutate(row.id)}>승인 후 실행</Button> : row.approvedBy ?? "—" },
-                    ]}
-                  />
-                </>
-              ),
-            },
-          ]}
-        />
-      </Card>
-      <Drawer title="실패 데이터 원문" width={720} open={selectedDlqRecord != null} onClose={() => setSelectedDlqRecord(null)} destroyOnHidden>
-        {dlqDetailQuery.isLoading ? "불러오는 중…" : dlqDetailQuery.data ? <>
-          <Typography.Title level={5}>오류</Typography.Title>
-          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{dlqDetailQuery.data.errorMessage ?? "—"}</pre>
-          <Typography.Title level={5}>Key</Typography.Title>
-          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{dlqDetailQuery.data.key ?? "—"}</pre>
-          <Typography.Title level={5}>Payload</Typography.Title>
-          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{dlqDetailQuery.data.payload ?? "—"}</pre>
-          <Alert type="warning" showIcon message="재처리 시 원본 Topic에 다시 발행됩니다" description="일반 단건은 관리자가 즉시 실행할 수 있지만 삭제 이벤트는 다른 관리자의 승인이 필요합니다." style={{ marginBottom: 12 }} />
-          <Input.TextArea rows={3} maxLength={1000} showCount value={replayReason} onChange={(event) => setReplayReason(event.target.value)} placeholder="재처리가 필요한 이유를 입력하세요." />
-          <Button type="primary" danger style={{ marginTop: 12 }} disabled={!replayReason.trim()} loading={replayMutation.isPending} onClick={() => selectedDlqRecord && replayMutation.mutate({ pipelineId: selectedDlqRecord.pipelineId, partition: selectedDlqRecord.partition, offset: selectedDlqRecord.offset, reason: replayReason })}>재처리 요청</Button>
-        </> : <Alert type="error" message="원문을 불러올 수 없습니다." />}
-      </Drawer>
+      <div className={`etl-log-dashboard-curtain${dashboardOpen ? " open" : " closed"}`}>
+        <button
+          type="button"
+          className="etl-log-dashboard-toggle"
+          onClick={() => setDashboardOpen((open) => !open)}
+          aria-expanded={dashboardOpen}
+        >
+          <span>대시보드</span>
+          {dashboardOpen ? <UpOutlined /> : <DownOutlined />}
+        </button>
+        <div className="etl-log-dashboard-panel">
+          <section className="etl-log-monitoring-card">
+            {metric("ALL", null, "전체 작업", summary.total)}
+            {metric("RUNNING", <RightOutlined />, "진행 중", summary.running)}
+            {metric("SUCCESS", <CheckCircleFilled />, "성공", summary.success, " etl-log-monitoring-metric--success")}
+            {metric("FAILED", <CloseCircleFilled />, "실패", summary.failed, " etl-log-monitoring-metric--danger")}
+            {summary.extra.map(([status, count]) =>
+              metric(status, null, STATUS_LABEL[status] ?? status, count, " etl-log-monitoring-metric--extra", status),
+            )}
+          </section>
+        </div>
+      </div>
+      {filters}
+      <Table<UnifiedCdcLogRow>
+        rowKey="key"
+        size="small"
+        loading={(processingQuery.isLoading && !processingQuery.data) || (eventsQuery.isLoading && !eventsQuery.data)}
+        dataSource={rows}
+        pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
+        scroll={{ x: 1150 }}
+        columns={[
+          {
+            title: "상태",
+            dataIndex: "status",
+            width: 100,
+            fixed: "left",
+            sorter: (a, b) => compareText(STATUS_LABEL[a.status] ?? a.status, STATUS_LABEL[b.status] ?? b.status),
+            render: (value: string, row) => (
+              <Tooltip title={row.message || undefined}>
+                <Tag color={STATUS_COLOR[value] ?? "default"}>{STATUS_LABEL[value] ?? value}</Tag>
+              </Tooltip>
+            ),
+          },
+          {
+            title: "파이프라인명",
+            dataIndex: "pipelineName",
+            width: 180,
+            sorter: (a, b) => compareText(a.pipelineName, b.pipelineName),
+          },
+          {
+            // ETL 로그에는 없는 열. 한 표에 처리 구간과 명령 이벤트가 섞여서 무엇의 기록인지 알려야 한다.
+            title: "구분",
+            dataIndex: "kindLabel",
+            width: 110,
+            sorter: (a, b) => compareText(a.kindLabel, b.kindLabel),
+          },
+          {
+            title: "시작시간",
+            dataIndex: "startedAt",
+            width: 180,
+            sorter: (a, b) => compareDate(a.startedAt, b.startedAt),
+            defaultSortOrder: "descend",
+            render: formatDateTime,
+          },
+          {
+            title: "종료시간",
+            dataIndex: "endedAt",
+            width: 180,
+            sorter: (a, b) => compareDate(a.endedAt, b.endedAt),
+            render: formatDateTime,
+          },
+          {
+            title: "소요시간",
+            dataIndex: "durationSeconds",
+            width: 110,
+            align: "right",
+            sorter: (a, b) => compareNumber(a.durationSeconds, b.durationSeconds),
+            render: formatDuration,
+          },
+          {
+            title: "처리건수",
+            dataIndex: "processedCount",
+            width: 110,
+            align: "right",
+            sorter: (a, b) => compareNumber(a.processedCount, b.processedCount),
+            render: (_value: number | null | undefined, row) =>
+              row.status === "FAILED" ? "-" : formatCount(row.processedCount),
+          },
+          {
+            title: "경로",
+            dataIndex: "path",
+            sorter: (a, b) => compareText(a.path, b.path),
+            ellipsis: true,
+            render: (value: string) => <Link to="/cdc/pipelines">{value}</Link>,
+          },
+        ]}
+        expandable={{
+          expandedRowRender: (row) => <DetailRow row={row} />,
+          rowExpandable: (row) => row.kind === "processing" || Boolean(row.message) || Boolean(row.event?.requestedBy),
+        }}
+      />
     </div>
   );
 }
