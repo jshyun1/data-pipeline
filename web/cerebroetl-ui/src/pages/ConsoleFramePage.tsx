@@ -70,6 +70,8 @@ const NIFI_AUTO_OPEN_MENU_ATTRIBUTE = "data-cerebro-auto-open-menu";
 const NIFI_TOP_TOOLBAR_ATTRIBUTE = "data-cerebro-top-toolbar";
 const NIFI_TOOL_HIDDEN_ATTRIBUTE = "data-cerebro-tool-hidden";
 const NIFI_TOOL_ALLOWED_ATTRIBUTE = "data-cerebro-tool-allowed";
+const NIFI_MENU_BUTTON_ATTRIBUTE = "data-cerebro-menu-button";
+const NIFI_BREADCRUMB_ATTRIBUTE = "data-cerebro-canvas-breadcrumb";
 const NIFI_MINI_TOOLBAR_ID = "cerebro-nifi-mini-toolbar";
 const LEGACY_NIFI_MINI_CREATE_TOOLBAR_CLEANUP_ATTRIBUTE = "data-cerebro-mini-create-toolbar-cleanup";
 const NIFI_PROCESSOR_LOCK_HEARTBEAT_MS = 20_000;
@@ -112,19 +114,20 @@ const HIDE_TOOL_CHROME_CSS = `
   [${NIFI_TOOL_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
   #${NIFI_MINI_TOOLBAR_ID} {
     position: fixed !important;
-    top: auto !important;
-    bottom: 42px !important;
-    left: 8px !important;
+    top: 14px !important;
+    bottom: auto !important;
+    left: 16px !important;
     z-index: 9100 !important;
     display: flex !important;
     align-items: center !important;
-    gap: 4px !important;
-    min-height: 36px !important;
-    padding: 2px 4px !important;
-    border: 1px solid #d5dbe3 !important;
-    border-radius: 6px !important;
-    background: #ffffff !important;
-    box-shadow: 0 2px 8px rgb(15 23 42 / 12%) !important;
+    gap: 3px !important;
+    min-height: 42px !important;
+    padding: 4px 6px !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 8px !important;
+    background: rgba(255, 255, 255, 0.98) !important;
+    box-shadow: 0 2px 8px rgb(15 23 42 / 8%) !important;
+    backdrop-filter: blur(8px) !important;
   }
   #${NIFI_MINI_TOOLBAR_ID}:empty {
     display: none !important;
@@ -141,7 +144,24 @@ const HIDE_TOOL_CHROME_CSS = `
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    background: #ffffff !important;
+    border: 1.5px solid transparent !important;
+    border-radius: 6px !important;
+    background: transparent !important;
+    color: #475569 !important;
+    box-shadow: none !important;
+  }
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:hover {
+    background: #f1f5f9 !important;
+    color: #0f172a !important;
+  }
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:has([title="프로세스 그룹"]),
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][title="프로세스 그룹"],
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:has([aria-label="프로세스 그룹"]),
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][aria-label="프로세스 그룹"] {
+    border-color: #ff3b30 !important;
+    background: #fff1f0 !important;
+    color: #ff3b30 !important;
+    box-shadow: 0 1px 3px rgb(255 59 48 / 15%) !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] i,
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] svg {
@@ -174,6 +194,69 @@ const HIDE_TOOL_CHROME_CSS = `
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] svg {
     transform: scale(0.82) !important;
     transform-origin: center !important;
+  }
+  [${NIFI_MENU_BUTTON_ATTRIBUTE}="true"] {
+    position: fixed !important;
+    top: 14px !important;
+    right: 16px !important;
+    z-index: 9101 !important;
+    width: 34px !important;
+    height: 34px !important;
+    min-width: 34px !important;
+    min-height: 34px !important;
+    max-width: 34px !important;
+    max-height: 34px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0 !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 8px !important;
+    background: rgba(255, 255, 255, 0.98) !important;
+    color: #475569 !important;
+    box-shadow: 0 2px 8px rgb(15 23 42 / 8%) !important;
+    backdrop-filter: blur(8px) !important;
+  }
+  [${NIFI_MENU_BUTTON_ATTRIBUTE}="true"]:hover {
+    background: #f8fafc !important;
+    border-color: #94a3b8 !important;
+    color: #0f172a !important;
+  }
+  [${NIFI_MENU_BUTTON_ATTRIBUTE}="true"] i,
+  [${NIFI_MENU_BUTTON_ATTRIBUTE}="true"] svg {
+    transform: scale(0.9) !important;
+    transform-origin: center !important;
+  }
+  [${NIFI_BREADCRUMB_ATTRIBUTE}="true"] {
+    position: fixed !important;
+    left: 16px !important;
+    bottom: 14px !important;
+    z-index: 9100 !important;
+    min-height: 30px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 7px !important;
+    padding: 0 13px !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 999px !important;
+    background: rgba(255, 255, 255, 0.98) !important;
+    color: #334155 !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 2px 8px rgb(15 23 42 / 8%) !important;
+    backdrop-filter: blur(8px) !important;
+  }
+  [${NIFI_BREADCRUMB_ATTRIBUTE}="true"] svg,
+  [${NIFI_BREADCRUMB_ATTRIBUTE}="true"] i {
+    width: 13px !important;
+    height: 13px !important;
+    color: #64748b !important;
+  }
+  [${NIFI_BREADCRUMB_ATTRIBUTE}="true"] a,
+  [${NIFI_BREADCRUMB_ATTRIBUTE}="true"] button,
+  [${NIFI_BREADCRUMB_ATTRIBUTE}="true"] span {
+    color: inherit !important;
+    font: inherit !important;
   }
   body,
   #canvas-container,
@@ -486,8 +569,13 @@ const HIDDEN_NIFI_STATUS_ICON_CLASSES = [
   "fa-exclamation-circle",
   "fa-question",
 ];
-const ALLOWED_NIFI_CANVAS_TOOLS = new Set(["Processor", "프로세서", "Process Group", "프로세스 그룹"]);
-const HIDDEN_NIFI_CANVAS_TOOLS = new Set([
+const ALLOWED_NIFI_CANVAS_TOOLS = new Set([
+  "Refresh",
+  "새로고침",
+  "Processor",
+  "프로세서",
+  "Process Group",
+  "프로세스 그룹",
   "Remote Process Group",
   "원격 프로세스 그룹",
   "Input Port",
@@ -500,9 +588,8 @@ const HIDDEN_NIFI_CANVAS_TOOLS = new Set([
   "라벨",
   "Template",
   "템플릿",
-  "Import from Registry",
-  "레지스트리에서 가져오기",
 ]);
+const HIDDEN_NIFI_CANVAS_TOOLS = new Set(["Import from Registry", "레지스트리에서 가져오기"]);
 const NIFI_MENU_ICON_CLASSES = ["fa-bars", "fa-navicon", "fa-reorder"];
 
 function translateNifiTooltip(value: string) {
@@ -899,7 +986,14 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
       return;
     }
 
-    if (menuIcon || (label && HIDDEN_NIFI_CANVAS_TOOLS.has(label))) {
+    if (menuIcon) {
+      toolItem.setAttribute(NIFI_MENU_BUTTON_ATTRIBUTE, "true");
+      toolItem.removeAttribute(NIFI_TOOL_HIDDEN_ATTRIBUTE);
+      markCanvasToolBar(toolItem);
+      return;
+    }
+
+    if (label && HIDDEN_NIFI_CANVAS_TOOLS.has(label)) {
       const hideTarget = hasToolLabel(toolItem, ALLOWED_NIFI_CANVAS_TOOLS) ? element : toolItem;
       hideTarget.setAttribute(NIFI_TOOL_HIDDEN_ATTRIBUTE, "true");
       markCanvasToolBar(toolItem);
@@ -909,6 +1003,57 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     if (label && ALLOWED_NIFI_CANVAS_TOOLS.has(label)) {
       keepCanvasToolVisible(toolItem);
       markCanvasToolBar(toolItem);
+    }
+  };
+
+  const patchCanvasBreadcrumb = () => {
+    const candidates = Array.from(doc.querySelectorAll("nav, ol, ul, div, span"))
+      .filter((element) => {
+        if (element.getAttribute(NIFI_BREADCRUMB_ATTRIBUTE) === "true") {
+          return true;
+        }
+        const rect = element.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0 || rect.width > 520 || rect.height > 56) {
+          return false;
+        }
+        const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (!text || text.length > 120) {
+          return false;
+        }
+        const className = elementClassName(element).toLowerCase();
+        const aria = (element.getAttribute("aria-label") ?? "").toLowerCase();
+        return className.includes("breadcrumb")
+          || aria.includes("breadcrumb")
+          || text === "Root"
+          || text === "ETL Root"
+          || text.startsWith("Root /")
+          || text.startsWith("Root >")
+          || text.startsWith("ETL Root");
+      })
+      .sort((a, b) => {
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
+        return br.top - ar.top || ar.left - br.left;
+      });
+    const candidate = candidates[0];
+    if (!candidate) {
+      return;
+    }
+    candidate.setAttribute(NIFI_BREADCRUMB_ATTRIBUTE, "true");
+    if ((candidate.textContent ?? "").trim() === "Root") {
+      candidate.textContent = "ETL Root";
+    }
+    if (!candidate.querySelector("[data-cerebro-breadcrumb-home='true'], svg, i")) {
+      const icon = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+      icon.setAttribute("data-cerebro-breadcrumb-home", "true");
+      icon.setAttribute("viewBox", "0 0 24 24");
+      icon.setAttribute("fill", "none");
+      icon.setAttribute("stroke", "currentColor");
+      icon.setAttribute("stroke-width", "2");
+      icon.setAttribute("stroke-linecap", "round");
+      icon.setAttribute("stroke-linejoin", "round");
+      icon.innerHTML = '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline>';
+      candidate.insertBefore(icon, candidate.firstChild);
     }
   };
 
@@ -961,6 +1106,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     });
     doc.querySelectorAll(".fa-refresh, .fa-play, .fa-stop, .fa-warning, .icon-enable-false, .fa-check").forEach(patchStatusBarVisibility);
     doc.querySelectorAll(NIFI_MENU_ICON_CLASSES.map((className) => `.${className}`).join(", ")).forEach(patchCanvasToolVisibility);
+    patchCanvasBreadcrumb();
   };
 
   patchDocument();
@@ -1015,6 +1161,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
           .forEach(patchCanvasToolVisibility);
       });
     }
+    patchCanvasBreadcrumb();
   });
 
   observer.observe(doc.documentElement, {
@@ -1658,18 +1805,23 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
     <aside className="nifi-tree-panel" aria-label="ETL 그룹 트리">
       <div className="nifi-tree-search-heading">
         <label className="nifi-tree-section-title" htmlFor="nifi-tree-search">
+          <FolderOutlined />
           트리 검색
         </label>
-        <Button
-          type="text"
-          size="small"
-          className="nifi-tree-refresh-button"
-          icon={<ReloadOutlined />}
-          loading={isRefreshing}
-          title="트리 캐시 새로고침"
-          aria-label="트리 캐시 새로고침"
-          onClick={() => loadTree(true, false, false, true)}
-        />
+        <div className="nifi-tree-heading-actions">
+          <Button
+            size="small"
+            className="nifi-tree-refresh-button"
+            icon={<ReloadOutlined />}
+            loading={isRefreshing}
+            title="트리 캐시 새로고침"
+            aria-label="트리 캐시 새로고침"
+            onClick={() => loadTree(true, false, false, true)}
+          />
+          <Button size="small" className="nifi-tree-collapse-button" onClick={() => setExpandedIds(new Set())}>
+            전체 접기
+          </Button>
+        </div>
       </div>
       <input
         id="nifi-tree-search"

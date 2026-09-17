@@ -5932,32 +5932,47 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 .nifi-tree-section-title {
-  display: block;
-  padding: 12px 14px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
   font-size: 13px;
   font-weight: 700;
   line-height: 1;
-  color: #334155;
+  color: #0f172a;
+}
+
+.nifi-tree-section-title .anticon {
+  color: #64748b;
+  font-size: 15px;
 }
 
 .nifi-tree-search-heading {
-  padding: 0 8px 0 14px;
+  min-height: 42px;
+  padding: 8px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+  border-bottom: 1px solid #eef2f7;
 }
 
-.nifi-tree-search-heading .nifi-tree-section-title {
-  padding-right: 0;
-  padding-left: 0;
+.nifi-tree-heading-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
 }
 
 .nifi-tree-refresh-button {
-  width: 24px;
-  height: 24px;
-  min-width: 24px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border-color: #dbe4ee;
+  border-radius: 5px;
   color: #0f766e;
+  background: #ffffff;
 }
 
 .nifi-tree-refresh-button:hover {
@@ -5965,10 +5980,21 @@ button.alert-compact-trigger.is-clear:hover {
   background: #ecfdf5 !important;
 }
 
+.nifi-tree-collapse-button {
+  height: 28px;
+  padding: 0 10px;
+  border-color: #dbe4ee;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .nifi-tree-search-input {
   width: calc(100% - 28px);
   height: 30px;
-  margin: 0 14px 10px;
+  margin: 10px 14px 10px;
   padding: 0 9px;
   border: 1px solid #d6dde6;
   border-radius: 6px;
@@ -8425,9 +8451,11 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
 }
 
 .gpt-analysis-body {
-  max-height: 420px;
+  max-height: min(60vh, 720px);
+  min-height: 72px;
   margin-top: 8px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .gpt-analysis-body > * + * {
@@ -8451,9 +8479,15 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   line-height: 1.7;
 }
 
+.gpt-analysis-answer {
+  display: block;
+  max-width: 100%;
+}
+
 .gpt-analysis-line {
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .gpt-analysis-heading {

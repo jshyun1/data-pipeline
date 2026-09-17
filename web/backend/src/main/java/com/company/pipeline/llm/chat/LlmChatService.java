@@ -53,7 +53,7 @@ public class LlmChatService {
 
     private static final Logger log = LoggerFactory.getLogger(LlmChatService.class);
     /** 답 길이 상한. 오류 분석 네 칸 · 속성창 설명 모두 이 안에서 끝난다. */
-    static final int MAX_OUTPUT_TOKENS = 2_048;
+    static final int MAX_OUTPUT_TOKENS = 4_096;
     /** 최대 입력 길이 중 대상 정보에 주는 몫. 나머지는 대화(첫 분석 · 문답 · 요약 · 질문)가 쓴다. */
     static final double CONTEXT_SHARE = 0.6;
     static final String AGENT_SUMMARY = "CONVERSATION_SUMMARY";
