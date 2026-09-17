@@ -1772,7 +1772,8 @@ function installProcessorEditReadonlyGuard(frame: HTMLIFrameElement, state: Proc
   doc.documentElement.setAttribute(NIFI_READ_ONLY_LOCK_INSTALLED_ATTRIBUTE, "true");
 
   let frameId: number | null = null;
-  const observer = new (frameWindow.MutationObserver ?? MutationObserver)(() => {
+  const FrameMutationObserver = doc.defaultView?.MutationObserver ?? MutationObserver;
+  const observer = new FrameMutationObserver(() => {
     if (frameId !== null) {
       return;
     }
