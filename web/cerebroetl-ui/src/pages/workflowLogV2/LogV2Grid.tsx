@@ -14,6 +14,7 @@ import {
   loadCountOf,
   runAt,
   runTypeLabel,
+  isActiveState,
   selectionKey,
   stepName,
   type DashboardDag,
@@ -338,7 +339,7 @@ export function TimelineView({ runs, ctx }: { runs: AirflowDagRun[]; ctx: GridCt
       });
     });
   });
-  const times = rows.flatMap((row) => [row.start, row.end ?? (row.state === "running" ? now.toISOString() : undefined)])
+  const times = rows.flatMap((row) => [row.start, row.end ?? (isActiveState(row.state) ? now.toISOString() : undefined)])
     .filter(Boolean).map((value) => dayjs(value).valueOf());
   const lo = Math.min(...times);
   const hiRaw = Math.max(...times);
@@ -367,7 +368,7 @@ export function TimelineView({ runs, ctx }: { runs: AirflowDagRun[]; ctx: GridCt
         </div>
       </div>
       {rows.map((row, index) => {
-        const end = row.end ?? (row.state === "running" ? now.toISOString() : undefined);
+        const end = row.end ?? (isActiveState(row.state) ? now.toISOString() : undefined);
         let bar: React.ReactNode = null;
         if (row.start) {
           const a = dayjs(row.start).valueOf();

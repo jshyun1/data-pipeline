@@ -1531,3 +1531,23 @@ CDC 파이프라인 선택 → 트리·행 강조·속성창, 1920/1366 세로·
   + `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal`, `TESTCONTAINERS_RYUK_DISABLED=true`, 도커 소켓 마운트
   ③ 기본값 없는 환경변수 `PIPELINE_JWT_SECRET` · `ACCOUNT_DB_*` 필요(테스트용 아무 값). 새 PostgreSQL 에 마이그레이션 68개가
   V74 까지 적용되는 것도 함께 확인됐다. 전체 238건 통과.
+
+## 38. 하위 워크플로우 교착 대비 - 트리거러 추가 + deferrable 대기 (2026-09-17)
+
+**요청**: 하위 워크플로우 노드가 자식이 끝날 때까지 워커 슬롯을 쥐어(PARALLELISM=4) 상위가 겹치면 «상위는 자식을 기다리고 자식은 슬롯이
+없어 못 뜨는» 교착이 가능하던 것을 막는다. `deferrable=False` 였던 이유는 트리거러 서비스가 없어서였다(그 밖의 기록 없음).
+
+**변경**
+- `docker-compose.yml` `airflow-triggerer` 추가(같은 Airflow 이미지, dags · logs · plugins 마운트, 0.5 CPU / 640m).
+- `etl_workflows_dynamic.py` SUBWF 노드 `TriggerDagRunOperator(deferrable=True)` - 대기 중 슬롯 반납, 트리거러가 자식 상태를 지켜본다.
+- 로그 · 로그2 화면: 태스크 `deferred`(하위 대기) · `up_for_reschedule`(센서 대기)를 «실행 중»으로 표시 · job 집계. 전에는 영문 그대로 · 회색.
+- 실패 로그 창 잡음에 `Pausing task as DEFERRED` 추가. 하위 추적 조건(`Dag Run triggered successfully` + trigger_dag_id)은 deferrable 에서도 그대로 찍혀 동작.
+- `AirflowHealthResponse` 주석(트리거러 항상 null → 이제 있음). 대시보드 상태 점검은 트리거러가 있으면 «트리거러» 항목을 자동 표시.
+
+**트리거러 메모리**: 384m 로 시작했더니 트리거를 붙잡은 뒤 헬스체크(`airflow jobs check`, 자체로 ~200MB 파이썬 프로세스)와 겹치는 순간
+OOM(137)으로 35초마다 재시작됐다(`docker events` 에 oom, 로그에는 흔적 없음). 640m + 헬스체크 30초로 해소. 평소 ~270MB.
+
+**검증**(실제 ETL 을 돌리지 않는 임시 DAG · 1슬롯 풀, 끝나고 DAG · 풀 · 로그 · 카탈로그 삭제): 상위 → 중간 → 말단(20초) 3단 중첩.
+- blocking(기존): 상위 대기가 슬롯을 쥐고 중간이 3분 넘게 `scheduled` - **교착 재현**
+- deferrable: 두 대기 태스크 `deferred` → 말단 실행 → 성공 체인 36초. 같은 1슬롯에서 실패 체인을 동시에 돌려도 교착 없이 말단 실패가 상위까지 failed 로 전파
+- 실제 `total` 의 하위 노드 2개 `deferrable=True` 파싱 확인(import 오류 없음). **실제 워크플로우 실행은 다음 정기 실행(10:30)이 처음**이다.

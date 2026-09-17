@@ -49,6 +49,8 @@ const NOISE: RegExp[] = [
   /상위 워크플로우가 있어 자체 스케줄/,
   // 하위 워크플로우를 기다리는 30초 간격 줄. 시작·끝 줄만 있으면 된다.
   /^Waiting for dag run to complete/,
+  // deferrable 대기(2026-09-17 전환)로 넘어갈 때 찍히는 줄 - 트리거러에 맡겼다는 뜻뿐이다.
+  /^Pausing task as DEFERRED/,
 ];
 
 /**

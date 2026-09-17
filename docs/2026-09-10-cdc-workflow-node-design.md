@@ -68,7 +68,7 @@ apply_action >> verify_action >> [verify_target_db_landing, monitor_cdc_runtime]
 | 워커 슬롯 영구 점유 | SUBWF 는 `deferrable=False` 라 대기 태스크가 슬롯을 쥔다. `AIRFLOW__CORE__PARALLELISM=4` 에서 2칸이 영구히 사라져 ETL 배치가 굶는다 |
 | 3번째 노드가 영원히 대기 | `AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG=2` — 3개 중 2개만 돌고 1개는 큐에서 못 나온다 |
 | stop 지시가 교착 | start Run 이 RUNNING 인데 워크플로우 `max_active_runs` 기본 1 이라 stop Run 이 큐에 갇힌다. stop 이 돌아야 start 가 끝나는데, start 가 끝나야 stop 이 돈다 |
-| triggerer 없음 | `deferrable=True` 로 슬롯 문제를 피하려면 triggerer 서비스가 필요한데 `docker-compose.yml` 에 없다 (apiserver·scheduler·dag-processor 뿐) |
+| triggerer 없음 | `deferrable=True` 로 슬롯 문제를 피하려면 triggerer 서비스가 필요한데 `docker-compose.yml` 에 없다 (apiserver·scheduler·dag-processor 뿐) — **2026-09-17 해소**: `airflow-triggerer` 추가, 하위 워크플로우 노드 `deferrable=True` (WORK_LOG 38) |
 
 triggerer 를 추가해도 아래 두 줄은 남는다. **A 는 권하지 않는다.**
 

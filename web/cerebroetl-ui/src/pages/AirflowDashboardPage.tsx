@@ -121,10 +121,16 @@ function duration(start?: string, end?: string) {
     : `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
 }
 
+/**
+ * 태스크가 «돌고 있는» 상태. deferred 는 하위 워크플로우 노드가 자식이 끝나길 트리거러에 맡겨 두고 슬롯을 비운 상태,
+ * up_for_reschedule 은 센서(CDC 제어 DAG)가 다음 확인 시각을 기다리는 상태다 - 둘 다 사용자에겐 «실행 중»이다(2026-09-17).
+ */
+const ACTIVE_TASK_STATES = ["running", "deferred", "up_for_reschedule"];
+
 function stateLabel(state?: string) {
   if (state === "success") return "성공";
   if (state === "failed") return "실패";
-  if (state === "running") return "실행 중";
+  if (state && ACTIVE_TASK_STATES.includes(state)) return "실행 중";
   if (state === "queued" || state === "scheduled") return "대기";
   if (state === "upstream_failed") return "선행 실패";
   if (state === "skipped") return "건너뜀";
@@ -135,7 +141,7 @@ function stateLabel(state?: string) {
 function stateColor(state?: string) {
   if (state === "success") return "success";
   if (state === "failed" || state === "upstream_failed") return "error";
-  if (state === "running") return "processing";
+  if (state && ACTIVE_TASK_STATES.includes(state)) return "processing";
   if (state === "queued" || state === "scheduled" || state === "up_for_retry") return "warning";
   return "default";
 }
@@ -1089,7 +1095,7 @@ function TaskRows({
   const rollUpState = (steps: NonNullable<typeof tasksQuery.data>) => {
     const states = steps.map((step) => step.state);
     if (states.includes("failed")) return "failed";
-    if (states.includes("running")) return "running";
+    if (states.some((state) => state && ACTIVE_TASK_STATES.includes(state))) return "running";
     if (states.includes("upstream_failed")) return "upstream_failed";
     if (states.every((state) => state === "success")) return "success";
     return states.find(Boolean) ?? undefined;

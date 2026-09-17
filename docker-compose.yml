@@ -720,3 +720,41 @@ services:
           cpus: "1.0"
           memory: 448m
     networks: [pipeline-net]
+
+  # 트리거러: «기다리기만 하는» 태스크(deferrable)를 워커 슬롯 밖에서 비동기로 지켜본다(2026-09-17 추가).
+  # 하위 워크플로우 노드(TriggerDagRunOperator)가 자식이 끝날 때까지 슬롯을 쥐고 있으면, 상위가 여럿 겹칠 때
+  # «상위는 자식을 기다리고 자식은 슬롯이 없어 못 뜨는» 교착이 난다(PARALLELISM=4). deferrable=True 로 대기를
+  # 여기로 넘기면 대기 중에는 슬롯을 쓰지 않는다. 트리거는 asyncio 한 프로세스에서 돌아 메모리가 작다.
+  airflow-triggerer:
+    logging: *default-logging
+    image: apache/airflow:${AIRFLOW_IMAGE_TAG}
+    container_name: airflow-triggerer
+    restart: unless-stopped
+    user: "${AIRFLOW_UID:-50000}:0"
+    command: ["triggerer"]
+    depends_on:
+      metadata-db:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-common-env
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type TriggererJob --hostname \"$$HOSTNAME\" || exit 1"]
+      # 헬스체크(airflow CLI)는 그 자체가 파이썬 프로세스 하나(약 200MB)라 본체와 겹치면 메모리가 두 배로 뛴다.
+      # 384m 에서는 트리거를 붙잡은 뒤 헬스체크와 겹치는 순간 OOM(137)으로 35초마다 재시작됐다(실측 2026-09-17).
+      interval: 30s
+      timeout: 20s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 640m
+    networks: [pipeline-net]

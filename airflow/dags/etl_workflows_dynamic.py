@@ -172,7 +172,10 @@ def _build_subworkflow(node: dict, spec: dict) -> TaskGroup:
             failed_states=["failed"],
             # 자식이 이미 같은 run_id로 있으면 그걸 기다린다(재실행 대비).
             reset_dag_run=True,
-            deferrable=False,
+            # 기다리는 동안 워커 슬롯을 반납한다(트리거러가 대신 지켜본다, docker-compose airflow-triggerer).
+            # False 였을 때는 대기 태스크가 자식이 끝날 때까지 슬롯을 쥐어, 상위 워크플로우가 여럿 겹치면
+            # «상위는 자식을 기다리고 자식은 슬롯이 없어 못 뜨는» 교착이 가능했다(PARALLELISM=4, 2026-09-17 전환).
+            deferrable=True,
             trigger_rule=_trigger_rule(node, spec),
         )
     return group
