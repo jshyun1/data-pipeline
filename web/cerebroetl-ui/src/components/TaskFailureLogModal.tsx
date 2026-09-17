@@ -1,6 +1,9 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
-import { Alert, Modal, Spin, Tag } from "antd";
+import { Alert, Button, Modal, Spin, Tag } from "antd";
+import { GptErrorAnalysis } from "./gpt/GptErrorAnalysis";
+import { useGptEnabled } from "./gpt/useGptEnabled";
 import {
   getAirflowTaskLogEntries,
   listAirflowTaskEventLogs,
@@ -158,15 +161,58 @@ function AttemptView({ attempt, single }: { attempt: LoadedAttempt; single: bool
   );
 }
 
-function TaskLogView({ item, nameOf }: { item: LoadedTaskLog; nameOf: (dagId: string) => string }) {
+/** GPT 에 넘길 «화면에 보이는 실패 로그»: 시도마다 실패 원인과 오류·경고 줄, 끝으로 Airflow 기록. 하위 실행은 그쪽 창에서 따로 분석한다. */
+function screenErrorText(item: LoadedTaskLog): string {
+  const blocks: string[] = [];
+  // 재시도는 대개 같은 오류를 되풀이한다. 앞 시도에서 보낸 문구는 다시 보내지 않는다(입력 길이 절약).
+  const seen = new Set<string>();
+  for (const attempt of item.attempts) {
+    const log = attempt.log;
+    if (!log) continue;
+    const head = item.attempts.length > 1 ? `[${attempt.tryNumber}회차 시도]\n` : "";
+    const exceptions = log.exceptions.filter((text) => !seen.has(text));
+    const lines = log.lines
+      .filter((line) => line.level === "error" || line.level === "critical" || line.level === "warning")
+      .map((line) => line.text)
+      .filter((text) => !seen.has(text));
+    [...log.exceptions, ...log.lines.map((line) => line.text)].forEach((text) => seen.add(text));
+    const body = [...exceptions, ...(lines.length ? [`실행 로그의 오류·경고 줄:\n${lines.join("\n")}`] : [])];
+    if (body.length) blocks.push(head + body.join("\n\n"));
+    else if (log.exceptions.length) blocks.push(`${head}앞 시도와 같은 오류로 실패`);
+  }
+  if (item.events.length) {
+    blocks.push(`Airflow 기록:\n${item.events.map((line) => `${line.time} ${line.text}`).join("\n")}`);
+  }
+  return blocks.join("\n\n");
+}
+
+function TaskLogView({ item, dagId, runId, nameOf }: {
+  item: LoadedTaskLog;
+  dagId: string;
+  runId: string;
+  nameOf: (dagId: string) => string;
+}) {
   const single = item.attempts.length <= 1;
   const hasReason = item.attempts.some((attempt) => (attempt.log?.exceptions.length ?? 0) > 0) || item.events.length > 0;
+  const gptEnabled = useGptEnabled();
+  const [analyzing, setAnalyzing] = useState(false);
   return (
     <section className="failure-log-task">
       <div className="failure-log-task-head">
         <strong>{taskLabel(item.taskId)}</strong>
         {!single && <Tag>{item.attempts.length}회 시도</Tag>}
+        {gptEnabled && hasReason && !analyzing && (
+          <Button size="small" className="gpt-analysis-open" onClick={() => setAnalyzing(true)}>GPT 분석</Button>
+        )}
       </div>
+      {analyzing && (
+        <GptErrorAnalysis
+          targetType="WORKFLOW_TASK"
+          target={{ dagId, runId, taskId: item.taskId }}
+          errorText={screenErrorText(item)}
+          onClose={() => setAnalyzing(false)}
+        />
+      )}
       {item.attempts.map((attempt) => <AttemptView key={attempt.tryNumber} attempt={attempt} single={single} />)}
       {item.events.length > 0 && (
         <div className="failure-log-block">
@@ -184,7 +230,9 @@ function TaskLogView({ item, nameOf }: { item: LoadedTaskLog; nameOf: (dagId: st
           {item.child.error ? (
             <div className="failure-log-empty">{item.child.error}</div>
           ) : item.child.tasks.length > 0 ? (
-            item.child.tasks.map((child) => <TaskLogView key={child.taskId} item={child} nameOf={nameOf} />)
+            item.child.tasks.map((child) => (
+              <TaskLogView key={child.taskId} item={child} dagId={item.child!.dagId} runId={item.child!.runId} nameOf={nameOf} />
+            ))
           ) : (
             <div className="failure-log-empty">하위 실행에 실패로 끝난 작업이 없습니다.</div>
           )}
@@ -218,7 +266,9 @@ export function TaskFailureLogModal({ target, onClose }: { target?: FailureLogTa
       ) : query.error ? (
         <Alert type="error" showIcon message={`로그를 불러오지 못했습니다: ${errorText(query.error)}`} />
       ) : (
-        (query.data ?? []).map((item) => <TaskLogView key={item.taskId} item={item} nameOf={nameOf} />)
+        (query.data ?? []).map((item) => (
+          <TaskLogView key={item.taskId} item={item} dagId={target!.dagId} runId={target!.runId} nameOf={nameOf} />
+        ))
       )}
     </Modal>
   );

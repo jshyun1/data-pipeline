@@ -11,6 +11,8 @@ import {
 import dayjs, { type Dayjs } from "dayjs";
 import { Link, useSearchParams } from "react-router-dom";
 import { activeDayPresetByDate } from "../components/dayPreset";
+import { GptErrorAnalysis } from "../components/gpt/GptErrorAnalysis";
+import { useGptEnabled } from "../components/gpt/useGptEnabled";
 import {
   listCdcEventLogs,
   listCdcProcessingLogs,
@@ -119,8 +121,27 @@ function formatDuration(seconds?: number | null) {
   return `${hours}시간 ${minutes % 60}분`;
 }
 
+/** GPT 에 넘길 «화면에 보이는 오류»: 줄의 구분·시각·상태와 메시지. 커넥터 오류 추적·파이프라인 구성은 서버가 붙인다. */
+function screenErrorText(row: UnifiedCdcLogRow) {
+  const lines = [
+    `구분: ${row.kindLabel}`,
+    `시각: ${formatDateTime(row.startedAt)}${row.endedAt ? ` ~ ${formatDateTime(row.endedAt)}` : ""}`,
+    `상태: ${STATUS_LABEL[row.status] ?? row.status}`,
+  ];
+  if (row.processing) {
+    const p = row.processing;
+    lines.push(`커넥터 상태: Source ${p.sourceState ?? "-"} · Sink ${p.sinkState ?? "-"}`, `Lag: ${p.consumerLag}`);
+  }
+  if (row.message) {
+    lines.push(`메시지:\n${row.message}`);
+  }
+  return lines.join("\n");
+}
+
 /** 펼친 줄. 표 열에서 뺀 처리 구간의 세부 값(소스·타깃·Topic·커넥터 상태·Lag)과 메시지를 보여준다. */
 function DetailRow({ row }: { row: UnifiedCdcLogRow }) {
+  const gptEnabled = useGptEnabled();
+  const [analyzing, setAnalyzing] = useState(false);
   const lines: Array<[string, ReactNode]> = [];
   if (row.processing) {
     const p = row.processing;
@@ -145,6 +166,19 @@ function DetailRow({ row }: { row: UnifiedCdcLogRow }) {
       {row.message ? (
         <pre style={{ whiteSpace: "pre-wrap", margin: lines.length ? "6px 0 0" : 0, fontSize: 12 }}>{row.message}</pre>
       ) : null}
+      {gptEnabled && row.status === "FAILED" && !analyzing && (
+        <Button size="small" className="gpt-analysis-open" style={{ marginTop: 8 }} onClick={() => setAnalyzing(true)}>
+          GPT 분석
+        </Button>
+      )}
+      {analyzing && (
+        <GptErrorAnalysis
+          targetType="CDC_PIPELINE"
+          target={{ pipelineId: String(row.pipelineId) }}
+          errorText={screenErrorText(row)}
+          onClose={() => setAnalyzing(false)}
+        />
+      )}
     </div>
   );
 }
@@ -472,7 +506,7 @@ export function CdcLogsPage() {
         ]}
         expandable={{
           expandedRowRender: (row) => <DetailRow row={row} />,
-          rowExpandable: (row) => row.kind === "processing" || Boolean(row.message) || Boolean(row.event?.requestedBy),
+          rowExpandable: (row) => row.kind === "processing" || row.status === "FAILED" || Boolean(row.message) || Boolean(row.event?.requestedBy),
         }}
       />
     </div>

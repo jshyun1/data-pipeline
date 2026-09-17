@@ -1474,3 +1474,60 @@ CDC 파이프라인 선택 → 트리·행 강조·속성창, 1920/1366 세로·
 → 전체 로그 창, 실행 이력 기간 변경, 타임라인, 지표 클릭, 상세 창 접기·끌기, 가로 넘침 0, 페이지 오류 0.
 재실행·실행 설정은 실제로 누르지 않았다(운영 DAG 에 영향). 로컬 Airflow 의 오래된 task 로그는 «Could not read served logs»
 라 로그 본문은 두 화면 모두 이 한 줄만 나온다(환경 문제, 화면 문제 아님).
+
+## 35. GPT 2단계 - 워크플로우 · CDC 로그 오류 분석 (2026-09-16)
+
+**요청**: GPT 설정 설계서(docs/2026-09-13-gpt-settings-design.md)의 다음 단계 착수. ETL 로그 · ETL 속성창은 ETL 담당 작업자가
+맡으므로 워크플로우 · CDC 쪽만. 진행 상황 · 설계와 달라진 점은 설계서 12절에 적었다.
+
+**추가/변경**
+- V74 `llm_usage_log` - 본문 없이 누가 · 대상 · LLM · 전송 글자 수 · 토큰 · 소요 · 결과.
+- 백엔드 `llm/client/LlmChatClient`(제공자 4종 SSE 스트리밍, JSON 한 덩어리로 답하는 호환 서버도 받음, 첫 응답 120초 · 전체 300초),
+  `llm/context`(대상 종류 · 수집기 인터페이스 · 우선순위 자르기 · 개인정보 마스킹), 수집기 `WorkflowTaskContextCollector`
+  (워크플로우 · 상위 경로 · 실패 단계 설명 · 노드 구성 · job 단계 SQL · 최근 실행) · `CdcPipelineContextCollector`
+  (파이프라인 구성 · 실측 상태 · 실패 태스크 trace 요약 · 최근 제어 명령), `llm/agent/ErrorAnalysisAgent`(역할 지시문 · 답변 형식),
+  `llm/chat`(`POST /api/llm/chat` SSE, `POST /api/llm/chat/preview`). ErrorCode `LLM_NOT_ENABLED` · `LLM_TARGET_NOT_FOUND`.
+- nginx `location /api/llm/` - 버퍼링 끔, 읽기 제한 330초.
+- 화면: `components/gpt/GptErrorAnalysis`(자동 분석 → 추가 질문 · 중지 · 보내는 정보 보기) · `useGptEnabled`.
+  워크플로우 실패 로그 창(`TaskFailureLogModal`)의 task 머리에 [GPT 분석] - 로그 · 로그2 화면이 같은 창을 쓴다.
+  CDC 로그 펼친 실패 줄에 [GPT 분석]. 선택된 LLM 이 없으면 버튼을 그리지 않는다.
+
+**ETL 담당에게** - `LlmContextCollector` 를 구현한 빈(`targetType()` = `ETL_JOB`)을 추가하면 `/api/llm/chat` 이 자동으로 쓴다.
+화면은 `GptErrorAnalysis` 에 `targetType="ETL_JOB"` 과 대상 id · 화면 오류 문구만 넘기면 된다. job 단계 · 최근 실행을 읽는 방식은
+`WorkflowTaskContextCollector` 의 `steps` · `recentRuns` 를 참고.
+
+**검증**: LLM 단위 테스트 34건(스트리밍 파싱 4종 · HTTP 오류 분류 · 리스너 중단 · 마스킹 오탐 · 자르기 · trace 요약 · 메시지 순서).
+로컬 gemma4(KT Cloud 프록시, OpenAI 호환)로 nginx 경유 스트리밍 - 첫 글자 2.4초. 화면(puppeteer 1600px): dz_com_daily 09-05 실패
+(PutSQL 접속 거부, 4회 시도) → 실패 로그 창 → [GPT 분석] 네 제목 답 · 추가 질문 · 보내는 정보 보기, CDC 로그 09-04 ORA-12541 실패 줄 →
+[GPT 분석], 성공 줄에는 버튼 없음, 페이지 오류 0. 거절 경로: 선택 해제 409 · 없는 파이프라인 404 · 미로그인 401 · ETL_JOB 400.
+권한 없는 사용자로는 확인하지 않았다. 테스트를 위해 로컬 gemma4 를 «선택» 상태로 켰다(해제 → 409 확인 후 다시 선택).
+
+## 36. GPT 3단계 - 속성창 GPT 탭(CDC · 워크플로우 노드) + 대화 길이 관리 (2026-09-17)
+
+**요청**: 로그 GPT 분석의 추가 질문이 길어질 때 대비(오류 분석은 오래된 문답 빼기, 속성창은 자동 요약)와 속성창 GPT 탭을 CDC ·
+워크플로우 둘 다 진행. 상세는 설계서 12절.
+
+**추가/변경**
+- 백엔드: `llm/agent/JobAnalysisAgent` · `ConversationSummarizer` · `AgentPrompts`(공용 지시문), `llm/chat/ConversationFitter`
+  (문답 쌍 단위로 오래된 것부터 고름), `LlmChatService`(입력 길이 60% 대상 정보 / 40% 대화, 오류 분석 DROPPED · 속성창 SUMMARIZED,
+  요약 실패 시 빼기, 요약 호출도 호출 기록), SSE `compacted` 이벤트, 요청에 `summary`. `llm/context/WorkflowNodeContextCollector`
+  (WORKFLOW_NODE) · `EtlJobContextText` · `WorkflowGraphText` 로 워크플로우 task 수집기와 공유.
+  속성창은 질문 필수(`prepareChat`), [보기] 는 질문 없이(`prepare`).
+- 화면: `components/gpt/useGptConversation`(대화 상태 · 요약 경계 · 중지 · 새 대화) · `GptConversationView` · `GptChatPanel`.
+  `GptErrorAnalysis` 는 같은 훅으로 옮김(동작 같음). CDC 관리 «파이프라인 상세» 창에 GPT 탭, 워크플로우 캔버스 노드 속성창을
+  [속성] [GPT] 탭으로(속성 내용은 들여쓰기만 바뀜). 선택된 LLM 이 없으면 탭 없음.
+
+**검증**: LLM 단위 테스트 41건. API · 화면 검증 내용은 설계서 12절 «3단계 검증». [보기] 가 속성창에서 400 이던 것(질문 필수 검사에 걸림)을
+화면 검증에서 찾아 고쳤다. 요약이 일어날 만큼 긴 대화를 화면에서 직접 이어 가 보지는 않았다.
+
+## 37. GPT - 확인 못 했던 3가지 확인 (2026-09-17)
+
+- **화면 요약 표시**: 한도를 잠시 6,000자로 낮춰 CDC GPT 탭에서 확인(설계서 12절 «추가 검증»). 이 과정에서 역할 지시문 길이를
+  한도 계산에서 빼먹은 것을 찾아 `LlmChatService` 에서 지시문 · 머리말(`PROMPT_WRAPPER_CHARS`)까지 세도록 고쳤다.
+- **권한 거절**: `permtest` + 임시 역할로 확인 후 원복.
+- **통합 테스트 `ConnectionRepositoryIT`**: 코드 문제가 아니라 실행 환경 문제 세 가지였다. 통과시킨 실행 방법 -
+  ① Docker 29 는 최소 API 1.40 인데 Testcontainers(docker-java)가 더 낮은 버전으로 물어 400 → `~/.docker-java.properties` 에
+  `api.version=1.44` ② 빌드 컨테이너 안에서 테스트 컨테이너 포트를 `localhost` 로 못 찾음 → `--add-host=host.docker.internal:host-gateway`
+  + `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal`, `TESTCONTAINERS_RYUK_DISABLED=true`, 도커 소켓 마운트
+  ③ 기본값 없는 환경변수 `PIPELINE_JWT_SECRET` · `ACCOUNT_DB_*` 필요(테스트용 아무 값). 새 PostgreSQL 에 마이그레이션 68개가
+  V74 까지 적용되는 것도 함께 확인됐다. 전체 238건 통과.

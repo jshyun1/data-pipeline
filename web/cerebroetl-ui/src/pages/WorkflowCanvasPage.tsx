@@ -29,6 +29,7 @@ import {
   Select,
   Space,
   Spin,
+  Tabs,
   Tooltip,
   Tag,
   Typography,
@@ -54,6 +55,8 @@ import type { PipelineResponse } from "../types/pipeline";
 import { buildWorkflowHierarchy, parentWorkflowPathOf, type WorkflowTreeItem } from "../utils/workflowTree";
 import { PaletteTree, type PaletteTreeNode } from "../components/PaletteTree";
 import { EtlJobSummary } from "./ConsoleFramePage";
+import { GptChatPanel } from "../components/gpt/GptChatPanel";
+import { useGptEnabled } from "../components/gpt/useGptEnabled";
 import {
   cronToKoreanText,
   nextPresetRuns,
@@ -173,6 +176,9 @@ export function WorkflowCanvasPage() {
   const [validation, setValidation] = useState<ValidationResult>();
   // 소속 그룹 밖 job이 필요할 때만 켠다(교차 그룹 워크플로우).
   const [dirty, setDirty] = useState(false);
+  // 노드 속성창의 [속성] [GPT] 탭. 선택된 LLM 이 없으면 탭 없이 속성만 보인다(설계 5-1).
+  const gptEnabled = useGptEnabled();
+  const [nodePanelTab, setNodePanelTab] = useState<"props" | "gpt">("props");
 
   /** 캔버스를 떠나기 전 확인. 저장 안 한 변경을 말없이 버리지 않는다. */
   const askLeave = () => new Promise<boolean>((resolve) => {
@@ -1000,57 +1006,90 @@ export function WorkflowCanvasPage() {
                 </Space>
               )}
                 className="wf-side-card">
-            {selectedNode ? (
+            {selectedNode ? (() => {
+              const nodeProps = (
               <div className="wf-node-detail">
-                {/* 종류·이름·상위 경로 줄은 뺐다(2026-09-11 요청) - 이름과 상위 경로는 카드 제목에 있다. */}
-                {/* 정보 구역은 ETL 관리 화면 job 속성창과 같은 «제목 + 아래 구분선» 모양이다(2026-09-11 요청).
-                    job 은 그쪽 컴포넌트를 그대로 쓰고(연결 DAG 만 뺌), 워크플로우 노드는 같은 모양으로 그린다. */}
-                {selectedNode.data.jobId && !selectedNode.data.subWorkflowId ? (
-                  <EtlJobSummary
-                    jobId={Number(selectedNode.data.jobId)}
-                    nifiPgId={selectedNode.data.nifiPgId ? String(selectedNode.data.nifiPgId) : null}
-                    onNavigate={leaveTo}
-                  />
-                ) : null}
-                {selectedNode.data.subWorkflowId ? (
-                  <SubWorkflowSummary workflowId={Number(selectedNode.data.subWorkflowId)} />
-                ) : null}
-                {/* 구분선 아래는 이 캔버스에서 고치는 값(실행 조건)과 바로가기다. */}
-                <Space direction="vertical" style={{ width: "100%" }} size={10} className="wf-node-detail-controls">
-                  <div>
-                    <div style={{ fontSize: 12, color: "#888" }}>실행 조건</div>
-                    <Select size="small" style={{ width: "100%" }}
-                            value={String(selectedNode.data.triggerRule ?? "ALL_SUCCESS")}
-                            onChange={(value) => {
-                              setNodes((current) => current.map((node) => node.id === selectedNode.id
-                                ? { ...node, data: { ...node.data, triggerRule: value } } : node));
-                              markDirty();
-                            }}
-                            options={[
-                              { value: "ALL_SUCCESS", label: "선행이 모두 성공해야" },
-                              { value: "ALL_DONE", label: "선행이 끝나면(성패 무관)" },
-                              { value: "ONE_FAILED", label: "선행 중 하나가 실패하면" },
-                            ]} />
-                  </div>
-                  {/* 워크플로우 노드면 그 워크플로우 캔버스로 바로 넘어간다. */}
-                  {selectedNode.data.subWorkflowId ? (
-                    <Button size="small" block
-                            onClick={() => leaveTo(
-                              `/workflows/design/${Number(selectedNode.data.subWorkflowId)}`)}>
-                      워크플로우 바로가기
-                    </Button>
-                  ) : null}
-                  {/* 이 job이 NiFi에서 실제로 어떻게 생겼는지 바로 열어본다. */}
-                  {selectedNode.data.nifiPgId ? (
-                    <Button size="small" block
-                            onClick={() => leaveTo(
-                              `/etl/manage?processGroupId=${encodeURIComponent(String(selectedNode.data.nifiPgId))}`)}>
-                      ETL job 바로가기
-                    </Button>
-                  ) : null}
-                </Space>
-              </div>
-            ) : selectedEdge ? (
+                      {/* 종류·이름·상위 경로 줄은 뺐다(2026-09-11 요청) - 이름과 상위 경로는 카드 제목에 있다. */}
+                      {/* 정보 구역은 ETL 관리 화면 job 속성창과 같은 «제목 + 아래 구분선» 모양이다(2026-09-11 요청).
+                          job 은 그쪽 컴포넌트를 그대로 쓰고(연결 DAG 만 뺌), 워크플로우 노드는 같은 모양으로 그린다. */}
+                      {selectedNode.data.jobId && !selectedNode.data.subWorkflowId ? (
+                        <EtlJobSummary
+                          jobId={Number(selectedNode.data.jobId)}
+                          nifiPgId={selectedNode.data.nifiPgId ? String(selectedNode.data.nifiPgId) : null}
+                          onNavigate={leaveTo}
+                        />
+                      ) : null}
+                      {selectedNode.data.subWorkflowId ? (
+                        <SubWorkflowSummary workflowId={Number(selectedNode.data.subWorkflowId)} />
+                      ) : null}
+                      {/* 구분선 아래는 이 캔버스에서 고치는 값(실행 조건)과 바로가기다. */}
+                      <Space direction="vertical" style={{ width: "100%" }} size={10} className="wf-node-detail-controls">
+                        <div>
+                          <div style={{ fontSize: 12, color: "#888" }}>실행 조건</div>
+                          <Select size="small" style={{ width: "100%" }}
+                                  value={String(selectedNode.data.triggerRule ?? "ALL_SUCCESS")}
+                                  onChange={(value) => {
+                                    setNodes((current) => current.map((node) => node.id === selectedNode.id
+                                      ? { ...node, data: { ...node.data, triggerRule: value } } : node));
+                                    markDirty();
+                                  }}
+                                  options={[
+                                    { value: "ALL_SUCCESS", label: "선행이 모두 성공해야" },
+                                    { value: "ALL_DONE", label: "선행이 끝나면(성패 무관)" },
+                                    { value: "ONE_FAILED", label: "선행 중 하나가 실패하면" },
+                                  ]} />
+                        </div>
+                        {/* 워크플로우 노드면 그 워크플로우 캔버스로 바로 넘어간다. */}
+                        {selectedNode.data.subWorkflowId ? (
+                          <Button size="small" block
+                                  onClick={() => leaveTo(
+                                    `/workflows/design/${Number(selectedNode.data.subWorkflowId)}`)}>
+                            워크플로우 바로가기
+                          </Button>
+                        ) : null}
+                        {/* 이 job이 NiFi에서 실제로 어떻게 생겼는지 바로 열어본다. */}
+                        {selectedNode.data.nifiPgId ? (
+                          <Button size="small" block
+                                  onClick={() => leaveTo(
+                                    `/etl/manage?processGroupId=${encodeURIComponent(String(selectedNode.data.nifiPgId))}`)}>
+                            ETL job 바로가기
+                          </Button>
+                        ) : null}
+                      </Space>
+                    </div>
+              );
+              if (!gptEnabled) return nodeProps;
+              return (
+                <Tabs
+                  size="small"
+                  className="wf-node-panel-tabs"
+                  activeKey={nodePanelTab}
+                  onChange={(key) => setNodePanelTab(key as "props" | "gpt")}
+                  items={[
+                    { key: "props", label: "속성", children: nodeProps },
+                    {
+                      key: "gpt",
+                      label: "GPT",
+                      // 노드를 바꾸면 대화를 새로 시작한다(key). 서버는 저장된 설계 기준으로 정보를 모은다.
+                      children: (
+                        <GptChatPanel
+                          key={`${workflowId}:${selectedNode.id}`}
+                          targetType="WORKFLOW_NODE"
+                          target={{
+                            ...(isDraft ? {} : { workflowId: String(workflowId) }),
+                            nodeKey: selectedNode.id,
+                            ...(selectedNode.data.jobId ? { jobId: String(selectedNode.data.jobId) } : {}),
+                            ...(selectedNode.data.subWorkflowId ? { subWorkflowId: String(selectedNode.data.subWorkflowId) } : {}),
+                          }}
+                          targetNoun="이 노드"
+                          notice={dirty ? "저장하지 않은 변경(연결·실행 조건 등)은 반영되지 않습니다. 저장된 설계 기준으로 답합니다." : undefined}
+                        />
+                      ),
+                    },
+                  ]}
+                />
+              );
+            })() : selectedEdge ? (
               <Space direction="vertical" style={{ width: "100%" }} size={10}>
                 <div>
                   <div style={{ fontSize: 12, color: "#888" }}>연결</div>

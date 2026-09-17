@@ -23,6 +23,8 @@ import { PlusOutlined } from "@ant-design/icons";
 import { Dropdown, Form, Modal } from "antd";
 import type { MenuProps } from "antd";
 import { WfIcon } from "../components/WorkflowPageHeader";
+import { GptChatPanel } from "../components/gpt/GptChatPanel";
+import { useGptEnabled } from "../components/gpt/useGptEnabled";
 import { useNavigate } from "react-router-dom";
 import { listConnections } from "../api/connections";
 import {
@@ -86,6 +88,8 @@ export function PipelinesPage() {
   const canWrite = !permissionsLoaded || can("KAFKA", "WRITE");
   const queryClient = useQueryClient();
   const [detailPipelineId, setDetailPipelineId] = useState<number | null>(null);
+  // 선택된 LLM 이 없으면 상세 창에 GPT 탭을 두지 않는다(설계 5-1).
+  const gptEnabled = useGptEnabled();
   const [nameFilter, setNameFilter] = useState("");
   const [topicFilter, setTopicFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
@@ -749,6 +753,19 @@ export function PipelinesPage() {
                   />
                 ),
               },
+              // 속성창 GPT 탭(docs/2026-09-13-gpt-settings-design.md 5-2). 창을 닫거나 다른 파이프라인을 열면 대화가 사라진다.
+              ...(gptEnabled ? [{
+                key: "gpt",
+                label: "GPT",
+                children: (
+                  <GptChatPanel
+                    key={detailPipeline.id}
+                    targetType="CDC_PIPELINE"
+                    target={{ pipelineId: String(detailPipeline.id) }}
+                    targetNoun="이 파이프라인"
+                  />
+                ),
+              }] : []),
             ]}
           />
         )}
