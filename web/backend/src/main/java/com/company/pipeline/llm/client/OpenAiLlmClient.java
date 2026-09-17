@@ -87,7 +87,7 @@ public class OpenAiLlmClient extends AbstractLlmClient {
                 }
             }
             if (!hasText(answer.toString())) {
-                throw new BusinessException(ErrorCode.LLM_CHAT_ERROR, "GPT 응답에서 답변을 찾을 수 없습니다.");
+                throw new BusinessException(ErrorCode.LLM_CHAT_ERROR, "LLM 응답 파싱 실패: GPT 응답에서 답변을 찾을 수 없습니다.");
             }
             return new LlmChatResult(answer.toString().strip(), inputTokens, outputTokens);
         } catch (ConnectException ex) {

@@ -77,7 +77,7 @@ public class LlmChatService {
                 emitter.complete();
             } catch (RuntimeException ex) {
                 markFailed(usageLog, started, ErrorCode.LLM_CHAT_ERROR.name());
-                send(emitter, "error", "GPT 요청 처리 중 오류가 발생했습니다.");
+                send(emitter, "error", "GPT 요청 처리 중 오류가 발생했습니다: " + ex.getMessage());
                 emitter.complete();
             }
         });
@@ -100,7 +100,7 @@ public class LlmChatService {
 
     private void requireTargetRead(String userId, LlmTargetType targetType) {
         SystemCode system = switch (targetType) {
-            case GENERAL -> SystemCode.NIFI;
+            case GENERAL, NIFI_GROUP -> SystemCode.NIFI;
             case ETL_JOB, WORKFLOW_NODE -> SystemCode.NIFI;
             case CDC_PIPELINE -> SystemCode.KAFKA;
             case WORKFLOW_TASK -> SystemCode.AIRFLOW;

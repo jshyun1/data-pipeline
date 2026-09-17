@@ -3119,10 +3119,11 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   };
 
   const aiTargetId = displayJob?.id ? String(displayJob.id) : "";
+  const aiGroupTargetId = activeGroupId ?? "root";
 
   const buildAiRequest = (question: string) => ({
-    targetType: displayJob ? "ETL_JOB" as const : "GENERAL" as const,
-    targetId: aiTargetId,
+    targetType: displayJob ? "ETL_JOB" as const : "NIFI_GROUP" as const,
+    targetId: displayJob ? aiTargetId : aiGroupTargetId,
     question,
     messages: aiMessages,
   });
@@ -3347,7 +3348,11 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
           <section className="nifi-ai-panel" role="tabpanel" aria-label="AI 어시스턴트">
             <div className="nifi-ai-summary">
               <strong>{aiProviderName ?? "선택된 GPT"}</strong>
-              <span>{displayJob ? `${displayJob.jobName} 정보와 함께 질문을 보냅니다.` : "ETL Job을 선택하면 질문할 수 있습니다."}</span>
+              <span>
+                {displayJob
+                  ? `${displayJob.jobName} 정보와 함께 질문을 보냅니다.`
+                  : "선택 그룹과 ETL/NiFi 지식 컨텍스트를 함께 보냅니다."}
+              </span>
               <Button size="small" loading={aiPreviewLoading} onClick={handleAiPreview}>
                 전송될 정보 보기
               </Button>

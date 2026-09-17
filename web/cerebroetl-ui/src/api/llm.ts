@@ -78,7 +78,7 @@ export interface LlmStatus {
   maskSensitive: boolean | null;
 }
 
-export type LlmTargetType = "GENERAL" | "ETL_JOB" | "CDC_PIPELINE" | "WORKFLOW_NODE" | "WORKFLOW_TASK";
+export type LlmTargetType = "GENERAL" | "NIFI_GROUP" | "ETL_JOB" | "CDC_PIPELINE" | "WORKFLOW_NODE" | "WORKFLOW_TASK";
 export type LlmChatRole = "user" | "assistant";
 
 export interface LlmChatMessage {

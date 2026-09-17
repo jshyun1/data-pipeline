@@ -54,8 +54,15 @@ abstract class AbstractLlmClient implements LlmClient {
 
     static void rejectIfFailed(int status, String body) {
         if (status / 100 != 2) {
-            throw new BusinessException(ErrorCode.LLM_CHAT_ERROR,
-                    "GPT 제공자가 요청을 거절했습니다(HTTP " + status + "): " + truncate(body));
+            String detail = truncate(body);
+            String message = switch (status) {
+                case 401 -> "GPT API 키가 올바르지 않습니다.";
+                case 403 -> "GPT API 키에 해당 모델을 사용할 권한이 없습니다.";
+                case 404 -> "GPT 모델명 또는 API 주소가 올바르지 않습니다.";
+                case 429 -> "GPT 요청 한도 또는 사용량 한도를 초과했습니다.";
+                default -> "GPT 제공자가 요청을 거절했습니다(HTTP " + status + ").";
+            };
+            throw new BusinessException(ErrorCode.LLM_CHAT_ERROR, message + (detail.isBlank() ? "" : " 상세: " + detail));
         }
     }
 
