@@ -22,6 +22,7 @@ import lombok.Setter;
 public class LlmUsageLog {
 
     public static final String AGENT_JOB_ANALYSIS = "JOB_ANALYSIS";
+    public static final String STATUS_PENDING = "PENDING";
     public static final String STATUS_SUCCESS = "SUCCESS";
     public static final String STATUS_FAILED = "FAILED";
 
@@ -89,6 +90,7 @@ public class LlmUsageLog {
         log.modelName = config.getModelName();
         log.deployment = config.getDeployment();
         log.masked = masked;
+        log.status = STATUS_PENDING;
         log.createdAt = OffsetDateTime.now();
         return log;
     }
