@@ -74,6 +74,14 @@ public class KafkaTopicCleanupService {
                 .filter(c -> ORACLE_CONNECTOR_CLASS.equals(c.getConnectorClass()))
                 .forEach(c -> topics.add("schema-changes." + c.getConnectorName()));
 
+        // 2026-09-17 이전(errors.tolerance=all 시절)에 만든 싱크는 dlq.pipeline-{id} 토픽을 남겼다. 지금은 DLQ 를 쓰지 않아
+        // 새로 생기지 않지만, 옛 파이프라인을 지울 때 함께 치운다. 없는 토픽을 삭제 요청에 섞으면 요청 전체가 실패로
+        // 보고되므로 있을 때만 넣는다.
+        String legacyDlqTopic = "dlq.pipeline-" + pipeline.getId();
+        if (filterExistingTopics(Set.of(legacyDlqTopic)).contains(legacyDlqTopic)) {
+            topics.add(legacyDlqTopic);
+        }
+
         if (topics.isEmpty()) {
             return;
         }

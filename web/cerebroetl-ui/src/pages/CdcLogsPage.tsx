@@ -11,6 +11,8 @@ import {
 import dayjs, { type Dayjs } from "dayjs";
 import { Link, useSearchParams } from "react-router-dom";
 import { activeDayPresetByDate } from "../components/dayPreset";
+import { GptErrorAnalysis } from "../components/gpt/GptErrorAnalysis";
+import { useGptEnabled } from "../components/gpt/useGptEnabled";
 import {
   listCdcEventLogs,
   listCdcProcessingLogs,
@@ -49,6 +51,7 @@ const COMMAND_LABEL: Record<string, string> = {
   DELETE: "삭제",
   RUNTIME_MONITOR: "런타임 감시",
   DISMISS_DRIFT: "불일치 확인",
+  SINK_CONFIG_REFRESH: "싱크 설정 재적용",
 };
 
 type StatusFilter = "ALL" | string;
@@ -119,8 +122,27 @@ function formatDuration(seconds?: number | null) {
   return `${hours}시간 ${minutes % 60}분`;
 }
 
+/** GPT 에 넘길 «화면에 보이는 오류»: 줄의 구분·시각·상태와 메시지. 커넥터 오류 추적·파이프라인 구성은 서버가 붙인다. */
+function screenErrorText(row: UnifiedCdcLogRow) {
+  const lines = [
+    `구분: ${row.kindLabel}`,
+    `시각: ${formatDateTime(row.startedAt)}${row.endedAt ? ` ~ ${formatDateTime(row.endedAt)}` : ""}`,
+    `상태: ${STATUS_LABEL[row.status] ?? row.status}`,
+  ];
+  if (row.processing) {
+    const p = row.processing;
+    lines.push(`커넥터 상태: Source ${p.sourceState ?? "-"} · Sink ${p.sinkState ?? "-"}`, `Lag: ${p.consumerLag}`);
+  }
+  if (row.message) {
+    lines.push(`메시지:\n${row.message}`);
+  }
+  return lines.join("\n");
+}
+
 /** 펼친 줄. 표 열에서 뺀 처리 구간의 세부 값(소스·타깃·Topic·커넥터 상태·Lag)과 메시지를 보여준다. */
 function DetailRow({ row }: { row: UnifiedCdcLogRow }) {
+  const gptEnabled = useGptEnabled();
+  const [analyzing, setAnalyzing] = useState(false);
   const lines: Array<[string, ReactNode]> = [];
   if (row.processing) {
     const p = row.processing;
@@ -145,6 +167,19 @@ function DetailRow({ row }: { row: UnifiedCdcLogRow }) {
       {row.message ? (
         <pre style={{ whiteSpace: "pre-wrap", margin: lines.length ? "6px 0 0" : 0, fontSize: 12 }}>{row.message}</pre>
       ) : null}
+      {gptEnabled && row.status === "FAILED" && !analyzing && (
+        <Button size="small" className="gpt-analysis-open" style={{ marginTop: 8 }} onClick={() => setAnalyzing(true)}>
+          GPT 분석
+        </Button>
+      )}
+      {analyzing && (
+        <GptErrorAnalysis
+          targetType="CDC_PIPELINE"
+          target={{ pipelineId: String(row.pipelineId) }}
+          errorText={screenErrorText(row)}
+          onClose={() => setAnalyzing(false)}
+        />
+      )}
     </div>
   );
 }
@@ -155,7 +190,7 @@ function DetailRow({ row }: { row: UnifiedCdcLogRow }) {
  *
  * <p>예전에는 «처리 이력 / 오류·상태 이력 / 실패 데이터(DLQ)» 탭으로 나뉘어 있었다. 두 이력은 한 표로 합치고
  * (시각 역순), DLQ 는 화면에서 뺐다 - 싱크 실패 정책을 «버리고 계속»에서 «멈춤»으로 바꾸기로 해서 DLQ 는 쓰이지
- * 않게 된다(docs/2026-09-09-cdc-error-policy-dlq.md). 백엔드의 DLQ·재처리 API 는 정책 전환 때 함께 정리한다.
+ * 않게 된다(docs/2026-09-09-cdc-error-policy-dlq.md). 백엔드의 DLQ·재처리 API 도 2026-09-17 정책 전환 때 함께 뺐다.
  * Lag 추이 차트와 자동 갱신도 ETL 로그 화면에 없어 뺐고, 처리 구간의 세부 값은 줄을 펼쳐 본다.
  *
  * <ul>
@@ -472,7 +507,7 @@ export function CdcLogsPage() {
         ]}
         expandable={{
           expandedRowRender: (row) => <DetailRow row={row} />,
-          rowExpandable: (row) => row.kind === "processing" || Boolean(row.message) || Boolean(row.event?.requestedBy),
+          rowExpandable: (row) => row.kind === "processing" || row.status === "FAILED" || Boolean(row.message) || Boolean(row.event?.requestedBy),
         }}
       />
     </div>

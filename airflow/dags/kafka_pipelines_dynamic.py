@@ -59,7 +59,9 @@ PIPELINE_API_BASE_URL = "http://pipeline-api:8081"
 # monitor: 커넥터를 건드리지 않고 감시만 다시 붙인다.
 # 감시 Run이 죽으면(파싱 실패·워커 재시작 등) 되살릴 방법이 stop -> start 뿐이었는데,
 # 그건 이미 잘 돌고 있는 CDC의 Sink를 한 번 멈춰야 한다. 감시만 잃은 경우를 위한 통로다.
-ACTIONS = ["deploy", "start", "stop", "monitor"]
+# restart: 싱크가 한 건 거부로 멈췄을 때(2026-09-17 실패 정책 전환) 원인을 고치고 다시 띄우는 복구 동작이다.
+# 백엔드가 «실패한 커넥터·태스크만» 다시 띄우고, 멈춘 건부터 이어서 적재된다. 잘 돌고 있는 것은 건드리지 않는다.
+ACTIONS = ["deploy", "start", "stop", "monitor", "restart"]
 
 CDC_INDEX_VARIABLE = "cdc_pipeline_index"
 CDC_SPEC_PREFIX = "cdc_pipeline_spec__"
@@ -112,7 +114,7 @@ def verify_pipeline_action(pipeline_id: int, **context):
             # stop은 CDC에서 Source를 계속 돌려둔다(원천 변경분을 놓치지 않기 위해).
             if action == "deploy":
                 expected = "STOPPED"
-            elif action == "start" or role == "SOURCE":
+            elif action in ("start", "restart") or role == "SOURCE":
                 expected = "RUNNING"
             else:
                 expected = "STOPPED"
@@ -159,6 +161,8 @@ def verify_target_db_landing(
 ):
     action = context["params"]["action"]
     if action != "start":
+        # restart 는 «멈춘 것을 다시 띄우는» 동작이라 새로 들어올 데이터가 없을 수 있다(원인만 고친 경우).
+        # 적재 검증으로 실패시키면 복구가 실패로 보인다 - 검증은 start 에서만 한다.
         raise AirflowSkipException(f"action={action}이라 타겟 DB 적재 검증은 건너뜀 (start일 때만 검증)")
 
     baseline = _record_metric_snapshot(pipeline_id)

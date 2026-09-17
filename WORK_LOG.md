@@ -1474,3 +1474,131 @@ CDC 파이프라인 선택 → 트리·행 강조·속성창, 1920/1366 세로·
 → 전체 로그 창, 실행 이력 기간 변경, 타임라인, 지표 클릭, 상세 창 접기·끌기, 가로 넘침 0, 페이지 오류 0.
 재실행·실행 설정은 실제로 누르지 않았다(운영 DAG 에 영향). 로컬 Airflow 의 오래된 task 로그는 «Could not read served logs»
 라 로그 본문은 두 화면 모두 이 한 줄만 나온다(환경 문제, 화면 문제 아님).
+
+## 35. GPT 2단계 - 워크플로우 · CDC 로그 오류 분석 (2026-09-16)
+
+**요청**: GPT 설정 설계서(docs/2026-09-13-gpt-settings-design.md)의 다음 단계 착수. ETL 로그 · ETL 속성창은 ETL 담당 작업자가
+맡으므로 워크플로우 · CDC 쪽만. 진행 상황 · 설계와 달라진 점은 설계서 12절에 적었다.
+
+**추가/변경**
+- V74 `llm_usage_log` - 본문 없이 누가 · 대상 · LLM · 전송 글자 수 · 토큰 · 소요 · 결과.
+- 백엔드 `llm/client/LlmChatClient`(제공자 4종 SSE 스트리밍, JSON 한 덩어리로 답하는 호환 서버도 받음, 첫 응답 120초 · 전체 300초),
+  `llm/context`(대상 종류 · 수집기 인터페이스 · 우선순위 자르기 · 개인정보 마스킹), 수집기 `WorkflowTaskContextCollector`
+  (워크플로우 · 상위 경로 · 실패 단계 설명 · 노드 구성 · job 단계 SQL · 최근 실행) · `CdcPipelineContextCollector`
+  (파이프라인 구성 · 실측 상태 · 실패 태스크 trace 요약 · 최근 제어 명령), `llm/agent/ErrorAnalysisAgent`(역할 지시문 · 답변 형식),
+  `llm/chat`(`POST /api/llm/chat` SSE, `POST /api/llm/chat/preview`). ErrorCode `LLM_NOT_ENABLED` · `LLM_TARGET_NOT_FOUND`.
+- nginx `location /api/llm/` - 버퍼링 끔, 읽기 제한 330초.
+- 화면: `components/gpt/GptErrorAnalysis`(자동 분석 → 추가 질문 · 중지 · 보내는 정보 보기) · `useGptEnabled`.
+  워크플로우 실패 로그 창(`TaskFailureLogModal`)의 task 머리에 [GPT 분석] - 로그 · 로그2 화면이 같은 창을 쓴다.
+  CDC 로그 펼친 실패 줄에 [GPT 분석]. 선택된 LLM 이 없으면 버튼을 그리지 않는다.
+
+**ETL 담당에게** - `LlmContextCollector` 를 구현한 빈(`targetType()` = `ETL_JOB`)을 추가하면 `/api/llm/chat` 이 자동으로 쓴다.
+화면은 `GptErrorAnalysis` 에 `targetType="ETL_JOB"` 과 대상 id · 화면 오류 문구만 넘기면 된다. job 단계 · 최근 실행을 읽는 방식은
+`WorkflowTaskContextCollector` 의 `steps` · `recentRuns` 를 참고.
+
+**검증**: LLM 단위 테스트 34건(스트리밍 파싱 4종 · HTTP 오류 분류 · 리스너 중단 · 마스킹 오탐 · 자르기 · trace 요약 · 메시지 순서).
+로컬 gemma4(KT Cloud 프록시, OpenAI 호환)로 nginx 경유 스트리밍 - 첫 글자 2.4초. 화면(puppeteer 1600px): dz_com_daily 09-05 실패
+(PutSQL 접속 거부, 4회 시도) → 실패 로그 창 → [GPT 분석] 네 제목 답 · 추가 질문 · 보내는 정보 보기, CDC 로그 09-04 ORA-12541 실패 줄 →
+[GPT 분석], 성공 줄에는 버튼 없음, 페이지 오류 0. 거절 경로: 선택 해제 409 · 없는 파이프라인 404 · 미로그인 401 · ETL_JOB 400.
+권한 없는 사용자로는 확인하지 않았다. 테스트를 위해 로컬 gemma4 를 «선택» 상태로 켰다(해제 → 409 확인 후 다시 선택).
+
+## 36. GPT 3단계 - 속성창 GPT 탭(CDC · 워크플로우 노드) + 대화 길이 관리 (2026-09-17)
+
+**요청**: 로그 GPT 분석의 추가 질문이 길어질 때 대비(오류 분석은 오래된 문답 빼기, 속성창은 자동 요약)와 속성창 GPT 탭을 CDC ·
+워크플로우 둘 다 진행. 상세는 설계서 12절.
+
+**추가/변경**
+- 백엔드: `llm/agent/JobAnalysisAgent` · `ConversationSummarizer` · `AgentPrompts`(공용 지시문), `llm/chat/ConversationFitter`
+  (문답 쌍 단위로 오래된 것부터 고름), `LlmChatService`(입력 길이 60% 대상 정보 / 40% 대화, 오류 분석 DROPPED · 속성창 SUMMARIZED,
+  요약 실패 시 빼기, 요약 호출도 호출 기록), SSE `compacted` 이벤트, 요청에 `summary`. `llm/context/WorkflowNodeContextCollector`
+  (WORKFLOW_NODE) · `EtlJobContextText` · `WorkflowGraphText` 로 워크플로우 task 수집기와 공유.
+  속성창은 질문 필수(`prepareChat`), [보기] 는 질문 없이(`prepare`).
+- 화면: `components/gpt/useGptConversation`(대화 상태 · 요약 경계 · 중지 · 새 대화) · `GptConversationView` · `GptChatPanel`.
+  `GptErrorAnalysis` 는 같은 훅으로 옮김(동작 같음). CDC 관리 «파이프라인 상세» 창에 GPT 탭, 워크플로우 캔버스 노드 속성창을
+  [속성] [GPT] 탭으로(속성 내용은 들여쓰기만 바뀜). 선택된 LLM 이 없으면 탭 없음.
+
+**검증**: LLM 단위 테스트 41건. API · 화면 검증 내용은 설계서 12절 «3단계 검증». [보기] 가 속성창에서 400 이던 것(질문 필수 검사에 걸림)을
+화면 검증에서 찾아 고쳤다. 요약이 일어날 만큼 긴 대화를 화면에서 직접 이어 가 보지는 않았다.
+
+## 37. GPT - 확인 못 했던 3가지 확인 (2026-09-17)
+
+- **화면 요약 표시**: 한도를 잠시 6,000자로 낮춰 CDC GPT 탭에서 확인(설계서 12절 «추가 검증»). 이 과정에서 역할 지시문 길이를
+  한도 계산에서 빼먹은 것을 찾아 `LlmChatService` 에서 지시문 · 머리말(`PROMPT_WRAPPER_CHARS`)까지 세도록 고쳤다.
+- **권한 거절**: `permtest` + 임시 역할로 확인 후 원복.
+- **통합 테스트 `ConnectionRepositoryIT`**: 코드 문제가 아니라 실행 환경 문제 세 가지였다. 통과시킨 실행 방법 -
+  ① Docker 29 는 최소 API 1.40 인데 Testcontainers(docker-java)가 더 낮은 버전으로 물어 400 → `~/.docker-java.properties` 에
+  `api.version=1.44` ② 빌드 컨테이너 안에서 테스트 컨테이너 포트를 `localhost` 로 못 찾음 → `--add-host=host.docker.internal:host-gateway`
+  + `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal`, `TESTCONTAINERS_RYUK_DISABLED=true`, 도커 소켓 마운트
+  ③ 기본값 없는 환경변수 `PIPELINE_JWT_SECRET` · `ACCOUNT_DB_*` 필요(테스트용 아무 값). 새 PostgreSQL 에 마이그레이션 68개가
+  V74 까지 적용되는 것도 함께 확인됐다. 전체 238건 통과.
+
+## 38. 하위 워크플로우 교착 대비 - 트리거러 추가 + deferrable 대기 (2026-09-17)
+
+**요청**: 하위 워크플로우 노드가 자식이 끝날 때까지 워커 슬롯을 쥐어(PARALLELISM=4) 상위가 겹치면 «상위는 자식을 기다리고 자식은 슬롯이
+없어 못 뜨는» 교착이 가능하던 것을 막는다. `deferrable=False` 였던 이유는 트리거러 서비스가 없어서였다(그 밖의 기록 없음).
+
+**변경**
+- `docker-compose.yml` `airflow-triggerer` 추가(같은 Airflow 이미지, dags · logs · plugins 마운트, 0.5 CPU / 640m).
+- `etl_workflows_dynamic.py` SUBWF 노드 `TriggerDagRunOperator(deferrable=True)` - 대기 중 슬롯 반납, 트리거러가 자식 상태를 지켜본다.
+- 로그 · 로그2 화면: 태스크 `deferred`(하위 대기) · `up_for_reschedule`(센서 대기)를 «실행 중»으로 표시 · job 집계. 전에는 영문 그대로 · 회색.
+- 실패 로그 창 잡음에 `Pausing task as DEFERRED` 추가. 하위 추적 조건(`Dag Run triggered successfully` + trigger_dag_id)은 deferrable 에서도 그대로 찍혀 동작.
+- `AirflowHealthResponse` 주석(트리거러 항상 null → 이제 있음). 대시보드 상태 점검은 트리거러가 있으면 «트리거러» 항목을 자동 표시.
+
+**트리거러 메모리**: 384m 로 시작했더니 트리거를 붙잡은 뒤 헬스체크(`airflow jobs check`, 자체로 ~200MB 파이썬 프로세스)와 겹치는 순간
+OOM(137)으로 35초마다 재시작됐다(`docker events` 에 oom, 로그에는 흔적 없음). 640m + 헬스체크 30초로 해소. 평소 ~270MB.
+
+**검증**(실제 ETL 을 돌리지 않는 임시 DAG · 1슬롯 풀, 끝나고 DAG · 풀 · 로그 · 카탈로그 삭제): 상위 → 중간 → 말단(20초) 3단 중첩.
+- blocking(기존): 상위 대기가 슬롯을 쥐고 중간이 3분 넘게 `scheduled` - **교착 재현**
+- deferrable: 두 대기 태스크 `deferred` → 말단 실행 → 성공 체인 36초. 같은 1슬롯에서 실패 체인을 동시에 돌려도 교착 없이 말단 실패가 상위까지 failed 로 전파
+- 실제 `total` 의 하위 노드 2개 `deferrable=True` 파싱 확인(import 오류 없음). **실제 워크플로우 실행은 다음 정기 실행(10:30)이 처음**이다.
+
+## 39. CDC 실패 정책 전환 + DLQ 백엔드 정리 (2026-09-17)
+
+설계 · 결과 · 운영 절차 · 운영 반영 순서는 `docs/2026-09-09-cdc-error-policy-dlq.md` 9절에 모두 적었다. 요약:
+
+- `JdbcSinkTemplate`: CDC 테이블 싱크 `errors.tolerance=none`(DLQ 설정 제거), 로그 파이프라인 싱크는 `all` 유지 · DLQ 만 제거.
+- `AlertEngine.connectorFailedSignals`: 커넥터 상태 FAILED 에 더해 `pipeline_connector.last_status_json` 의 **태스크 FAILED** 도 잡는다.
+- 로컬 `CONNECTOR_FAILED` · `SERVICE_UNREACHABLE` 켬(관리 API, 사람이 끈 설정이라 마이그레이션으로 강제하지 않음). 로컬 활성 수신자 0명(차수봉 비활성).
+- Kafka 보존 실측 7일 → `KAFKA_LOG_RETENTION_HOURS: 336`, kafka 재생성(토픽 유지 확인).
+- `PipelineDeployService.refreshSinkConfig` + `POST /api/pipelines/{id}/sink-config/refresh` + CDC 관리 «상세 › Connector» 정책 표시 · «싱크 설정 재적용».
+  준비(PREPARE)와 같은 설정이 나오게 싱크 설정 렌더링을 함수로 뺐다. 명령 이력 `SINK_CONFIG_REFRESH`(CDC 로그 «싱크 설정 재적용»).
+- DLQ 백엔드 삭제(API 5 · 서비스 2 · 엔티티 · DTO 4 · 보안 규칙), V75 `dlq_replay_request` 삭제(로컬 · 운영 0건), 화면 API 함수 삭제,
+  파이프라인 삭제 시 `dlq.pipeline-{id}` 토픽도 정리.
+
+**실측으로 바뀐 전제**: Debezium JDBC 싱크는 `all` 이어도 **DB 거부(길이 초과 등)는 버리지 않고 태스크를 멈췄다**(DLQ 비어 있음). `all` 이
+조용히 버린 것은 변환 오류(깨진 메시지)뿐이었다. 그리고 그 멈춤을 `CONNECTOR_FAILED` 가 못 잡고 있었다 - 알림 보완이 실질 효과가 컸다.
+
+**검증**(로컬 target-db 안의 실제 CDC 파이프라인을 앱 API 로 생성 · 준비 · 시작, 끝나고 삭제 API + 잔여 기록 · 연결정보 · 스키마 정리, target-db 는 다시 정지):
+옛 설정 흉내 → 긴 값에 멈춤(DLQ 0) · 알림 FIRING 20초 내 · 파이프라인 FAILED → 컬럼 확장 + 재시작 → 멈춘 건부터 적재 · 자동 복구 · 알림 300초 뒤 해소 →
+깨진 메시지는 옛 설정에서 DLQ 로 조용히 빠짐 → 화면에서 «싱크 설정 재적용»(경고 → 멈춤, Connect 실제 설정 none) → 같은 깨진 메시지에 멈춤 →
+오프셋 한 칸 넘기기 + 재시작으로 탈출(소스 6 = 타깃 6) → 삭제 API 가 커넥터 · 토픽 · `dlq.pipeline-4` · 복제 슬롯까지 정리.
+백엔드 테스트 246건 통과(통합 테스트 포함, `JdbcSinkTemplateTest` 로그 파이프라인 정책 1건 추가).
+
+## 40. CDC 복구 수단 3가지 - 재시작 · 멈춘 상태 배포 · 멈춘 한 건 건너뛰기 (2026-09-17)
+
+**배경**: 실패 정책을 «멈춤»으로 바꾼 뒤(39절) 확인해 보니 **멈춘 파이프라인을 화면에서 되살릴 방법이 없었다** - 런타임 감시가 FAILED 로
+바꾸면 «실행 설정»의 시작 · 중지는 상태 검사에서 거절되고, 배포는 «Kafka Connect가 실패 상태입니다»로 실패했다(실측). 재시작 API 는 있었지만
+화면 · 제어 DAG 어디에도 없었다. 사용자 요청으로 ② → ① → ③ 순서로 만들었다. 화면 안내는 docs/2026-09-17-cdc-failure-and-subworkflow-guide.md 5절.
+
+**② 멈춘 상태에서 배포되게** — `awaitConnectorState` 가 STOPPED · PAUSED 를 기다리는 동안에는 «태스크 FAILED» 를 확정 실패로 보지 않는다.
+멈추면 태스크는 어차피 사라지는데 그 전 순간을 실패로 단정하고 있었다. RUNNING 을 기다릴 때만 즉시 중단한다.
+
+**① 재시작** — `PipelineDeployService.restart` 재작성: DEPLOYED · FAILED 에서만 허용(READY · STOPPED 는 «시작»이 맞다),
+일부러 멈춰 둔 커넥터는 건드리지 않음, Connect 의 «실패한 것만 재시작»(`restartFailed` = `POST /connectors/{name}/restart?includeTasks=true&onlyFailed=true`)
+사용, 재시작 뒤 RUNNING 확인(원인이 그대로면 실패로 끝난다). 재시작은 비동기라 요청 직후 옛 FAILED 가 보이므로 **6초 유예**를 둔다
+(유예 없이 만들었더니 실제로는 복구됐는데 apply_action 이 실패로 끝났다 - 실측). 제어 DAG `kafka_pipelines_dynamic.py` 에 `restart` 동작 추가
+(검증 기대값은 start 와 같고, 적재 검증은 건너뛴다), 로그 화면 «실행 설정»에 «재시작 (Restart)» 선택지.
+
+**③ 멈춘 한 건 건너뛰기** — `SinkStuckRecordService` + `GET /api/pipelines/{id}/sink-stuck`(멈춘 위치 · 밀린 건수 · 레코드 내용(마스킹 · 2천자) ·
+원인 trace) · `POST …/sink-stuck/skip`(사유 필수, 화면에서 본 위치와 실제가 같을 때만, 싱크가 멈춰 있을 때만 → 오프셋 +1 → 자동 재시작).
+CDC 관리 «상세 › Connector» 에 빨간 안내와 «이 한 건 건너뛰기» + 사유 입력 창. 이력 `SKIP_RECORD` 에 위치 · 사유 · **요청자**가 남는다
+(`PipelineCommandHistoryRecorder` 에 requested_by 오버로드 추가 - 되돌릴 수 없는 동작은 누가 했는지 남아야 한다).
+
+**검증**(로컬 target-db 안 실제 CDC 파이프라인, 끝나고 삭제 · 기록 정리 · target-db 정지):
+- ① 고치지 않고 재시작 → 502 «taskStates=[FAILED]»(확인이 실제로 동작). 제약 위반으로 멈춤 → 제약 제거 → 제어 DAG restart →
+  apply_action · verify_action success, 이력 «재시작: SINK / 그대로: SOURCE(정상)», 밀린 2건 적재. 화면 «실행 설정»에 선택지 5개 확인
+- ② FAILED 에서 배포 → READY(전에는 502) → 시작 → 밀린 8 · 9번 적재
+- ③ 깨진 메시지 주입 → 멈춤 → 화면에서 내용 · 원인 확인 → 사유 없이는 확인 버튼 비활성 → 건너뛰기 → 다음 건 적재, 소스 10 = 타깃 10.
+  API 거절 경로: 사유 없음 400, 위치 불일치 400(«화면 16, 지금 11»)
+- 백엔드 테스트 248건(재시작 규칙 3건 추가). 통합 테스트는 단독 실행 시 통과 - 빌드 · 브라우저 검증과 겹치면 메모리 부족으로 테스트용
+  Postgres 컨테이너가 제때 못 떠 실패한다(코드 문제 아님, 로컬 가용 메모리 약 1.8GB)

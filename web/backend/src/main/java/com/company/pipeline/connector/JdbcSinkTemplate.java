@@ -45,7 +45,7 @@ public class JdbcSinkTemplate {
         config.put("schema.evolution", "basic");
         config.put("table.name.format", request.targetSchema() + "." + request.targetTable());
         config.put("delete.enabled", String.valueOf(request.deleteEnabled()));
-        addDlqSettings(config, request.pipelineId());
+        addStopOnErrorPolicy(config);
 
         return new RenderedConnectorConfig(connectorName, "SINK",
                 "io.debezium.connector.jdbc.JdbcSinkConnector", config);
@@ -102,7 +102,7 @@ public class JdbcSinkTemplate {
         config.put("transforms.unwrap.delete.tombstone.handling.mode", "rewrite");
         config.put("transforms.dropDeleted.type", "org.apache.kafka.connect.transforms.ReplaceField$Value");
         config.put("transforms.dropDeleted.exclude", "__deleted");
-        addDlqSettings(config, request.pipelineId());
+        addStopOnErrorPolicy(config);
 
         return new RenderedConnectorConfig(connectorName, "SINK",
                 "io.debezium.connector.jdbc.JdbcSinkConnector", config);
@@ -136,19 +136,44 @@ public class JdbcSinkTemplate {
         config.put("table.name.format", request.targetSchema() + "." + request.targetTable());
         config.put("delete.enabled", "false");
         config.put("key.converter", "org.apache.kafka.connect.storage.StringConverter");
-        addDlqSettings(config, request.pipelineId());
+        addSkipOnErrorPolicy(config);
 
         return new RenderedConnectorConfig(connectorName, "SINK",
                 "io.debezium.connector.jdbc.JdbcSinkConnector", config);
     }
 
-    private void addDlqSettings(Map<String, Object> config, Long pipelineId) {
-        config.put("errors.tolerance", "all");
-        config.put("errors.deadletterqueue.topic.name", "dlq.pipeline-" + pipelineId);
-        config.put("errors.deadletterqueue.topic.replication.factor", "1");
-        config.put("errors.deadletterqueue.context.headers.enable", "true");
+    /**
+     * CDC 테이블 싱크의 실패 정책 - <b>한 건이라도 거부되면 태스크를 멈춘다</b>(errors.tolerance=none, 2026-09-17 전환).
+     *
+     * <p>예전에는 all(버리고 계속) + DLQ 토픽이었다. 그러면 외래키 위반 · 타입 불일치 · 길이 초과 같은 건은 오프셋이
+     * 지나가 <b>재시작해도 영원히 안 들어온다</b>(소스에는 있는데 타깃에는 없는 조용한 누락). none 이면 오프셋이 그 자리에
+     * 멈춰, 원인을 고치고 태스크를 재시작하면 그 건부터 다시 들어온다. 상용 CDC(GoldenGate REPERROR ABEND,
+     * SharePlex Post)의 기본값과 같다. 결정 · 전제 조건: docs/2026-09-09-cdc-error-policy-dlq.md
+     *
+     * <p>멈춘 걸 사람이 알아야 하므로 CONNECTOR_FAILED 알림이 태스크 FAILED 도 잡도록 함께 고쳤다(AlertEngine).
+     * 소스는 계속 Kafka 에 쌓으므로 Kafka 보존 기간(docker-compose, 14일) 안에 고치면 손실이 없다.
+     *
+     * <p>이미 등록된 커넥터는 설정이 등록 시점에 굳어 있어 이 템플릿만 바꿔서는 안 바뀐다 -
+     * {@code PipelineDeployService.refreshSinkConfig} 로 싱크 설정만 다시 넣는다.
+     */
+    private void addStopOnErrorPolicy(Map<String, Object> config) {
+        config.put("errors.tolerance", "none");
+        // 멈춘 원인(예외 · 레코드 위치)을 Connect 로그에 남긴다. 태스크 trace 에도 남지만 재시작하면 사라진다.
         config.put("errors.log.enable", "true");
         // 원문 데이터가 Connect 로그에 평문으로 남지 않게 한다.
+        config.put("errors.log.include.messages", "false");
+    }
+
+    /**
+     * 로그 파이프라인 싱크의 실패 정책 - 거부된 줄은 <b>건너뛰고 계속</b> 간다(DLQ 없이, 2026-09-17).
+     *
+     * <p>로그는 업무 데이터가 아니고, 줄 하나(컬럼 길이를 넘는 긴 줄 등) 때문에 뒤따르는 모든 로그 적재가 멈추는 편이
+     * 더 해롭다고 봤다. 건너뛴 줄은 Connect 로그에 남는다(원문 제외). DLQ 토픽은 CDC 정책 전환과 함께 없앴다 -
+     * 로그 파이프라인도 멈춤으로 바꾸려면 {@link #addStopOnErrorPolicy} 를 쓰면 된다.
+     */
+    private void addSkipOnErrorPolicy(Map<String, Object> config) {
+        config.put("errors.tolerance", "all");
+        config.put("errors.log.enable", "true");
         config.put("errors.log.include.messages", "false");
     }
 

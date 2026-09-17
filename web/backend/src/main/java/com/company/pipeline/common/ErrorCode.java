@@ -19,7 +19,8 @@ public enum ErrorCode {
     FILEBEAT_CONFIG_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Filebeat 설정 파일 처리 중 오류가 발생했습니다."),
     LLM_PROVIDER_NOT_FOUND(HttpStatus.NOT_FOUND, "GPT 설정을 찾을 수 없습니다."),
     LLM_PROVIDER_CONFLICT(HttpStatus.CONFLICT, "GPT 설정을 변경할 수 없습니다."),
-    LLM_CHAT_ERROR(HttpStatus.BAD_GATEWAY, "GPT 요청 처리 중 오류가 발생했습니다."),
+    LLM_NOT_ENABLED(HttpStatus.CONFLICT, "선택된 GPT 설정이 없습니다. GPT 설정 > 관리에서 사용할 LLM 을 선택하십시오."),
+    LLM_TARGET_NOT_FOUND(HttpStatus.NOT_FOUND, "분석할 대상을 찾을 수 없습니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 내부 오류가 발생했습니다.");
 
     private final HttpStatus httpStatus;

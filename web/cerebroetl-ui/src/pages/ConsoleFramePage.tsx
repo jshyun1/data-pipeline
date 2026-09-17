@@ -48,10 +48,10 @@ import {
 } from "../api/platform";
 import {
   getLlmStatus,
-  previewLlmChatContext,
+  previewLlmContext,
   streamLlmChat,
-  type LlmChatMessage,
-  type LlmContextPreviewResponse,
+  type LlmChatTurn,
+  type LlmContextPreview,
 } from "../api/llm";
 import { getWorkflow, listWorkflows, type WorkflowDetail } from "../api/workflows";
 
@@ -2827,12 +2827,12 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const [activeTab, setActiveTab] = useState<"detail" | "ai">("detail");
   const [aiAssistantEnabled, setAiAssistantEnabled] = useState(false);
   const [aiProviderName, setAiProviderName] = useState<string | null>(null);
-  const [aiMessages, setAiMessages] = useState<LlmChatMessage[]>([]);
+  const [aiMessages, setAiMessages] = useState<LlmChatTurn[]>([]);
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiPreviewLoading, setAiPreviewLoading] = useState(false);
-  const [aiPreview, setAiPreview] = useState<LlmContextPreviewResponse | null>(null);
+  const [aiPreview, setAiPreview] = useState<LlmContextPreview | null>(null);
   const [jobs, setJobs] = useState<EtlJobResponse[]>([]);
   const [details, setDetails] = useState<EtlJobDetailResponse[]>([]);
   const [runs, setRuns] = useState<EtlJobRunResponse[]>([]);
@@ -3122,10 +3122,11 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const aiGroupTargetId = activeGroupId ?? "root";
 
   const buildAiRequest = (question: string) => ({
-    targetType: displayJob ? "ETL_JOB" as const : "NIFI_GROUP" as const,
-    targetId: displayJob ? aiTargetId : aiGroupTargetId,
+    agentType: "JOB_ANALYSIS" as const,
+    targetType: "ETL_JOB" as const,
+    target: (displayJob ? { jobId: aiTargetId } : { groupId: aiGroupTargetId }) as Record<string, string>,
     question,
-    messages: aiMessages.filter((entry) => entry.content.trim().length > 0),
+    history: aiMessages.filter((entry) => entry.content.trim().length > 0),
   });
 
   const handleAiSubmit = async () => {
@@ -3138,26 +3139,21 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     setAiError(null);
     setAiMessages((prev) => [...prev, { role: "user", content: question }, { role: "assistant", content: "" }]);
     try {
-      const response = await streamLlmChat(buildAiRequest(question), (delta) => {
-        setAiMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last?.role === "assistant") {
-            next[next.length - 1] = { ...last, content: last.content + delta };
-          }
-          return next;
-        });
-      });
-      setAiMessages((prev) => {
-        const next = [...prev];
-        const last = next[next.length - 1];
-        if (last?.role === "assistant") {
-          next[next.length - 1] = { ...last, content: response.answer };
-        }
-        return next;
+      // 새 API 는 답변을 결과로 돌려주지 않고 onDelta 로만 흘린다. 제공자 이름은 meta 로 온다.
+      await streamLlmChat(buildAiRequest(question), {
+        onMeta: (meta) => setAiProviderName(meta.providerName),
+        onDelta: (delta) => {
+          setAiMessages((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last?.role === "assistant") {
+              next[next.length - 1] = { ...last, content: last.content + delta };
+            }
+            return next;
+          });
+        },
       });
       setAiQuestion("");
-      setAiProviderName(response.providerName);
     } catch (ex) {
       setAiError(ex instanceof Error ? ex.message : "AI 어시스턴트 요청에 실패했습니다.");
       setAiMessages((prev) => prev.filter((entry) => entry.content.trim().length > 0));
@@ -3170,7 +3166,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     setAiPreviewLoading(true);
     setAiError(null);
     try {
-      const preview = await previewLlmChatContext(buildAiRequest(aiQuestion.trim() || "전송 정보 미리보기"));
+      const preview = await previewLlmContext(buildAiRequest(aiQuestion.trim() || "전송 정보 미리보기"));
       setAiPreview(preview);
     } catch (ex) {
       setAiError(ex instanceof Error ? ex.message : "전송 정보를 불러오지 못했습니다.");
@@ -3418,7 +3414,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
             <dl>
               <div>
                 <dt>대상</dt>
-                <dd>{aiPreview.targetTitle}</dd>
+                <dd>{aiPreview.targetLabel}</dd>
               </div>
               <div>
                 <dt>GPT</dt>
@@ -3429,7 +3425,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
                 <dd>{aiPreview.masked ? "켜짐" : "꺼짐"}</dd>
               </div>
             </dl>
-            <pre>{aiPreview.context}</pre>
+            <pre>{aiPreview.text}</pre>
           </div>
         ) : null}
       </Modal>

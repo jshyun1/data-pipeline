@@ -1,7 +1,7 @@
 # CDC 실패 처리 정책 전환 — «버리고 계속» → «멈추고 사람 부르기»
 
 싱크 커넥터가 레코드 한 건을 거부했을 때의 기본 동작을 바꾸는 건에 대한 검토와 실행 계획.
-**검토만 끝났고 아직 아무것도 바꾸지 않았다.** 다음 작업 때 이 문서대로 진행한다.
+**2026-09-17 전환했다.** 실측으로 전제 일부가 바뀌었다 - 결과 · 운영 절차 · 운영(MSA) 반영 순서는 [9절](#9-전환-결과-2026-09-17).
 
 ---
 
@@ -137,3 +137,70 @@ DLQ 에도 안 남는 불일치가 있기 때문이다 — 초기 적재와 CDC 
 
 우리에겐 `pipeline_consistency_check` 와 정합성 점검이 부분적으로 있다.
 이 방향을 키우는 것이 상용의 compare/repair 에 대응하며, 이번 전환과는 별개 과제다.
+
+## 9. 전환 결과 (2026-09-17)
+
+### 9-1. 바꾼 것
+
+| 항목 | 내용 |
+|---|---|
+| 싱크 실패 정책 | CDC 테이블 싱크(일반 · 델타) `errors.tolerance = none` + DLQ 설정 제거 (`JdbcSinkTemplate.addStopOnErrorPolicy`) |
+| 로그 파이프라인 싱크 | `all`(건너뛰고 계속) 유지, **DLQ 만 제거**. 줄 하나(긴 줄 등)로 모든 로그 적재가 멈추는 편이 더 해롭다고 판단 — 바꾸려면 `addSkipOnErrorPolicy` 대신 `addStopOnErrorPolicy` 한 줄 |
+| 실패 알림 | `CONNECTOR_FAILED` 가 **태스크 FAILED 도** 잡게 고침(아래 9-2 ②). 로컬에서 `CONNECTOR_FAILED` · `SERVICE_UNREACHABLE` 규칙을 켬(관리 API) |
+| Kafka 보존 | 실측 168시간(7일, 브로커 기본값) → `KAFKA_LOG_RETENTION_HOURS: 336`(14일) |
+| 기존 커넥터 적용 | `POST /api/pipelines/{id}/sink-config/refresh` + CDC 관리 «상세 › Connector» 탭 «싱크 설정 재적용». 소스는 그대로, 실행 중이면 싱크 태스크만 새 설정으로 재시작돼 커밋된 위치부터 이어 읽는다. 탭에 현재 정책을 보여 주고 옛 정책이면 경고 |
+| DLQ 백엔드 | `/api/cdc/logs/dlq*` 5개 API · `DlqReadService` · `DlqReplayService` · 엔티티 · DTO 삭제, **V75 로 `dlq_replay_request` 삭제**(로컬 0건 · 운영 0건 확인), 화면 API 함수 삭제 |
+| 옛 DLQ 토픽 | 파이프라인 삭제 때 `dlq.pipeline-{id}` 도 함께 지우게 함(`KafkaTopicCleanupService`) |
+
+### 9-2. 실측으로 바뀐 전제
+
+로컬 `target-db` 에 실제 CDC 파이프라인(PostgreSQL 소스 → Kafka → JDBC 싱크, 타깃 컬럼 `varchar(5)`)을 앱 API 로 만들어 확인했다.
+
+**① `errors.tolerance = all` 이어도 DB 가 거부한 건은 버려지지 않았다.** 옛 설정(all + DLQ)에서 긴 값을 넣자 싱크 **태스크가 FAILED 로 멈췄고 DLQ 는 비어 있었다**
+(`Failed to flush records … value too long for type character varying(5)`). Debezium JDBC 싱크는 DB 쓰기(flush) 실패를 오류 처리기에 넘기지 않고
+그대로 던진다. 2절 ②의 «외래키 위반 · 타입 불일치 · 길이 초과 → 조용히 버려짐» 은 이 커넥터에서는 사실이 아니었다.
+
+`all` 이 실제로 버린 것은 **변환 단계 오류**다 — 역직렬화가 안 되는 메시지를 토픽에 넣자 옛 설정은 DLQ 로 빼고 알림 없이 계속 갔고(조용한 누락 재현),
+새 설정은 `Tolerance exceeded in error handler` 로 멈췄다. 그러니 이번 전환의 실제 효과는:
+
+- 변환 오류(깨진 메시지 · 스키마 불일치 · SMT 실패)의 조용한 누락이 없어졌다
+- **DB 거부로 멈추는 것은 전환 전에도 이미 일어나고 있었다** → 그래서 ②가 더 중요했다
+
+**② 그 멈춤을 알림이 못 잡고 있었다.** 싱크가 멈추면 커넥터는 RUNNING, **태스크만** FAILED 가 된다. `CONNECTOR_FAILED` 는 커넥터 상태만 봐서
+울리지 않았다. 런타임 감시가 10초마다 적는 `pipeline_connector.last_status_json` 의 태스크 상태를 함께 보게 고쳤고, 시험에서
+«zz-정책전환-시험 — Sink 태스크 FAILED»(CRITICAL)가 약 20초 안에 떴다가, 고친 뒤 300초 정상 유지 후 자동 해소됐다.
+
+### 9-3. 운영 절차 — 싱크가 멈췄을 때
+
+알림 «… Sink 태스크 FAILED» → CDC 관리 «상세» 의 운영 상태 · Connector 실행상태(trace), CDC 로그의 «런타임 감시 실패» 줄(GPT 분석 가능)에서 원인을 본다.
+멈춘 뒤 런타임 감시가 파이프라인을 **FAILED** 로 바꾼다(그 상태에서 시작 · 중지는 거절되고 **재시작 · 배포**가 된다).
+
+**화면 절차와 자세한 설명: [2026-09-17 안내 문서 5절](2026-09-17-cdc-failure-and-subworkflow-guide.md#5-복구--화면에서-하는-방법)**
+
+| 상황 | 방법 |
+|---|---|
+| 고칠 수 있는 원인(컬럼 길이 · 제약 · 접속) | 원인을 고치고 **워크플로우 › 로그 → 실행 설정 → «재시작 (Restart)»** — 멈춘 건부터 다시 들어온다 |
+| 커넥터 설정 자체가 잘못됨 | **실행 설정 → «배포» → «시작»** — 설정을 다시 넣고 세운다 |
+| 고칠 수 없는 한 건(깨진 메시지 등) | **CDC 관리 → 상세 → Connector → «이 한 건 건너뛰기»** — 내용 · 원인을 보고 사유를 적으면 그 건을 넘기고 자동으로 다시 띄운다. **넘긴 건은 타깃에 안 들어간다** |
+
+API 로 직접 부르려면 `POST /api/pipelines/{id}/restart`, `GET /api/pipelines/{id}/sink-stuck`,
+`POST /api/pipelines/{id}/sink-stuck/skip`(topic · partition · offset · reason). 409 «rebalance was underway» 면 잠시 뒤 다시 부른다.
+
+> 2026-09-17 저녁 추가. 그 전에는 화면 복구 수단이 없어 명령어로만 했다 - 그때 쓰던 `kafka-consumer-groups --reset-offsets --shift-by 1` 절차는
+> 이제 «한 건 건너뛰기» 버튼이 대신한다(같은 일을 한다).
+
+### 9-4. 운영(MSA) 반영 순서
+
+운영은 2026-09-17 기준 DEPLOYED 파이프라인 3개(14 · 15 · 22), `dlq.*` 토픽 6개, `CONNECTOR_FAILED` 켜짐 · `SERVICE_UNREACHABLE` 꺼짐 ·
+활성 수신자 2명(읽기 전용 확인).
+
+1. **알림 먼저** — `SERVICE_UNREACHABLE` 을 켤지 결정하고 수신자를 확인한다(`CONNECTOR_FAILED` 는 이미 켜짐). 사람이 일부러 끈 설정일 수 있어 마이그레이션으로 강제로 켜지 않았다
+2. 백엔드 · 화면 배포(V75 가 `dlq_replay_request` 를 지운다)
+3. `docker-compose.yml` 반영 후 `kafka` 재생성(보존 14일, 잠깐 끊겼다 Connect 가 다시 붙는다) — 디스크 여유 확인
+4. 파이프라인 14 · 15 · 22 각각 «상세 › Connector › 싱크 설정 재적용» → 탭 경고가 «멈춤» 으로 바뀌는지 확인
+5. 옛 `dlq.pipeline-*` 토픽은 비었는지 확인 후 수동 삭제(파이프라인을 지울 때는 자동으로 지워진다)
+
+### 9-5. 남은 것
+
+- 5절 ③ 탈출구의 화면 기능(오프셋 건너뛰기) — **2026-09-17 저녁에 만들었다**(9-3). 건너뛴 레코드 원문 보관과 «다른 관리자 승인» 여부는 정하지 않았다
+- «며칠째 멈춰 있음» 단계 알림 — 멈춰 있는 동안 `CONNECTOR_FAILED` 가 30분(renotify 1800초)마다 다시 알리지만, «보존 14일이 곧 끝난다» 같은 단계 경고는 없다

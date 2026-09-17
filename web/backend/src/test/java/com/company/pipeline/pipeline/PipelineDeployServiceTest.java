@@ -280,21 +280,55 @@ class PipelineDeployServiceTest {
         verify(kafkaConnectClient, never()).pause(anyString());
     }
 
+    // 재시작은 «멈춘 것만 다시 띄우는» 복구 동작이다(2026-09-17). 싱크가 한 건 거부로 멈췄을 때 원인을 고치고 쓴다.
     @Test
-    void restart_callsRestartTaskForEachConnector() throws Exception {
+    void restart_restartsFailedConnectorAndVerifiesRunning() throws Exception {
         PipelineDefinition pipeline = newPipeline(1L);
+        pipeline.setStatus(PipelineStatus.FAILED);
         when(pipelineDefinitionRepository.findById(1L)).thenReturn(Optional.of(pipeline));
         when(pipelineDefinitionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        var connector = new com.company.pipeline.connector.PipelineConnector(
-                1L, "SOURCE", "source-1-oracle-appuser-customers", "x", "{}");
-        when(pipelineConnectorRepository.findByPipelineId(1L)).thenReturn(List.of(connector));
-        when(kafkaConnectClient.getStatus(anyString())).thenReturn(
-                new ConnectorStatusResponse("x", new ConnectorState("RUNNING", "w"), List.of(), "source"));
+        var sink = new com.company.pipeline.connector.PipelineConnector(
+                1L, "SINK", "sink-1-postgresql-cdc_landing-customers", "x", "{}");
+        when(pipelineConnectorRepository.findByPipelineId(1L)).thenReturn(List.of(sink));
+        ConnectorStatusResponse failed = new ConnectorStatusResponse("x", new ConnectorState("RUNNING", "w"),
+                List.of(new ConnectorTaskStatus(0, "FAILED", "w", "value too long")), "sink");
+        ConnectorStatusResponse running = new ConnectorStatusResponse("x", new ConnectorState("RUNNING", "w"),
+                List.of(new ConnectorTaskStatus(0, "RUNNING", "w", null)), "sink");
+        when(kafkaConnectClient.getStatus(anyString())).thenReturn(failed, running);
 
         deployService.restart(1L);
 
-        verify(kafkaConnectClient).restartTask("source-1-oracle-appuser-customers", 0);
+        verify(kafkaConnectClient).restartFailed("sink-1-postgresql-cdc_landing-customers");
         assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.DEPLOYED);
+    }
+
+    // CDC 중지는 Source 만 돌리고 Sink 는 멈춰 두는 «정상» 상태다 - 재시작이 그걸 깨워서는 안 된다.
+    @Test
+    void restart_leavesDeliberatelyStoppedConnectorAlone() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        pipeline.setStatus(PipelineStatus.DEPLOYED);
+        when(pipelineDefinitionRepository.findById(1L)).thenReturn(Optional.of(pipeline));
+        var sink = new com.company.pipeline.connector.PipelineConnector(
+                1L, "SINK", "sink-1-postgresql-cdc_landing-customers", "x", "{}");
+        when(pipelineConnectorRepository.findByPipelineId(1L)).thenReturn(List.of(sink));
+        when(kafkaConnectClient.getStatus(anyString())).thenReturn(
+                new ConnectorStatusResponse("x", new ConnectorState("STOPPED", "w"), List.of(), "sink"));
+
+        deployService.restart(1L);
+
+        verify(kafkaConnectClient, never()).restartFailed(anyString());
+    }
+
+    // 멈춰 둔(READY·STOPPED) 파이프라인은 «시작»이 맞다 - 재시작으로 되살리면 실행 지시 주체가 흐려진다.
+    @Test
+    void restart_whenNotRunningOrFailed_throwsValidationError() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        pipeline.setStatus(PipelineStatus.READY);
+        when(pipelineDefinitionRepository.findById(1L)).thenReturn(Optional.of(pipeline));
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                com.company.pipeline.common.BusinessException.class, () -> deployService.restart(1L));
+        verify(kafkaConnectClient, never()).restartFailed(anyString());
     }
 
     @Test

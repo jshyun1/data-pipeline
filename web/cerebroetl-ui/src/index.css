@@ -8381,3 +8381,176 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
 .lv2-type { padding: 0 6px; border: 1px solid #bfdbfe; border-radius: 4px; background: #eff6ff; color: #2563eb; font-size: 10.5px; font-weight: 700; }
 .lv2-links { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
 .lv2-history-bar { margin-bottom: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* ===== GPT 오류 분석 창 (components/gpt/GptErrorAnalysis) — docs/2026-09-13-gpt-settings-design.md 5-3 =====
+ * 워크플로우 실패 로그 창과 CDC 로그 펼친 줄 안에 열린다. 글자 크기·색은 실패 로그 창(.failure-log-*)에 맞춘다. */
+.failure-log-task-head .gpt-analysis-open {
+  margin-left: auto;
+}
+
+.gpt-analysis {
+  margin: 10px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  background: #fafbff;
+  font-size: 12px;
+}
+
+.gpt-analysis-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.gpt-analysis-title {
+  color: #3730a3;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.gpt-analysis-meta {
+  color: #64748b;
+}
+
+.gpt-analysis-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.gpt-analysis-note {
+  margin: 6px 0;
+  color: #b45309;
+  font-size: 12px;
+}
+
+.gpt-analysis-body {
+  max-height: 420px;
+  margin-top: 8px;
+  overflow: auto;
+}
+
+.gpt-analysis-body > * + * {
+  margin-top: 8px;
+}
+
+.gpt-analysis-question {
+  margin-left: auto;
+  width: fit-content;
+  max-width: 85%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #e0e7ff;
+  color: #1e293b;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.gpt-analysis-reply {
+  color: #1e293b;
+  line-height: 1.7;
+}
+
+.gpt-analysis-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.gpt-analysis-heading {
+  margin-top: 8px;
+  color: #3730a3;
+  font-weight: 600;
+}
+
+.gpt-analysis-heading:first-child {
+  margin-top: 0;
+}
+
+.gpt-analysis-waiting,
+.gpt-analysis-stopped {
+  margin-top: 4px;
+  color: #94a3b8;
+}
+
+.gpt-analysis-ask {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.gpt-analysis-preview {
+  max-height: 60vh;
+  margin: 8px 0;
+}
+
+/* 대화가 요약된 앞부분(흐리게)과 경계 줄 - 속성창 GPT 탭 */
+.gpt-analysis-summarized {
+  opacity: 0.55;
+}
+
+.gpt-analysis-divider {
+  margin: 8px 0 0;
+  padding-top: 6px;
+  border-top: 1px dashed #c7d2fe;
+  color: #6366f1;
+  font-size: 11px;
+  text-align: center;
+}
+
+/* 속성창 GPT 탭 (components/gpt/GptChatPanel) - CDC 파이프라인 상세 창 · 워크플로우 캔버스 노드 속성창 */
+.gpt-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.gpt-chat-intro {
+  padding: 8px 10px;
+  border: 1px solid #e0e7ff;
+  border-radius: 8px;
+  background: #fafbff;
+  color: #334155;
+  line-height: 1.6;
+}
+
+.gpt-chat-intro .ant-btn-link {
+  height: auto;
+  padding: 0 4px;
+  font-size: 12px;
+}
+
+.gpt-chat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 360px);
+  min-height: 120px;
+  overflow: auto;
+}
+
+.gpt-chat-empty {
+  padding: 18px 8px;
+  color: #94a3b8;
+  line-height: 1.8;
+  text-align: center;
+}
+
+.gpt-chat-footer .gpt-analysis-ask {
+  margin-top: 0;
+}
+
+.gpt-chat-actions {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 24px;
+  margin-top: 4px;
+}
+
+/* 캔버스 노드 속성창의 [속성] [GPT] 탭 - 좁은 카드라 탭 줄 여백을 줄인다 */
+.wf-node-panel-tabs > .ant-tabs-nav {
+  margin-bottom: 10px;
+}

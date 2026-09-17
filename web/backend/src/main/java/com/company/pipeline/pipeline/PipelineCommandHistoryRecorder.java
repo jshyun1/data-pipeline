@@ -20,9 +20,18 @@ public class PipelineCommandHistoryRecorder {
         this.pipelineCommandHistoryRepository = pipelineCommandHistoryRepository;
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(Long pipelineId, String command, String result, String message) {
+        record(pipelineId, command, result, message, null);
+    }
+
+    /**
+     * @param requestedBy 사람이 누른 동작이면 그 사용자. 되돌릴 수 없는 동작(멈춘 건 건너뛰기 등)은 «누가» 가 남아야 한다.
+     *                    스케줄러 · 감시가 스스로 남기는 기록은 null 이다
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void record(Long pipelineId, String command, String result, String message, String requestedBy) {
         PipelineCommandHistory history = new PipelineCommandHistory();
+        history.setRequestedBy(requestedBy);
         history.setPipelineId(pipelineId);
         history.setCommand(command);
         history.setResult(result);
