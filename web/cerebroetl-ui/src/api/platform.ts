@@ -743,7 +743,7 @@ export async function releaseNifiProcessorEditLock(
  */
 export async function saveAirflowDagSchedule(dagId: string, cron?: string): Promise<void> {
   if (!/^nifi_pipeline_[a-z0-9]{8}_control$/i.test(dagId)) {
-    throw new Error("NiFi에서 생성된 DAG만 화면에서 스케줄을 변경할 수 있습니다.");
+    throw new Error("ETL에서 생성된 DAG만 화면에서 스케줄을 변경할 수 있습니다.");
   }
   await apiClient.put<ApiResponse<void>>(
     `/airflow/dag-catalog/${encodeURIComponent(dagId)}/schedule`,

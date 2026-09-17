@@ -85,7 +85,7 @@ export function App() {
               title="ETL 관리"
               src="/nifi/"
               healthcheckSrc="/nifi/"
-              waitMessage="NiFi 관리 콘솔을 준비하는 중입니다"
+              waitMessage="ETL 관리 콘솔을 준비하는 중입니다"
               showProcessGroupTree
             />
           }

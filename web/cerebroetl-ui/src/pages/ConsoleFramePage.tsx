@@ -1655,7 +1655,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
   const filteredTree = tree ? filterTree(tree, searchQuery.trim().toLowerCase()) : null;
 
   return (
-    <aside className="nifi-tree-panel" aria-label="NiFi 프로세스 그룹 트리">
+    <aside className="nifi-tree-panel" aria-label="ETL 그룹 트리">
       <div className="nifi-tree-search-heading">
         <label className="nifi-tree-section-title" htmlFor="nifi-tree-search">
           트리 검색

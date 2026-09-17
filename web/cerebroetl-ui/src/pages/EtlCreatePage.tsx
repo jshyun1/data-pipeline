@@ -2527,7 +2527,7 @@ export function EtlCreatePage() {
         loadMode: isFileLoad ? "INSERT" : loadMode,
         etlType,
       });
-      message.success("NiFi 템플릿 그룹을 복제하고 설정을 반영했습니다.");
+      message.success("ETL 템플릿 그룹을 복제하고 설정을 반영했습니다.");
       clearEtlCreateDraft();
       setCompletedSteps((previous) => previous.includes("target") ? previous : [...previous, "target"]);
       setCompleted(true);

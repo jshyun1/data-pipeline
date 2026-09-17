@@ -51,7 +51,7 @@ public class EtlJobContextText {
                 out.append("\nUPSERT 키: ").append(step.getUpdateKeys());
             }
             if (step.getRunStatus() != null) {
-                out.append("\nNiFi 상태: ").append(step.getRunStatus());
+                out.append("\nETL 상태: ").append(step.getRunStatus());
             }
             if (step.getSqlText() != null && !step.getSqlText().isBlank()) {
                 out.append("\nSQL:\n").append(ContextText.cut(step.getSqlText(), MAX_SQL_CHARS));

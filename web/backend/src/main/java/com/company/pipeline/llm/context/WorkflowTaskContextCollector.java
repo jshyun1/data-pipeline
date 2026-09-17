@@ -35,9 +35,9 @@ public class WorkflowTaskContextCollector implements LlmContextCollector {
 
     private static final Map<String, String> PHASE_DESCRIPTION = Map.of(
             "open_run", "실행 기록 열기 (Cerebro 실행 원장에 이번 실행을 등록)",
-            "start_pg", "NiFi 프로세스 그룹 시작 (job 의 SQL 단계들이 NiFi 에서 돌기 시작)",
-            "await", "NiFi 처리 완료 대기 (NiFi 오류 bulletin 을 감시하고, 끝나면 적재 건수를 센다)",
-            "stop_pg", "NiFi 프로세스 그룹 정지 (성패와 관계없이 항상 실행)",
+            "start_pg", "ETL 그룹 시작 (job 의 SQL 단계들이 ETL에서 돌기 시작)",
+            "await", "ETL 처리 완료 대기 (ETL 오류 알림을 감시하고, 끝나면 적재 건수를 센다)",
+            "stop_pg", "ETL 그룹 정지 (성패와 관계없이 항상 실행)",
             "verify", "적재 확인 (실행 원장이 성공으로 닫혔는지 확인)",
             "run", "하위 워크플로우 DAG 를 실행하고 끝날 때까지 대기",
             "marker", "시작/끝/분기 표시 노드");

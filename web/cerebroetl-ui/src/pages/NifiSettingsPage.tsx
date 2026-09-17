@@ -99,7 +99,7 @@ export function NifiSettingsPage() {
   const createMutation = useMutation({
     mutationFn: createNifiParameterContext,
     onSuccess: () => {
-      message.success("NiFi 파라미터 컨텍스트를 등록했습니다.");
+      message.success("ETL 파라미터 컨텍스트를 등록했습니다.");
       invalidateParameterContexts();
       closeContextModal();
     },
@@ -114,7 +114,7 @@ export function NifiSettingsPage() {
         parameters: toRequestParameters(draftParameters),
       }),
     onSuccess: () => {
-      message.success("NiFi 파라미터 컨텍스트를 수정했습니다.");
+      message.success("ETL 파라미터 컨텍스트를 수정했습니다.");
       invalidateParameterContexts();
       closeContextModal();
     },
@@ -124,7 +124,7 @@ export function NifiSettingsPage() {
   const deleteMutation = useMutation({
     mutationFn: deleteNifiParameterContext,
     onSuccess: () => {
-      message.success("NiFi 파라미터 컨텍스트를 삭제했습니다.");
+      message.success("ETL 파라미터 컨텍스트를 삭제했습니다.");
       invalidateParameterContexts();
     },
     onError: (error: Error) => message.error(error.message),
@@ -296,7 +296,7 @@ export function NifiSettingsPage() {
                         </button>
                         <Popconfirm
                           title="이 파라미터 컨텍스트를 삭제할까요?"
-                          description="NiFi에서도 함께 삭제됩니다."
+                          description="ETL에서도 함께 삭제됩니다."
                           onConfirm={() => deleteMutation.mutate(record.id)}
                         >
                           <button

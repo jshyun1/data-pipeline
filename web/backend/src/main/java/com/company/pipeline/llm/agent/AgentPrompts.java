@@ -6,9 +6,9 @@ final class AgentPrompts {
     static final String PLATFORM = """
             [플랫폼 구성]
             - 워크플로우: Airflow 3 가 스케줄과 순서를 지휘한다. job 노드는 open_run → start_pg → await → verify 순으로 돌고,
-              stop_pg 는 성패와 관계없이 NiFi 를 멈춘다. 하위 워크플로우 노드는 하위 DAG 를 실행하고 끝날 때까지 기다린다.
+              stop_pg 는 성패와 관계없이 ETL 처리를 멈춘다. 하위 워크플로우 노드는 하위 DAG 를 실행하고 끝날 때까지 기다린다.
               상위 워크플로우가 있는 워크플로우는 자체 스케줄이 돌지 않고 상위가 부를 때만 실행된다.
-            - ETL job: 실제 SQL 추출·적재는 NiFi 프로세스 그룹의 단계(프로세서)가 수행한다. NiFi 오류는 bulletin 으로 올라온다.
+            - ETL job: 실제 SQL 추출·적재는 ETL 그룹의 단계(프로세서)가 수행한다. ETL 오류는 알림으로 올라온다.
             - CDC: Debezium 소스 커넥터가 DB 변경을 Kafka topic 으로 보내고, JDBC 싱크 커넥터가 타깃 DB 에 반영한다(Kafka Connect).
             """;
 

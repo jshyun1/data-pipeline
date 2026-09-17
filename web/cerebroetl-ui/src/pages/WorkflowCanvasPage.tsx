@@ -832,7 +832,7 @@ export function WorkflowCanvasPage() {
              style={{ display: "grid", gridTemplateColumns: "260px 1fr 300px", gap: 12 }}>
           {/* 좌: job 팔레트 - ETL(NiFi)에서 만들어 둔 job 목록 */}
           <Card size="small" title="job 팔레트"
-                extra={<Button size="small" icon={<SyncOutlined />} title="NiFi에서 다시 읽어옵니다"
+                extra={<Button size="small" icon={<SyncOutlined />} title="ETL에서 다시 읽어옵니다"
                                loading={syncMutation.isPending}
                                onClick={() => syncMutation.mutate()} />}
                 className="wf-side-card">

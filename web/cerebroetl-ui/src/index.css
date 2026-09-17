@@ -6082,12 +6082,10 @@ button.alert-compact-trigger.is-clear:hover {
   flex: 0 1 285px;
   width: clamp(235px, 18vw, 285px);
   min-width: 235px;
-  /* 높이는 내용에 맡기고 상한만 둔다(상세 패널이 짧을 때 빈 공간이 늘어지지 않게).
-     상한은 128px 하드코딩 대신 GNB 기준값(--app-offset)을 쓴다 - 상단 메뉴 높이가
-     바뀌어도 따라간다. */
-  height: auto;
+  /* 오른쪽 상세 패널은 화면 하단까지 채운다. */
+  height: calc(100vh - var(--app-offset) - 19px);
   max-height: calc(100vh - var(--app-offset) - 19px);
-  align-self: flex-start;
+  align-self: stretch;
   overflow: auto;
   border: 1px solid #d5dbe3;
   border-radius: 8px;
@@ -6099,7 +6097,6 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 .nifi-detail-panel--ai {
-  height: calc(100vh - var(--app-offset) - 19px);
   display: flex;
   flex-direction: column;
   overflow: hidden;

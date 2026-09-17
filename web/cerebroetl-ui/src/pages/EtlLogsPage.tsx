@@ -11,6 +11,8 @@ import {
 import dayjs, { type Dayjs } from "dayjs";
 import { Link, useSearchParams } from "react-router-dom";
 import { activeDayPresetByDate } from "../components/dayPreset";
+import { GptErrorAnalysis } from "../components/gpt/GptErrorAnalysis";
+import { useGptEnabled } from "../components/gpt/useGptEnabled";
 import {
   getNifiProcessGroupTree,
   listNifiExecutionLogs,
@@ -46,6 +48,7 @@ interface UnifiedEtlLogRow {
   endedAt?: string | null;
   durationSeconds?: number | null;
   insertedCount?: number | null;
+  jobId?: number | null;
   groupId?: string | null;
   groupName?: string | null;
   path: string;
@@ -188,6 +191,7 @@ export function EtlLogsPage() {
         endedAt: row.endedAt,
         durationSeconds: row.durationSeconds,
         insertedCount: row.insertedCount,
+        jobId: null,
         groupId: row.groupId,
         groupName: row.groupName,
         path: (row.groupId && pathByGroupId.get(row.groupId)) || jobName,
@@ -208,6 +212,7 @@ export function EtlLogsPage() {
           endedAt: null,
           durationSeconds: null,
           insertedCount: null,
+          jobId: row.jobId,
           groupId: row.groupId,
           groupName: row.groupName,
           path: (row.groupId && pathByGroupId.get(row.groupId)) || jobName,
@@ -274,6 +279,44 @@ export function EtlLogsPage() {
   };
   // 이 화면의 RangePicker 는 날짜 단위라 시각까지 비교하는 판정으로는 일치하지 않는다.
   const selectedPreset = activeDayPresetByDate(appliedRange[0], appliedRange[1]);
+
+  const detailText = (row: UnifiedEtlLogRow) => [
+    `상태: ${EVENT_STATUS_LABEL[row.status] ?? row.status}`,
+    `Job: ${row.jobName}`,
+    `Processor: ${row.processorName ?? "-"}`,
+    `경로: ${row.path || "-"}`,
+    `발생 시각: ${formatDateTime(row.startedAt)}`,
+    row.message ? `오류 내용:\n${row.message}` : "오류 내용: -",
+  ].join("\n");
+
+  function DetailRow({ row }: { row: UnifiedEtlLogRow }) {
+    const gptEnabled = useGptEnabled();
+    const [analyzing, setAnalyzing] = useState(false);
+    const target: Record<string, string> = {};
+    if (row.jobId != null) target.jobId = String(row.jobId);
+    if (row.groupId) target.groupId = row.groupId;
+    const canAnalyze = gptEnabled && row.status === "FAILED" && (row.jobId != null || Boolean(row.groupId));
+    return (
+      <div style={{ fontSize: 12 }}>
+        <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: 12 }}>
+          {row.message ?? "상세 정보 없음"}
+        </pre>
+        {canAnalyze && !analyzing && (
+          <Button size="small" className="gpt-analysis-open" style={{ marginTop: 8 }} onClick={() => setAnalyzing(true)}>
+            GPT 분석
+          </Button>
+        )}
+        {analyzing && (
+          <GptErrorAnalysis
+            targetType="ETL_JOB"
+            target={target}
+            errorText={detailText(row)}
+            onClose={() => setAnalyzing(false)}
+          />
+        )}
+      </div>
+    );
+  }
 
   const filters = (
     <Space className="etl-log-filter-toolbar" wrap>
@@ -429,11 +472,7 @@ export function EtlLogsPage() {
           },
         ]}
         expandable={{
-          expandedRowRender: (row) => (
-            <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: 12 }}>
-              {row.message ?? "상세 정보 없음"}
-            </pre>
-          ),
+          expandedRowRender: (row) => <DetailRow row={row} />,
           rowExpandable: (row) => row.status !== "SUCCESS" && Boolean(row.message),
         }}
       />
