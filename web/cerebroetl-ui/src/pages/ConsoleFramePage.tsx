@@ -261,6 +261,15 @@ const HIDE_TOOL_CHROME_CSS = `
     height: 100% !important;
     z-index: 2 !important;
     pointer-events: auto !important;
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ICON_ATTRIBUTE}] > :not(.cerebro-tool-icon) * {
+    opacity: 0 !important;
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} .cerebro-tool-icon {
     position: absolute !important;
@@ -306,6 +315,9 @@ const HIDE_TOOL_CHROME_CSS = `
     box-shadow: 0 2px 8px rgb(15 23 42 / 9%) !important;
     overflow: visible !important;
   }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] > :not([${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]) {
+    display: none !important;
+  }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] {
     position: relative !important;
     width: 28px !important;
@@ -339,6 +351,15 @@ const HIDE_TOOL_CHROME_CSS = `
     height: 100% !important;
     z-index: 2 !important;
     pointer-events: auto !important;
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ICON_ATTRIBUTE}] > :not(.cerebro-tool-icon) * {
+    opacity: 0 !important;
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] .cerebro-tool-icon {
     position: absolute !important;
