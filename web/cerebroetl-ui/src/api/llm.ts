@@ -1,4 +1,5 @@
 import { apiClient, unwrap, type ApiResponse } from "./client";
+import { getToken } from "../auth/session";
 
 // 백엔드 com.company.pipeline.llm 과 맞춘다. 설계: docs/2026-09-13-gpt-settings-design.md
 export type LlmDeployment = "EXTERNAL" | "INTERNAL";
@@ -77,6 +78,36 @@ export interface LlmStatus {
   maskSensitive: boolean | null;
 }
 
+export type LlmTargetType = "GENERAL" | "ETL_JOB" | "CDC_PIPELINE" | "WORKFLOW_NODE" | "WORKFLOW_TASK";
+export type LlmChatRole = "user" | "assistant";
+
+export interface LlmChatMessage {
+  role: LlmChatRole;
+  content: string;
+}
+
+export interface LlmChatRequest {
+  targetType: LlmTargetType;
+  targetId: string;
+  question: string;
+  messages: LlmChatMessage[];
+}
+
+export interface LlmChatResponse {
+  answer: string;
+  providerName: string;
+  modelName: string;
+  masked: boolean;
+  durationMs: number;
+}
+
+export interface LlmContextPreviewResponse {
+  targetTitle: string;
+  providerName: string;
+  masked: boolean;
+  context: string;
+}
+
 export async function listLlmProviders(): Promise<LlmProviderResponse[]> {
   const res = await apiClient.get<ApiResponse<LlmProviderResponse[]>>("/llm/providers");
   return unwrap(res.data);
@@ -132,5 +163,82 @@ export async function testSavedLlmProvider(id: number): Promise<LlmProviderRespo
 /** GPT 기능 사용 가능 여부. enabled=false 면 GPT 탭·분석 버튼을 그리지 않는다(2단계에서 사용). */
 export async function getLlmStatus(): Promise<LlmStatus> {
   const res = await apiClient.get<ApiResponse<LlmStatus>>("/llm/status");
+  return unwrap(res.data);
+}
+
+export async function streamLlmChat(request: LlmChatRequest, onDelta: (delta: string) => void): Promise<LlmChatResponse> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+  };
+  const token = getToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const response = await fetch("/api/llm/chat", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(request),
+  });
+  if (!response.ok || !response.body) {
+    const text = await response.text();
+    let message = text || "AI 어시스턴트 요청에 실패했습니다.";
+    try {
+      const parsed = JSON.parse(text) as ApiResponse<unknown>;
+      message = parsed.error?.message ?? message;
+    } catch {
+      // JSON 오류 본문이 아니면 원문 메시지를 그대로 쓴다.
+    }
+    throw new Error(message);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let donePayload: LlmChatResponse | null = null;
+
+  const consumeEvent = (raw: string) => {
+    const lines = raw.split(/\r?\n/);
+    const event = lines.find((line) => line.startsWith("event:"))?.slice("event:".length).trim() ?? "message";
+    const data = lines
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice("data:".length).trimStart())
+      .join("\n");
+    if (!data) {
+      return;
+    }
+    if (event === "delta") {
+      onDelta(data);
+    } else if (event === "done") {
+      donePayload = JSON.parse(data) as LlmChatResponse;
+    } else if (event === "error") {
+      throw new Error(data);
+    }
+  };
+
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split(/\r?\n\r?\n/);
+    buffer = events.pop() ?? "";
+    for (const event of events) {
+      consumeEvent(event);
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    consumeEvent(buffer);
+  }
+  if (!donePayload) {
+    throw new Error("AI 어시스턴트 응답이 완료되지 않았습니다.");
+  }
+  return donePayload;
+}
+
+export async function previewLlmChatContext(request: LlmChatRequest): Promise<LlmContextPreviewResponse> {
+  const res = await apiClient.post<ApiResponse<LlmContextPreviewResponse>>("/llm/chat/preview", request);
   return unwrap(res.data);
 }

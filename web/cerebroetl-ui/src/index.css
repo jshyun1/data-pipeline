@@ -479,6 +479,7 @@ body {
 .etl-create-toolbar {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -527,6 +528,17 @@ body {
   background: #ffffff;
   font: inherit;
   cursor: pointer;
+}
+
+.etl-create-page .stepper-item:last-child::after {
+  content: "";
+  position: absolute;
+  top: 17px;
+  left: 50%;
+  z-index: -1;
+  width: 50vw;
+  height: 2px;
+  background: #ffffff;
 }
 
 .etl-create-page .stepper-circle {
@@ -5312,6 +5324,129 @@ button.alert-compact-trigger.is-clear:hover {
   background: #ffffff;
 }
 
+.console-side {
+  position: relative;
+  flex: 0 0 auto;
+  min-height: 0;
+  display: flex;
+  transition:
+    width 0.18s ease,
+    flex-basis 0.18s ease;
+}
+
+.console-side-left {
+  padding-right: 6px;
+}
+
+.console-side-right {
+  padding-left: 6px;
+}
+
+.console-side-right:not(.collapsed) .nifi-detail-panel {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+.console-side.collapsed {
+  width: 30px;
+  flex-basis: 30px;
+  align-self: stretch;
+  padding: 0;
+  border: 1px solid #d5dbe3;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgb(15 23 42 / 8%);
+}
+
+.console-curtain-toggle {
+  position: absolute;
+  top: 10px;
+  z-index: 5;
+  width: 24px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d5dbe3;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #0f766e;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgb(15 23 42 / 10%);
+}
+
+.console-curtain-toggle:hover,
+.console-curtain-toggle:focus-visible {
+  border-color: #99f6e4;
+  background: #ecfdf5;
+  color: #0d9488;
+}
+
+.console-curtain-toggle:focus-visible {
+  outline: 2px solid rgb(20 184 166 / 24%);
+  outline-offset: 1px;
+}
+
+.console-side-left .console-curtain-toggle {
+  right: -7px;
+}
+
+.console-side-right .console-curtain-toggle {
+  left: -7px;
+}
+
+.console-side.collapsed .console-curtain-toggle {
+  top: 8px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  box-shadow: none;
+}
+
+.console-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 4;
+  width: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: ew-resize;
+}
+
+.console-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 3px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+}
+
+.console-resize-handle:hover::after,
+.console-resize-handle:focus-visible::after,
+.is-resizing-console-panel .console-resize-handle::after {
+  background: #14b8a6;
+}
+
+.console-resize-handle:focus-visible {
+  outline: 2px solid rgb(20 184 166 / 24%);
+  outline-offset: -2px;
+}
+
+.is-resizing-console-panel {
+  cursor: ew-resize;
+  user-select: none;
+}
+
 .console-frame {
   width: 100%;
   height: 100%;
@@ -5963,6 +6098,13 @@ button.alert-compact-trigger.is-clear:hover {
   line-height: 1.25;
 }
 
+.nifi-detail-panel--ai {
+  height: calc(100vh - var(--app-offset) - 19px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .nifi-detail-header {
   padding: 14px 24px;
   border-bottom: 1px solid #d5dbe3;
@@ -6054,6 +6196,228 @@ button.alert-compact-trigger.is-clear:hover {
 
 .nifi-detail-message.error {
   color: #b42318;
+}
+
+.nifi-detail-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid #d5dbe3;
+  background: #eef2f7;
+}
+
+.nifi-detail-tab {
+  min-width: 82px;
+  max-width: 140px;
+  height: 31px;
+  padding: 0 10px;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-bottom: 0;
+  border-radius: 7px 7px 0 0;
+  background: #e2e8f0;
+  color: #475569;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nifi-detail-tab.active {
+  position: relative;
+  bottom: -1px;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.nifi-detail-tab:hover,
+.nifi-detail-tab:focus-visible {
+  color: #0f766e;
+}
+
+.nifi-detail-tab:focus-visible {
+  outline: 2px solid rgb(20 184 166 / 24%);
+  outline-offset: -2px;
+}
+
+.nifi-ai-panel {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 14px;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nifi-ai-summary {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid #dbe4ee;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12px;
+}
+
+.nifi-ai-summary strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.nifi-ai-summary .ant-btn {
+  justify-self: start;
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.nifi-ai-alert {
+  font-size: 12px;
+}
+
+.nifi-ai-conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid #dbe4ee;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.nifi-ai-empty {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.nifi-ai-message {
+  display: grid;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.nifi-ai-message span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.nifi-ai-message p {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #111827;
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.nifi-ai-message.user p {
+  border-color: #ccfbf1;
+  background: #f0fdfa;
+}
+
+.nifi-ai-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.nifi-ai-composer {
+  position: relative;
+}
+
+.nifi-ai-composer textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  padding: 8px 46px 8px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  outline: none;
+  color: #111827;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.nifi-ai-composer textarea:focus {
+  border-color: #14b8a6;
+  box-shadow: 0 0 0 2px rgb(20 184 166 / 14%);
+}
+
+.nifi-ai-send-button.ant-btn {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border: 0;
+  background: #a7d8ff;
+  color: #0f172a;
+  box-shadow: none;
+}
+
+.nifi-ai-send-button.ant-btn:not(:disabled):hover,
+.nifi-ai-send-button.ant-btn:not(:disabled):focus-visible {
+  background: #8ccaff;
+  color: #0f172a;
+}
+
+.nifi-ai-send-button.ant-btn:disabled {
+  background: #e2e8f0;
+  color: #94a3b8;
+}
+
+.nifi-ai-preview dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.nifi-ai-preview dl > div {
+  min-width: 0;
+}
+
+.nifi-ai-preview dt {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.nifi-ai-preview dd {
+  margin: 2px 0 0;
+  color: #111827;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.nifi-ai-preview pre {
+  max-height: 56vh;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid #dbe4ee;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .nifi-edit-lock-alert {
@@ -6436,10 +6800,33 @@ button.alert-compact-trigger.is-clear:hover {
     flex-wrap: wrap;
   }
 
+  .console-side-left {
+    order: 1;
+  }
+
+  .console-side-right {
+    order: 2;
+  }
+
   .nifi-tree-panel,
   .nifi-detail-panel {
     width: calc(50% - 5px);
     max-width: none;
+  }
+
+  .console-side:not(.collapsed) {
+    flex: 1 1 calc(50% - 5px);
+    min-width: 0;
+  }
+
+  .console-side-right:not(.collapsed) {
+    width: auto !important;
+    flex-basis: calc(50% - 5px) !important;
+  }
+
+  .console-side:not(.collapsed) .nifi-tree-panel,
+  .console-side:not(.collapsed) .nifi-detail-panel {
+    width: 100%;
   }
 
   .console-frame-shell {
@@ -6458,10 +6845,28 @@ button.alert-compact-trigger.is-clear:hover {
     flex-direction: column;
   }
 
+  .console-side-left {
+    order: 1;
+  }
+
+  .console-side-right {
+    order: 3;
+  }
+
   .nifi-tree-panel,
   .nifi-detail-panel {
     width: 100%;
     min-width: 0;
+  }
+
+  .console-side:not(.collapsed) {
+    width: 100%;
+    flex-basis: auto;
+  }
+
+  .console-side-right:not(.collapsed) {
+    width: 100% !important;
+    flex-basis: auto !important;
   }
 
   .console-frame-shell {

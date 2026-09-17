@@ -1,6 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type SyntheticEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type MouseEvent as ReactMouseEvent,
+  type SyntheticEvent,
+} from "react";
 import { Alert, Button, Modal, Result, Spin, message } from "antd";
-import { FileOutlined, FolderOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
+import {
+  ArrowUpOutlined,
+  DoubleLeftOutlined,
+  DoubleRightOutlined,
+  FileOutlined,
+  FolderOutlined,
+  ReloadOutlined,
+  UploadOutlined,
+} from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   getEtlJob,
@@ -29,6 +46,13 @@ import {
   type NifiProcessorRun,
   type NifiProcessGroupTreeNode,
 } from "../api/platform";
+import {
+  getLlmStatus,
+  previewLlmChatContext,
+  streamLlmChat,
+  type LlmChatMessage,
+  type LlmContextPreviewResponse,
+} from "../api/llm";
 import { getWorkflow, listWorkflows, type WorkflowDetail } from "../api/workflows";
 
 const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
@@ -49,6 +73,13 @@ const NIFI_TOOL_ALLOWED_ATTRIBUTE = "data-cerebro-tool-allowed";
 const NIFI_MINI_TOOLBAR_ID = "cerebro-nifi-mini-toolbar";
 const LEGACY_NIFI_MINI_CREATE_TOOLBAR_CLEANUP_ATTRIBUTE = "data-cerebro-mini-create-toolbar-cleanup";
 const NIFI_PROCESSOR_LOCK_HEARTBEAT_MS = 20_000;
+const NIFI_DETAIL_PANEL_DEFAULT_WIDTH = 285;
+const NIFI_DETAIL_PANEL_MIN_WIDTH = 235;
+const NIFI_DETAIL_PANEL_MAX_WIDTH = 520;
+
+function clampDetailPanelWidth(width: number): number {
+  return Math.min(NIFI_DETAIL_PANEL_MAX_WIDTH, Math.max(NIFI_DETAIL_PANEL_MIN_WIDTH, width));
+}
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
 // 보이게 한다. 번들 분석으로 실제 렌더링되는 요소를 확인한 선택자:
 // - NiFi: 두 곳에 있었다.
@@ -1025,12 +1056,12 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
 
     let drag:
       | {
-          startX: number;
-          startY: number;
-          left: number;
-          top: number;
-          moved: boolean;
-        }
+        startX: number;
+        startY: number;
+        left: number;
+        top: number;
+        moved: boolean;
+      }
       | null = null;
 
     const move = (event: MouseEvent) => {
@@ -1529,7 +1560,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
   useEffect(() => loadTree(true, true, false, true), [loadTree]);
 
   useEffect(() => {
-    let cleanupRequest = () => {};
+    let cleanupRequest = () => { };
     const timerId = window.setInterval(() => {
       cleanupRequest();
       cleanupRequest = loadTree(false, false, true);
@@ -1960,11 +1991,11 @@ function buildDetailLogSummaries(
         return dateKey >= period.from && dateKey <= period.to;
       })
       .reduce((sum, row) => sum + row.totalInserted, 0) : matchedRuns
-      .filter((row) => {
-        const dateKey = logRowDateKey(row.startedAt);
-        return dateKey >= period.from && dateKey <= period.to;
-      })
-      .reduce((sum, row) => sum + row.insertedCount, 0),
+        .filter((row) => {
+          const dateKey = logRowDateKey(row.startedAt);
+          return dateKey >= period.from && dateKey <= period.to;
+        })
+        .reduce((sum, row) => sum + row.insertedCount, 0),
     errorCount: matchedEvents
       .filter((row) => {
         const dateKey = logRowDateKey(row.occurredAt);
@@ -2793,6 +2824,15 @@ export function EtlJobSummary({ jobId, nifiPgId, onNavigate }: {
 
 function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGroupDetailPanelProps) {
   const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<"detail" | "ai">("detail");
+  const [aiAssistantEnabled, setAiAssistantEnabled] = useState(false);
+  const [aiProviderName, setAiProviderName] = useState<string | null>(null);
+  const [aiMessages, setAiMessages] = useState<LlmChatMessage[]>([]);
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiPreviewLoading, setAiPreviewLoading] = useState(false);
+  const [aiPreview, setAiPreview] = useState<LlmContextPreviewResponse | null>(null);
   const [jobs, setJobs] = useState<EtlJobResponse[]>([]);
   const [details, setDetails] = useState<EtlJobDetailResponse[]>([]);
   const [runs, setRuns] = useState<EtlJobRunResponse[]>([]);
@@ -2824,6 +2864,40 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const latestRun = runs[0] ?? null;
   const airflowDags = uniqueValues(groupJobs.map((entry) => entry.airflowDagId));
   const isLoading = jobsLoading || detailLoading;
+
+  useEffect(() => {
+    let cancelled = false;
+    getLlmStatus()
+      .then((status) => {
+        if (cancelled) {
+          return;
+        }
+        setAiAssistantEnabled(status.enabled);
+        setAiProviderName(status.providerName);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAiAssistantEnabled(false);
+          setAiProviderName(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!aiAssistantEnabled && activeTab === "ai") {
+      setActiveTab("detail");
+    }
+  }, [activeTab, aiAssistantEnabled]);
+
+  useEffect(() => {
+    setAiMessages([]);
+    setAiQuestion("");
+    setAiError(null);
+    setAiPreview(null);
+  }, [selectedGroupId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3044,9 +3118,71 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     }
   };
 
+  const aiTargetId = displayJob?.id ? String(displayJob.id) : "";
+
+  const buildAiRequest = (question: string) => ({
+    targetType: displayJob ? "ETL_JOB" as const : "GENERAL" as const,
+    targetId: aiTargetId,
+    question,
+    messages: aiMessages,
+  });
+
+  const handleAiSubmit = async () => {
+    const question = aiQuestion.trim();
+    if (!question) {
+      setAiError("질문을 입력하세요.");
+      return;
+    }
+    setAiLoading(true);
+    setAiError(null);
+    setAiMessages((prev) => [...prev, { role: "user", content: question }, { role: "assistant", content: "" }]);
+    try {
+      const response = await streamLlmChat(buildAiRequest(question), (delta) => {
+        setAiMessages((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.role === "assistant") {
+            next[next.length - 1] = { ...last, content: last.content + delta };
+          }
+          return next;
+        });
+      });
+      setAiMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === "assistant") {
+          next[next.length - 1] = { ...last, content: response.answer };
+        }
+        return next;
+      });
+      setAiQuestion("");
+      setAiProviderName(response.providerName);
+    } catch (ex) {
+      setAiError(ex instanceof Error ? ex.message : "AI 어시스턴트 요청에 실패했습니다.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleAiPreview = async () => {
+    setAiPreviewLoading(true);
+    setAiError(null);
+    try {
+      const preview = await previewLlmChatContext(buildAiRequest(aiQuestion.trim() || "전송 정보 미리보기"));
+      setAiPreview(preview);
+    } catch (ex) {
+      setAiError(ex instanceof Error ? ex.message : "전송 정보를 불러오지 못했습니다.");
+    } finally {
+      setAiPreviewLoading(false);
+    }
+  };
+
   return (
     <>
-      <aside className="nifi-detail-panel" aria-label="선택한 프로세스 그룹 상세">
+      <aside
+        className={`nifi-detail-panel${activeTab === "ai" ? " nifi-detail-panel--ai" : ""}`}
+        aria-label="선택한 프로세스 그룹 상세"
+      >
         <div className="nifi-detail-header">
           <div className="nifi-detail-title" title={headerTitle}>
             {headerTitle}
@@ -3056,132 +3192,241 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
         {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
         {!isLoading && error ? <div className="nifi-detail-message error">조회 실패</div> : null}
 
-        <section className="nifi-detail-section">
-          <h3>■ 정보</h3>
-          <dl>
-            <div>
-              <dt>상태</dt>
-              <dd className={statusClass(displayJob, displayNode)}>{statusText(displayJob, displayNode)}</dd>
-            </div>
-            <div>
-              <dt>경로</dt>
-              <dd>{displayPath}</dd>
-            </div>
-            {isJobGroup ? (
-              <div>
-                <dt>DAG</dt>
-                <dd>
-                  {workflowLoading ? (
-                    "불러오는 중"
-                  ) : relatedWorkflows.length > 0 ? (
-                    <button type="button" className="nifi-detail-link" onClick={openDagTarget}>
-                      {relatedWorkflows.length === 1
-                        ? `${relatedWorkflows[0].name} (${relatedWorkflows[0].dagId})`
-                        : `${relatedWorkflows.length}개 워크플로우`}
-                    </button>
-                  ) : dagId ? (
-                    dagId
-                  ) : (
-                    "-"
-                  )}
-                </dd>
-              </div>
-            ) : null}
-          </dl>
-        </section>
+        <div className="nifi-detail-tabs" role="tablist" aria-label="상세 패널 탭">
+          <button
+            type="button"
+            className={`nifi-detail-tab${activeTab === "detail" ? " active" : ""}`}
+            role="tab"
+            aria-selected={activeTab === "detail"}
+            onClick={() => setActiveTab("detail")}
+          >
+            상세정보
+          </button>
+          {aiAssistantEnabled ? (
+            <button
+              type="button"
+              className={`nifi-detail-tab${activeTab === "ai" ? " active" : ""}`}
+              role="tab"
+              aria-selected={activeTab === "ai"}
+              onClick={() => setActiveTab("ai")}
+            >
+              AI 어시스턴트
+            </button>
+          ) : null}
+        </div>
 
-        {showGroupingOnlyJobStatus ? (
-          <section className="nifi-detail-section">
-            <h3>JOB 상태</h3>
-            <div className="nifi-direct-status-list">
-              <div className="nifi-grouping-status-table">
-                <div className="nifi-grouping-status-row heading">
-                  <span />
-                  <span>중지</span>
-                  <span>대기</span>
-                  <span>성공</span>
-                  <span>실패</span>
-                </div>
-                {directGroupingGroups.map((entry) => (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className="nifi-grouping-status-row"
-                    onClick={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(entry.id)}`)}
-                  >
-                    <span className="nifi-grouping-status-name" title={entry.name}>{entry.name}</span>
-                    <span className="nifi-grouping-status-cell">{formatCount(entry.stoppedCount)}</span>
-                    <span className="nifi-grouping-status-cell">{formatCount(waitingCount(entry))}</span>
-                    <span className="nifi-grouping-status-cell">{formatCount(entry.runningCount)}</span>
-                    <span className="nifi-grouping-status-cell">{formatCount(entry.invalidCount)}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-        {isJobGroup ? (
+        {activeTab === "detail" ? (
           <>
             <section className="nifi-detail-section">
-              <h3>■ 테이블</h3>
-              <dl className="nifi-detail-target-list">
+              <h3>■ 정보</h3>
+              <dl>
                 <div>
-                  <dt>소스테이블</dt>
-                  <dd className="nifi-detail-inline-value nifi-detail-preline" title={sourceText}>
-                    {sourceText}
-                  </dd>
+                  <dt>상태</dt>
+                  <dd className={statusClass(displayJob, displayNode)}>{statusText(displayJob, displayNode)}</dd>
                 </div>
                 <div>
-                  <dt>타깃테이블</dt>
-                  <dd className="nifi-detail-inline-value" title={targetText}>
-                    {targetText}
-                  </dd>
+                  <dt>경로</dt>
+                  <dd>{displayPath}</dd>
                 </div>
+                {isJobGroup ? (
+                  <div>
+                    <dt>DAG</dt>
+                    <dd>
+                      {workflowLoading ? (
+                        "불러오는 중"
+                      ) : relatedWorkflows.length > 0 ? (
+                        <button type="button" className="nifi-detail-link" onClick={openDagTarget}>
+                          {relatedWorkflows.length === 1
+                            ? `${relatedWorkflows[0].name} (${relatedWorkflows[0].dagId})`
+                            : `${relatedWorkflows.length}개 워크플로우`}
+                        </button>
+                      ) : dagId ? (
+                        dagId
+                      ) : (
+                        "-"
+                      )}
+                    </dd>
+                  </div>
+                ) : null}
               </dl>
-              {inputDirectory ? (
-                <div className="nifi-file-add-panel">
-                  <Button
-                    icon={<UploadOutlined />}
-                    loading={isAddingFiles}
-                    onClick={() => addFileInputRef.current?.click()}
-                    size="small"
-                  >
-                    파일 추가
-                  </Button>
-                  <input
-                    ref={addFileInputRef}
-                    hidden
-                    multiple
-                    type="file"
-                    onChange={handleAddFiles}
-                  />
-                  {addedFiles.length > 0 ? (
-                    <ul className="nifi-added-file-list">
-                      {addedFiles.map((fileName, index) => (
-                        <li key={`${fileName}-${index}`} title={fileName}>
-                          - {fileName}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-              ) : null}
             </section>
 
-            <section className="nifi-detail-section">
-              <h3>■ 실행로그</h3>
-              <div className="nifi-detail-last-run-date">{lastRunDate}</div>
-              <DetailLogRows
-                loading={logsLoading}
-                summaries={logSummaries}
-                keyword={logKeyword}
-                onNavigate={navigate}
-              />
-            </section>
+            {showGroupingOnlyJobStatus ? (
+              <section className="nifi-detail-section">
+                <h3>JOB 상태</h3>
+                <div className="nifi-direct-status-list">
+                  <div className="nifi-grouping-status-table">
+                    <div className="nifi-grouping-status-row heading">
+                      <span />
+                      <span>중지</span>
+                      <span>대기</span>
+                      <span>성공</span>
+                      <span>실패</span>
+                    </div>
+                    {directGroupingGroups.map((entry) => (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        className="nifi-grouping-status-row"
+                        onClick={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(entry.id)}`)}
+                      >
+                        <span className="nifi-grouping-status-name" title={entry.name}>{entry.name}</span>
+                        <span className="nifi-grouping-status-cell">{formatCount(entry.stoppedCount)}</span>
+                        <span className="nifi-grouping-status-cell">{formatCount(waitingCount(entry))}</span>
+                        <span className="nifi-grouping-status-cell">{formatCount(entry.runningCount)}</span>
+                        <span className="nifi-grouping-status-cell">{formatCount(entry.invalidCount)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
+            {isJobGroup ? (
+              <>
+                <section className="nifi-detail-section">
+                  <h3>■ 테이블</h3>
+                  <dl className="nifi-detail-target-list">
+                    <div>
+                      <dt>소스테이블</dt>
+                      <dd className="nifi-detail-inline-value nifi-detail-preline" title={sourceText}>
+                        {sourceText}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>타깃테이블</dt>
+                      <dd className="nifi-detail-inline-value" title={targetText}>
+                        {targetText}
+                      </dd>
+                    </div>
+                  </dl>
+                  {inputDirectory ? (
+                    <div className="nifi-file-add-panel">
+                      <Button
+                        icon={<UploadOutlined />}
+                        loading={isAddingFiles}
+                        onClick={() => addFileInputRef.current?.click()}
+                        size="small"
+                      >
+                        파일 추가
+                      </Button>
+                      <input
+                        ref={addFileInputRef}
+                        hidden
+                        multiple
+                        type="file"
+                        onChange={handleAddFiles}
+                      />
+                      {addedFiles.length > 0 ? (
+                        <ul className="nifi-added-file-list">
+                          {addedFiles.map((fileName, index) => (
+                            <li key={`${fileName}-${index}`} title={fileName}>
+                              - {fileName}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </section>
+
+                <section className="nifi-detail-section">
+                  <h3>■ 실행로그</h3>
+                  <div className="nifi-detail-last-run-date">{lastRunDate}</div>
+                  <DetailLogRows
+                    loading={logsLoading}
+                    summaries={logSummaries}
+                    keyword={logKeyword}
+                    onNavigate={navigate}
+                  />
+                </section>
+              </>
+            ) : null}
           </>
-        ) : null}
+        ) : (
+          <section className="nifi-ai-panel" role="tabpanel" aria-label="AI 어시스턴트">
+            <div className="nifi-ai-summary">
+              <strong>{aiProviderName ?? "선택된 GPT"}</strong>
+              <span>{displayJob ? `${displayJob.jobName} 정보와 함께 질문을 보냅니다.` : "ETL Job을 선택하면 질문할 수 있습니다."}</span>
+              <Button size="small" loading={aiPreviewLoading} onClick={handleAiPreview}>
+                전송될 정보 보기
+              </Button>
+            </div>
+            {aiError ? (
+              <Alert className="nifi-ai-alert" type="error" showIcon message={aiError} />
+            ) : null}
+            <div className="nifi-ai-conversation">
+              {aiMessages.length === 0 ? (
+                <div className="nifi-ai-empty">질문을 보내면 이 영역에 대화가 표시됩니다.</div>
+              ) : (
+                aiMessages.map((entry, index) => (
+                  <div key={`${entry.role}-${index}`} className={`nifi-ai-message ${entry.role}`}>
+                    <span>{entry.role === "user" ? "나" : "AI"}</span>
+                    <p>{entry.content}</p>
+                  </div>
+                ))
+              )}
+              {aiLoading ? (
+                <div className="nifi-ai-loading">
+                  <Spin size="small" />
+                  <span>답변을 생성하는 중</span>
+                </div>
+              ) : null}
+            </div>
+            <div className="nifi-ai-composer">
+              <textarea
+                rows={3}
+                value={aiQuestion}
+                placeholder="무엇이든 질문하세요"
+                aria-label="AI 어시스턴트 질문"
+                onChange={(event) => setAiQuestion(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                    void handleAiSubmit();
+                  }
+                }}
+              />
+              <Button
+                className="nifi-ai-send-button"
+                shape="circle"
+                icon={<ArrowUpOutlined />}
+                loading={aiLoading}
+                aria-label="보내기"
+                title="보내기"
+                onClick={handleAiSubmit}
+              />
+            </div>
+          </section>
+        )}
       </aside>
+
+      <Modal
+        title="전송될 정보"
+        open={aiPreview !== null}
+        footer={null}
+        width={720}
+        onCancel={() => setAiPreview(null)}
+      >
+        {aiPreview ? (
+          <div className="nifi-ai-preview">
+            <dl>
+              <div>
+                <dt>대상</dt>
+                <dd>{aiPreview.targetTitle}</dd>
+              </div>
+              <div>
+                <dt>GPT</dt>
+                <dd>{aiPreview.providerName}</dd>
+              </div>
+              <div>
+                <dt>마스킹</dt>
+                <dd>{aiPreview.masked ? "켜짐" : "꺼짐"}</dd>
+              </div>
+            </dl>
+            <pre>{aiPreview.context}</pre>
+          </div>
+        ) : null}
+      </Modal>
 
       <Modal
         title="연관 워크플로우"
@@ -3224,6 +3469,9 @@ export function ConsoleFramePage({
   const [selectedCanvasItem, setSelectedCanvasItem] = useState<CanvasSelection | null>(
     processGroupId ? { type: "processGroup", id: processGroupId } : null,
   );
+  const [isTreePanelCollapsed, setIsTreePanelCollapsed] = useState(false);
+  const [isDetailPanelCollapsed, setIsDetailPanelCollapsed] = useState(false);
+  const [detailPanelWidth, setDetailPanelWidth] = useState(NIFI_DETAIL_PANEL_DEFAULT_WIDTH);
   const [jobCatalogReloadKey, setJobCatalogReloadKey] = useState(0);
   const processGroupTreeRef = useRef<NifiProcessGroupTreeNode | null>(null);
   const processGroupIdRef = useRef<string | null>(null);
@@ -3316,14 +3564,46 @@ export function ConsoleFramePage({
     }
   };
 
+  const startDetailPanelResize = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = detailPanelWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      setDetailPanelWidth(clampDetailPanelWidth(startWidth + startX - moveEvent.clientX));
+    };
+    const handleMouseUp = () => {
+      document.body.classList.remove("is-resizing-console-panel");
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    document.body.classList.add("is-resizing-console-panel");
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  };
+
   return (
     <div className="console-page">
       {showProcessGroupTree ? (
-        <ProcessGroupTreePanel
-          activeGroupId={selectedProcessGroupId}
-          onTreeChange={setProcessGroupTree}
-          onCatalogSynced={handleCatalogSynced}
-        />
+        <div className={`console-side console-side-left${isTreePanelCollapsed ? " collapsed" : ""}`}>
+          <button
+            type="button"
+            className="console-curtain-toggle"
+            aria-label={isTreePanelCollapsed ? "트리 패널 열기" : "트리 패널 닫기"}
+            title={isTreePanelCollapsed ? "트리 패널 열기" : "트리 패널 닫기"}
+            onClick={() => setIsTreePanelCollapsed((collapsed) => !collapsed)}
+          >
+            {isTreePanelCollapsed ? <DoubleRightOutlined /> : <DoubleLeftOutlined />}
+          </button>
+          {!isTreePanelCollapsed ? (
+            <ProcessGroupTreePanel
+              activeGroupId={selectedProcessGroupId}
+              onTreeChange={setProcessGroupTree}
+              onCatalogSynced={handleCatalogSynced}
+            />
+          ) : null}
+        </div>
       ) : null}
       <div className="console-frame-shell">
         {isReady ? (
@@ -3348,15 +3628,40 @@ export function ConsoleFramePage({
         )}
       </div>
       {showProcessGroupTree ? (
-        selectedCanvasItem?.type === "processor" ? (
-          <ProcessorDetailPanel processorId={selectedCanvasItem.id} onParentGroupFound={setSelectedProcessGroupId} />
-        ) : (
-          <ProcessGroupDetailPanel
-            activeGroupId={selectedProcessGroupId}
-            tree={processGroupTree}
-            reloadKey={jobCatalogReloadKey}
-          />
-        )
+        <div
+          className={`console-side console-side-right${isDetailPanelCollapsed ? " collapsed" : ""}`}
+          style={isDetailPanelCollapsed ? undefined : { width: detailPanelWidth, flexBasis: detailPanelWidth }}
+        >
+          {!isDetailPanelCollapsed ? (
+            <button
+              type="button"
+              className="console-resize-handle"
+              aria-label="상세 패널 너비 조절"
+              title="상세 패널 너비 조절"
+              onMouseDown={startDetailPanelResize}
+            />
+          ) : null}
+          <button
+            type="button"
+            className="console-curtain-toggle"
+            aria-label={isDetailPanelCollapsed ? "상세 패널 열기" : "상세 패널 닫기"}
+            title={isDetailPanelCollapsed ? "상세 패널 열기" : "상세 패널 닫기"}
+            onClick={() => setIsDetailPanelCollapsed((collapsed) => !collapsed)}
+          >
+            {isDetailPanelCollapsed ? <DoubleLeftOutlined /> : <DoubleRightOutlined />}
+          </button>
+          {!isDetailPanelCollapsed ? (
+            selectedCanvasItem?.type === "processor" ? (
+              <ProcessorDetailPanel processorId={selectedCanvasItem.id} onParentGroupFound={setSelectedProcessGroupId} />
+            ) : (
+              <ProcessGroupDetailPanel
+                activeGroupId={selectedProcessGroupId}
+                tree={processGroupTree}
+                reloadKey={jobCatalogReloadKey}
+              />
+            )
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
