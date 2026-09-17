@@ -75,10 +75,10 @@ const LEGACY_NIFI_MINI_CREATE_TOOLBAR_CLEANUP_ATTRIBUTE = "data-cerebro-mini-cre
 const NIFI_PROCESSOR_LOCK_HEARTBEAT_MS = 20_000;
 const NIFI_DETAIL_PANEL_DEFAULT_WIDTH = 285;
 const NIFI_DETAIL_PANEL_MIN_WIDTH = 235;
-const NIFI_DETAIL_PANEL_MAX_WIDTH = 520;
 
 function clampDetailPanelWidth(width: number): number {
-  return Math.min(NIFI_DETAIL_PANEL_MAX_WIDTH, Math.max(NIFI_DETAIL_PANEL_MIN_WIDTH, width));
+  const maxWidth = Math.max(NIFI_DETAIL_PANEL_MIN_WIDTH, Math.floor(window.innerWidth * 0.72));
+  return Math.min(maxWidth, Math.max(NIFI_DETAIL_PANEL_MIN_WIDTH, width));
 }
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
 // 보이게 한다. 번들 분석으로 실제 렌더링되는 요소를 확인한 선택자:
@@ -3125,7 +3125,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     targetType: displayJob ? "ETL_JOB" as const : "NIFI_GROUP" as const,
     targetId: displayJob ? aiTargetId : aiGroupTargetId,
     question,
-    messages: aiMessages,
+    messages: aiMessages.filter((entry) => entry.content.trim().length > 0),
   });
 
   const handleAiSubmit = async () => {
@@ -3160,6 +3160,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
       setAiProviderName(response.providerName);
     } catch (ex) {
       setAiError(ex instanceof Error ? ex.message : "AI 어시스턴트 요청에 실패했습니다.");
+      setAiMessages((prev) => prev.filter((entry) => entry.content.trim().length > 0));
     } finally {
       setAiLoading(false);
     }
@@ -3574,10 +3575,14 @@ export function ConsoleFramePage({
     const startX = event.clientX;
     const startWidth = detailPanelWidth;
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      setDetailPanelWidth(clampDetailPanelWidth(startWidth + startX - moveEvent.clientX));
+    const resizeTo = (clientX: number) => {
+      setDetailPanelWidth(clampDetailPanelWidth(startWidth + startX - clientX));
     };
-    const handleMouseUp = () => {
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      resizeTo(moveEvent.clientX);
+    };
+    const handleMouseUp = (upEvent: MouseEvent) => {
+      resizeTo(upEvent.clientX);
       document.body.classList.remove("is-resizing-console-panel");
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);

@@ -14,6 +14,8 @@ public record LlmChatRequest(
         @Valid @Size(max = 12) List<LlmChatMessage> messages
 ) {
     public List<LlmChatMessage> safeMessages() {
-        return messages == null ? List.of() : messages;
+        return messages == null ? List.of() : messages.stream()
+                .filter(message -> message != null && message.content() != null && !message.content().isBlank())
+                .toList();
     }
 }
