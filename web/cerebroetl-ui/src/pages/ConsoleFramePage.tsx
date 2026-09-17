@@ -256,15 +256,18 @@ const HIDE_TOOL_CHROME_CSS = `
   }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ICON_ATTRIBUTE}] > :not(.cerebro-tool-icon) {
     opacity: 0 !important;
-    position: absolute !important;
-    inset: 0 !important;
-    width: 100% !important;
-    height: 100% !important;
     z-index: 2 !important;
     pointer-events: auto !important;
     background: transparent !important;
     border-color: transparent !important;
     box-shadow: none !important;
+  }
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ICON_ATTRIBUTE}] :not(.cerebro-tool-icon):not(.cerebro-tool-icon *) {
+    background: transparent !important;
+    background-color: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ICON_ATTRIBUTE}] > :not(.cerebro-tool-icon) * {
     opacity: 0 !important;
@@ -358,15 +361,18 @@ const HIDE_TOOL_CHROME_CSS = `
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ICON_ATTRIBUTE}] > :not(.cerebro-tool-icon) {
     opacity: 0 !important;
-    position: absolute !important;
-    inset: 0 !important;
-    width: 100% !important;
-    height: 100% !important;
     z-index: 2 !important;
     pointer-events: auto !important;
     background: transparent !important;
     border-color: transparent !important;
     box-shadow: none !important;
+  }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ICON_ATTRIBUTE}] :not(.cerebro-tool-icon):not(.cerebro-tool-icon *) {
+    background: transparent !important;
+    background-color: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ICON_ATTRIBUTE}] > :not(.cerebro-tool-icon) * {
     opacity: 0 !important;
@@ -1213,7 +1219,6 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
         .map(toolLabel)
         .find((value): value is string => Boolean(value));
     toolItem.setAttribute(NIFI_TOOL_ALLOWED_ATTRIBUTE, "true");
-    toolItem.setAttribute("draggable", "true");
     toolItem.removeAttribute(NIFI_TOOL_HIDDEN_ATTRIBUTE);
     renderCanvasToolIcon(toolItem, label);
     let current = toolItem.parentElement;
