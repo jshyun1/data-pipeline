@@ -27,6 +27,7 @@ import com.company.pipeline.pipeline.dto.PipelineResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
@@ -57,6 +58,8 @@ public class PipelineDeployService {
     // 있다. Connector만 RUNNING이고 task가 아직 비어 있는 정상 초기화 구간을 실패로
     // 오판하지 않도록 최대 60초를 기다린다.
     private static final int STATUS_VERIFY_ATTEMPTS = 120;
+    /** 재시작 요청 뒤 «아직 FAILED» 를 실패로 보지 않는 확인 횟수(× 0.5초 = 약 6초). */
+    private static final int RESTART_GRACE_ATTEMPTS = 12;
     private static final long STATUS_VERIFY_INTERVAL_MILLIS = 500L;
 
     private final PipelineDefinitionRepository pipelineDefinitionRepository;
@@ -174,7 +177,13 @@ public class PipelineDeployService {
                 pipeline.getMaskedColumns()));
         prepareStoppedConnector(pipeline.getId(), "SOURCE", sourceConfig);
 
-        RenderedConnectorConfig sinkConfig = connectorConfigRenderer.renderSink(new SinkConnectorRequest(
+        prepareStoppedConnector(pipeline.getId(), "SINK", renderTableCdcSink(pipeline, source, target));
+    }
+
+    /** CDC 테이블 파이프라인의 싱크 설정. 준비(PREPARE)와 싱크 설정 재적용이 같은 결과를 내도록 한 곳에서 만든다. */
+    private RenderedConnectorConfig renderTableCdcSink(PipelineDefinition pipeline, PipelineConnection source,
+            PipelineConnection target) {
+        return connectorConfigRenderer.renderSink(new SinkConnectorRequest(
                 pipeline.getId(), target.getDbType(), target.getHost(), target.getPort(),
                 target.getUsername(), passwordCryptoService.decrypt(target.getEncryptedPassword()),
                 target.getDatabaseName(), target.getServiceName(),
@@ -182,7 +191,6 @@ public class PipelineDeployService {
                 source.getDbType(), pipeline.getSourceSchema(), pipeline.getSourceTable(),
                 pipeline.getTopicName(), Boolean.TRUE.equals(pipeline.getDeleteEnabled()),
                 pipeline.getLoadMode(), pipeline.getDeltaOpColumn()));
-        prepareStoppedConnector(pipeline.getId(), "SINK", sinkConfig);
     }
 
     /**
@@ -224,15 +232,87 @@ public class PipelineDeployService {
                         "로그 소스 설정을 찾을 수 없습니다. pipelineId=" + pipeline.getId()));
         PipelineConnection target = findConnectionOrThrow(pipeline.getTargetConnectionId());
 
-        RenderedConnectorConfig sinkConfig = connectorConfigRenderer.renderLogSink(new LogSinkConnectorRequest(
+        prepareStoppedConnector(pipeline.getId(), "SINK", renderLogSink(pipeline, source, target));
+
+        String filebeatYaml = filebeatConfigRenderer.render(pipeline.getId(), source);
+        filebeatInputFileService.write(pipeline.getId(), filebeatYaml);
+    }
+
+    private RenderedConnectorConfig renderLogSink(PipelineDefinition pipeline, LogPipelineSource source,
+            PipelineConnection target) {
+        return connectorConfigRenderer.renderLogSink(new LogSinkConnectorRequest(
                 pipeline.getId(), target.getDbType(), target.getHost(), target.getPort(),
                 target.getUsername(), passwordCryptoService.decrypt(target.getEncryptedPassword()),
                 target.getDatabaseName(), target.getServiceName(),
                 pipeline.getTargetSchema(), pipeline.getTargetTable(), source.getTopicName()));
-        prepareStoppedConnector(pipeline.getId(), "SINK", sinkConfig);
+    }
 
-        String filebeatYaml = filebeatConfigRenderer.render(pipeline.getId(), source);
-        filebeatInputFileService.write(pipeline.getId(), filebeatYaml);
+    /**
+     * 이미 등록된 <b>싱크 커넥터에만</b> 지금 템플릿의 설정을 다시 넣는다(소스는 건드리지 않는다).
+     *
+     * <p>커넥터 설정은 준비(PREPARE) 시점에 굳어서, 템플릿을 바꿔도(예: 2026-09-17 실패 정책 «버리고 계속» → «멈춤»)
+     * 이미 떠 있는 커넥터는 옛 설정으로 계속 돈다. 준비를 다시 하면 소스까지 멈추고 Oracle 캡처 조건 점검도 다시 돌아
+     * 운영 중인 파이프라인에 부담이 크다. 싱크만 바꾸면:
+     * <ul>
+     *   <li>실행 중(RUNNING)이면 Kafka Connect 가 태스크를 새 설정으로 재시작하고, 커밋된 오프셋부터 이어 읽는다(유실 없음).
+     *       소스는 그동안에도 Kafka 에 계속 쌓는다.</li>
+     *   <li>멈춘(STOPPED) 싱크는 설정만 바꾸고 멈춘 채로 둔다 - 실행 지시는 Airflow 만 한다는 원칙.</li>
+     * </ul>
+     * 파이프라인 상태는 바꾸지 않는다. 결과는 명령 이력 {@code SINK_CONFIG_REFRESH} 로 남는다.
+     */
+    public PipelineResponse refreshSinkConfig(Long pipelineId) {
+        return withPipelineLock(pipelineId, () -> {
+            PipelineDefinition pipeline = findPipeline(pipelineId);
+            if (pipeline.getStatus() == PipelineStatus.DEPLOYING) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR, "준비(배포) 중인 파이프라인입니다. 끝난 뒤 다시 시도하세요.");
+            }
+            PipelineConnector sink = requiredConnector(pipelineId, "SINK");
+            try {
+                PipelineConnection target = findConnectionOrThrow(pipeline.getTargetConnectionId());
+                RenderedConnectorConfig rendered;
+                if ("LOG_FILE".equals(pipeline.getPipelineType())) {
+                    LogPipelineSource source = logPipelineSourceRepository.findByPipelineId(pipelineId)
+                            .orElseThrow(() -> new BusinessException(ErrorCode.VALIDATION_ERROR,
+                                    "로그 소스 설정을 찾을 수 없습니다. pipelineId=" + pipelineId));
+                    rendered = renderLogSink(pipeline, source, target);
+                } else {
+                    rendered = renderTableCdcSink(pipeline, findConnectionOrThrow(pipeline.getSourceConnectionId()), target);
+                }
+                if (!rendered.connectorName().equals(sink.getConnectorName())) {
+                    // 대상 스키마·테이블 이름이 바뀌어 커넥터 이름이 달라졌다 - 설정만 바꿔 끼우면 옛 이름의 커넥터가
+                    // 새 대상에 쓰게 된다. 준비를 다시 해서 커넥터를 새로 만들어야 한다.
+                    throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                            "싱크 커넥터 이름이 달라졌습니다(등록=" + sink.getConnectorName() + ", 현재 설정=" + rendered.connectorName()
+                                    + "). 파이프라인을 다시 준비하세요.");
+                }
+
+                String name = sink.getConnectorName();
+                String before = connectorState(kafkaConnectClient.getStatus(name));
+                tolerateTimeout("upsertConfig", name, () -> kafkaConnectClient.upsertConfig(name, rendered.config()));
+                ConnectorStatusResponse after;
+                if ("STOPPED".equalsIgnoreCase(before)) {
+                    // 설정 갱신이 멈춘 커넥터를 되살리는 경우가 있어 한 번 더 멈춘다(준비 단계와 같은 방식).
+                    tolerateTimeout("stop", name, () -> kafkaConnectClient.stop(name));
+                    after = awaitConnectorState(name, "STOPPED", false);
+                } else if ("PAUSED".equalsIgnoreCase(before)) {
+                    after = awaitConnectorState(name, "PAUSED", false);
+                } else {
+                    after = awaitConnectorState(name, "RUNNING", true);
+                }
+                sink.setConnectorConfigJson(toJson(rendered.config()));
+                saveVerifiedStatus(sink, after);
+                commandHistoryRecorder.record(pipelineId, "SINK_CONFIG_REFRESH", "SUCCESS",
+                        "싱크 설정 재적용(errors.tolerance=" + rendered.config().get("errors.tolerance")
+                                + ", 커넥터 " + before + " → " + connectorState(after) + ")");
+            } catch (RuntimeException ex) {
+                commandHistoryRecorder.record(pipelineId, "SINK_CONFIG_REFRESH", "FAILED", ex.getMessage());
+                if (ex instanceof BusinessException businessException) {
+                    throw businessException;
+                }
+                throw new BusinessException(ErrorCode.KAFKA_CONNECT_ERROR, "싱크 설정 재적용 실패: " + ex.getMessage());
+            }
+            return PipelineResponse.from(pipeline, pipelineConnectorRepository.findByPipelineId(pipelineId));
+        });
     }
 
     private void deployConnector(Long pipelineId, String role, RenderedConnectorConfig rendered) {
@@ -530,9 +610,77 @@ public class PipelineDeployService {
     }
 
     /** 재시작: 커넥터의 태스크만 재시작한다 (설정을 다시 만들지 않음, tasks.max=1 고정이라 task 0). */
+    /**
+     * 멈춘 커넥터·태스크를 <b>다시 띄운다</b>. 싱크가 한 건 거부로 멈췄을 때(2026-09-17 실패 정책 전환) 운영자가 원인을 고친 뒤
+     * 쓰는 복구 수단이다 - 고친 뒤 재시작하면 <b>멈춘 건부터</b> 다시 들어온다.
+     *
+     * <p>규칙:
+     * <ul>
+     *   <li>실행 중(DEPLOYED)·실패(FAILED)에서만 된다. 멈춰 둔(STOPPED·READY) 파이프라인은 «시작»이 맞다 - 재시작으로
+     *       되살리면 «실행 지시는 Airflow 만 한다»는 원칙이 깨진다.</li>
+     *   <li>일부러 멈춰 둔 커넥터는 건드리지 않는다. CDC 중지는 Source 만 돌리고 Sink 는 멈춘 정상 상태다.</li>
+     *   <li>Connect 의 «실패한 것만 재시작»을 쓰므로 잘 돌고 있는 태스크는 그대로 둔다.</li>
+     *   <li>재시작 뒤 실제로 RUNNING 이 됐는지 확인한다 - 원인을 안 고쳤으면 같은 자리에서 다시 멈추고, 그 예외가 그대로 올라간다.</li>
+     * </ul>
+     */
     public PipelineResponse restart(Long pipelineId) {
-        return applyToAllConnectors(pipelineId, "RESTART", PipelineStatus.DEPLOYED,
-                connectorName -> kafkaConnectClient.restartTask(connectorName, 0));
+        return withPipelineLock(pipelineId, () -> restartLocked(pipelineId));
+    }
+
+    private PipelineResponse restartLocked(Long pipelineId) {
+        PipelineDefinition pipeline = findPipeline(pipelineId);
+        if (pipeline.getStatus() != PipelineStatus.DEPLOYED && pipeline.getStatus() != PipelineStatus.FAILED) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "재시작은 실행 중(DEPLOYED) 또는 실패(FAILED) 상태에서만 가능합니다. 현재 상태=" + pipeline.getStatus()
+                            + " - 멈춰 있는 파이프라인은 «시작»을 쓰십시오.");
+        }
+        List<PipelineConnector> connectors = pipelineConnectorRepository.findByPipelineId(pipelineId);
+        if (connectors.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "아직 배포된 적 없는 파이프라인입니다. 먼저 «배포»를 하십시오.");
+        }
+
+        List<String> restarted = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
+        try {
+            for (PipelineConnector connector : connectors) {
+                String name = connector.getConnectorName();
+                ConnectorStatusResponse before = kafkaConnectClient.getStatus(name);
+                if (hasConnectorState(before, "STOPPED") || hasConnectorState(before, "PAUSED")) {
+                    skipped.add(connector.getConnectorRole() + "(" + connectorState(before) + ")");
+                    saveVerifiedStatus(connector, before);
+                    continue;
+                }
+                if (matchesState(before, "RUNNING", true)) {
+                    skipped.add(connector.getConnectorRole() + "(정상)");
+                    saveVerifiedStatus(connector, before);
+                    continue;
+                }
+                tolerateTimeout("restart", name, () -> kafkaConnectClient.restartFailed(name));
+                // 재시작은 비동기다 - 되살아날 시간을 주고 나서 판정한다(그 뒤에도 FAILED 면 원인이 안 고쳐진 것이다).
+                saveVerifiedStatus(connector, awaitConnectorState(name, "RUNNING", true, RESTART_GRACE_ATTEMPTS));
+                restarted.add(connector.getConnectorRole());
+            }
+            if (restarted.isEmpty() && pipeline.getStatus() == PipelineStatus.DEPLOYED) {
+                commandHistoryRecorder.record(pipelineId, "RESTART", "SUCCESS",
+                        "다시 띄울 커넥터가 없습니다(" + String.join(", ", skipped) + ")");
+                return PipelineResponse.from(pipeline, connectors);
+            }
+            pipeline.setStatus(PipelineStatus.DEPLOYED);
+            pipelineDefinitionRepository.save(pipeline);
+            commandHistoryRecorder.record(pipelineId, "RESTART", "SUCCESS",
+                    "재시작: " + (restarted.isEmpty() ? "없음" : String.join(", ", restarted))
+                            + (skipped.isEmpty() ? "" : " / 그대로: " + String.join(", ", skipped)));
+        } catch (Exception ex) {
+            // 상태는 건드리지 않는다 - 런타임 감시가 실제 상태로 다시 판정한다. 여기서 FAILED 를 덮어쓰면
+            // «재시작하다 실패»와 «원래 실패»가 구분되지 않는다.
+            commandHistoryRecorder.record(pipelineId, "RESTART", "FAILED", ex.getMessage());
+            if (ex instanceof BusinessException businessException) {
+                throw businessException;
+            }
+            throw new BusinessException(ErrorCode.KAFKA_CONNECT_ERROR, "재시작 실패: " + ex.getMessage());
+        }
+        return PipelineResponse.from(pipeline, pipelineConnectorRepository.findByPipelineId(pipelineId));
     }
 
     /**
@@ -558,6 +706,22 @@ public class PipelineDeployService {
 
     private ConnectorStatusResponse awaitConnectorState(String connectorName, String expectedState,
             boolean requireRunningTasks) {
+        return awaitConnectorState(connectorName, expectedState, requireRunningTasks, 0);
+    }
+
+    /**
+     * @param failureGraceAttempts 이 횟수만큼은 «태스크 FAILED» 를 실패로 보지 않는다. 재시작 요청은 비동기라 요청 직후에는
+     *                             아직 옛 FAILED 가 보인다 - 0 으로 두고 확인하면 방금 되살린 태스크를 실패로 단정한다
+     *                             (2026-09-17 실측: 재시작이 실제로는 성공했는데 apply_action 이 실패로 끝났다).
+     */
+    private ConnectorStatusResponse awaitConnectorState(String connectorName, String expectedState,
+            boolean requireRunningTasks, int failureGraceAttempts) {
+        // «멈추는 중»에 보이는 태스크 FAILED 는 실패가 아니다 - stop 이 반영되면 태스크 자체가 사라진다.
+        // 이걸 실패로 단정하던 때는 <b>이미 멈춰 있는(태스크 FAILED) 파이프라인을 다시 배포할 수 없었다</b>
+        // (2026-09-17 실측: 원인을 고친 뒤에도 «Kafka Connect가 실패 상태입니다 … taskStates=[FAILED]» 로 거절).
+        // RUNNING 을 기다릴 때만 확정 실패로 보고 즉시 중단한다.
+        boolean abortOnFailure = !"STOPPED".equalsIgnoreCase(expectedState)
+                && !"PAUSED".equalsIgnoreCase(expectedState);
         ConnectorStatusResponse lastStatus = null;
         BusinessException lastFailure = null;
         for (int attempt = 0; attempt < STATUS_VERIFY_ATTEMPTS; attempt++) {
@@ -567,14 +731,14 @@ public class PipelineDeployService {
                 if (matchesState(lastStatus, expectedState, requireRunningTasks)) {
                     return lastStatus;
                 }
-                if (hasTerminalFailure(lastStatus)) {
+                if (abortOnFailure && attempt >= failureGraceAttempts && hasTerminalFailure(lastStatus)) {
                     throw new BusinessException(ErrorCode.KAFKA_CONNECT_ERROR,
                             "Kafka Connect가 실패 상태입니다. connector=" + connectorName
                                     + ", connectorState=" + connectorState(lastStatus)
                                     + ", taskStates=" + taskStates(lastStatus));
                 }
             } catch (BusinessException ex) {
-                if (lastStatus != null && hasTerminalFailure(lastStatus)) {
+                if (abortOnFailure && attempt >= failureGraceAttempts && lastStatus != null && hasTerminalFailure(lastStatus)) {
                     throw ex;
                 }
                 // 생성/stop/resume 직후 분산 워커의 상태 엔드포인트가 잠시 404/409를

@@ -1387,6 +1387,48 @@ public class AlertEngine {
     /** 커넥터 FAILED(원본 규칙표, 위험). 최신 스냅샷의 소스/싱크 상태를 본다. */
     private List<Candidate> connectorFailedSignals(Map<String, Object> rule) {
         ScopeFilter scope = scopeOf(rule);
+        Map<Long, Candidate> byPipeline = new java.util.LinkedHashMap<>();
+        connectorStateFailures(scope).forEach(c -> byPipeline.put(pipelineIdOf(c), c));
+        taskStateFailures(scope).forEach(c -> byPipeline.putIfAbsent(pipelineIdOf(c), c));
+        return List.copyOf(byPipeline.values());
+    }
+
+    private static long pipelineIdOf(Candidate candidate) {
+        return Long.parseLong(candidate.targetKey().substring("CONNECTOR:".length()));
+    }
+
+    /**
+     * 태스크가 FAILED 인 커넥터. 커넥터 자체는 RUNNING 으로 남고 <b>태스크만</b> 죽는 경우가 대부분이라
+     * 커넥터 상태만 보면 놓친다 - 특히 싱크가 한 건 거부로 멈추는 실패(errors.tolerance=none, 2026-09-17 전환)는
+     * 늘 이 모양이다. 런타임 감시(KafkaPipelineStateSynchronizer)가 10초마다 실측 상태를 태스크까지
+     * {@code pipeline_connector.last_status_json} 에 적어 두므로 그것을 본다(원칙 B: 규칙이 직접 Connect 를 부르지 않는다).
+     * 감시 대상(DEPLOYED · STOPPED · FAILED)이 아닌 파이프라인의 json 은 오래된 값이라 뺀다.
+     */
+    private List<Candidate> taskStateFailures(ScopeFilter scope) {
+        return jdbc.query("""
+                SELECT c.pipeline_id, d.name, string_agg(DISTINCT c.connector_role, ',' ORDER BY c.connector_role) AS roles
+                FROM pipeline_connector c
+                JOIN pipeline_definition d ON d.id = c.pipeline_id
+                WHERE d.status IN ('DEPLOYED', 'STOPPED', 'FAILED')
+                  AND c.last_status_json IS NOT NULL
+                  AND jsonb_path_exists(c.last_status_json::jsonb, '$.tasks[*] ? (@.state == "FAILED")')
+                GROUP BY c.pipeline_id, d.name
+                """, (rs, i) -> {
+            long pid = rs.getLong("pipeline_id");
+            if (!scope.allows(pid)) {
+                return null;
+            }
+            String roles = rs.getString("roles");
+            String which = roles == null ? "커넥터"
+                    : roles.replace("SINK", "Sink").replace("SOURCE", "Source").replace(",", "·");
+            String label = rs.getString("name") != null ? rs.getString("name") : ("파이프라인 " + pid);
+            return new Candidate("CONNECTOR:" + pid, label, "CDC", null, null,
+                    String.format("%s — %s 태스크 FAILED", label, which), "/cdc/pipelines");
+        }).stream().filter(java.util.Objects::nonNull).toList();
+    }
+
+    /** 커넥터 상태 자체가 FAILED(최근 10분 수집 스냅샷 기준). */
+    private List<Candidate> connectorStateFailures(ScopeFilter scope) {
         return jdbc.query("""
                 SELECT DISTINCT ON (s.pipeline_id) s.pipeline_id, d.name,
                        s.connector_state, s.source_connector_state, s.sink_connector_state

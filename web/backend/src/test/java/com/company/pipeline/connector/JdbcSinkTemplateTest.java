@@ -31,9 +31,11 @@ class JdbcSinkTemplateTest {
         assertThat(config.get("schema.evolution")).isEqualTo("basic");
         assertThat(config.get("table.name.format")).isEqualTo("cdc_landing.customers");
         assertThat(config.get("delete.enabled")).isEqualTo("true");
-        assertThat(config.get("errors.deadletterqueue.topic.name")).isEqualTo("dlq.pipeline-12");
-        assertThat(config.get("errors.deadletterqueue.context.headers.enable")).isEqualTo("true");
+        // CDC 싱크는 한 건이라도 거부되면 멈춘다(2026-09-17 정책 전환) - DLQ 설정이 남아 있으면 안 된다.
+        assertThat(config.get("errors.tolerance")).isEqualTo("none");
+        assertThat(config.get("errors.log.enable")).isEqualTo("true");
         assertThat(config.get("errors.log.include.messages")).isEqualTo("false");
+        assertThat(config.keySet()).noneMatch(key -> key.startsWith("errors.deadletterqueue."));
     }
 
     // 실제 운영에서 발견된 버그 재현: pipeline_definition에 sourceTable이 소문자로
@@ -76,7 +78,8 @@ class JdbcSinkTemplateTest {
         assertThat(config.get("transforms.unwrap.add.fields.prefix")).isEqualTo("");
         assertThat(config.get("transforms.unwrap.delete.tombstone.handling.mode")).isEqualTo("rewrite");
         assertThat(config.get("transforms.dropDeleted.exclude")).isEqualTo("__deleted");
-        assertThat(config.get("errors.deadletterqueue.topic.name")).isEqualTo("dlq.pipeline-21");
+        assertThat(config.get("errors.tolerance")).isEqualTo("none");
+        assertThat(config.keySet()).noneMatch(key -> key.startsWith("errors.deadletterqueue."));
     }
 
     // 델타 최신상태: PK당 한 행. upsert + record_key 로 덮어쓰되 delete 는 행 삭제가 아니라 d 로
@@ -95,6 +98,17 @@ class JdbcSinkTemplateTest {
         assertThat(config.get("transforms.unwrap.add.fields")).isEqualTo("op:cdc_op,ts_ms:cdc_ts");
         assertThat(config.get("transforms.unwrap.delete.tombstone.handling.mode")).isEqualTo("rewrite");
         assertThat(config.get("transforms.dropDeleted.exclude")).isEqualTo("__deleted");
+    }
+
+    // 로그 파이프라인은 거부된 줄을 건너뛰고 계속 간다(줄 하나로 전체 로그 적재가 멈추지 않게). DLQ 는 없다.
+    @Test
+    void renderForLogPipeline_skipsRejectedLinesWithoutDlq() {
+        var config = template.renderForLogPipeline(new com.company.pipeline.connector.dto.LogSinkConnectorRequest(
+                31L, DbType.POSTGRESQL, "pg", 5432, "u", "pw", "db", null, "logs", "app_log", "log-topic")).config();
+
+        assertThat(config.get("errors.tolerance")).isEqualTo("all");
+        assertThat(config.get("errors.log.enable")).isEqualTo("true");
+        assertThat(config.keySet()).noneMatch(key -> key.startsWith("errors.deadletterqueue."));
     }
 
     @Test

@@ -91,6 +91,10 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # 토픽 보존 기간 14일(기본 7일, 실측 2026-09-17). CDC 싱크는 한 건이라도 거부되면 멈추고(errors.tolerance=none)
+      # 소스는 계속 Kafka 에 쌓는다 - 싱크를 고쳐 재시작하기 전에 보존 기간이 지나면 밀린 데이터가 지워져 진짜 유실이 된다.
+      # 주말 · 연휴를 넘겨도 고칠 여유를 둔다. docs/2026-09-09-cdc-error-policy-dlq.md 5-②
+      KAFKA_LOG_RETENTION_HOURS: 336
       # 토픽 데이터(파티션 세그먼트, __consumer_offsets, KRaft 메타데이터)가 저장되는 곳.
       #
       # 이 값을 안 주면 브로커가 기본값 /tmp/kafka-logs를 쓴다 - 컨테이너 안이라

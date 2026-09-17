@@ -51,6 +51,7 @@ const COMMAND_LABEL: Record<string, string> = {
   DELETE: "삭제",
   RUNTIME_MONITOR: "런타임 감시",
   DISMISS_DRIFT: "불일치 확인",
+  SINK_CONFIG_REFRESH: "싱크 설정 재적용",
 };
 
 type StatusFilter = "ALL" | string;
@@ -189,7 +190,7 @@ function DetailRow({ row }: { row: UnifiedCdcLogRow }) {
  *
  * <p>예전에는 «처리 이력 / 오류·상태 이력 / 실패 데이터(DLQ)» 탭으로 나뉘어 있었다. 두 이력은 한 표로 합치고
  * (시각 역순), DLQ 는 화면에서 뺐다 - 싱크 실패 정책을 «버리고 계속»에서 «멈춤»으로 바꾸기로 해서 DLQ 는 쓰이지
- * 않게 된다(docs/2026-09-09-cdc-error-policy-dlq.md). 백엔드의 DLQ·재처리 API 는 정책 전환 때 함께 정리한다.
+ * 않게 된다(docs/2026-09-09-cdc-error-policy-dlq.md). 백엔드의 DLQ·재처리 API 도 2026-09-17 정책 전환 때 함께 뺐다.
  * Lag 추이 차트와 자동 갱신도 ETL 로그 화면에 없어 뺐고, 처리 구간의 세부 값은 줄을 펼쳐 본다.
  *
  * <ul>

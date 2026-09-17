@@ -13,8 +13,11 @@ import com.company.pipeline.pipeline.dto.PipelineRuntimeStatusResponse;
 import com.company.pipeline.pipeline.dto.PipelineConsistencyCheckResponse;
 import com.company.pipeline.pipeline.dto.PipelineBatchCreateRequest;
 import com.company.pipeline.pipeline.dto.PipelineBatchCreateResponse;
+import com.company.pipeline.pipeline.dto.StuckSinkResponse;
+import com.company.pipeline.user.AppUser;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -36,6 +39,7 @@ public class PipelineController {
     private final PipelineRuntimeStatusService pipelineRuntimeStatusService;
     private final PipelineConsistencyService pipelineConsistencyService;
     private final PipelineBatchCreateService pipelineBatchCreateService;
+    private final SinkStuckRecordService sinkStuckRecordService;
 
     public PipelineController(PipelineService pipelineService, PipelineDeployService pipelineDeployService,
             PipelineCommandHistoryRepository pipelineCommandHistoryRepository,
@@ -43,7 +47,8 @@ public class PipelineController {
             PipelineMetricSnapshotService pipelineMetricSnapshotService,
             PipelineRuntimeStatusService pipelineRuntimeStatusService,
             PipelineConsistencyService pipelineConsistencyService,
-            PipelineBatchCreateService pipelineBatchCreateService) {
+            PipelineBatchCreateService pipelineBatchCreateService,
+            SinkStuckRecordService sinkStuckRecordService) {
         this.pipelineService = pipelineService;
         this.pipelineDeployService = pipelineDeployService;
         this.pipelineCommandHistoryRepository = pipelineCommandHistoryRepository;
@@ -52,6 +57,7 @@ public class PipelineController {
         this.pipelineRuntimeStatusService = pipelineRuntimeStatusService;
         this.pipelineConsistencyService = pipelineConsistencyService;
         this.pipelineBatchCreateService = pipelineBatchCreateService;
+        this.sinkStuckRecordService = sinkStuckRecordService;
     }
 
     @PostMapping
@@ -125,6 +131,36 @@ public class PipelineController {
     @PostMapping("/{id}/stop")
     public ApiResponse<PipelineResponse> stop(@PathVariable Long id) {
         return ApiResponse.success(pipelineDeployService.stop(id));
+    }
+
+    /** 멈춘 싱크가 어디서 멈췄는지와 그 레코드(마스킹·길이 제한). 읽기만 한다. */
+    @GetMapping("/{id}/sink-stuck")
+    public ApiResponse<StuckSinkResponse> stuckSink(@PathVariable Long id) {
+        return ApiResponse.success(sinkStuckRecordService.inspect(id));
+    }
+
+    /**
+     * 고칠 수 없는 한 건을 건너뛰고 싱크를 다시 띄운다. <b>그 건은 타깃에 들어가지 않는다</b> - 사유가 필수이고 이력에 남는다.
+     */
+    @PostMapping("/{id}/sink-stuck/skip")
+    public ApiResponse<PipelineResponse> skipStuckRecord(@PathVariable Long id,
+            @Valid @RequestBody SkipStuckRecordRequest request, @AuthenticationPrincipal AppUser user) {
+        return ApiResponse.success(sinkStuckRecordService.skip(id, request.topic(), request.partition(),
+                request.offset(), request.reason(), user == null ? "unknown" : user.getUserId()));
+    }
+
+    /** 화면에서 본 위치를 그대로 돌려받아, 그 사이 위치가 바뀌었으면 거절한다. */
+    public record SkipStuckRecordRequest(
+            @jakarta.validation.constraints.NotBlank String topic,
+            @jakarta.validation.constraints.NotNull Integer partition,
+            @jakarta.validation.constraints.NotNull Long offset,
+            @jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Size(max = 500) String reason) {
+    }
+
+    /** 이미 등록된 싱크 커넥터에 지금 템플릿 설정(실패 정책 등)을 다시 넣는다. 소스는 건드리지 않는다. */
+    @PostMapping("/{id}/sink-config/refresh")
+    public ApiResponse<PipelineResponse> refreshSinkConfig(@PathVariable Long id) {
+        return ApiResponse.success(pipelineDeployService.refreshSinkConfig(id));
     }
 
     @PostMapping("/{id}/restart")

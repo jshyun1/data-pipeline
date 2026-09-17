@@ -142,6 +142,22 @@ public class KafkaConnectClient {
                 .toBodilessEntity());
     }
 
+    /**
+     * 실패한 커넥터·태스크만 다시 띄운다(POST /connectors/{name}/restart?includeTasks=true&onlyFailed=true).
+     *
+     * <p>태스크 하나만 재시작하는 {@link #restartTask}와 달리 커넥터 자체가 FAILED 인 경우도 살린다. 재시작할 것이 없으면
+     * Connect 가 204 를 준다(오류 아님). 잘 돌고 있는 태스크는 건드리지 않으므로 «멈춘 것만 되살리기»에 맞다.
+     */
+    public void restartFailed(String connectorName) {
+        execute(() -> controlClient.post()
+                .uri(uriBuilder -> uriBuilder.path("/connectors/{name}/restart")
+                        .queryParam("includeTasks", "true")
+                        .queryParam("onlyFailed", "true")
+                        .build(connectorName))
+                .retrieve()
+                .toBodilessEntity());
+    }
+
     public void restartTask(String connectorName, int taskId) {
         execute(() -> controlClient.post()
                 .uri("/connectors/{name}/tasks/{taskId}/restart", connectorName, taskId)

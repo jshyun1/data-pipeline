@@ -1670,6 +1670,9 @@ function ExecutionSettingsModal({
         // 한쪽만 막으면 같은 중복이 시작 쪽으로 그대로 생긴다.
         { label: "시작 (Start)", value: "start", disabled: watching },
         { label: "중지 (Stop)", value: "stop" },
+        // 싱크가 멈췄을 때(실패) 원인을 고치고 다시 띄우는 복구 동작(2026-09-17). 멈춘 커넥터·태스크만 다시 띄우고
+        // 멈춘 건부터 이어서 적재된다. 감시 Run 이 살아 있으면 정상 운행 중이라 쓸 일이 없어 막는다.
+        { label: "재시작 (Restart)", value: "restart", disabled: watching },
         // 이미 돌고 있는 CDC의 감시 Run만 잃었을 때. 커넥터에는 아무 지시도 하지 않는다.
         // 예전에는 이걸 되살리려면 stop -> start 밖에 없어서 Sink를 한 번 멈춰야 했다.
         // 감시 Run이 살아 있는데 또 누르면 같은 파이프라인을 감시하는 Run이 둘이 되고,

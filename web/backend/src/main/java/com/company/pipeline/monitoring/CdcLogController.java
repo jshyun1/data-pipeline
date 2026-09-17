@@ -3,13 +3,6 @@ package com.company.pipeline.monitoring;
 import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.monitoring.dto.CdcEventLogResponse;
 import com.company.pipeline.monitoring.dto.CdcProcessingLogResponse;
-import com.company.pipeline.monitoring.dto.DlqRecordDetailResponse;
-import com.company.pipeline.monitoring.dto.DlqRecordResponse;
-import com.company.pipeline.monitoring.dto.DlqReplayCreateRequest;
-import com.company.pipeline.monitoring.dto.DlqReplayResponse;
-import com.company.pipeline.user.AppUser;
-import jakarta.validation.Valid;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -17,25 +10,23 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
+/**
+ * CDC 로그 화면(처리 이력 · 오류/상태 이력).
+ *
+ * <p>실패 데이터(DLQ) 조회 · 재처리 요청/승인 API 는 2026-09-17 에 뺐다. 싱크 실패 정책을 «버리고 계속»(errors.tolerance=all
+ * + DLQ 토픽)에서 «멈춤»(none)으로 바꿔 DLQ 에 쌓일 것이 없어졌기 때문이다 - 거부된 건은 오프셋이 그 자리에 멈춰, 고치고
+ * 재시작하면 그 건부터 다시 들어온다. 결정 경위: docs/2026-09-09-cdc-error-policy-dlq.md
+ */
 @RestController
 @RequestMapping("/api/cdc/logs")
 @com.company.pipeline.authz.RequirePermission(system = com.company.pipeline.authz.SystemCode.KAFKA)
 public class CdcLogController {
 
     private final CdcLogService cdcLogService;
-    private final DlqReadService dlqReadService;
-    private final DlqReplayService dlqReplayService;
 
-    public CdcLogController(CdcLogService cdcLogService, DlqReadService dlqReadService,
-            DlqReplayService dlqReplayService) {
+    public CdcLogController(CdcLogService cdcLogService) {
         this.cdcLogService = cdcLogService;
-        this.dlqReadService = dlqReadService;
-        this.dlqReplayService = dlqReplayService;
     }
 
     @GetMapping("/processing")
@@ -50,35 +41,5 @@ public class CdcLogController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return ApiResponse.success(cdcLogService.eventLogs(from, to));
-    }
-
-    @GetMapping("/dlq")
-    public ApiResponse<List<DlqRecordResponse>> dlqRecords(@RequestParam Long pipelineId,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
-        return ApiResponse.success(dlqReadService.list(pipelineId, from, to));
-    }
-
-    @GetMapping("/dlq/detail")
-    public ApiResponse<DlqRecordDetailResponse> dlqDetail(@RequestParam Long pipelineId,
-            @RequestParam int partition, @RequestParam long offset) {
-        return ApiResponse.success(dlqReadService.detail(pipelineId, partition, offset));
-    }
-
-    @GetMapping("/dlq/replay-requests")
-    public ApiResponse<List<DlqReplayResponse>> replayRequests(@AuthenticationPrincipal AppUser user) {
-        return ApiResponse.success(dlqReplayService.history(user));
-    }
-
-    @PostMapping("/dlq/replay-requests")
-    public ApiResponse<DlqReplayResponse> requestReplay(@Valid @RequestBody DlqReplayCreateRequest request,
-            @AuthenticationPrincipal AppUser user) {
-        return ApiResponse.success(dlqReplayService.request(request, user));
-    }
-
-    @PostMapping("/dlq/replay-requests/{id}/approve")
-    public ApiResponse<DlqReplayResponse> approveReplay(@PathVariable Long id,
-            @AuthenticationPrincipal AppUser user) {
-        return ApiResponse.success(dlqReplayService.approve(id, user));
     }
 }

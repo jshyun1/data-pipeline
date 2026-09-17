@@ -21,6 +21,7 @@ import {
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { Dropdown, Form, Modal } from "antd";
+import type { StuckSinkPosition } from "../api/pipelines";
 import type { MenuProps } from "antd";
 import { WfIcon } from "../components/WorkflowPageHeader";
 import { GptChatPanel } from "../components/gpt/GptChatPanel";
@@ -42,6 +43,9 @@ import {
   deletePipeline,
   checkPipelineConsistency,
   dismissConnectorDrift,
+  refreshSinkConfig,
+  getStuckSink,
+  skipStuckRecord,
   getPipelineHistory,
   listPipelineRuntimeStatuses,
   listPipelineConsistencyChecks,
@@ -387,6 +391,15 @@ export function PipelinesPage() {
     onError: (error: Error) => message.error(error.message),
   });
 
+  const refreshSinkMutation = useMutation({
+    mutationFn: refreshSinkConfig,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pipelines"] });
+      message.success("싱크 설정을 다시 적용했습니다.");
+    },
+    onError: (error: Error) => message.error(error.message),
+  });
+
   const dismissDriftMutation = useMutation({
     mutationFn: dismissConnectorDrift,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["pipeline-dashboard-summary"] }),
@@ -651,6 +664,13 @@ export function PipelinesPage() {
                 label: "Connector",
                 children: (
                   <>
+                    <SinkErrorPolicy
+                      pipeline={detailPipeline}
+                      canWrite={canWrite}
+                      loading={refreshSinkMutation.isPending}
+                      onRefresh={() => refreshSinkMutation.mutate(detailPipeline.id)}
+                    />
+                    <SinkStuckRecord pipeline={detailPipeline} canWrite={canWrite} />
                     <Table
                       rowKey="id"
                       size="small"
@@ -804,6 +824,204 @@ export function PipelinesPage() {
         </Form>
       </Modal>
     </div>
+  );
+}
+
+/**
+ * 싱크 커넥터의 실패 정책(errors.tolerance)과 재적용 버튼(2026-09-17 실패 정책 전환).
+ *
+ * <p>CDC 테이블 싱크는 한 건이라도 거부되면 멈추는 것(none)이 기준이다. 전환 전에 준비한 커넥터는 설정이 등록 시점에 굳어
+ * «버리고 계속»(all)으로 남아 있으므로, 여기서 경고하고 싱크 설정만 다시 넣게 한다. 로그 파이프라인은 거부된 줄을 건너뛰는
+ * 것(all)이 기준이다. 결정 경위: docs/2026-09-09-cdc-error-policy-dlq.md
+ */
+function SinkErrorPolicy({ pipeline, canWrite, loading, onRefresh }: {
+  pipeline: PipelineResponse;
+  canWrite: boolean;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const sink = pipeline.connectors.find((connector) => connector.connectorRole === "SINK");
+  if (!sink) return null;
+  let tolerance: string | undefined;
+  let hasDlq = false;
+  try {
+    const config = JSON.parse(sink.connectorConfigJson ?? "{}") as Record<string, unknown>;
+    tolerance = typeof config["errors.tolerance"] === "string" ? config["errors.tolerance"] : undefined;
+    hasDlq = Object.keys(config).some((key) => key.startsWith("errors.deadletterqueue."));
+  } catch {
+    tolerance = undefined;
+  }
+  const isLog = pipeline.pipelineType === "LOG_FILE";
+  const expected = isLog ? "all" : "none";
+  const outdated = tolerance !== expected || hasDlq;
+  const label = (value?: string) => (value === "none" ? "멈춤" : value === "all" ? "건너뛰고 계속" : "기본값(멈춤)");
+  return (
+    <Alert
+      type={outdated ? "warning" : "info"}
+      showIcon
+      style={{ marginBottom: 16 }}
+      message={`싱크 실패 정책: ${label(tolerance)}${hasDlq ? " + DLQ" : ""}`}
+      description={
+        <>
+          {isLog
+            ? "로그 파이프라인은 거부된 줄을 건너뛰고 계속 적재합니다(건너뛴 줄은 Kafka Connect 로그에 남습니다)."
+            : "CDC 테이블 싱크는 한 건이라도 거부되면 멈춥니다. 원인을 고치고 재시작하면 그 건부터 다시 들어옵니다."}
+          {outdated && (
+            <div style={{ marginTop: 6 }}>
+              이 커넥터는 이전 정책으로 등록돼 있습니다. «싱크 설정 재적용»으로 싱크 설정만 새로 넣을 수 있습니다
+              (소스는 그대로, 실행 중이면 싱크 태스크만 재시작되어 커밋된 위치부터 이어 읽습니다).
+            </div>
+          )}
+        </>
+      }
+      action={
+        <Popconfirm
+          title="싱크 설정을 다시 적용할까요?"
+          description="실행 중인 싱크는 태스크가 잠깐 재시작됩니다. 소스 커넥터는 건드리지 않습니다."
+          okText="적용"
+          cancelText="취소"
+          onConfirm={onRefresh}
+          disabled={!canWrite}
+        >
+          <Button size="small" loading={loading} disabled={!canWrite}
+                  title={!canWrite ? "CDC 쓰기 권한이 없습니다" : undefined}>
+            싱크 설정 재적용
+          </Button>
+        </Popconfirm>
+      }
+    />
+  );
+}
+
+/**
+ * 멈춘 싱크의 «멈춘 한 건 건너뛰기»(2026-09-17). 싱크는 한 건이라도 거부되면 멈추는데, 원본을 고칠 수 없는 건(깨진 메시지 등)은
+ * 재시작해도 같은 자리에서 또 멈춘다. 그 한 건만 넘기고 다시 띄운다.
+ *
+ * <p><b>넘긴 건은 타깃에 들어가지 않는다</b> - 그래서 넘기기 전에 무엇을 넘기는지(내용·원인) 보여 주고 사유를 받는다.
+ * 저장된 실행 상태에 FAILED 태스크가 있을 때만 Kafka 를 조회한다(정상 파이프라인에서 괜히 브로커를 부르지 않게).
+ */
+function SinkStuckRecord({ pipeline, canWrite }: { pipeline: PipelineResponse; canWrite: boolean }) {
+  const queryClient = useQueryClient();
+  const [reason, setReason] = useState("");
+  const [target, setTarget] = useState<StuckSinkPosition>();
+
+  const sink = pipeline.connectors.find((connector) => connector.connectorRole === "SINK");
+  const sinkLooksFailed = (() => {
+    try {
+      const status = JSON.parse(sink?.lastStatusJson ?? "{}") as { tasks?: Array<{ state?: string }> };
+      return (status.tasks ?? []).some((task) => task.state === "FAILED");
+    } catch {
+      return false;
+    }
+  })();
+
+  const stuckQuery = useQuery({
+    queryKey: ["pipeline-stuck-sink", pipeline.id],
+    queryFn: () => getStuckSink(pipeline.id),
+    enabled: sinkLooksFailed,
+    retry: false,
+  });
+
+  const skipMutation = useMutation({
+    mutationFn: (input: { topic: string; partition: number; offset: number; reason: string }) =>
+      skipStuckRecord(pipeline.id, input),
+    onSuccess: () => {
+      setTarget(undefined);
+      setReason("");
+      queryClient.invalidateQueries({ queryKey: ["pipelines"] });
+      queryClient.invalidateQueries({ queryKey: ["pipeline-stuck-sink", pipeline.id] });
+      queryClient.invalidateQueries({ queryKey: ["pipeline-history", pipeline.id] });
+      message.success("멈춰 있던 한 건을 건너뛰고 싱크를 다시 띄웠습니다.");
+    },
+    onError: (error: Error) => message.error(error.message),
+  });
+
+  if (!sinkLooksFailed) return null;
+  if (stuckQuery.isLoading) return <Alert type="info" showIcon message="멈춘 위치를 확인하는 중입니다." style={{ marginBottom: 16 }} />;
+  if (stuckQuery.error) {
+    return <Alert type="warning" showIcon style={{ marginBottom: 16 }}
+                  message="멈춘 위치를 확인하지 못했습니다" description={(stuckQuery.error as Error).message} />;
+  }
+  const stuck = stuckQuery.data;
+  if (!stuck?.stopped) return null;
+
+  return (
+    <>
+      <Alert
+        type="error"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="싱크가 멈춰 있습니다"
+        description={
+          <>
+            <div>
+              원인을 고칠 수 있으면 고친 뒤 <strong>워크플로우 › 로그 → 이 파이프라인 → «실행 설정» → «재시작 (Restart)»</strong> 을 하십시오.
+              멈춘 건부터 다시 들어옵니다. 원본을 고칠 수 없는 건(깨진 메시지 등)만 아래에서 건너뜁니다.
+            </div>
+            {stuck.failureTraces.length > 0 && (
+              <Collapse
+                size="small"
+                style={{ marginTop: 8 }}
+                items={[{
+                  key: "trace",
+                  label: "멈춘 원인",
+                  children: <pre className="connector-json-block">{stuck.failureTraces.join("\n\n")}</pre>,
+                }]}
+              />
+            )}
+            {stuck.positions.length === 0 && (
+              <div style={{ marginTop: 8 }}>아직 읽지 않은 메시지가 없습니다 - 멈춘 원인만 고치고 재시작하면 됩니다.</div>
+            )}
+            {stuck.positions.map((position) => (
+              <div key={`${position.topic}-${position.partition}`} style={{ marginTop: 10 }}>
+                <div>
+                  <strong>{position.topic} · 파티션 {position.partition}</strong> · 멈춘 위치 {position.committedOffset.toLocaleString()}
+                  {" · "}밀린 건수 {position.lag.toLocaleString()}
+                </div>
+                {position.readError
+                  ? <div style={{ color: "#b45309" }}>{position.readError}</div>
+                  : (
+                    <pre className="connector-json-block" style={{ marginTop: 4 }}>
+                      {position.keyPreview ? `키: ${position.keyPreview}\n` : ""}{position.preview}
+                    </pre>
+                  )}
+                <Button danger size="small" disabled={!canWrite}
+                        title={!canWrite ? "CDC 쓰기 권한이 없습니다" : undefined}
+                        onClick={() => { setTarget(position); setReason(""); }}>
+                  이 한 건 건너뛰기
+                </Button>
+              </div>
+            ))}
+          </>
+        }
+      />
+      <Modal
+        open={Boolean(target)}
+        title="멈춰 있는 한 건을 건너뜁니다"
+        okText="건너뛰기"
+        okButtonProps={{ danger: true, disabled: !reason.trim() }}
+        cancelText="취소"
+        confirmLoading={skipMutation.isPending}
+        onCancel={() => setTarget(undefined)}
+        onOk={() => target && skipMutation.mutate({
+          topic: target.topic, partition: target.partition, offset: target.committedOffset, reason: reason.trim(),
+        })}
+      >
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+               message="이 건은 타깃에 들어가지 않습니다"
+               description="Kafka 의 읽은 위치를 한 칸 넘겨 다음 건부터 이어 갑니다. 되돌릴 수 없고, 필요하면 원본을 확인해 수동으로 넣어야 합니다." />
+        <div style={{ marginBottom: 8 }}>
+          {target?.topic} · 파티션 {target?.partition} · 오프셋 {target?.committedOffset.toLocaleString()}
+        </div>
+        <Input.TextArea
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          rows={3}
+          maxLength={500}
+          placeholder="건너뛰는 사유 (이력에 남습니다) - 예: 역직렬화 불가한 깨진 메시지, 원본 확인함"
+        />
+      </Modal>
+    </>
   );
 }
 
