@@ -72,6 +72,13 @@ const NIFI_TOOL_HIDDEN_ATTRIBUTE = "data-cerebro-tool-hidden";
 const NIFI_TOOL_ALLOWED_ATTRIBUTE = "data-cerebro-tool-allowed";
 const NIFI_MENU_BUTTON_ATTRIBUTE = "data-cerebro-menu-button";
 const NIFI_BREADCRUMB_ATTRIBUTE = "data-cerebro-canvas-breadcrumb";
+const NIFI_READ_ONLY_LOCK_ATTRIBUTE = "data-cerebro-readonly-lock";
+const NIFI_READ_ONLY_LOCK_INSTALLED_ATTRIBUTE = "data-cerebro-readonly-lock-installed";
+const NIFI_READ_ONLY_HOLDER_ATTRIBUTE = "data-cerebro-readonly-lock-holder";
+const NIFI_READ_ONLY_NOTICE_ID = "cerebro-nifi-readonly-notice";
+const NIFI_LOCK_DISABLED_BEFORE_ATTRIBUTE = "data-cerebro-lock-disabled-before";
+const NIFI_LOCK_READONLY_BEFORE_ATTRIBUTE = "data-cerebro-lock-readonly-before";
+const NIFI_LOCK_DIALOG_ATTRIBUTE = "data-cerebro-readonly-lock-dialog";
 const NIFI_MINI_TOOLBAR_ID = "cerebro-nifi-mini-toolbar";
 const LEGACY_NIFI_MINI_CREATE_TOOLBAR_CLEANUP_ATTRIBUTE = "data-cerebro-mini-create-toolbar-cleanup";
 const NIFI_PROCESSOR_LOCK_HEARTBEAT_MS = 20_000;
@@ -114,44 +121,44 @@ const HIDE_TOOL_CHROME_CSS = `
   [${NIFI_TOOL_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
   #${NIFI_MINI_TOOLBAR_ID} {
     position: fixed !important;
-    top: 14px !important;
+    top: 12px !important;
     bottom: auto !important;
     left: 16px !important;
     z-index: 9100 !important;
     display: flex !important;
     align-items: center !important;
-    gap: 3px !important;
-    min-height: 42px !important;
-    padding: 4px 6px !important;
-    border: 1px solid #cbd5e1 !important;
+    gap: 5px !important;
+    min-height: 38px !important;
+    padding: 3px 8px !important;
+    border: 1px solid #d7dee8 !important;
     border-radius: 8px !important;
-    background: rgba(255, 255, 255, 0.98) !important;
-    box-shadow: 0 2px 8px rgb(15 23 42 / 8%) !important;
-    backdrop-filter: blur(8px) !important;
+    background: #ffffff !important;
+    box-shadow: 0 2px 7px rgb(15 23 42 / 10%) !important;
+    backdrop-filter: none !important;
   }
   #${NIFI_MINI_TOOLBAR_ID}:empty {
     display: none !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] {
-    width: 32px !important;
-    height: 32px !important;
-    min-width: 32px !important;
-    min-height: 32px !important;
-    max-width: 32px !important;
-    max-height: 32px !important;
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
+    max-width: 28px !important;
+    max-height: 28px !important;
     margin: 0 !important;
     padding: 2px !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    border: 1.5px solid transparent !important;
-    border-radius: 6px !important;
+    border: 1px solid transparent !important;
+    border-radius: 5px !important;
     background: transparent !important;
-    color: #475569 !important;
+    color: #334155 !important;
     box-shadow: none !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:hover {
-    background: #f1f5f9 !important;
+    background: #f8fafc !important;
     color: #0f172a !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:has([title="프로세스 그룹"]),
@@ -159,40 +166,41 @@ const HIDE_TOOL_CHROME_CSS = `
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:has([aria-label="프로세스 그룹"]),
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][aria-label="프로세스 그룹"] {
     border-color: #ff3b30 !important;
-    background: #fff1f0 !important;
+    background: #ffffff !important;
     color: #ff3b30 !important;
-    box-shadow: 0 1px 3px rgb(255 59 48 / 15%) !important;
+    box-shadow: none !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] i,
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] svg {
-    transform: scale(0.78) !important;
+    transform: scale(0.74) !important;
     transform-origin: center !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] {
-    min-height: 42px !important;
-    height: 42px !important;
-    padding: 4px 8px !important;
+    min-height: 38px !important;
+    height: 38px !important;
+    padding: 3px 8px !important;
     justify-content: flex-start !important;
     align-items: center !important;
-    gap: 4px !important;
+    gap: 5px !important;
     background: #ffffff !important;
     background-color: #ffffff !important;
     box-shadow: none !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] {
-    width: 32px !important;
-    height: 32px !important;
-    min-width: 32px !important;
-    min-height: 32px !important;
-    margin: 0 2px !important;
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
+    margin: 0 1px !important;
     padding: 2px !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
+    border-radius: 5px !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] i,
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] svg {
-    transform: scale(0.82) !important;
+    transform: scale(0.76) !important;
     transform-origin: center !important;
   }
   [${NIFI_MENU_BUTTON_ATTRIBUTE}="true"] {
@@ -257,6 +265,23 @@ const HIDE_TOOL_CHROME_CSS = `
   [${NIFI_BREADCRUMB_ATTRIBUTE}="true"] span {
     color: inherit !important;
     font: inherit !important;
+  }
+  #${NIFI_READ_ONLY_NOTICE_ID} {
+    margin: 12px 20px 0 !important;
+    padding: 10px 12px !important;
+    border: 1px solid #fecaca !important;
+    border-radius: 6px !important;
+    background: #fff1f2 !important;
+    color: #991b1b !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    line-height: 1.45 !important;
+  }
+  [${NIFI_LOCK_DIALOG_ATTRIBUTE}="true"] input[${NIFI_LOCK_READONLY_BEFORE_ATTRIBUTE}],
+  [${NIFI_LOCK_DIALOG_ATTRIBUTE}="true"] textarea[${NIFI_LOCK_READONLY_BEFORE_ATTRIBUTE}],
+  [${NIFI_LOCK_DIALOG_ATTRIBUTE}="true"] select[${NIFI_LOCK_DISABLED_BEFORE_ATTRIBUTE}],
+  [${NIFI_LOCK_DIALOG_ATTRIBUTE}="true"] button[${NIFI_LOCK_DISABLED_BEFORE_ATTRIBUTE}] {
+    cursor: not-allowed !important;
   }
   body,
   #canvas-container,
@@ -351,25 +376,25 @@ const HIDE_TOOL_CHROME_CSS = `
   }
   [${NIFI_PANEL_ATTRIBUTE}="navigation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) {
     left: 0 !important;
-    top: 126px !important;
+    top: 72px !important;
     right: auto !important;
     bottom: auto !important;
   }
   [${NIFI_PANEL_ATTRIBUTE}="operation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) {
     left: 0 !important;
-    top: 168px !important;
+    top: 116px !important;
     right: auto !important;
     bottom: auto !important;
   }
   [${NIFI_PANEL_ATTRIBUTE}="navigation"][${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"] {
-    top: 126px !important;
+    top: 72px !important;
     right: auto !important;
     bottom: auto !important;
     left: 0 !important;
   }
   [${NIFI_PANEL_ATTRIBUTE}="operation"][${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"] {
     left: 0 !important;
-    top: 380px !important;
+    top: 304px !important;
     right: auto !important;
     bottom: auto !important;
   }
@@ -1611,6 +1636,161 @@ function installCanvasRouteSync(frame: HTMLIFrameElement, onProcessGroupChange: 
   frameWindow.addEventListener("beforeunload", () => frameWindow.clearInterval(timerId), { once: true });
 }
 
+interface ProcessorEditLockFrameState {
+  readOnly: boolean;
+  holderLabel?: string | null;
+}
+
+function dialogTextMatchesProcessorEditor(element: Element) {
+  const text = elementText(element);
+  if (!text || text.length > 3000) {
+    return false;
+  }
+  return /(Edit\s+Processor|프로세서\s*편집|Processor\s*\|)/i.test(text) && /\bApply\b|적용/.test(text);
+}
+
+function findProcessorEditDialogs(doc: Document) {
+  const selectors = [
+    '[role="dialog"]',
+    ".cdk-overlay-pane",
+    ".mat-dialog-container",
+    ".mat-mdc-dialog-container",
+    ".processor-configuration",
+  ].join(", ");
+  return Array.from(doc.querySelectorAll(selectors)).filter((element) => (
+    isVisibleElement(element) && dialogTextMatchesProcessorEditor(element)
+  ));
+}
+
+function restoreLockDisabledState(element: Element) {
+  if (!element.hasAttribute(NIFI_LOCK_DISABLED_BEFORE_ATTRIBUTE)) {
+    return;
+  }
+  const control = element as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+  if ("disabled" in control) {
+    control.disabled = element.getAttribute(NIFI_LOCK_DISABLED_BEFORE_ATTRIBUTE) === "true";
+  }
+  element.removeAttribute(NIFI_LOCK_DISABLED_BEFORE_ATTRIBUTE);
+  element.removeAttribute("aria-disabled");
+}
+
+function applyLockDisabledState(element: Element) {
+  const control = element as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+  if (!("disabled" in control)) {
+    return;
+  }
+  if (!element.hasAttribute(NIFI_LOCK_DISABLED_BEFORE_ATTRIBUTE)) {
+    element.setAttribute(NIFI_LOCK_DISABLED_BEFORE_ATTRIBUTE, String(control.disabled));
+  }
+  control.disabled = true;
+  element.setAttribute("aria-disabled", "true");
+}
+
+function restoreLockReadonlyState(element: Element) {
+  if (!element.hasAttribute(NIFI_LOCK_READONLY_BEFORE_ATTRIBUTE)) {
+    return;
+  }
+  const control = element as HTMLInputElement | HTMLTextAreaElement;
+  if ("readOnly" in control) {
+    control.readOnly = element.getAttribute(NIFI_LOCK_READONLY_BEFORE_ATTRIBUTE) === "true";
+  }
+  element.removeAttribute(NIFI_LOCK_READONLY_BEFORE_ATTRIBUTE);
+}
+
+function applyLockReadonlyState(element: Element) {
+  const control = element as HTMLInputElement | HTMLTextAreaElement;
+  if (!("readOnly" in control)) {
+    applyLockDisabledState(element);
+    return;
+  }
+  if (!element.hasAttribute(NIFI_LOCK_READONLY_BEFORE_ATTRIBUTE)) {
+    element.setAttribute(NIFI_LOCK_READONLY_BEFORE_ATTRIBUTE, String(control.readOnly));
+  }
+  control.readOnly = true;
+}
+
+function isApplyButton(element: Element) {
+  const label = [
+    elementText(element),
+    element.getAttribute("aria-label") ?? "",
+    element.getAttribute("title") ?? "",
+  ].join(" ").replace(/\s+/g, " ").trim();
+  return /(^|\s)(Apply|적용)(\s|$)/i.test(label);
+}
+
+function patchProcessorEditReadonly(doc: Document) {
+  const readOnly = doc.documentElement.getAttribute(NIFI_READ_ONLY_LOCK_ATTRIBUTE) === "true";
+  const holderLabel = doc.documentElement.getAttribute(NIFI_READ_ONLY_HOLDER_ATTRIBUTE) ?? "";
+  const dialogs = findProcessorEditDialogs(doc);
+
+  if (!readOnly) {
+    doc.querySelectorAll(`#${NIFI_READ_ONLY_NOTICE_ID}`).forEach((element) => element.remove());
+    doc.querySelectorAll(`[${NIFI_LOCK_DISABLED_BEFORE_ATTRIBUTE}]`).forEach(restoreLockDisabledState);
+    doc.querySelectorAll(`[${NIFI_LOCK_READONLY_BEFORE_ATTRIBUTE}]`).forEach(restoreLockReadonlyState);
+    doc.querySelectorAll(`[${NIFI_LOCK_DIALOG_ATTRIBUTE}]`).forEach((element) => {
+      element.removeAttribute(NIFI_LOCK_DIALOG_ATTRIBUTE);
+    });
+    return;
+  }
+
+  dialogs.forEach((dialog) => {
+    dialog.setAttribute(NIFI_LOCK_DIALOG_ATTRIBUTE, "true");
+    let notice = dialog.querySelector(`#${NIFI_READ_ONLY_NOTICE_ID}`);
+    if (!notice) {
+      notice = doc.createElement("div");
+      notice.id = NIFI_READ_ONLY_NOTICE_ID;
+      dialog.insertBefore(notice, dialog.firstChild);
+    }
+    notice.textContent = holderLabel
+      ? `${holderLabel} 사용자가 같은 Processor를 편집 중입니다. 현재 창은 읽기 전용이며 Apply를 사용할 수 없습니다.`
+      : "다른 사용자가 같은 Processor를 편집 중입니다. 현재 창은 읽기 전용이며 Apply를 사용할 수 없습니다.";
+
+    dialog.querySelectorAll("input, textarea").forEach(applyLockReadonlyState);
+    dialog.querySelectorAll("select").forEach(applyLockDisabledState);
+    dialog.querySelectorAll("button, [role='button']").forEach((button) => {
+      if (isApplyButton(button)) {
+        applyLockDisabledState(button);
+      }
+    });
+  });
+}
+
+function installProcessorEditReadonlyGuard(frame: HTMLIFrameElement, state: ProcessorEditLockFrameState) {
+  const doc = iframeDocument(frame);
+  const frameWindow = frame.contentWindow;
+  if (!doc || !frameWindow) {
+    return;
+  }
+
+  doc.documentElement.setAttribute(NIFI_READ_ONLY_LOCK_ATTRIBUTE, state.readOnly ? "true" : "false");
+  doc.documentElement.setAttribute(NIFI_READ_ONLY_HOLDER_ATTRIBUTE, state.holderLabel ?? "");
+  patchProcessorEditReadonly(doc);
+
+  if (doc.documentElement.getAttribute(NIFI_READ_ONLY_LOCK_INSTALLED_ATTRIBUTE) === "true") {
+    return;
+  }
+  doc.documentElement.setAttribute(NIFI_READ_ONLY_LOCK_INSTALLED_ATTRIBUTE, "true");
+
+  let frameId: number | null = null;
+  const observer = new (frameWindow.MutationObserver ?? MutationObserver)(() => {
+    if (frameId !== null) {
+      return;
+    }
+    frameId = frameWindow.requestAnimationFrame(() => {
+      frameId = null;
+      patchProcessorEditReadonly(doc);
+    });
+  });
+
+  observer.observe(doc.documentElement, { childList: true, subtree: true });
+  frameWindow.addEventListener("beforeunload", () => {
+    if (frameId !== null) {
+      frameWindow.cancelAnimationFrame(frameId);
+    }
+    observer.disconnect();
+  }, { once: true });
+}
+
 interface ConsoleFramePageProps {
   title: string;
   src: string;
@@ -2471,9 +2651,10 @@ function newLockOwnerToken() {
 interface ProcessorDetailPanelProps {
   processorId: string;
   onParentGroupFound?: (groupId: string) => void;
+  onEditLockChange?: (state: ProcessorEditLockFrameState) => void;
 }
 
-function ProcessorDetailPanel({ processorId, onParentGroupFound }: ProcessorDetailPanelProps) {
+function ProcessorDetailPanel({ processorId, onParentGroupFound, onEditLockChange }: ProcessorDetailPanelProps) {
   const navigate = useNavigate();
   const [processor, setProcessor] = useState<NifiProcessorDetailResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -2580,6 +2761,24 @@ function ProcessorDetailPanel({ processorId, onParentGroupFound }: ProcessorDeta
   const activeThreadCount = processor?.status?.aggregateSnapshot?.activeThreadCount ?? processor?.status?.activeThreadCount;
   const isReadOnlyByLock = Boolean(editLock && !editLock.heldByMe);
   const logKeyword = component?.name ?? "";
+
+  useEffect(() => {
+    onEditLockChange?.({
+      readOnly: isReadOnlyByLock,
+      holderLabel: editLock ? `${editLock.lockedByUserNm}(${editLock.lockedByUserId})` : null,
+    });
+  }, [
+    editLock?.lockedByUserId,
+    editLock?.lockedByUserNm,
+    isReadOnlyByLock,
+    onEditLockChange,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      onEditLockChange?.({ readOnly: false, holderLabel: null });
+    };
+  }, [onEditLockChange, processorId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3629,6 +3828,11 @@ export function ConsoleFramePage({
   const [jobCatalogReloadKey, setJobCatalogReloadKey] = useState(0);
   const processGroupTreeRef = useRef<NifiProcessGroupTreeNode | null>(null);
   const processGroupIdRef = useRef<string | null>(null);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const [processorEditLockFrameState, setProcessorEditLockFrameState] = useState<ProcessorEditLockFrameState>({
+    readOnly: false,
+    holderLabel: null,
+  });
   const frameSrc = processGroupId ? withProcessGroupId(src, processGroupId) : src;
   processGroupTreeRef.current = processGroupTree;
   processGroupIdRef.current = processGroupId;
@@ -3688,6 +3892,13 @@ export function ConsoleFramePage({
     setJobCatalogReloadKey((key) => key + 1);
   }, []);
 
+  const handleProcessorEditLockChange = useCallback((state: ProcessorEditLockFrameState) => {
+    setProcessorEditLockFrameState(state);
+    if (frameRef.current) {
+      installProcessorEditReadonlyGuard(frameRef.current, state);
+    }
+  }, []);
+
   const selectCanvasItem = (selection: CanvasSelection) => {
     setSelectedCanvasItem(selection);
     if (selection.type === "processGroup") {
@@ -3703,10 +3914,12 @@ export function ConsoleFramePage({
 
   const handleFrameLoad = (event: SyntheticEvent<HTMLIFrameElement>) => {
     const frame = event.currentTarget;
+    frameRef.current = frame;
     cleanupLegacyNifiMiniCreateToolbars(frame);
     hideToolChrome(frame);
     patchKoreanTooltips(frame);
     installNifiPanelLayout(frame);
+    installProcessorEditReadonlyGuard(frame, processorEditLockFrameState);
     clickNifiMenuItem(frame, nifiAutoOpenMenuTitles);
     if (showProcessGroupTree) {
       installCanvasRouteSync(frame, selectCanvasProcessGroupRoute);
@@ -3767,6 +3980,7 @@ export function ConsoleFramePage({
         {isReady ? (
           <iframe
             key={frameKey}
+            ref={frameRef}
             className="console-frame"
             title={title}
             src={frameSrc}
@@ -3810,7 +4024,11 @@ export function ConsoleFramePage({
           </button>
           {!isDetailPanelCollapsed ? (
             selectedCanvasItem?.type === "processor" ? (
-              <ProcessorDetailPanel processorId={selectedCanvasItem.id} onParentGroupFound={setSelectedProcessGroupId} />
+              <ProcessorDetailPanel
+                processorId={selectedCanvasItem.id}
+                onParentGroupFound={setSelectedProcessGroupId}
+                onEditLockChange={handleProcessorEditLockChange}
+              />
             ) : (
               <ProcessGroupDetailPanel
                 activeGroupId={selectedProcessGroupId}
