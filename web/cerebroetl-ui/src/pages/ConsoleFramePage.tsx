@@ -71,6 +71,7 @@ const NIFI_TOP_TOOLBAR_ATTRIBUTE = "data-cerebro-top-toolbar";
 const NIFI_TOOL_HIDDEN_ATTRIBUTE = "data-cerebro-tool-hidden";
 const NIFI_TOOL_ALLOWED_ATTRIBUTE = "data-cerebro-tool-allowed";
 const NIFI_TOOL_ICON_ATTRIBUTE = "data-cerebro-tool-icon";
+const NIFI_TOOL_LABEL_ATTRIBUTE = "data-cerebro-tool-label";
 const NIFI_MENU_BUTTON_ATTRIBUTE = "data-cerebro-menu-button";
 const NIFI_BREADCRUMB_ATTRIBUTE = "data-cerebro-canvas-breadcrumb";
 const NIFI_READ_ONLY_LOCK_ATTRIBUTE = "data-cerebro-readonly-lock";
@@ -163,8 +164,44 @@ const HIDE_TOOL_CHROME_CSS = `
     overflow: hidden !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:hover {
+    overflow: visible !important;
+  }
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:hover {
     background: #f8fafc !important;
     color: #0f172a !important;
+  }
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][${NIFI_TOOL_LABEL_ATTRIBUTE}]:hover::after {
+    content: attr(${NIFI_TOOL_LABEL_ATTRIBUTE}) !important;
+    position: absolute !important;
+    left: 50% !important;
+    top: calc(100% + 8px) !important;
+    transform: translateX(-50%) !important;
+    z-index: 9200 !important;
+    min-width: max-content !important;
+    max-width: 180px !important;
+    padding: 5px 8px !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 6px !important;
+    background: #0f172a !important;
+    color: #ffffff !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    line-height: 1.2 !important;
+    white-space: nowrap !important;
+    box-shadow: 0 6px 16px rgb(15 23 42 / 18%) !important;
+    pointer-events: none !important;
+  }
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][${NIFI_TOOL_LABEL_ATTRIBUTE}]:hover::before {
+    content: "" !important;
+    position: absolute !important;
+    left: 50% !important;
+    top: calc(100% + 3px) !important;
+    transform: translateX(-50%) rotate(45deg) !important;
+    z-index: 9199 !important;
+    width: 8px !important;
+    height: 8px !important;
+    background: #0f172a !important;
+    pointer-events: none !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:has([title="프로세스 그룹"]),
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][title="프로세스 그룹"],
@@ -1030,7 +1067,11 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     if (!iconName) {
       return;
     }
+    const displayLabel = label ? translateNifiTooltip(label) : label;
     toolItem.setAttribute(NIFI_TOOL_ICON_ATTRIBUTE, iconName);
+    toolItem.setAttribute(NIFI_TOOL_LABEL_ATTRIBUTE, displayLabel ?? label ?? "");
+    toolItem.setAttribute("title", displayLabel ?? label ?? "");
+    toolItem.setAttribute("aria-label", displayLabel ?? label ?? "");
     toolItem.querySelectorAll(":scope > .cerebro-tool-icon").forEach((icon) => icon.remove());
     toolItem.insertAdjacentHTML("afterbegin", toolIconSvg(iconName));
   };
