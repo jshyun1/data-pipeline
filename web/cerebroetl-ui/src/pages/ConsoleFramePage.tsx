@@ -162,6 +162,12 @@ const HIDE_TOOL_CHROME_CSS = `
     color: #475569 !important;
     box-shadow: none !important;
     overflow: hidden !important;
+    cursor: grab !important;
+    user-select: none !important;
+    touch-action: none !important;
+  }
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:active {
+    cursor: grabbing !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:hover {
     overflow: visible !important;
@@ -203,18 +209,52 @@ const HIDE_TOOL_CHROME_CSS = `
     background: #0f172a !important;
     pointer-events: none !important;
   }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][${NIFI_TOOL_LABEL_ATTRIBUTE}]:hover::after {
+    content: attr(${NIFI_TOOL_LABEL_ATTRIBUTE}) !important;
+    position: absolute !important;
+    left: 50% !important;
+    top: calc(100% + 8px) !important;
+    transform: translateX(-50%) !important;
+    z-index: 9200 !important;
+    min-width: max-content !important;
+    max-width: 180px !important;
+    padding: 5px 8px !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 6px !important;
+    background: #0f172a !important;
+    color: #ffffff !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    line-height: 1.2 !important;
+    white-space: nowrap !important;
+    box-shadow: 0 6px 16px rgb(15 23 42 / 18%) !important;
+    pointer-events: none !important;
+  }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][${NIFI_TOOL_LABEL_ATTRIBUTE}]:hover::before {
+    content: "" !important;
+    position: absolute !important;
+    left: 50% !important;
+    top: calc(100% + 3px) !important;
+    transform: translateX(-50%) rotate(45deg) !important;
+    z-index: 9199 !important;
+    width: 8px !important;
+    height: 8px !important;
+    background: #0f172a !important;
+    pointer-events: none !important;
+  }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:has([title="프로세스 그룹"]),
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][title="프로세스 그룹"],
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:has([aria-label="프로세스 그룹"]),
-  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][aria-label="프로세스 그룹"] {
+  #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][aria-label="프로세스 그룹"],
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:has([aria-label="프로세스 그룹"]),
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][aria-label="프로세스 그룹"] {
     border-color: #ff3b30 !important;
     background: #ffffff !important;
     color: #ff3b30 !important;
     box-shadow: none !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ICON_ATTRIBUTE}] > :not(.cerebro-tool-icon) {
-    visibility: hidden !important;
-    pointer-events: none !important;
+    opacity: 0 !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} .cerebro-tool-icon {
     position: absolute !important;
@@ -238,17 +278,29 @@ const HIDE_TOOL_CHROME_CSS = `
     transform: none !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] {
+    position: fixed !important;
+    top: 12px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    z-index: 9100 !important;
+    width: auto !important;
+    max-width: max-content !important;
     min-height: 38px !important;
     height: 38px !important;
-    padding: 3px 8px !important;
+    display: flex !important;
+    padding: 4px 9px !important;
     justify-content: flex-start !important;
     align-items: center !important;
     gap: 5px !important;
     background: #ffffff !important;
     background-color: #ffffff !important;
-    box-shadow: none !important;
+    border: 1px solid #dbe3ee !important;
+    border-radius: 9px !important;
+    box-shadow: 0 2px 8px rgb(15 23 42 / 9%) !important;
+    overflow: visible !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] {
+    position: relative !important;
     width: 28px !important;
     height: 28px !important;
     min-width: 28px !important;
@@ -259,11 +311,31 @@ const HIDE_TOOL_CHROME_CSS = `
     align-items: center !important;
     justify-content: center !important;
     border-radius: 5px !important;
+    cursor: grab !important;
+    user-select: none !important;
+    touch-action: none !important;
+  }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:active {
+    cursor: grabbing !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] i,
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] svg {
     transform: scale(0.76) !important;
     transform-origin: center !important;
+  }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ICON_ATTRIBUTE}] > :not(.cerebro-tool-icon) {
+    opacity: 0 !important;
+  }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] .cerebro-tool-icon {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 18px !important;
+    height: 18px !important;
+    margin: auto !important;
+    color: currentColor !important;
+    pointer-events: none !important;
+    visibility: visible !important;
+    transform: none !important;
   }
   [${NIFI_MENU_BUTTON_ATTRIBUTE}="true"] {
     position: fixed !important;
@@ -989,7 +1061,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
   };
 
   const toolLabel = (element: Element) =>
-    NIFI_TOOLTIP_ATTRIBUTES
+    [NIFI_TOOL_LABEL_ATTRIBUTE, ...NIFI_TOOLTIP_ATTRIBUTES]
       .map((attributeName) => element.getAttribute(attributeName)?.replace(/\s+/g, " ").trim())
       .find((value): value is string => Boolean(value));
 
@@ -1070,22 +1142,11 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     const displayLabel = label ? translateNifiTooltip(label) : label;
     toolItem.setAttribute(NIFI_TOOL_ICON_ATTRIBUTE, iconName);
     toolItem.setAttribute(NIFI_TOOL_LABEL_ATTRIBUTE, displayLabel ?? label ?? "");
-    toolItem.setAttribute("title", displayLabel ?? label ?? "");
     toolItem.setAttribute("aria-label", displayLabel ?? label ?? "");
+    toolItem.removeAttribute("title");
+    toolItem.querySelectorAll("[title]").forEach((child) => child.removeAttribute("title"));
     toolItem.querySelectorAll(":scope > .cerebro-tool-icon").forEach((icon) => icon.remove());
     toolItem.insertAdjacentHTML("afterbegin", toolIconSvg(iconName));
-  };
-
-  const miniCanvasToolBar = () => {
-    const existing = doc.getElementById(NIFI_MINI_TOOLBAR_ID);
-    if (existing) {
-      return existing;
-    }
-    const toolbar = doc.createElement("div");
-    toolbar.id = NIFI_MINI_TOOLBAR_ID;
-    toolbar.setAttribute("aria-label", "ETL 캔버스 도구");
-    doc.body.appendChild(toolbar);
-    return toolbar;
   };
 
   const keepCanvasToolVisible = (toolItem: Element) => {
@@ -1094,12 +1155,9 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
         .map(toolLabel)
         .find((value): value is string => Boolean(value));
     toolItem.setAttribute(NIFI_TOOL_ALLOWED_ATTRIBUTE, "true");
+    toolItem.setAttribute("draggable", "true");
     toolItem.removeAttribute(NIFI_TOOL_HIDDEN_ATTRIBUTE);
     renderCanvasToolIcon(toolItem, label);
-    const toolbar = miniCanvasToolBar();
-    if (toolItem.parentElement !== toolbar) {
-      toolbar.appendChild(toolItem);
-    }
     let current = toolItem.parentElement;
     for (let depth = 0; depth < 5 && current && current !== doc.body; depth += 1) {
       if (hasToolLabel(current, ALLOWED_NIFI_CANVAS_TOOLS)) {
