@@ -3352,7 +3352,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
               <span>
                 {displayJob
                   ? `${displayJob.jobName} 정보와 함께 질문을 보냅니다.`
-                  : }
+                  : "선택 그룹과 ETL 지식 컨텍스트를 기반으로 탐색합니다."}
               </span>
               <Button size="small" loading={aiPreviewLoading} onClick={handleAiPreview}>
                 전송될 정보 보기
