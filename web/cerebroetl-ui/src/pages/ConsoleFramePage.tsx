@@ -255,6 +255,12 @@ const HIDE_TOOL_CHROME_CSS = `
   }
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ICON_ATTRIBUTE}] > :not(.cerebro-tool-icon) {
     opacity: 0 !important;
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    z-index: 2 !important;
+    pointer-events: auto !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} .cerebro-tool-icon {
     position: absolute !important;
@@ -265,6 +271,7 @@ const HIDE_TOOL_CHROME_CSS = `
     color: currentColor !important;
     pointer-events: none !important;
     visibility: visible !important;
+    z-index: 1 !important;
   }
   #${NIFI_MINI_TOOLBAR_ID} .cerebro-tool-icon * {
     vector-effect: non-scaling-stroke !important;
@@ -314,6 +321,7 @@ const HIDE_TOOL_CHROME_CSS = `
     cursor: grab !important;
     user-select: none !important;
     touch-action: none !important;
+    overflow: hidden !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]:active {
     cursor: grabbing !important;
@@ -325,6 +333,12 @@ const HIDE_TOOL_CHROME_CSS = `
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ICON_ATTRIBUTE}] > :not(.cerebro-tool-icon) {
     opacity: 0 !important;
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    z-index: 2 !important;
+    pointer-events: auto !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] .cerebro-tool-icon {
     position: absolute !important;
@@ -336,6 +350,10 @@ const HIDE_TOOL_CHROME_CSS = `
     pointer-events: none !important;
     visibility: visible !important;
     transform: none !important;
+    z-index: 1 !important;
+  }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_MENU_BUTTON_ATTRIBUTE}="true"] {
+    display: none !important;
   }
   [${NIFI_MENU_BUTTON_ATTRIBUTE}="true"] {
     position: fixed !important;
