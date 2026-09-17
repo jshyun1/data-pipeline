@@ -14,6 +14,7 @@ import com.company.pipeline.llm.dto.LlmContextPreviewResponse;
 import com.company.pipeline.user.AppUser;
 import java.io.IOException;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import org.springframework.security.core.Authentication;
@@ -46,7 +47,9 @@ public class LlmChatService {
         String userId = currentUserId();
         requireTargetRead(userId, request.targetType());
         LlmProviderConfig config = activeConfig();
-        LlmContext context = contextService.collect(request.targetType(), request.targetId(), config);
+        LlmContext context = request.targetType() == LlmTargetType.NIFI_GROUP
+                ? new LlmContext("ETL/NiFi", "", config.isMaskSensitive())
+                : contextService.collect(request.targetType(), request.targetId(), config);
         LlmUsageLog usageLog = LlmUsageLog.create(userId, request.targetType(), request.targetId(), config, context.masked());
         usageLogRepository.save(usageLog);
 
@@ -55,8 +58,9 @@ public class LlmChatService {
         CompletableFuture.runAsync(() -> {
             try {
                 String apiKey = config.getEncryptedApiKey() == null ? null : cryptoService.decrypt(config.getEncryptedApiKey());
+                LlmContext answerContext = prepareAnswerContext(request, config, apiKey, context);
                 LlmChatPrompt prompt = new LlmChatPrompt(config.getProvider(), config.effectiveBaseUrl(),
-                        config.getModelName(), apiKey, systemPrompt(context), request.safeMessages(), request.question().trim());
+                        config.getModelName(), apiKey, systemPrompt(answerContext), request.safeMessages(), request.question().trim());
                 LlmChatResult result = clientRegistry.get(config.getProvider()).stream(prompt, delta -> send(emitter, "delta", delta));
                 int durationMs = elapsedMs(started);
                 usageLog.setInputTokens(result.inputTokens());
@@ -68,7 +72,7 @@ public class LlmChatService {
                         "answer", result.answer(),
                         "providerName", config.getName(),
                         "modelName", config.getModelName(),
-                        "masked", context.masked(),
+                        "masked", answerContext.masked(),
                         "durationMs", durationMs));
                 emitter.complete();
             } catch (BusinessException ex) {
@@ -84,11 +88,33 @@ public class LlmChatService {
         return emitter;
     }
 
+    private LlmContext prepareAnswerContext(LlmChatRequest request, LlmProviderConfig config, String apiKey,
+                                            LlmContext fallbackContext) {
+        if (request.targetType() != LlmTargetType.NIFI_GROUP) {
+            return fallbackContext;
+        }
+        LlmContext routingIndex = contextService.collectRoutingIndex(request.targetType(), request.targetId(), config);
+        String route = completeSilently(config, apiKey, routingPrompt(routingIndex), request.question().trim()).answer();
+        LlmContext focusedContext = contextService.collectFocused(request.targetType(), request.targetId(), config,
+                request.question(), route);
+        String brief = completeSilently(config, apiKey, briefPrompt(focusedContext, route), request.question().trim()).answer();
+        return new LlmContext(focusedContext.title(), brief, focusedContext.masked());
+    }
+
+    private LlmChatResult completeSilently(LlmProviderConfig config, String apiKey, String systemPrompt, String question) {
+        LlmChatPrompt prompt = new LlmChatPrompt(config.getProvider(), config.effectiveBaseUrl(),
+                config.getModelName(), apiKey, systemPrompt, List.of(), question);
+        return clientRegistry.get(config.getProvider()).stream(prompt, delta -> {
+        });
+    }
+
     public LlmContextPreviewResponse preview(LlmChatRequest request) {
         String userId = currentUserId();
         requireTargetRead(userId, request.targetType());
         LlmProviderConfig config = activeConfig();
-        LlmContext context = contextService.collect(request.targetType(), request.targetId(), config);
+        LlmContext context = request.targetType() == LlmTargetType.NIFI_GROUP
+                ? contextService.collectRoutingIndex(request.targetType(), request.targetId(), config)
+                : contextService.collect(request.targetType(), request.targetId(), config);
         return new LlmContextPreviewResponse(context.title(), config.getName(), context.masked(), context.text());
     }
 
@@ -119,6 +145,38 @@ public class LlmChatService {
                 [대상 정보]
                 %s
                 """.formatted(context.text());
+    }
+
+    private static String routingPrompt(LlmContext index) {
+        return """
+                당신은 Cerebro ETL/NiFi 검색 라우터입니다.
+                사용자의 질문을 보고 아래 색인에서 관련 그룹, Job, Processor 후보만 고르십시오.
+                최종 답변을 작성하지 마십시오.
+                출력 형식:
+                - 의도: 한 줄
+                - 관련 그룹/Job/Processor: 이름과 ID 목록
+                - 필요한 정보: 상태, 연결, SQL, 실행 이력 등 필요한 항목
+                - 제외할 정보: 질문과 무관한 항목
+
+                [검색 색인]
+                %s
+                """.formatted(index.text());
+    }
+
+    private static String briefPrompt(LlmContext focusedContext, String route) {
+        return """
+                당신은 Cerebro ETL/NiFi 컨텍스트 편집자입니다.
+                아래 라우팅 결과와 서버 컨텍스트에서 사용자 질문에 필요한 사실만 추려 최종 답변용 브리프를 만드십시오.
+                사용자의 질문에 답하지 말고, 근거가 되는 컨텍스트만 짧게 정리하십시오.
+                DB 비밀번호, API 키, 인증 토큰, 접속 계정 정보는 포함하지 마십시오.
+                모르는 값은 확인 불가라고 적으십시오.
+
+                [라우팅 결과]
+                %s
+
+                [서버 컨텍스트]
+                %s
+                """.formatted(route, focusedContext.text());
     }
 
     private static int elapsedMs(long started) {

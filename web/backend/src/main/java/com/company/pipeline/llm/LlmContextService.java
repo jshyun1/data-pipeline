@@ -18,7 +18,9 @@ import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -87,6 +89,46 @@ public class LlmContextService {
         String raw = stripSecrets(buildEtlJobContext(job, steps, links, runs));
         String text = config.isMaskSensitive() ? mask(raw) : raw;
         return new LlmContext(job.getJobName(), limit(text, config.getMaxInputChars()), config.isMaskSensitive());
+    }
+
+    public LlmContext collectRoutingIndex(LlmTargetType targetType, String targetId, LlmProviderConfig config) {
+        if (targetType != LlmTargetType.NIFI_GROUP) {
+            return collect(targetType, targetId, config);
+        }
+        try {
+            List<NifiProcessGroupMetadata> groups = groupMetadataRepository.findAll();
+            List<EtlJob> jobs = etlJobRepository.findByDeletedAtIsNullOrderByJobNameAsc();
+            String raw = stripSecrets(buildRoutingIndex(targetId, groups, jobs));
+            String text = config.isMaskSensitive() ? mask(raw) : raw;
+            return new LlmContext("ETL/NiFi 검색 색인", limit(text, Math.min(config.getMaxInputChars(), 12000)),
+                    config.isMaskSensitive());
+        } catch (RuntimeException ex) {
+            throw new BusinessException(ErrorCode.LLM_CHAT_ERROR, "NiFi 검색 색인 수집 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    public LlmContext collectFocused(LlmTargetType targetType, String targetId, LlmProviderConfig config,
+                                     String question, String routingHint) {
+        if (targetType != LlmTargetType.NIFI_GROUP) {
+            return collect(targetType, targetId, config);
+        }
+        try {
+            List<NifiProcessGroupMetadata> groups = groupMetadataRepository.findAll();
+            List<EtlJob> allJobs = etlJobRepository.findByDeletedAtIsNullOrderByJobNameAsc();
+            Map<String, NifiProcessGroupMetadata> groupById = groups.stream()
+                    .collect(Collectors.toMap(NifiProcessGroupMetadata::getProcessGroupId, g -> g, (a, b) -> a));
+            Set<String> scopedGroupIds = scopedGroupIds(targetId, groups);
+            List<EtlJob> focusedJobs = focusJobs(question + "\n" + value(routingHint), allJobs, groupById, scopedGroupIds);
+            Map<String, RuntimeStatus> runtime = runtimeStatusByProcessor();
+            String raw = stripSecrets(buildNifiKnowledgeContext(targetId, groupById, groups, focusedJobs, runtime, allJobs.size()));
+            String text = config.isMaskSensitive() ? mask(raw) : raw;
+            String title = groupById.get(targetId) == null ? "ETL 전체" : groupById.get(targetId).getProcessGroupName();
+            return new LlmContext(title, limit(text, config.getMaxInputChars()), config.isMaskSensitive());
+        } catch (NifiClientException ex) {
+            throw new BusinessException(ErrorCode.LLM_CHAT_ERROR, "NiFi 실시간 정보 수집 실패: " + ex.getMessage(), ex);
+        } catch (RuntimeException ex) {
+            throw new BusinessException(ErrorCode.LLM_CHAT_ERROR, "NiFi 포커스 컨텍스트 수집 실패: " + ex.getMessage(), ex);
+        }
     }
 
     private LlmContext collectNifiKnowledge(String targetId, LlmProviderConfig config) {
@@ -251,6 +293,71 @@ public class LlmContextService {
         return out.toString();
     }
 
+    private String buildRoutingIndex(String targetId, List<NifiProcessGroupMetadata> groups, List<EtlJob> jobs) {
+        StringBuilder out = new StringBuilder();
+        out.append("목적: 사용자 질문에 필요한 ETL/NiFi 그룹, Job, Processor 후보를 고르는 검색 색인\n");
+        out.append("선택 그룹 ID: ").append(value(targetId)).append('\n');
+        out.append("전체 그룹 수: ").append(groups.size()).append(", 전체 Job 수: ").append(jobs.size()).append("\n\n");
+
+        out.append("[그룹]\n");
+        groups.stream()
+                .sorted(Comparator.comparing(NifiProcessGroupMetadata::getProcessGroupName, String.CASE_INSENSITIVE_ORDER))
+                .limit(120)
+                .forEach(group -> out.append("- name=").append(group.getProcessGroupName())
+                        .append(", id=").append(group.getProcessGroupId())
+                        .append(", parent=").append(value(group.getParentGroupId()))
+                        .append(", comment=").append(value(group.getComments())).append('\n'));
+
+        out.append("\n[Job/Processor 색인]\n");
+        jobs.stream()
+                .sorted(Comparator.comparing(EtlJob::getJobName, String.CASE_INSENSITIVE_ORDER))
+                .limit(120)
+                .forEach(job -> {
+                    out.append("- job=").append(job.getJobName())
+                            .append(", jobId=").append(job.getId())
+                            .append(", groupId=").append(job.getNifiPgId())
+                            .append(", parentGroupId=").append(value(job.getParentPgId()))
+                            .append(", steps=").append(job.getStepCount())
+                            .append(", running=").append(job.getRunningCount())
+                            .append(", stopped=").append(job.getStoppedCount())
+                            .append(", invalid=").append(job.getInvalidCount())
+                            .append(", comment=").append(value(job.getComments())).append('\n');
+                    List<EtlJobStep> steps = etlJobStepRepository
+                            .findByJobIdAndDeletedAtIsNullOrderByStepNameAsc(job.getId());
+                    steps.stream().limit(8).forEach(step -> out.append("  - processor=")
+                            .append(step.getStepName())
+                            .append(", type=").append(step.getStepType())
+                            .append(", target=").append(value(step.getTargetTable()))
+                            .append(", status=").append(value(step.getRunStatus())).append('\n'));
+                });
+        return out.toString();
+    }
+
+    private List<EtlJob> focusJobs(String hint, List<EtlJob> jobs,
+                                   Map<String, NifiProcessGroupMetadata> groupById, Set<String> scopedGroupIds) {
+        Set<Long> selected = new LinkedHashSet<>();
+        String normalizedHint = normalize(hint);
+        boolean hasScope = !scopedGroupIds.isEmpty();
+        for (EtlJob job : jobs) {
+            NifiProcessGroupMetadata group = groupById.get(job.getNifiPgId());
+            boolean inScope = hasScope && (scopedGroupIds.contains(job.getNifiPgId()) || scopedGroupIds.contains(job.getParentPgId()));
+            boolean matched = contains(normalizedHint, job.getJobName())
+                    || contains(normalizedHint, job.getNifiPgId())
+                    || contains(normalizedHint, job.getComments())
+                    || (group != null && contains(normalizedHint, group.getProcessGroupName()));
+            if (inScope || matched) {
+                selected.add(job.getId());
+            }
+        }
+        if (selected.isEmpty() && !jobs.isEmpty()) {
+            jobs.stream().limit(12).map(EtlJob::getId).forEach(selected::add);
+        }
+        return jobs.stream()
+                .filter(job -> selected.contains(job.getId()))
+                .limit(16)
+                .toList();
+    }
+
     private static Set<String> scopedGroupIds(String targetId, List<NifiProcessGroupMetadata> groups) {
         if (targetId == null || targetId.isBlank() || "root".equalsIgnoreCase(targetId)) {
             return Set.of();
@@ -339,5 +446,13 @@ public class LlmContextService {
 
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private static boolean contains(String normalizedHaystack, String needle) {
+        return needle != null && !needle.isBlank() && normalizedHaystack.contains(normalize(needle));
+    }
+
+    private static String normalize(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT);
     }
 }
