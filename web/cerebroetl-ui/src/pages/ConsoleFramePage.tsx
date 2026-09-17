@@ -74,6 +74,7 @@ const NIFI_TOOL_ICON_ATTRIBUTE = "data-cerebro-tool-icon";
 const NIFI_TOOL_LABEL_ATTRIBUTE = "data-cerebro-tool-label";
 const NIFI_MENU_BUTTON_ATTRIBUTE = "data-cerebro-menu-button";
 const NIFI_BREADCRUMB_ATTRIBUTE = "data-cerebro-canvas-breadcrumb";
+const NIFI_BREADCRUMB_CONTAINER_ATTRIBUTE = "data-cerebro-canvas-breadcrumb-container";
 const NIFI_READ_ONLY_LOCK_ATTRIBUTE = "data-cerebro-readonly-lock";
 const NIFI_READ_ONLY_LOCK_INSTALLED_ATTRIBUTE = "data-cerebro-readonly-lock-installed";
 const NIFI_READ_ONLY_HOLDER_ATTRIBUTE = "data-cerebro-readonly-lock-holder";
@@ -315,9 +316,6 @@ const HIDE_TOOL_CHROME_CSS = `
     box-shadow: 0 2px 8px rgb(15 23 42 / 9%) !important;
     overflow: visible !important;
   }
-  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] > :not([${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]) {
-    display: none !important;
-  }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] {
     position: relative !important;
     width: 28px !important;
@@ -374,6 +372,9 @@ const HIDE_TOOL_CHROME_CSS = `
     z-index: 1 !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_MENU_BUTTON_ATTRIBUTE}="true"] {
+    display: none !important;
+  }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] ~ :not([${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]) {
     display: none !important;
   }
   [${NIFI_MENU_BUTTON_ATTRIBUTE}="true"] {
@@ -438,6 +439,9 @@ const HIDE_TOOL_CHROME_CSS = `
   [${NIFI_BREADCRUMB_ATTRIBUTE}="true"] span {
     color: inherit !important;
     font: inherit !important;
+  }
+  [${NIFI_BREADCRUMB_CONTAINER_ATTRIBUTE}="true"] > :not([${NIFI_BREADCRUMB_ATTRIBUTE}="true"]) {
+    display: none !important;
   }
   #${NIFI_READ_ONLY_NOTICE_ID} {
     margin: 12px 20px 0 !important;
@@ -1303,6 +1307,10 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
       return;
     }
     candidate.setAttribute(NIFI_BREADCRUMB_ATTRIBUTE, "true");
+    const breadcrumbContainer = candidate.parentElement;
+    if (breadcrumbContainer && breadcrumbContainer !== doc.body) {
+      breadcrumbContainer.setAttribute(NIFI_BREADCRUMB_CONTAINER_ATTRIBUTE, "true");
+    }
     if ((candidate.textContent ?? "").trim() === "Root") {
       candidate.textContent = "ETL Root";
     }
