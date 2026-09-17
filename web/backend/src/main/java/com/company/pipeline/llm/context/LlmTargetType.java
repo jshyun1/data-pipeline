@@ -8,6 +8,8 @@ import com.company.pipeline.authz.SystemCode;
  * <p>ETL 쪽(ETL_JOB)은 ETL 담당 작업자가 수집기를 붙인다. 종류는 미리 두되 수집기가 없으면 «아직 지원하지 않는 대상»으로 거절한다.
  */
 public enum LlmTargetType {
+    /** ETL 관리 화면의 범용 운영 어시스턴트 */
+    ETL_ASSISTANT(SystemCode.NIFI),
     /** ETL 관리 속성창 · ETL 로그 */
     ETL_JOB(SystemCode.NIFI),
     /** CDC 관리 속성창 · CDC 로그 */

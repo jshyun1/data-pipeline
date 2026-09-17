@@ -139,7 +139,7 @@ export async function getLlmStatus(): Promise<LlmStatus> {
 // ---------------------------------------------------------------- GPT 분석(2단계)
 
 /** 분석 대상 종류. 서버가 요청마다 이 값으로 조회 권한을 다시 확인한다(설계 7절). */
-export type LlmTargetType = "ETL_JOB" | "CDC_PIPELINE" | "WORKFLOW_NODE" | "WORKFLOW_TASK";
+export type LlmTargetType = "ETL_ASSISTANT" | "ETL_JOB" | "CDC_PIPELINE" | "WORKFLOW_NODE" | "WORKFLOW_TASK";
 export type LlmAgentType = "ERROR_ANALYSIS" | "JOB_ANALYSIS";
 
 export interface LlmChatTurn {

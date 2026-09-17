@@ -3611,13 +3611,20 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     }
   };
 
-  const aiTargetId = displayJob?.id ? String(displayJob.id) : "";
-  const aiGroupTargetId = activeGroupId ?? "root";
+  const aiSelectedType = isJobGroup ? "JOB" : activeGroupId ? "GROUP" : "ROOT";
+  const aiSelectedId = activeGroupId ?? "root";
 
   const buildAiRequest = (question: string) => ({
     agentType: "JOB_ANALYSIS" as const,
-    targetType: "ETL_JOB" as const,
-    target: (displayJob ? { jobId: aiTargetId } : { groupId: aiGroupTargetId }) as Record<string, string>,
+    targetType: "ETL_ASSISTANT" as const,
+    target: {
+      selectedType: aiSelectedType,
+      selectedId: aiSelectedId,
+      selectedName: titleName,
+      currentPath: displayPath,
+      ...(displayJob ? { jobId: String(displayJob.id), jobGroupId: displayJob.nifiPgId } : {}),
+      question,
+    } as Record<string, string>,
     question,
     history: aiMessages.filter((entry) => entry.content.trim().length > 0),
   });

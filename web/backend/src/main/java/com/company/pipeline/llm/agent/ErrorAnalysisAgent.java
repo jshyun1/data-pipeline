@@ -70,6 +70,7 @@ public final class ErrorAnalysisAgent {
 
     static String targetLabel(LlmTargetType type) {
         return switch (type) {
+            case ETL_ASSISTANT -> "ETL 관리 어시스턴트";
             case WORKFLOW_TASK -> "워크플로우 실행 중 실패한 작업";
             case CDC_PIPELINE -> "CDC 파이프라인";
             case ETL_JOB -> "ETL job";
