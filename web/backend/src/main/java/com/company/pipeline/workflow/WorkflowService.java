@@ -134,6 +134,11 @@ public class WorkflowService {
                     throw new BusinessException(ErrorCode.VALIDATION_ERROR,
                             "이미 사용 중인 workflowKey입니다: " + key);
                 });
+        // 지운 워크플로우의 키도 다시 쓰지 않는다 - 같은 dag_id 로 예전 실행 이력·알림 판정·실행 원장이 이어 붙는다.
+        if (workflowRepository.existsByWorkflowKey(key)) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "삭제된 워크플로우가 쓰던 workflowKey입니다. 예전 실행 이력이 섞이므로 다른 키를 쓰세요: " + key);
+        }
         EtlWorkflow workflow = new EtlWorkflow(key, request.name());
         workflow.updateSettings(request.name(), request.description(),
                 request.scheduleCron(), request.timezone(), request.catchup(),
@@ -159,9 +164,10 @@ public class WorkflowService {
             base = base.substring(0, 74);
         }
         String candidate = base;
-        // 소프트 삭제된 키는 다시 쓸 수 있다(유일 인덱스가 deleted_at IS NULL 조건부라서).
-        for (int suffix = 2; workflowRepository.findByWorkflowKeyAndDeletedAtIsNull(candidate).isPresent();
-             suffix += 1) {
+        // 지운 워크플로우의 키도 건너뛴다. 예전에는 «유일 인덱스가 deleted_at IS NULL 조건부라 다시 쓸 수 있다»고 재사용했는데,
+        // 키가 dag_id(etl_wf_{키})·실행 원장·알림 판정을 묶어서 지운 워크플로우의 실행 이력이 새 워크플로우에 이어 보였다
+        // (2026-09-17 - 삭제한 «검증용 CDC 일괄»의 키 cdc 를 새 워크플로우가 받아 etl_wf_cdc 이력이 섞임).
+        for (int suffix = 2; workflowRepository.existsByWorkflowKey(candidate); suffix += 1) {
             candidate = base + "_" + suffix;
         }
         return candidate;

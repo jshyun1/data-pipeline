@@ -1685,3 +1685,32 @@ CDC 관리 «상세 › Connector» 에 빨간 안내와 «이 한 건 건너뛰
 게시된 정기 워크플로우는 root_total(오늘 11:15 실행, 다음 09-18 10:30)뿐·dz_com_daily 자체 스케줄은 상위 때문에 꺼짐·dw_pop_daily 미게시 →
 밀린 회차 없음 판단 후 복구, 복구 뒤 scheduled/backfill 0건 확인. 검증 중 본 것(기존 동작): 지운 워크플로우의 키가 새 워크플로우에 다시 쓰여
 (`etl_wf_cdc`) 예전 실행 이력이 새 워크플로우 DAG 에 이어 보인다.
+
+## 46. 파이프라인 삭제 때 복제 slot 이 남던 문제 + 지운 워크플로우 키 재사용 (2026-09-17)
+
+**요청**: 43절 «고치지 않고 남긴 것»의 slot 문제 해결, 44절에서 본 워크플로우 키 재사용 처리.
+
+**1) 복제 slot**(`PostgresReplicationCleanupService`)
+- 원인 실측: 소스가 도는 파이프라인의 커넥터를 Kafka Connect 에서 DELETE(204) 한 직후 `pg_drop_replication_slot` →
+  `replication slot "…" is active for PID 54`. walsender 가 1~2초 더 slot 을 잡는다. 코드는 커넥터 삭제 직후 바로 지우고 SQLException 을
+  주석대로 «조용히» 삼켜서, 타이밍이 늦으면 slot 이 남았다(43절 8번). 주석의 «남아도 이름만 안 겹치면 문제 없다»도 틀림 - 남은 논리 slot 은
+  WAL 을 붙잡아 소스 DB 디스크가 찬다.
+- 수정: slot 이 풀릴 때까지 최대 15초(0.5초 간격) 기다렸다 삭제 → 그래도 사용 중이면 잡고 있는 연결을 `pg_terminate_backend` 로 끊고 5초 더
+  기다려 삭제(slot 이름이 파이프라인 전용 · 커넥터는 이미 지웠으므로 그 연결은 지운 커넥터가 남긴 것) → 실패하면 예외는 여전히 안 던지되
+  WARN 로그에 slot 이름 · 소스 DB · 수동 정리 SQL. 주석 바로잡음.
+- 실측(target-db 로컬 테스트 파이프라인, 검증 후 전부 삭제): 소스 가동 중인 파이프라인 2개 즉시 삭제 → 둘 다 slot 삭제(응답 3.6초) /
+  `pg_recvlogical` 로 같은 이름 slot 을 붙잡아 둔 채 삭제 → 15초 뒤 «끊습니다» 경고 · slot 삭제(18.1초) / 소스 DB 를 꺼 둔 채 삭제 →
+  삭제는 200, «정리 실패 … SELECT pg_drop_replication_slot('…')» 경고.
+- MSA 반영 전 확인할 것: 이미 남아 있을 수 있는 slot - 소스 Postgres 에서 `SELECT slot_name, active, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn))
+  FROM pg_replication_slots WHERE slot_name LIKE 'dbz_source_%'` 로 지금 파이프라인에 없는 것을 찾는다(읽기 전용).
+
+**2) 워크플로우 키 재사용**(`WorkflowService.generateKey` · `create`)
+- 원인: «소프트 삭제된 키는 다시 쓸 수 있다(유일 인덱스가 deleted_at IS NULL 조건부)»로 일부러 재사용. 키가 dag_id(`etl_wf_{키}`) ·
+  실행 원장(`etl_job_run.workflow_key`) · 알림 판정(AlertEngine 이 `etl_wf_`||workflow_key 로 dag_id 계산)을 묶어서, 지운 워크플로우의
+  실행 이력 · 알림 판정 · 원장이 새 워크플로우에 이어 붙었다(44절 `etl_wf_cdc`).
+- 수정: `existsByWorkflowKey`(지운 것 포함)로 자동 생성 키가 한 번 쓴 키를 건너뛰고, 직접 지정한 키도 지운 워크플로우 것이면 400.
+  DB 유일 인덱스는 그대로(조건부) - 이미 `cdc` 가 지운 행 2개에 있어 전체 유일로 바꾸려면 데이터 정리가 먼저 필요하다.
+- 실측: 지운 `cdc` · `cdc_2` 가 있는 상태에서 같은 이름으로 생성 → `cdc_3` / 키 `cdc` 직접 지정 → 400.
+
+**테스트**: `WorkflowServiceKeyTest` 3건 추가, 백엔드 전체 266건 중 실패 1건(ConnectionRepositoryIT, 기존 환경 문제). 45절 디자인 세션 편집 뒤
+CDC 워크플로우 노드 화면 코드 보존 확인 · 프런트 tsc 통과.
