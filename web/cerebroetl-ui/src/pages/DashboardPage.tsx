@@ -770,7 +770,7 @@ export function DashboardPage() {
             <div className="summary-card-heading">
               <span className="summary-card-title">
                 <span className="summary-card-dot" />
-                Airflow
+                Workflow
               </span>
               <TimeBadge label={selectedPeriodLabel} />
             </div>
@@ -802,7 +802,7 @@ export function DashboardPage() {
 
           <div className="summary-card-footer">
             {/* 원본 5-2 "Airflow 스트립 의미 불명 → 툴팁" */}
-            <div className="airflow-run-strip" aria-label="최근 Airflow 실행 상태">
+            <div className="airflow-run-strip" aria-label="최근 워크플로우 실행 상태">
               {recentAirflowRuns.map((entry) => (
                 <Tooltip
                   key={entry.id}

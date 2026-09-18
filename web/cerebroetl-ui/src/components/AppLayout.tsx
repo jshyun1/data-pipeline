@@ -281,7 +281,6 @@ export function AppLayout() {
           <Link to="/dashboard" className="navbar-logo"
                 onClick={(event) => guardedNavigate(event, "/dashboard")}>
             CEREBRO <span className="accent">ETL</span>
-            <span className="company-tag">(주)데이터월드</span>
           </Link>
           <nav aria-label="주요 메뉴">
             <ul className="navbar-menu">
