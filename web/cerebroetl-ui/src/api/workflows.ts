@@ -20,6 +20,8 @@ export interface WorkflowSummary {
   jobCount: number;
   /** 이 워크플로우 캔버스에 노드로 놓인 하위 워크플로우 id. */
   childWorkflowIds: number[];
+  /** CDC 노드 수. 0 보다 크면 CDC 워크플로우 - 하위 워크플로우 노드로 놓을 수 없다. 상세 응답에는 없다. */
+  cdcNodeCount?: number;
   updatedAt: string;
 }
 
@@ -32,6 +34,9 @@ export interface WorkflowNodeView {
   nifiPgId?: string | null;
   subWorkflowId?: number | null;
   subWorkflowName?: string | null;
+  /** CDC 노드가 가리키는 파이프라인(nodeType=CDC 일 때만). */
+  pipelineId?: number | null;
+  pipelineName?: string | null;
   triggerRule: string;
   branchExpr?: string | null;
   retries: number;
@@ -86,6 +91,7 @@ export interface SaveGraphRequest {
     nodeType?: string;
     jobId?: number | null;
     subWorkflowId?: number | null;
+    pipelineId?: number | null;
     triggerRule?: string;
     branchExpr?: string | null;
     retries?: number;

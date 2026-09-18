@@ -38,6 +38,10 @@ public class PipelineService {
     private final PipelineMetadataArchiveRepository metadataArchiveRepository;
     private final PipelineGroupService groupService;
 
+    /** 워크플로우 캔버스의 CDC 노드가 이 파이프라인을 가리키는지 확인하기 위한 통로(삭제 가드). */
+    private final com.company.pipeline.workflow.EtlWorkflowNodeRepository workflowNodeRepository;
+    private final com.company.pipeline.workflow.EtlWorkflowRepository workflowRepository;
+
     public PipelineService(PipelineDefinitionRepository pipelineDefinitionRepository,
             PipelineConnectorRepository pipelineConnectorRepository,
             ConnectionRepository connectionRepository,
@@ -47,7 +51,11 @@ public class PipelineService {
             PostgresReplicationCleanupService postgresReplicationCleanupService,
             KafkaTopicCleanupService kafkaTopicCleanupService,
             PipelineMetadataArchiveRepository metadataArchiveRepository,
-            PipelineGroupService groupService) {
+            PipelineGroupService groupService,
+            com.company.pipeline.workflow.EtlWorkflowNodeRepository workflowNodeRepository,
+            com.company.pipeline.workflow.EtlWorkflowRepository workflowRepository) {
+        this.workflowNodeRepository = workflowNodeRepository;
+        this.workflowRepository = workflowRepository;
         this.groupService = groupService;
         this.pipelineDefinitionRepository = pipelineDefinitionRepository;
         this.pipelineConnectorRepository = pipelineConnectorRepository;
@@ -213,6 +221,24 @@ public class PipelineService {
     @Transactional
     public void delete(Long id) {
         PipelineDefinition entity = findOrThrow(id);
+        // 워크플로우 캔버스에 얹혀 있으면 지우지 않는다. 지우면 그 노드가 허공을 가리켜
+        // 게시가 막히고, 이미 게시된 DAG 는 «가리키는 CDC 파이프라인이 없습니다» 로 실패한다.
+        // 지운 워크플로우(소프트 삭제)의 노드는 세지 않는다 - job 삭제 가드(workflowsReferencing)와 같은 기준.
+        List<String> usedBy = workflowNodeRepository.findByPipelineIdAndDeletedAtIsNull(id).stream()
+                .map(com.company.pipeline.workflow.EtlWorkflowNode::getWorkflowId)
+                .distinct()
+                .map(workflowRepository::findById)
+                .flatMap(java.util.Optional::stream)
+                .filter(workflow -> workflow.getDeletedAt() == null)
+                .map(com.company.pipeline.workflow.EtlWorkflow::getName)
+                .toList();
+        if (!usedBy.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "워크플로우에서 사용 중이라 삭제할 수 없습니다: " + String.join(", ", usedBy)
+                            + " - 먼저 해당 워크플로우에서 이 CDC 노드를 빼주세요.");
+        }
+        // 남은 것은 지운 워크플로우의 노드뿐이다. 참조를 비워야 FK 에 걸리지 않고 지워진다.
+        workflowNodeRepository.clearPipelineReference(id);
         List<PipelineConnector> connectors = pipelineConnectorRepository.findByPipelineId(id);
         for (PipelineConnector connector : connectors) {
             try {

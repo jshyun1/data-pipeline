@@ -36,13 +36,16 @@ public class WorkflowValidator {
     private final EtlJobRepository jobRepository;
     private final EtlWorkflowRepository workflowRepository;
     private final EtlWorkflowNodeRepository nodeRepository;
+    private final com.company.pipeline.pipeline.PipelineDefinitionRepository pipelineRepository;
 
     public WorkflowValidator(EtlJobRepository jobRepository,
                              EtlWorkflowRepository workflowRepository,
-                             EtlWorkflowNodeRepository nodeRepository) {
+                             EtlWorkflowNodeRepository nodeRepository,
+                             com.company.pipeline.pipeline.PipelineDefinitionRepository pipelineRepository) {
         this.jobRepository = jobRepository;
         this.workflowRepository = workflowRepository;
         this.nodeRepository = nodeRepository;
+        this.pipelineRepository = pipelineRepository;
     }
 
     public WorkflowValidationResult validate(EtlWorkflow workflow,
@@ -65,6 +68,7 @@ public class WorkflowValidator {
         validateSchedule(workflow, errors);              // V6
         validateJobReuse(workflow, nodes, warnings);     // V7, V9
         validateChaining(workflow, errors, warnings);    // V10, V11
+        validateCdcComposition(workflow, nodes, edges, errors, warnings);  // V12
 
         return WorkflowValidationResult.of(errors, warnings);
     }
@@ -86,6 +90,13 @@ public class WorkflowValidator {
             var found = workflowRepository.findByIdAndDeletedAtIsNull(id);
             if (found.isEmpty()) {
                 errors.add(Issue.of("V10", "선행 워크플로우를 찾을 수 없습니다: " + id));
+                continue;
+            }
+            // CDC 워크플로우는 지시만 쏘고 끝나서 «완료 신호»를 내지 않는다 - 선행으로 걸면 이 워크플로우는 영영 안 돈다.
+            if (isCdcWorkflow(id)) {
+                errors.add(Issue.of("V10",
+                        "CDC 워크플로우는 선행으로 지정할 수 없습니다(완료 신호가 없어 이 워크플로우가 시작되지 않습니다): "
+                                + found.get().getName()));
                 continue;
             }
             if (!found.get().isPublished()) {
@@ -173,6 +184,7 @@ public class WorkflowValidator {
                     }
                 }
                 case EtlWorkflowNode.TYPE_SUBWF -> validateSubWorkflow(node, errors);
+                case EtlWorkflowNode.TYPE_CDC -> validateCdcNode(node, errors);
                 default -> { /* JOIN/START/END는 추가 제약 없음 */ }
             }
         }
@@ -215,7 +227,127 @@ public class WorkflowValidator {
         }
         if (workflowRepository.findByIdAndDeletedAtIsNull(node.getSubWorkflowId()).isEmpty()) {
             errors.add(Issue.at("V8", "하위 워크플로우를 찾을 수 없습니다.", node.getNodeKey()));
+            return;
         }
+        // 하위 워크플로우는 conf 없이 뜬다 - CDC 워크플로우면 지시 기본값(start)이 매 회차 나가서, 일부러 멈춰 둔
+        // 파이프라인까지 다시 켠다(2026-09-17 실측: 상위 ETL 실행 → 하위 CDC → 제어 DAG action=start → DEPLOYED).
+        if (isCdcWorkflow(node.getSubWorkflowId())) {
+            errors.add(Issue.at("V8",
+                    "CDC 워크플로우는 하위 워크플로우로 넣을 수 없습니다. 상위가 돌 때마다 CDC 시작 지시가 나갑니다 - "
+                            + "CDC 워크플로우는 실시간 모니터링의 «실행 설정»에서 따로 실행하세요.",
+                    node.getNodeKey()));
+        }
+    }
+
+    /** V12 - CDC 노드는 파이프라인을 가리켜야 하고, 그 파이프라인이 실재해야 한다. */
+    private void validateCdcNode(EtlWorkflowNode node, List<Issue> errors) {
+        if (node.getPipelineId() == null) {
+            errors.add(Issue.at("V12", "CDC 파이프라인이 지정되지 않은 노드입니다.", node.getNodeKey()));
+            return;
+        }
+        if (pipelineRepository.findById(node.getPipelineId()).isEmpty()) {
+            errors.add(Issue.at("V12",
+                    "참조하는 CDC 파이프라인이 삭제되었습니다. 노드를 지우거나 다른 파이프라인으로 바꿔주세요.",
+                    node.getNodeKey()));
+        }
+    }
+
+    /**
+     * V12 - CDC 워크플로우의 구성 규칙(2026-09-10 설계 «방안 B»).
+     *
+     * <p>CDC 노드는 제어 DAG 를 부르고 <b>기다리지 않는다</b>. «끝»이 없는 것을 기다리면 워커 슬롯이
+     * 영구히 묶이기 때문이다. 기다리지 않으므로 순서도 성립하지 않는다 - 그래서 잇지 못하게 막고,
+     * 순서가 있는 ETL job·하위 워크플로우와 한 워크플로우에 섞지 못하게 한다. 섞으면 화면의 그림과
+     * 실제 실행이 어긋난다(«CDC 가 끝나면 다음»처럼 읽히는데 그렇게 돌지 않는다).
+     *
+     * <p>스케줄도 두지 않는다. CDC 는 한 번 켜면 계속 도는 것이라 «매일 2시에 다시 켜기»가
+     * 뜻을 갖지 않는다 - 이미 돌고 있으면 건너뛰고, 멈춰 있다면 그건 사람이 볼 일이다.
+     */
+    private void validateCdcComposition(EtlWorkflow workflow, List<EtlWorkflowNode> nodes,
+                                        List<EtlWorkflowEdge> edges,
+                                        List<Issue> errors, List<Issue> warnings) {
+        Set<String> cdcKeys = nodes.stream()
+                .filter(n -> EtlWorkflowNode.TYPE_CDC.equals(n.getNodeType()))
+                .map(EtlWorkflowNode::getNodeKey)
+                .collect(Collectors.toSet());
+        if (cdcKeys.isEmpty()) {
+            return;
+        }
+        // 섞였을 때는 «적은 쪽» 노드를 짚는다. 기존 ETL 워크플로우에 CDC 하나를 잘못 놓았으면 그 CDC 가,
+        // CDC 워크플로우에 job 하나를 놓았으면 그 job 이 빨갛게 된다(같으면 CDC 쪽).
+        List<EtlWorkflowNode> others = nodes.stream()
+                .filter(n -> !EtlWorkflowNode.TYPE_CDC.equals(n.getNodeType()))
+                .toList();
+        if (!others.isEmpty()) {
+            List<EtlWorkflowNode> marked = others.size() < cdcKeys.size() ? others
+                    : nodes.stream().filter(n -> EtlWorkflowNode.TYPE_CDC.equals(n.getNodeType())).toList();
+            marked.forEach(n -> errors.add(Issue.at("V12",
+                    "ETL job·하위 워크플로우와 CDC 노드는 한 워크플로우에 섞을 수 없습니다. "
+                            + "CDC 노드만 두거나 워크플로우를 나누세요(CDC " + cdcKeys.size() + "개 · 그 밖 " + others.size() + "개).",
+                    n.getNodeKey())));
+        }
+        edges.stream()
+                .filter(e -> cdcKeys.contains(e.getFromNodeKey()) || cdcKeys.contains(e.getToNodeKey()))
+                .forEach(e -> errors.add(Issue.at("V12",
+                        "CDC 노드는 연결할 수 없습니다: " + e.getFromNodeKey() + " → " + e.getToNodeKey(),
+                        e.getFromNodeKey())));
+        if (!others.isEmpty()) {
+            // 섞였으면 섞임만 알린다. 아래 «CDC 워크플로우» 규칙(스케줄·선행 금지)까지 내면, ETL 워크플로우에 CDC 하나를
+            // 잘못 놓은 사람에게 «스케줄을 지우라»는 엉뚱한 안내가 된다(2026-09-17 확인).
+            return;
+        }
+        if (workflow.getScheduleCron() != null && !workflow.getScheduleCron().isBlank()) {
+            errors.add(Issue.of("V12",
+                    "CDC 워크플로우에는 스케줄을 둘 수 없습니다. 실행할 때 지시(시작·중지 등)를 골라 보냅니다."));
+        }
+        // 선행 워크플로우도 무시된다 - 팩토리가 CDC 워크플로우의 스케줄(선행 신호 포함)을 끈다. 걸어 두면 «선행이 끝나면
+        // 돈다»로 읽히는데 실제로는 안 돈다.
+        if (!parseUpstream(workflow.getUpstreamWorkflowIds()).isEmpty()) {
+            errors.add(Issue.of("V12",
+                    "CDC 워크플로우에는 선행 워크플로우를 둘 수 없습니다(수동 실행 전용). 선행 설정을 비워 주세요."));
+        }
+        // 반대 방향 - 이미 다른 워크플로우가 이 워크플로우를 하위 노드나 선행으로 쓰고 있으면, 여기를 CDC 로 바꿔
+        // 게시하는 순간 그쪽이 매 회차 CDC 시작 지시를 보내거나(하위) 영영 안 돈다(선행).
+        if (workflow.getId() != null) {
+            List<String> parents = nodeRepository.findBySubWorkflowIdAndDeletedAtIsNull(workflow.getId()).stream()
+                    .map(EtlWorkflowNode::getWorkflowId)
+                    .distinct()
+                    .map(workflowRepository::findById)
+                    .flatMap(java.util.Optional::stream)
+                    .filter(w -> w.getDeletedAt() == null)
+                    .map(EtlWorkflow::getName)
+                    .toList();
+            if (!parents.isEmpty()) {
+                errors.add(Issue.of("V12",
+                        "다른 워크플로우가 이 워크플로우를 하위 노드로 쓰고 있어 CDC 워크플로우로 게시할 수 없습니다: "
+                                + String.join(", ", parents)));
+            }
+            List<String> downstream = workflowRepository.findByDeletedAtIsNullOrderByNameAsc().stream()
+                    .filter(w -> !Objects.equals(w.getId(), workflow.getId()))
+                    .filter(w -> parseUpstream(w.getUpstreamWorkflowIds()).contains(workflow.getId()))
+                    .map(EtlWorkflow::getName)
+                    .toList();
+            if (!downstream.isEmpty()) {
+                errors.add(Issue.of("V12",
+                        "다른 워크플로우가 이 워크플로우를 선행으로 지정해 CDC 워크플로우로 게시할 수 없습니다: "
+                                + String.join(", ", downstream)));
+            }
+        }
+        // 같은 파이프라인을 두 번 얹으면 같은 지시가 두 번 간다. 해롭지는 않지만(두 번째는 건너뛴다) 실수일 가능성이 크다.
+        Map<Long, Long> byPipeline = nodes.stream()
+                .filter(n -> EtlWorkflowNode.TYPE_CDC.equals(n.getNodeType()) && n.getPipelineId() != null)
+                .collect(Collectors.groupingBy(EtlWorkflowNode::getPipelineId, Collectors.counting()));
+        byPipeline.forEach((pipelineId, count) -> {
+            if (count > 1) {
+                warnings.add(Issue.of("V12", "같은 CDC 파이프라인이 " + count + "번 놓여 있습니다(id=" + pipelineId + ")."));
+            }
+        });
+    }
+
+    /** 노드 구성에서 읽는 «CDC 워크플로우»(CDC 노드가 하나라도 있으면). DAG 팩토리 {@code _is_cdc} 와 같은 기준. */
+    private boolean isCdcWorkflow(Long workflowId) {
+        return nodeRepository.findByWorkflowIdAndDeletedAtIsNull(workflowId).stream()
+                .anyMatch(n -> EtlWorkflowNode.TYPE_CDC.equals(n.getNodeType()));
     }
 
     /** V1 - 위상 정렬로 사이클을 찾는다(Kahn). 남은 노드가 있으면 그게 순환이다. */

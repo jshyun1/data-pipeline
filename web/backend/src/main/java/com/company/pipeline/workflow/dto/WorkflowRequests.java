@@ -60,6 +60,8 @@ public final class WorkflowRequests {
             String nodeType,
             Long jobId,
             Long subWorkflowId,
+            /** CDC 노드가 가리키는 파이프라인(nodeType=CDC 일 때만). */
+            Long pipelineId,
             String triggerRule,
             String branchExpr,
             Integer retries,

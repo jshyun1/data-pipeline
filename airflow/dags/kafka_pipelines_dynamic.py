@@ -70,10 +70,35 @@ VERIFY_INTERVAL_SECONDS = 5
 RUNTIME_MONITOR_INTERVAL_SECONDS = 30
 
 
+def skip_reason(action: str, status: str) -> str | None:
+    """이미 기대 상태라 «할 일이 없는» 경우의 사유. 없으면 None(=지시를 보낸다).
+
+    워크플로우가 CDC 여러 개에 같은 지시를 한 번에 쏘면(2026-09-17 방안 B) 그중 일부는
+    이미 그 상태다. 백엔드는 그런 요청을 400으로 거부하는데, 그대로 두면 «문제가 없는데
+    화면만 빨간» Run 이 남는다. 실패가 아니라 건너뜀으로 끝내야 «진짜 실패»가 눈에 띈다.
+    """
+    if action == "start" and status == "DEPLOYED":
+        return "이미 실행 중입니다(DEPLOYED) - 시작할 것이 없습니다"
+    if action == "stop" and status in ("STOPPED", "READY", "CREATED"):
+        return f"이미 멈춰 있습니다({status}) - 멈출 것이 없습니다"
+    # 재시작은 돌고 있거나 실패한 것만 대상이다(백엔드 restartLocked 와 같은 규칙).
+    # 멈춰 둔 파이프라인은 일괄 restart 의 대상이 아니다 - 여기서 켜면 «끈 의도»를 뒤집는다.
+    if action == "restart" and status not in ("DEPLOYED", "FAILED"):
+        return f"재시작 대상이 아닙니다({status}) - 실행 중이거나 실패한 것만 다시 띄웁니다"
+    return None
+
+
 def call_pipeline_action(pipeline_id: int, **context):
     action = context["params"]["action"]
     if action not in ACTIONS:
         raise ValueError(f"알 수 없는 action: {action}")
+    if action != "monitor":
+        status_resp = requests.get(f"{PIPELINE_API_BASE_URL}/api/pipelines/{pipeline_id}", timeout=30)
+        status_resp.raise_for_status()
+        status = status_resp.json()["data"]["status"]
+        reason = skip_reason(action, status)
+        if reason:
+            raise AirflowSkipException(f"파이프라인 {pipeline_id} {action} 건너뜀 - {reason}")
     if action == "monitor":
         # 이미 돌고 있는 CDC에 감시만 다시 붙이는 경우다. 커넥터에는 아무 지시도 하지 않는다.
         print(f"파이프라인 {pipeline_id} monitor - 커넥터를 건드리지 않고 감시만 시작합니다")
@@ -223,6 +248,26 @@ def monitor_cdc_runtime(pipeline_id: int, **context) -> bool:
         # 배포는 커넥터를 STOPPED로 만들어두는 단계라 감시할 런타임이 없다.
         # 실제 실행은 이후 start DagRun이 지시하고, 그 Run이 감시를 맡는다.
         return True
+
+    # 감시는 파이프라인당 하나만. 늦게 뜬 감시는 물러난다(2026-09-17).
+    # 워크플로우가 CDC 여러 개에 restart 를 한 번에 쏘면, 이미 감시받던 멀쩡한 파이프라인에도 감시 Run 이
+    # 하나 더 붙는다. 감시 둘이 max_active_runs=2 를 다 차지하면 이후 stop 이 큐에 갇혀 영영 못 돈다.
+    # 화면의 실행 설정은 백엔드가 미리 막지만, 워크플로우는 제어 DAG 를 직접 띄워서 그 차단을 거치지 않는다.
+    try:
+        watch_resp = requests.get(
+            f"{PIPELINE_API_BASE_URL}/api/airflow/dag-catalog/kafka_pipeline_{pipeline_id}_control/watch-runs",
+            timeout=30,
+        )
+        watch_resp.raise_for_status()
+        watchers = watch_resp.json()["data"]
+        me = context["run_id"]
+        if me in watchers and watchers.index(me) > 0:
+            raise AirflowSkipException(
+                f"파이프라인 {pipeline_id}은 이미 먼저 뜬 Run({watchers[0]})이 감시 중입니다 - 감시를 겹쳐 붙이지 않습니다"
+            )
+    except requests.RequestException as exc:
+        # 판정을 못 해도 감시는 계속한다. 감시가 겹치는 것보다 감시가 사라지는 편이 더 위험하다.
+        print(f"파이프라인 {pipeline_id} 감시 중복 확인 일시 실패(감시는 계속): {exc}")
 
     try:
         response = requests.get(

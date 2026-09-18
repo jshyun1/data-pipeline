@@ -52,6 +52,10 @@ class PipelineServiceTest {
 
     @Mock
     private PipelineGroupService groupService;
+    @Mock
+    private com.company.pipeline.workflow.EtlWorkflowNodeRepository workflowNodeRepository;
+    @Mock
+    private com.company.pipeline.workflow.EtlWorkflowRepository workflowRepository;
 
     private PipelineService pipelineService;
 
@@ -60,7 +64,7 @@ class PipelineServiceTest {
         pipelineService = new PipelineService(pipelineDefinitionRepository, pipelineConnectorRepository,
                 connectionRepository, kafkaConnectClient, logPipelineSourceRepository, filebeatInputFileService,
                 postgresReplicationCleanupService, kafkaTopicCleanupService, metadataArchiveRepository,
-                groupService);
+                groupService, workflowNodeRepository, workflowRepository);
     }
 
     @Test
@@ -217,6 +221,45 @@ class PipelineServiceTest {
 
         verify(kafkaConnectClient).delete("source-1-oracle-appuser-customers");
         verify(pipelineConnectorRepository).deleteAll(List.of(connector));
+        verify(pipelineDefinitionRepository).delete(pipeline);
+    }
+
+    @Test
+    void delete_rejectedWhileWorkflowCanvasUsesPipeline() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        when(pipelineDefinitionRepository.findById(1L)).thenReturn(Optional.of(pipeline));
+        com.company.pipeline.workflow.EtlWorkflowNode node = new com.company.pipeline.workflow.EtlWorkflowNode(
+                7L, "cdc_orders", com.company.pipeline.workflow.EtlWorkflowNode.TYPE_CDC, null, null, 1L,
+                null, null, null, null, null, null);
+        when(workflowNodeRepository.findByPipelineIdAndDeletedAtIsNull(1L)).thenReturn(List.of(node));
+        when(workflowRepository.findById(7L)).thenReturn(Optional.of(
+                new com.company.pipeline.workflow.EtlWorkflow("cdc_bulk", "CDC 일괄")));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> pipelineService.delete(1L))
+                .isInstanceOf(com.company.pipeline.common.BusinessException.class)
+                .hasMessageContaining("워크플로우에서 사용 중")
+                .hasMessageContaining("CDC 일괄");
+        // 커넥터·토픽 정리는 시작도 하지 않아야 한다 - 막힌 뒤에 반쯤 지워진 상태가 남으면 안 된다.
+        verify(kafkaConnectClient, never()).delete(any());
+        verify(pipelineDefinitionRepository, never()).delete(any());
+    }
+
+    @Test
+    void delete_nodeOfDeletedWorkflowDoesNotBlockAndReferenceIsCleared() throws Exception {
+        PipelineDefinition pipeline = newPipeline(1L);
+        when(pipelineDefinitionRepository.findById(1L)).thenReturn(Optional.of(pipeline));
+        com.company.pipeline.workflow.EtlWorkflowNode node = new com.company.pipeline.workflow.EtlWorkflowNode(
+                7L, "cdc_orders", com.company.pipeline.workflow.EtlWorkflowNode.TYPE_CDC, null, null, 1L,
+                null, null, null, null, null, null);
+        when(workflowNodeRepository.findByPipelineIdAndDeletedAtIsNull(1L)).thenReturn(List.of(node));
+        com.company.pipeline.workflow.EtlWorkflow deleted = new com.company.pipeline.workflow.EtlWorkflow("old", "지운 워크플로우");
+        deleted.softDelete();
+        when(workflowRepository.findById(7L)).thenReturn(Optional.of(deleted));
+
+        pipelineService.delete(1L);
+
+        // 워크플로우는 소프트 삭제라 노드가 남는다 - 참조를 비워야 FK 에 걸리지 않고 지워진다.
+        verify(workflowNodeRepository).clearPipelineReference(1L);
         verify(pipelineDefinitionRepository).delete(pipeline);
     }
 

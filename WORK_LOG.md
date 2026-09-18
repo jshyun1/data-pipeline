@@ -1602,3 +1602,86 @@ CDC 관리 «상세 › Connector» 에 빨간 안내와 «이 한 건 건너뛰
   API 거절 경로: 사유 없음 400, 위치 불일치 400(«화면 16, 지금 11»)
 - 백엔드 테스트 248건(재시작 규칙 3건 추가). 통합 테스트는 단독 실행 시 통과 - 빌드 · 브라우저 검증과 겹치면 메모리 부족으로 테스트용
   Postgres 컨테이너가 제때 못 떠 실패한다(코드 문제 아님, 로컬 가용 메모리 약 1.8GB)
+
+## 43. 워크플로우 CDC 노드 - 부르고 끝낸다(방안 B) + 한 개만 실패했을 때의 조치 (2026-09-17)
+
+**요청**: 워크플로우 캔버스에 CDC 노드(설계 `docs/2026-09-10-cdc-workflow-node-design.md` 방안 B). 사용자 고민 - «CDC 여러 개 중 하나가 실패하면
+어떻게 조치하나» → 노드별 상태 · 바로가기 + 일괄 restart(실패한 것만 되살림) + 이미 그 상태면 실패 대신 건너뜀.
+
+- **저장·검증**: V77 `etl_workflow_node.pipeline_id`(FK `pipeline_definition`). `node_type='CDC'`. «CDC 워크플로우»는 따로 두지 않고 노드 구성에서
+  읽는다(CDC 노드가 하나라도 있으면). 게시 검증 V12 - CDC 노드는 파이프라인 필수·실재 / 연결선 금지 / CDC 노드만(job·하위 워크플로우와 섞지 않음) /
+  스케줄 금지 / 같은 파이프라인 중복은 경고. 없는 파이프라인 참조는 저장에서 400. 캔버스에 얹힌 파이프라인은 삭제 거부(«워크플로우에서 사용 중»).
+- **컴파일·DAG**: 노드 spec `pipeline_id · cdc_dag_id(kafka_pipeline_{id}_control) · name`, 최상위 `kind=CDC`. 팩토리 `_build_cdc` =
+  `TriggerDagRunOperator(conf={"action": "{{ params.action }}"}, wait_for_completion=False)`. CDC 워크플로우는 스케줄·완료 신호(workflow_done) 없음,
+  `params.action`(start·stop·restart·deploy), `max_active_runs=2`, 태그 `cdc-workflow`(«cdc» 만 쓰면 키가 cdc 인 ETL 워크플로우와 겹침 - 검증 중 실제로 겹쳤다).
+- **제어 DAG**: `skip_reason` - start 인데 DEPLOYED, stop 인데 STOPPED/READY/CREATED, restart 인데 DEPLOYED·FAILED 가 아님 → `AirflowSkipException`
+  (실패가 아니라 건너뜀). **감시는 파이프라인당 하나** - 감시 센서가 `GET /api/airflow/dag-catalog/{dagId}/watch-runs`(running 만 조회, 먼저 뜬 순)로
+  «나보다 먼저 뜬 감시»가 있으면 물러난다. 백엔드·화면의 «감시 중» 판정에 restart 포함(원래 start·monitor 뿐).
+- **화면**: 캔버스 CDC 팔레트 끌어 놓기(청록 `cdc` 노드, 연결점 없음, 연결 시도 경고), CDC 노드 속성창(파이프라인 · 실행 방식 · CDC 파이프라인 바로가기,
+  실행 조건 칸 없음, GPT 탭은 CDC_PIPELINE 수집기), CDC 워크플로우면 스케줄 칸 대신 안내. 실시간 모니터링 - 실행 설정 선택지 4개, 속성창
+  «CDC 파이프라인 (N) · 실행 상태(집계: 하나라도 FAILED→실패 / 전부 실행→실행 중 / 전부 멈춤→중지 / 섞임→일부 실행)» + 파이프라인별 실제 상태 +
+  이름 누르면 `/cdc/pipelines?pipelineId=` 로 그 상세 창이 바로 열림. 태스크 유형 «CDC 지시», 성공 문구 «지시 보냄», 업무 구분 «CDC 워크플로우».
+
+**검증**
+- 단위: `WorkflowCdcNodeTest` 8건(V12 5 + 컴파일 3), `PipelineServiceTest` 삭제 가드 1건 추가 - 13건 전부 통과. 프런트 tsc 통과.
+- DAG 팩토리(컨테이너 안 직접 생성): 크론이 실려 와도 NullTimetable, workflow_done 없음, 노드별 send(wait=False, 서로 무관), 사라진 파이프라인 노드는
+  missing 실패 태스크, ETL 워크플로우는 그대로.
+- API: 연결선 → V12 거부, 없는 파이프라인 저장 → 400, 올바른 그래프 valid · 게시 → DAG 등록.
+- **E2E(target-db 로컬 전용 테스트 파이프라인 7·8, 검증 후 삭제)**: 워크플로우 deploy → 둘 다 READY / start → 둘 다 DEPLOYED · 초기 2건씩 적재 →
+  B 타깃에 CHECK 제약 + 양쪽 소스에 amount=5000 → **A 3건 적재, B 싱크 태스크만 FAILED**(커넥터 RUNNING) → 런타임 상태 7=RUNNING · 8=FAILED,
+  8번 제어 DAG 감시만 failed · 파이프라인 8=FAILED → 화면 속성창 «실행 상태 실패 · e2e-wf-b 실패», 눌러서 상세 창 열림(캡처 `~/qa-gpt/wfcdc-fail-*`) →
+  제약 제거 후 워크플로우 restart → 7번 «다시 띄울 커넥터가 없습니다(SOURCE(정상), SINK(정상))», 8번 «재시작: SINK / 그대로: SOURCE(정상)»,
+  **B 에 거부됐던 3:5000 과 밀린 4:400 까지 유실 없이 적재**.
+- READY 두 개에 stop → 두 제어 DAG 모두 apply_action skipped(«이미 멈춰 있습니다»), Run 은 success, 상태 변화 없음.
+- **검증 중 발견해 고친 것**
+  1. 일괄 restart 가 이미 감시받던 7번에 감시 Run 을 하나 더 붙여 max_active_runs=2 가 꽉 참(이후 stop 이 큐에 갇힘) → 위 «감시는 하나».
+     배포 후 실측: 7번의 늦게 뜬 restart 감시가 «이미 먼저 뜬 Run(…)이 감시 중입니다 - 감시를 겹쳐 붙이지 않습니다»로 skipped, 감시 1개로 복귀 →
+     워크플로우 stop → 7·8 STOPPED, 감시 Run 모두 종료.
+  2. 워크플로우를 지워도 파이프라인 삭제가 막힘 - 워크플로우는 소프트 삭제라 노드가 남는데 가드가 그걸 셈. job 가드처럼 지운 워크플로우는 빼고,
+     남은 노드 참조는 `clearPipelineReference` 로 비운 뒤 삭제(안 비우면 FK 위반). 단위 테스트 1건 추가(PipelineServiceTest 14건), 실측 삭제 200.
+  3. CDC 워크플로우 식별 태그 «cdc» → «cdc-workflow»(키가 cdc 인 워크플로우와 겹침).
+- 화면 표기: 태스크 유형 «CDC 지시», 성공 문구 «지시 보냄», 업무 구분 «CDC 워크플로우», 바로가기 «CDC 파이프라인». 캔버스 캡처 `~/qa-gpt/wfcanvas-*`
+  (cdc 노드 연결점 0, 팔레트 «(배치됨)», 노드 속성창, 스케줄 안내, 쓰기 요청 0 · 페이지 오류 0).
+- **정리**: 테스트 워크플로우 37·38 게시취소·삭제, 파이프라인 7·8 삭제, target-db 테스트 스키마·테이블 삭제, 커넥터·토픽 0, 제어 DAG stale,
+  target-db 는 원래대로 중지.
+- **고치지 않고 남긴 것(기존 코드)**: 파이프라인 삭제 때 Postgres 복제 슬롯 정리(`PostgresReplicationCleanupService`)가 소스 커넥터가 아직 슬롯을
+  잡고 있으면 실패하는데 예외를 삼켜 **고아 슬롯이 남는다** - 이번에 8번 슬롯이 남아 수동으로 지웠다(7번은 지워짐, 타이밍 경합). 소스 DB 에
+  WAL 이 계속 쌓이는 위험이라 별도 처리 필요.
+
+**배포 때 함께 처리한 것**: 19:51 airflow-scheduler · dag-processor · triggerer 를 `--force-recreate --no-deps` 로 재생성(DAG 0개 상태).
+42절이 «밀린 회차가 돌 수 있어 보류»로 적어 둔 것을 읽기 전이었다 - 재생성 뒤 scheduled/backfill 회차 0건 확인(정기 DAG 는 root_total 하나, 다음 09-18 10:30).
+
+## 44. 워크플로우 CDC 노드 - 섞어 설계했을 때 · 미확인 항목 확인과 수정 (2026-09-17)
+
+**요청**: 43절에서 확인 못 한 것 전부 진행 + «한 워크플로우에 ETL 노드와 CDC 노드가 병렬로 같이 있으면 어떻게 처리되나».
+상세 표는 `docs/2026-09-10-cdc-workflow-node-design.md` 7-3·7-4.
+
+**확인(수정 전 실측)** - 운영 워크플로우·파이프라인은 건드리지 않고 검증용 워크플로우 5개 + target-db 테스트 파이프라인 1개로.
+1. 로그 화면 «이 작업만 실행»(CDC 노드) → `Dag Run already exists` 로 실패, 워크플로우 Run 전체 failed, 지시 안 감.
+2. 스케줄(0 3 * * *) 있는 ETL 워크플로우에 CDC 파이프라인을 끌어 놓고 저장 → **스케줄이 경고 없이 NULL**. 게시는 V12 로 거부(문구가
+   «CDC 워크플로우에는 CDC 노드만» + «스케줄 금지» 라 ETL 워크플로우에 엉뚱한 안내).
+3. 혼합 스펙을 컨테이너에서 DAG 로 직접 생성 → 전체가 CDC 취급(NullTimetable, workflow_done 없음, job 태스크와 send 병렬).
+4. GPT - CDC 노드 GPT 탭(CDC_PIPELINE) 정상, 섞인 워크플로우의 job 노드 정보 정상. WORKFLOW_NODE 수집기는 CDC 노드를 모르지만 화면이 그 경로를 안 씀.
+5. 하위 워크플로우 노드로 CDC 워크플로우 → 검증 통과, 상위를 conf 없이 실행(정기 실행과 같은 조건) → 하위 CDC → 제어 DAG action=start →
+   **파이프라인 READY→DEPLOYED**.
+6. 선행 체이닝 - ETL 의 선행=CDC(완료 신호 없어 영영 안 돎), CDC 에 선행 지정(무시돼 자동 실행 안 됨) 둘 다 검증 통과.
+
+**수정**
+- 설계 화면: 섞는 드롭 3종(ETL 에 CDC 파이프라인 / CDC 에 job / 어디든 CDC 워크플로우를 하위로) 놓는 순간 경고·거부. 팔레트 워크플로우 줄 «· CDC».
+  «CDC 워크플로우» 판정을 «전부 CDC» 로 바꿔 섞인 상태에서 스케줄을 비우지 않음. 목록 응답 `cdcNodeCount` 추가.
+- 게시 검증: V8(하위=CDC 워크플로우) · V10(선행=CDC 워크플로우) · V12(CDC 워크플로우에 선행 / 다른 워크플로우의 하위·선행으로 쓰이는데 CDC 로 게시)
+  추가, 섞임 문구 중립화 + 적은 쪽 노드 짚기 + 섞였으면 CDC 전용 규칙 생략.
+- DAG: CDC send 재시도면 `…__{노드키}__retryN` 새 제어 Run(첫 시도 이름 유지, reset_dag_run 은 감시를 끊어 쓰지 않음).
+- 테스트: `WorkflowCdcNodeTest` 8→13건 전부 통과. 프런트 tsc 통과.
+
+**수정 후 실측**: 드롭 3종 모두 경고·노드 안 붙음·쓰기 요청 0, 저장 후 스케줄 0 3 * * * 유지, 이미 섞인 데이터를 열어 저장해도 스케줄 유지,
+검증 5종(섞임 · 하위 · 선행 · CDC 에 선행+역참조 · 순수 CDC 통과) 의도대로, CDC 노드 재실행 → `__retry2` 제어 Run 건너뜀 · 워크플로우 Run success.
+기존 게시 워크플로우 total · dz_com_daily · dz_pop_daily 검증 그대로 통과.
+
+**정리**: 검증용 워크플로우 39~43 게시취소·삭제, 파이프라인 9 삭제(이번엔 슬롯 정상 삭제), target-db 테스트 스키마·테이블 삭제 후 중지.
+삭제된 파이프라인 9 의 감시 Run 은 DAG 가 사라지자 Airflow 가 «Dag not found during start up» 으로 failed 처리(무한히 남지 않음).
+
+**함께 처리한 것**: 22:19 KST 다시 재부팅 → 같은 7개 서비스 복구. 이번엔 메모리 절차대로 먼저 확인 - 다른 세션 없음, WORK_LOG 보류 없음,
+게시된 정기 워크플로우는 root_total(오늘 11:15 실행, 다음 09-18 10:30)뿐·dz_com_daily 자체 스케줄은 상위 때문에 꺼짐·dw_pop_daily 미게시 →
+밀린 회차 없음 판단 후 복구, 복구 뒤 scheduled/backfill 0건 확인. 검증 중 본 것(기존 동작): 지운 워크플로우의 키가 새 워크플로우에 다시 쓰여
+(`etl_wf_cdc`) 예전 실행 이력이 새 워크플로우 DAG 에 이어 보인다.

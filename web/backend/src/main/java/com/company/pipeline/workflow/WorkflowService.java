@@ -4,6 +4,8 @@ import com.company.pipeline.common.BusinessException;
 import com.company.pipeline.common.ErrorCode;
 import com.company.pipeline.jobcatalog.EtlJob;
 import com.company.pipeline.jobcatalog.EtlJobRepository;
+import com.company.pipeline.pipeline.PipelineDefinition;
+import com.company.pipeline.pipeline.PipelineDefinitionRepository;
 import com.company.pipeline.workflow.dto.WorkflowRequests.CreateWorkflow;
 import com.company.pipeline.workflow.dto.WorkflowRequests.EdgeRequest;
 import com.company.pipeline.workflow.dto.WorkflowRequests.NodeRequest;
@@ -42,17 +44,21 @@ public class WorkflowService {
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
             new com.fasterxml.jackson.databind.ObjectMapper();
     private final com.company.pipeline.nifi.NifiProcessGroupMetadataRepository pgRepository;
+    /** CDC 노드가 가리키는 파이프라인의 실존·이름 확인용. */
+    private final PipelineDefinitionRepository pipelineDefinitionRepository;
 
     public WorkflowService(EtlWorkflowRepository workflowRepository,
                            EtlWorkflowNodeRepository nodeRepository,
                            EtlWorkflowEdgeRepository edgeRepository,
                            EtlJobRepository jobRepository,
-                           com.company.pipeline.nifi.NifiProcessGroupMetadataRepository pgRepository) {
+                           com.company.pipeline.nifi.NifiProcessGroupMetadataRepository pgRepository,
+                           PipelineDefinitionRepository pipelineDefinitionRepository) {
         this.workflowRepository = workflowRepository;
         this.nodeRepository = nodeRepository;
         this.edgeRepository = edgeRepository;
         this.jobRepository = jobRepository;
         this.pgRepository = pgRepository;
+        this.pipelineDefinitionRepository = pipelineDefinitionRepository;
     }
 
     @Transactional(readOnly = true)
@@ -69,7 +75,10 @@ public class WorkflowService {
                             .filter(Objects::nonNull)
                             .distinct()
                             .toList();
-                    return WorkflowSummary.from(w, nodes.size(), upstreamIds(w).size(), jobCount, childIds);
+                    int cdcNodeCount = (int) nodes.stream()
+                            .filter(n -> EtlWorkflowNode.TYPE_CDC.equals(n.getNodeType()))
+                            .count();
+                    return WorkflowSummary.from(w, nodes.size(), upstreamIds(w).size(), jobCount, childIds, cdcNodeCount);
                 })
                 .toList();
     }
@@ -86,12 +95,18 @@ public class WorkflowService {
         Map<Long, EtlWorkflow> subById = workflowRepository.findAllById(
                         nodes.stream().map(EtlWorkflowNode::getSubWorkflowId).filter(Objects::nonNull).toList())
                 .stream().collect(Collectors.toMap(EtlWorkflow::getId, Function.identity()));
+        Map<Long, PipelineDefinition> pipelineById = pipelineDefinitionRepository.findAllById(
+                        nodes.stream().map(EtlWorkflowNode::getPipelineId).filter(Objects::nonNull).toList())
+                .stream().collect(Collectors.toMap(PipelineDefinition::getId, Function.identity()));
 
         List<NodeView> nodeViews = nodes.stream().map(n -> {
             EtlJob job = n.getJobId() == null ? null : jobsById.get(n.getJobId());
             // 참조하던 job이 삭제(소프트 포함)됐으면 화면에서 표시하고 게시도 막는다.
             boolean missing = n.getJobId() != null && (job == null || job.getDeletedAt() != null);
             EtlWorkflow sub = n.getSubWorkflowId() == null ? null : subById.get(n.getSubWorkflowId());
+            // CDC 노드도 가리키던 파이프라인이 사라질 수 있다 - job 과 같은 표시를 쓴다.
+            PipelineDefinition pipeline = n.getPipelineId() == null ? null : pipelineById.get(n.getPipelineId());
+            missing = missing || (n.getPipelineId() != null && pipeline == null);
             String parentName = job == null || job.getParentPgId() == null ? null
                     : pgRepository.findById(job.getParentPgId())
                             .map(com.company.pipeline.nifi.NifiProcessGroupMetadata::getProcessGroupName)
@@ -101,6 +116,7 @@ public class WorkflowService {
                     parentName,
                     job == null ? null : job.getNifiPgId(),
                     sub == null ? null : sub.getName(),
+                    pipeline == null ? null : pipeline.getName(),
                     missing);
         }).toList();
 
@@ -238,12 +254,26 @@ public class WorkflowService {
             }
         }
 
+        // CDC 노드가 가리키는 파이프라인도 같은 이유로 먼저 확인한다(FK 위반이 500 으로 새는 것 방지).
+        List<Long> pipelineIds = nodes.stream()
+                .map(NodeRequest::pipelineId).filter(Objects::nonNull).distinct().toList();
+        if (!pipelineIds.isEmpty()) {
+            Set<Long> foundPipelines = pipelineDefinitionRepository.findAllById(pipelineIds).stream()
+                    .map(PipelineDefinition::getId).collect(Collectors.toSet());
+            List<Long> missingPipelines = pipelineIds.stream()
+                    .filter(pipelineId -> !foundPipelines.contains(pipelineId)).toList();
+            if (!missingPipelines.isEmpty()) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                        "존재하지 않는 CDC 파이프라인을 참조합니다: " + missingPipelines);
+            }
+        }
+
         edgeRepository.deleteByWorkflowId(id);
         nodeRepository.deleteByWorkflowId(id);
         nodeRepository.flush();
 
         nodes.forEach(n -> nodeRepository.save(new EtlWorkflowNode(
-                id, n.nodeKey(), n.nodeType(), n.jobId(), n.subWorkflowId(),
+                id, n.nodeKey(), n.nodeType(), n.jobId(), n.subWorkflowId(), n.pipelineId(),
                 n.triggerRule(), n.branchExpr(), n.retries(), n.retryDelaySec(),
                 n.displayX(), n.displayY())));
         edges.forEach(e -> edgeRepository.save(new EtlWorkflowEdge(

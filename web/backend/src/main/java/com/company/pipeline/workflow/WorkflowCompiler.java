@@ -2,6 +2,8 @@ package com.company.pipeline.workflow;
 
 import com.company.pipeline.jobcatalog.EtlJob;
 import com.company.pipeline.jobcatalog.EtlJobRepository;
+import com.company.pipeline.pipeline.PipelineDefinition;
+import com.company.pipeline.pipeline.PipelineDefinitionRepository;
 import com.company.pipeline.jobcatalog.EtlJobStep;
 import com.company.pipeline.jobcatalog.EtlJobStepRepository;
 import com.company.pipeline.nifi.NifiProcessGroupMetadata;
@@ -40,15 +42,19 @@ public class WorkflowCompiler {
     private final NifiProcessGroupMetadataRepository pgRepository;
     /** SUBWF 노드가 «어느 DAG를 띄울지» 알아야 해서 워크플로우 자체도 조회한다. */
     private final EtlWorkflowRepository workflowRepository;
+    /** CDC 노드가 가리키는 파이프라인 이름(화면·로그에 키 대신 사람 말로 보이게 한다). */
+    private final PipelineDefinitionRepository pipelineRepository;
 
     public WorkflowCompiler(EtlJobRepository jobRepository,
                             EtlJobStepRepository stepRepository,
                             NifiProcessGroupMetadataRepository pgRepository,
-                            EtlWorkflowRepository workflowRepository) {
+                            EtlWorkflowRepository workflowRepository,
+                            PipelineDefinitionRepository pipelineRepository) {
         this.jobRepository = jobRepository;
         this.stepRepository = stepRepository;
         this.pgRepository = pgRepository;
         this.workflowRepository = workflowRepository;
+        this.pipelineRepository = pipelineRepository;
     }
 
     public Map<String, Object> compile(EtlWorkflow workflow,
@@ -89,6 +95,15 @@ public class WorkflowCompiler {
                 if (job != null && job.getNifiPgId() != null) {
                     governedRootOf(job.getNifiPgId()).ifPresent(governedRoots::add);
                 }
+            } else if (EtlWorkflowNode.TYPE_CDC.equals(node.getNodeType())) {
+                // CDC 노드는 파이프라인 «제어 DAG» 를 부른다. 팩토리는 워크플로우 id 가 아니라
+                // 어느 DAG 를 띄울지 알아야 한다 - dag_id 규칙은 kafka_pipelines_dynamic.py 와 같다.
+                spec.put("pipeline_id", node.getPipelineId());
+                spec.put("cdc_dag_id", node.getPipelineId() == null
+                        ? null : "kafka_pipeline_" + node.getPipelineId() + "_control");
+                spec.put("name", node.getPipelineId() == null ? node.getNodeKey()
+                        : pipelineRepository.findById(node.getPipelineId())
+                                .map(PipelineDefinition::getName).orElse(node.getNodeKey()));
             } else {
                 spec.put("name", node.getNodeKey());
                 if (node.getSubWorkflowId() != null) {
@@ -137,6 +152,10 @@ public class WorkflowCompiler {
         spec.put("upstream_mode", workflow.getUpstreamMode());
         // 공존 기간에 기존 팩토리가 "이 root 직하 그룹은 새 팩토리가 맡는다"를 알아보는 키.
         spec.put("governed_root_pg_ids", List.copyOf(governedRoots));
+        // CDC 워크플로우는 구성에서 읽는다(CDC 노드가 하나라도 있으면). 팩토리는 이 값으로
+        // 스케줄·완료 신호를 걸지 않고, 실행할 때 고른 지시(action)를 각 제어 DAG 에 그대로 넘긴다.
+        spec.put("kind", nodes.stream().anyMatch(n -> EtlWorkflowNode.TYPE_CDC.equals(n.getNodeType()))
+                ? "CDC" : "ETL");
         spec.put("nodes", nodeSpecs);
         spec.put("edges", edgeSpecs);
         spec.put("compiled_at", LocalDateTime.now().toString());
