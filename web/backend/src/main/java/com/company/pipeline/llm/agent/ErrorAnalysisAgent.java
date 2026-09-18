@@ -74,6 +74,8 @@ public final class ErrorAnalysisAgent {
             case WORKFLOW_TASK -> "워크플로우 실행 중 실패한 작업";
             case CDC_PIPELINE -> "CDC 파이프라인";
             case ETL_JOB -> "ETL job";
+            case WORKFLOW -> "워크플로우";
+            case WORKFLOW_DRAFT -> "작성 중인 새 워크플로우(저장 전)";
             case WORKFLOW_NODE -> "워크플로우 노드";
         };
     }

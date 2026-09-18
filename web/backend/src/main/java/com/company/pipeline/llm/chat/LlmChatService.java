@@ -109,7 +109,7 @@ public class LlmChatService {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "아직 지원하지 않는 분석 대상입니다: " + request.targetType());
         }
 
-        CollectedTarget target = collector.collect(request.target(), request.errorText());
+        CollectedTarget target = collector.collect(request.target(), request.errorText(), request.draft());
         int maxChars = config.getMaxInputChars() != null ? config.getMaxInputChars()
                 : config.getProvider().getDefaultMaxInputChars();
         int contextBudget = (int) (maxChars * CONTEXT_SHARE);
@@ -196,7 +196,7 @@ public class LlmChatService {
     private List<LlmMessage> jobMessages(Prepared prepared, String apiKey, LlmChatListener listener) {
         LlmTargetType type = prepared.request().targetType();
         ConversationFitter.Normalized normalized = ConversationFitter.normalize(prepared.history(), false);
-        int fixed = JobAnalysisAgent.SYSTEM_PROMPT.length() + prepared.contextText().length() + prepared.question().length()
+        int fixed = JobAnalysisAgent.systemPrompt(type).length() + prepared.contextText().length() + prepared.question().length()
                 + PROMPT_WRAPPER_CHARS;
         String summary = prepared.summary();
         int summaryChars = summary == null ? 0 : summary.length();

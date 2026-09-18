@@ -163,6 +163,7 @@ function RunHistory({ dagId, runs, common }: { dagId?: string; runs: AirflowDagR
 function jobTypeLabel(job: JobGroup) {
   return job.kind === "job" ? `JOB (${job.steps.length}단계)`
     : job.kind === "call" ? "하위 워크플로우"
+    : job.kind === "cdc" ? "CDC 지시"
     : job.kind === "marker" ? "표시 노드" : "워크플로우 종단";
 }
 
@@ -235,7 +236,7 @@ function EtlDetail({ selection, common, onSelect }: { selection: Selection; comm
 
   const kindLabel = selection.kind === "run" ? (run && runTypeLabel(run) === "상위 워크플로우 호출" ? "하위 워크플로우 실행" : "워크플로우 실행")
     : selection.kind === "step" ? "단계"
-    : job ? { job: "Job", call: "하위 워크플로우 호출", marker: "표시 노드", end: "워크플로우 종단" }[job.kind] : "Job";
+    : job ? { job: "Job", call: "하위 워크플로우 호출", cdc: "CDC 지시", marker: "표시 노드", end: "워크플로우 종단" }[job.kind] : "Job";
   const title = selection.kind === "run" ? `${wfName} · ${formatAt(runStart, "YYYY-MM-DD HH:mm:ss")}`
     : selection.kind === "job" ? `${jobNo}${selection.jobKey}`
     : `${job?.key ?? ""} · ${stepName(selection.taskId)}`;

@@ -182,13 +182,13 @@ export function AlertHistoryTab() {
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="middle">
-      <Space wrap size="middle">
-        <Space.Compact>
+      {/* 디자인 작업물 alarm-setting.html 필터 띠: 날짜 프리셋 · 기간 · 심각도 · 확인 상태 ··· 오른쪽 끝 검색. */}
+      <div className="std-card std-filter-card">
+        <Space.Compact className="std-date-preset">
           <Button size="small" type={selectedPreset === 0 ? "primary" : "default"} onClick={() => applyDayPreset(0)}>당일</Button>
           <Button size="small" type={selectedPreset === 1 ? "primary" : "default"} onClick={() => applyDayPreset(1)}>전일</Button>
         </Space.Compact>
         <RangePicker
-          size="small"
           allowClear={false}
           value={appliedRange}
           onChange={(value) => {
@@ -198,23 +198,19 @@ export function AlertHistoryTab() {
             }
           }}
         />
-        <span>
-          심각도{" "}
-          <Select
-            size="small"
-            value={severity}
-            style={{ width: 110 }}
-            onChange={resetTo(setSeverity)}
-            options={[
-              { label: "전체", value: "ALL" },
-              { label: "🔴 위험", value: "CRITICAL" },
-              { label: "🟡 경고", value: "WARNING" },
-              { label: "⚪ 정보", value: "INFO" },
-            ]}
-          />
-        </span>
+        <span className="std-field-label">심각도</span>
+        <Select
+          value={severity}
+          style={{ width: 110 }}
+          onChange={resetTo(setSeverity)}
+          options={[
+            { label: "전체", value: "ALL" },
+            { label: "🔴 위험", value: "CRITICAL" },
+            { label: "🟡 경고", value: "WARNING" },
+            { label: "⚪ 정보", value: "INFO" },
+          ]}
+        />
         <Segmented
-          size="small"
           value={filter}
           onChange={(v) => resetTo(setFilter)(v as HistoryFilter)}
           options={[
@@ -224,14 +220,15 @@ export function AlertHistoryTab() {
           ]}
         />
         <Input.Search
-          size="small"
           allowClear
+          className="std-push-end"
           placeholder="내용·대상 검색"
-          style={{ width: 220 }}
+          style={{ width: 260 }}
           onSearch={(v) => resetTo(setQ)(v)}
         />
-      </Space>
+      </div>
 
+      <div className="std-card std-table-card">
       <Table<HistoryItem>
         rowKey="id"
         size="middle"
@@ -281,6 +278,7 @@ export function AlertHistoryTab() {
           ),
         }}
       />
+      </div>
     </Space>
   );
 }

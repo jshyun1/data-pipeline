@@ -14,6 +14,10 @@ public enum LlmTargetType {
     ETL_JOB(SystemCode.NIFI),
     /** CDC 관리 속성창 · CDC 로그 */
     CDC_PIPELINE(SystemCode.KAFKA),
+    /** 워크플로우 설계 화면 속성창(노드를 고르지 않았을 때 = 워크플로우 전체) */
+    WORKFLOW(SystemCode.NIFI),
+    /** 워크플로우 생성 화면 속성창(아직 저장하지 않은 초안 - 화면이 작성 중 설계를 보낸다) */
+    WORKFLOW_DRAFT(SystemCode.NIFI),
     /** 워크플로우 캔버스 노드 속성창 */
     WORKFLOW_NODE(SystemCode.NIFI),
     /** 워크플로우 로그 실패 로그 창 */

@@ -181,6 +181,50 @@ def _build_subworkflow(node: dict, spec: dict) -> TaskGroup:
     return group
 
 
+def _build_cdc(node: dict, spec: dict) -> TaskGroup:
+    """CDC 노드. 파이프라인의 제어 DAG를 부르고 <b>기다리지 않는다</b>(2026-09-10 설계 방안 B).
+
+    워크플로우는 «N개 파이프라인에 같은 지시를 한 번에» 쏘는 발사대다. 기다리지 않는 이유는
+    CDC의 start Run이 감시 센서로 CDC 수명만큼 살기 때문이다 - 기다리면 워커 슬롯이 영구히
+    묶이고, 멈추라는 지시가 큐에 갇혀 교착이 된다.
+
+    <p>그래서 이 노드의 success는 «CDC가 돌고 있다»가 아니라 «지시를 보냈다»는 뜻이다.
+    실제 상태는 파이프라인 런타임 상태를 모아서 본다(화면이 그렇게 그린다).
+
+    <p>보낼 지시는 실행할 때 고른다(params.action). 이미 그 상태인 파이프라인은 제어 DAG가
+    «건너뜀»으로 끝낸다 - 3개 중 1개만 실패했을 때 restart를 쏘면 그 1개만 되살아난다.
+    """
+    cdc_dag_id = node.get("cdc_dag_id")
+    with TaskGroup(group_id=node["key"]) as group:
+        if not cdc_dag_id:
+            # 가리키던 파이프라인이 사라진 노드. 조용히 통과시키면 «지시했다»가 되어버린다.
+            PythonOperator(
+                task_id="missing",
+                python_callable=lambda **_: (_ for _ in ()).throw(
+                    RuntimeError(f"[{node['key']}] 가리키는 CDC 파이프라인이 없습니다")),
+                trigger_rule=_trigger_rule(node, spec),
+            )
+            return group
+        TriggerDagRunOperator(
+            task_id="send",
+            trigger_dag_id=cdc_dag_id,
+            # 제어 DAG는 params.action(enum)으로 동작을 받는다. 워크플로우 실행 때 고른 값을 그대로 넘긴다.
+            conf={"action": "{{ params.action }}"},
+            # SUBWF와 같은 규칙 - Airflow 3이 scheduled__/backfill__ 접두사를 예약해 두었다.
+            # 재시도(로그 화면 «이 작업만 실행» = 이 태스크 clear)면 뒤에 __retryN 을 붙여 새 제어 Run 을 만든다.
+            # 같은 이름이면 «Dag Run already exists»로 실패하고 워크플로우 Run 전체가 빨개지는데 지시는 한 번도 안 간다
+            # (2026-09-17 실측). reset_dag_run 으로 기존 Run 을 되살리면 안 된다 - start Run 은 감시 센서가 살아 있는
+            # Run 이라, 되살리는 순간 감시가 끊긴다. 새 Run 은 건너뜀 판정(skip_reason)과 «감시는 하나» 규칙을 그대로 탄다.
+            # 첫 시도의 이름은 예전과 같게 둔다 - 화면이 manual__{상위 run}__{노드키} 로 하위 실행을 찾는다.
+            trigger_run_id="manual__{{ dag_run.run_id }}__" + node["key"]
+            + "{{ '' if ti.try_number <= 1 else '__retry' ~ ti.try_number }}",
+            # 여기가 방안 B의 핵심이다. 기다리지 않으므로 슬롯도, 교착도, 무한 대기도 없다.
+            wait_for_completion=False,
+            trigger_rule=_trigger_rule(node, spec),
+        )
+    return group
+
+
 def _build_marker(node: dict, spec: dict) -> TaskGroup:
     """JOB/SUBWF가 아닌 노드(START/END/JOIN 등)는 자리만 잡는 빈 그룹으로 둔다.
 
@@ -215,19 +259,41 @@ def _schedule_of(spec: dict):
     return assets                               # 기본 AND
 
 
+# CDC 제어 DAG가 받는 지시. kafka_pipelines_dynamic.ACTIONS 와 같아야 한다.
+# monitor 는 워크플로우에서 뺀다 - 감시만 다시 붙이는 것은 개별 파이프라인을 고쳐 세울 때 쓰는 통로다.
+CDC_WORKFLOW_ACTIONS = ["start", "stop", "restart", "deploy"]
+
+
+def _is_cdc(spec: dict) -> bool:
+    """CDC 워크플로우인가. 컴파일러가 실어 보내지만, 옛 게시본을 위해 노드 구성으로도 본다."""
+    if (spec.get("kind") or "").upper() == "CDC":
+        return True
+    return any(node.get("type") == "CDC" for node in spec.get("nodes", []))
+
+
 def build_workflow_dag(spec: dict) -> DAG:
     dag_id = spec["dag_id"]
+    cdc = _is_cdc(spec)
+    params = {"workflow_key": Param(spec.get("workflow_key", ""), type="string")}
+    if cdc:
+        # 실행할 때 «무엇을 지시할지»를 고른다. 소속 CDC 노드 전부에 같은 값이 간다.
+        params["action"] = Param("start", enum=CDC_WORKFLOW_ACTIONS,
+                                 description="CDC 파이프라인들에 보낼 지시")
     with DAG(
         dag_id=dag_id,
         # 화면에는 dag_id가 아니라 사용자가 지은 이름이 보여야 한다(실행 현황 트리·카탈로그).
         dag_display_name=(spec.get("name") or dag_id),
         description=(spec.get("description") or spec.get("name") or dag_id),
-        schedule=_schedule_of(spec),
+        # CDC 워크플로우는 수동 전용이다 - «매일 다시 켜기»가 뜻을 갖지 않는다(켜 두면 계속 돈다).
+        schedule=None if cdc else _schedule_of(spec),
         catchup=bool(spec.get("catchup", False)),
-        max_active_runs=int(spec.get("max_active_runs") or 1),
+        # 지시만 쏘고 끝나므로 겹칠 일이 거의 없지만, 연달아 누른 두 번째가 큐에 갇히지 않게 둘까지 연다.
+        max_active_runs=2 if cdc else int(spec.get("max_active_runs") or 1),
         start_date=None,
-        tags=["etl", "workflow", spec.get("workflow_key", "")],
-        params={"workflow_key": Param(spec.get("workflow_key", ""), type="string")},
+        # «cdc-workflow» 는 화면이 CDC 워크플로우를 알아보는 표식이다. «cdc» 만 쓰면 워크플로우 키가
+        # 우연히 cdc 인 ETL 워크플로우(키도 태그로 붙는다)가 CDC 로 오인된다 - 실제로 검증 중에 겹쳤다.
+        tags=(["cdc", "cdc-workflow"] if cdc else ["etl"]) + ["workflow", spec.get("workflow_key", "")],
+        params=params,
         default_args={"owner": "cerebro-etl"},
     ) as dag:
         groups = {}
@@ -236,6 +302,8 @@ def build_workflow_dag(spec: dict) -> DAG:
                 groups[node["key"]] = _build_job_group(node, spec)
             elif node.get("type") == "SUBWF":
                 groups[node["key"]] = _build_subworkflow(node, spec)
+            elif node.get("type") == "CDC":
+                groups[node["key"]] = _build_cdc(node, spec)
             else:
                 groups[node["key"]] = _build_marker(node, spec)
         for edge in spec.get("edges", []):
@@ -248,7 +316,9 @@ def build_workflow_dag(spec: dict) -> DAG:
         # Asset 이벤트는 태스크가 성공할 때 발행되므로, 중간 태스크에 outlet을 달면
         # 워크플로우가 아직 돌고 있는데 후행 워크플로우가 시작돼버린다. 모든 리프를
         # 이 태스크로 모아서 "정말 다 끝났을 때"만 신호가 나가게 한다.
-        produces = spec.get("produces_asset")
+        # CDC 워크플로우에는 «완료»가 없다(지시를 보냈을 뿐 CDC 는 계속 돈다). 완료 신호를 내보내면
+        # 뒤에 이어진 워크플로우가 «CDC 적재가 끝났다»고 오해하고 시작한다.
+        produces = None if cdc else spec.get("produces_asset")
         if produces:
             targets = {e.get("to") for e in spec.get("edges", [])}
             leaves = [g for key, g in groups.items() if key not in

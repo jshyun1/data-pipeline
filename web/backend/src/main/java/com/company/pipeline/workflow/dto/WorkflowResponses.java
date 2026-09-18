@@ -30,19 +30,24 @@ public final class WorkflowResponses {
             int jobCount,
             /** 이 워크플로우 캔버스에 노드로 놓인 하위 워크플로우 id. 목록 화면이 트리를 세울 때 쓴다. */
             List<Long> childWorkflowIds,
+            /**
+             * CDC 노드 수. 0 보다 크면 «CDC 워크플로우»다(DAG 팩토리와 같은 기준). 설계 화면이 이 워크플로우를
+             * 하위 노드로 놓지 못하게 막는 근거다 - 하위로 넣으면 상위가 돌 때마다 CDC 시작 지시가 나간다.
+             */
+            int cdcNodeCount,
             LocalDateTime updatedAt) {
 
         public static WorkflowSummary from(EtlWorkflow w, int nodeCount, int upstreamCount) {
-            return from(w, nodeCount, upstreamCount, 0, List.of());
+            return from(w, nodeCount, upstreamCount, 0, List.of(), 0);
         }
 
         public static WorkflowSummary from(EtlWorkflow w, int nodeCount, int upstreamCount,
-                                           int jobCount, List<Long> childWorkflowIds) {
+                                           int jobCount, List<Long> childWorkflowIds, int cdcNodeCount) {
             return new WorkflowSummary(
                     w.getId(), w.getWorkflowKey(), w.dagId(), w.getName(), w.getDescription(),
                     w.getScheduleCron(), w.getTimezone(),
                     upstreamCount, w.isPublished(), w.getPublishedAt(), w.getPublishedBy(),
-                    nodeCount, jobCount, childWorkflowIds, w.getUpdatedAt());
+                    nodeCount, jobCount, childWorkflowIds, cdcNodeCount, w.getUpdatedAt());
         }
     }
 
@@ -109,20 +114,24 @@ public final class WorkflowResponses {
             String nifiPgId,
             Long subWorkflowId,
             String subWorkflowName,
+            /** CDC 노드가 가리키는 파이프라인(nodeType=CDC 일 때만). 이름은 캔버스 노드에 적는다. */
+            Long pipelineId,
+            String pipelineName,
             String triggerRule,
             String branchExpr,
             int retries,
             int retryDelaySec,
             Double displayX,
             Double displayY,
-            /** 참조하던 job이 사라졌으면 화면에서 빨갛게 표시한다(게시도 막힌다). */
+            /** 참조하던 job(또는 CDC 파이프라인)이 사라졌으면 화면에서 빨갛게 표시한다(게시도 막힌다). */
             boolean jobMissing) {
 
         public static NodeView of(EtlWorkflowNode n, String jobName, String parentGroupName,
-                                  String nifiPgId, String subWorkflowName, boolean jobMissing) {
+                                  String nifiPgId, String subWorkflowName, String pipelineName,
+                                  boolean jobMissing) {
             return new NodeView(
                     n.getNodeKey(), n.getNodeType(), n.getJobId(), jobName, parentGroupName, nifiPgId,
-                    n.getSubWorkflowId(), subWorkflowName,
+                    n.getSubWorkflowId(), subWorkflowName, n.getPipelineId(), pipelineName,
                     n.getTriggerRule(), n.getBranchExpr(), n.getRetries(), n.getRetryDelaySec(),
                     n.getDisplayX(), n.getDisplayY(), jobMissing);
         }

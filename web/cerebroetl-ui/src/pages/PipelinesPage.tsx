@@ -1,10 +1,9 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Button,
-  Card,
   Collapse,
   Descriptions,
   Drawer,
@@ -24,9 +23,10 @@ import { Dropdown, Form, Modal } from "antd";
 import type { StuckSinkPosition } from "../api/pipelines";
 import type { MenuProps } from "antd";
 import { WfIcon } from "../components/WorkflowPageHeader";
+import { StdPage } from "../components/StdPage";
 import { GptChatPanel } from "../components/gpt/GptChatPanel";
 import { useGptEnabled } from "../components/gpt/useGptEnabled";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { listConnections } from "../api/connections";
 import {
   createPipelineGroup,
@@ -92,6 +92,19 @@ export function PipelinesPage() {
   const canWrite = !permissionsLoaded || can("KAFKA", "WRITE");
   const queryClient = useQueryClient();
   const [detailPipelineId, setDetailPipelineId] = useState<number | null>(null);
+  // 실행 현황에서 «이 파이프라인이 실패했다»를 누르면 바로 그 상세 창이 열려야 한다.
+  // 목록에서 다시 찾게 하면 CDC 가 여럿일 때 어느 것이었는지 놓친다(2026-09-17).
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const requested = Number(searchParams.get("pipelineId"));
+    if (!requested) {
+      return;
+    }
+    setDetailPipelineId(requested);
+    // 한 번 열고 나면 주소에서 지운다 - 남겨 두면 창을 닫아도 새로고침 때 또 열린다.
+    searchParams.delete("pipelineId");
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams]);
   // 선택된 LLM 이 없으면 상세 창에 GPT 탭을 두지 않는다(설계 5-1).
   const gptEnabled = useGptEnabled();
   const [nameFilter, setNameFilter] = useState("");
@@ -105,6 +118,8 @@ export function PipelinesPage() {
   >();
   const [groupForm] = Form.useForm<{ name: string }>();
   const [selectedTreeKey, setSelectedTreeKey] = useState<string>("all");
+  // 확인 창을 hook 으로 연다 - 정적 Modal.confirm 은 화면 테마(StdPage)를 못 받아 파란 버튼 · 옛 모양으로 떴다.
+  const [modal, modalHolder] = Modal.useModal();
 
   const { data: pipelines, isLoading } = useQuery({
     queryKey: ["pipelines"],
@@ -331,7 +346,7 @@ export function PipelinesPage() {
       return;
     }
     if (action === "delete") {
-      Modal.confirm({
+      modal.confirm({
         title: `그룹 «${group.name}»을(를) 삭제할까요?`,
         content: "하위 그룹이나 파이프라인이 남아 있으면 삭제되지 않습니다. 먼저 옮겨주세요.",
         okText: "삭제",
@@ -417,8 +432,8 @@ export function PipelinesPage() {
   );
 
   return (
-    <div>
-      <Card title="CDC 파이프라인">
+    <StdPage menu="cdc" title="CDC 파이프라인" icon="database">
+      {modalHolder}
         {Object.entries(driftByPipeline).map(([pipelineId, info]) => (
           <Alert
             key={pipelineId}
@@ -444,8 +459,13 @@ export function PipelinesPage() {
             }
           />
         ))}
-        <div style={{ display: "grid", gridTemplateColumns: "290px minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
-          <Card size="small" title="파이프라인 탐색" className="cdc-tree-card" styles={{ body: { padding: 0 } }}>
+        {/* 디자인 작업물 cdc-manage.html: 왼쪽 «파이프라인 탐색» 트리 카드 · 오른쪽 필터 + 표 카드. 두 카드는 화면 바닥까지 늘인다. */}
+        <div className="cdc-manage-layout">
+          <section className="std-card cdc-tree-card">
+            <div className="std-card-head">
+              <h2 className="std-card-title"><WfIcon name="folder" size={16} />파이프라인 탐색</h2>
+              <span className="tree-node-badge">{pipelines?.length ?? 0}</span>
+            </div>
             {/* 검색칸·트리는 워크플로우 관리 화면 트리 카드와 같은 마크업·클래스다(2026-09-11 요청). */}
             <div className="wf-tree-search">
               <WfIcon name="search" size={13} />
@@ -468,9 +488,9 @@ export function PipelinesPage() {
                 onMenu={onTreeMenu}
               />
             </div>
-          </Card>
-          <div style={{ minWidth: 0 }}>
-        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
+          </section>
+          <section className="std-card std-table-card cdc-manage-main">
+        <div className="std-filter-card cdc-manage-filter">
           <Space wrap>
             <Input
               placeholder="이름 검색"
@@ -505,7 +525,7 @@ export function PipelinesPage() {
               onChange={setTypeFilter}
             />
           </Space>
-          <Space wrap>
+          <Space wrap className="std-push-end">
             {/* 쓰기 권한이 없으면 버튼을 비활성이 아니라 아예 감춘다 - 사이드바에서 «생성»
                 메뉴가 사라지는 것과 같은 규칙이라, 할 수 없는 동작을 화면에 남기지 않는다.
                 (연결정보 부족처럼 «권한은 있는데 조건이 아직» 인 경우는 그대로 비활성+안내) */}
@@ -528,9 +548,13 @@ export function PipelinesPage() {
         loading={isLoading}
         dataSource={filteredPipelines}
         scroll={{ x: 1120 }}
-        pagination={{ pageSize: 20, hideOnSinglePage: true, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
+        pagination={{ pageSize: 20, hideOnSinglePage: true, showSizeChanger: true, showTotal: (total) => `총 ${total}건` }}
         columns={[
-          ...cdcPipelineColumns(runtimeByPipeline, metricByPipeline),
+          // 이름은 굵게 한 줄로(디자인). 공용 열 정의(cdcPipelineColumns)는 로그 화면도 쓰므로 여기서만 바꾼다.
+          ...cdcPipelineColumns(runtimeByPipeline, metricByPipeline).map((column) =>
+            column.title === "이름"
+              ? { ...column, width: 190, render: (value: string) => <strong className="cdc-manage-name">{value}</strong> }
+              : column),
           {
             title: "관리",
             width: 130,
@@ -559,9 +583,8 @@ export function PipelinesPage() {
           },
         ]}
         />
-          </div>
+          </section>
         </div>
-      </Card>
 
 
       <Drawer
@@ -570,8 +593,21 @@ export function PipelinesPage() {
         onClose={() => setDetailPipelineId(null)}
         width={640}
         destroyOnHidden
+        styles={{ body: { padding: 0 } }}
       >
         {detailPipeline && (
+          // ETL 관리 화면 속성창과 같은 2단 구조(2026-09-17 요청): 위 «상세정보 | AI 어시스턴트» 탭,
+          // 상세정보 안에 예전 탭(기본정보 · 운영 상태 · Connector · 정합성 · 이력)을 그대로 둔다.
+          <CdcDetailShell
+            key={detailPipeline.id}
+            ai={gptEnabled ? (
+              <GptChatPanel
+                targetType="CDC_PIPELINE"
+                target={{ pipelineId: String(detailPipeline.id) }}
+                targetNoun="이 파이프라인"
+              />
+            ) : null}
+          >
           <Tabs
             items={[
               {
@@ -773,21 +809,11 @@ export function PipelinesPage() {
                   />
                 ),
               },
-              // 속성창 GPT 탭(docs/2026-09-13-gpt-settings-design.md 5-2). 창을 닫거나 다른 파이프라인을 열면 대화가 사라진다.
-              ...(gptEnabled ? [{
-                key: "gpt",
-                label: "GPT",
-                children: (
-                  <GptChatPanel
-                    key={detailPipeline.id}
-                    targetType="CDC_PIPELINE"
-                    target={{ pipelineId: String(detailPipeline.id) }}
-                    targetNoun="이 파이프라인"
-                  />
-                ),
-              }] : []),
+              // 속성창 GPT 탭(docs/2026-09-13-gpt-settings-design.md 5-2)은 위 «AI 어시스턴트» 탭으로 옮겼다.
+              // 창을 닫거나 다른 파이프라인을 열면 대화가 사라지는 것은 같다(CdcDetailShell key).
             ]}
           />
+          </CdcDetailShell>
         )}
       </Drawer>
 
@@ -823,6 +849,32 @@ export function PipelinesPage() {
           </Form.Item>
         </Form>
       </Modal>
+    </StdPage>
+  );
+}
+
+/**
+ * CDC 파이프라인 상세 창의 윗단 탭 — ETL 관리 화면 속성창(nifi-detail-tabs)과 같은 모양 · 이름.
+ * AI 어시스턴트는 선택된 GPT 가 있을 때만 보인다(예전 GPT 탭과 같은 조건).
+ */
+function CdcDetailShell({ ai, children }: { ai: ReactNode; children: ReactNode }) {
+  const [tab, setTab] = useState<"detail" | "ai">("detail");
+  const current = ai ? tab : "detail";
+  return (
+    <div className={`cdc-detail-shell${current === "ai" ? " is-ai" : ""}`}>
+      <div className="nifi-detail-tabs" role="tablist" aria-label="상세 패널 탭">
+        <button type="button" role="tab" aria-selected={current === "detail"}
+                className={`nifi-detail-tab${current === "detail" ? " active" : ""}`} onClick={() => setTab("detail")}>
+          상세정보
+        </button>
+        {ai ? (
+          <button type="button" role="tab" aria-selected={current === "ai"}
+                  className={`nifi-detail-tab${current === "ai" ? " active" : ""}`} onClick={() => setTab("ai")}>
+            AI 어시스턴트
+          </button>
+        ) : null}
+      </div>
+      {current === "ai" ? ai : <div className="cdc-detail-body">{children}</div>}
     </div>
   );
 }

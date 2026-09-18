@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Card, DatePicker, Input, Select, Space, Table, Tag } from "antd";
+import { Button, DatePicker, Input, Select, Space, Table, Tag } from "antd";
+import { StdPage } from "../../components/StdPage";
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import { activeDayPreset, dayPresetRange } from "../../components/dayPreset";
@@ -174,11 +175,10 @@ export function AuditLogPage() {
   ];
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>감사 로그</h2>
-      <Card>
-        <Space wrap style={{ marginBottom: 16 }}>
-          <Space.Compact>
+    <StdPage menu="settings" title="감사 로그" icon="doc">
+      {/* 디자인 작업물 audit-setting.html: 필터 띠 카드 + 표 카드. */}
+      <div className="std-card std-filter-card">
+          <Space.Compact className="std-date-preset">
             <Button type={selectedPreset === 0 ? "primary" : "default"} onClick={() => applyDayPreset(0)}>당일</Button>
             <Button type={selectedPreset === 1 ? "primary" : "default"} onClick={() => applyDayPreset(1)}>전일</Button>
           </Space.Compact>
@@ -211,21 +211,22 @@ export function AuditLogPage() {
           <Button onClick={() => refetch()} loading={isFetching}>
             새로고침
           </Button>
-        </Space>
+      </div>
+      <div className="std-card std-table-card">
         <Table<AuditView>
           rowKey="id"
           loading={isFetching}
           columns={columns}
           dataSource={filtered}
-          size="small"
+          size="middle"
           pagination={{
             defaultPageSize: 10,
             showSizeChanger: true,
             pageSizeOptions: [10, 20, 50, 100, 200],
-            showTotal: (total) => `전체 ${total}건`,
+            showTotal: (total) => `총 ${total}건`,
           }}
         />
-      </Card>
-    </div>
+      </div>
+    </StdPage>
   );
 }

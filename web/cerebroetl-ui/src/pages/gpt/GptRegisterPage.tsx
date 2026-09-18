@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Checkbox, Form, Input, InputNumber, Radio, Select, Space, Spin, message } from "antd";
+import { Alert, Button, Checkbox, Form, Input, InputNumber, Radio, Select, Space, Spin, message } from "antd";
+import { StdPage } from "../../components/StdPage";
 import {
   BILLING_LABEL,
   DEFAULT_MAX_INPUT_CHARS,
@@ -57,6 +58,12 @@ const INITIAL: FormValues = {
 export function GptRegisterPage() {
   const [params] = useSearchParams();
   const editId = params.get("id") ? Number(params.get("id")) : undefined;
+  // 수정(?id=3) 화면에서 «등록» 탭·메뉴로 옮기면 같은 경로라 컴포넌트가 그대로 남아, 수정하던 값이 입력칸에 남은 채
+  // 저장하면 «새 등록»이 됐다. 대상(id)이 바뀌면 폼을 통째로 새로 띄워 입력값 · 테스트 결과 · 직접 바꾼 표시를 비운다.
+  return <GptRegisterForm key={editId ?? "new"} editId={editId} />;
+}
+
+function GptRegisterForm({ editId }: { editId?: number }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form] = Form.useForm<FormValues>();
@@ -138,10 +145,10 @@ export function GptRegisterPage() {
   });
 
   if (editId !== undefined && detailQuery.isLoading) {
-    return <Card><Spin /> GPT 설정을 불러오는 중입니다.</Card>;
+    return <StdPage menu="gpt" title="GPT 수정" icon="bot" className="gpt-register-page"><div className="std-card std-card-body"><Spin /> GPT 설정을 불러오는 중입니다.</div></StdPage>;
   }
   if (editId !== undefined && detailQuery.isError) {
-    return <Card><Alert type="error" showIcon message="GPT 설정을 찾을 수 없습니다." /></Card>;
+    return <StdPage menu="gpt" title="GPT 수정" icon="bot" className="gpt-register-page"><div className="std-card std-card-body"><Alert type="error" showIcon message="GPT 설정을 찾을 수 없습니다." /></div></StdPage>;
   }
 
   const external = deployment === "EXTERNAL";
@@ -150,8 +157,14 @@ export function GptRegisterPage() {
     : external ? "API 키" : "필요한 경우만 입력";
 
   return (
-    <Card title={editId ? "GPT 수정" : "GPT 등록"} style={{ maxWidth: 820 }}>
+    <StdPage menu="gpt" title={editId ? "GPT 수정" : "GPT 등록"} icon="bot" className="gpt-register-page">
+    {/* 표준 입력 표: 왼쪽 회색 이름 칸 · 오른쪽 입력, 바닥 띠에 동작 버튼(디자인 작업물의 등록 모달 · 위저드 폼과 같은 모양). */}
+    <section className="std-card std-form-card">
+      <div className="std-card-head">
+        <h2 className="std-card-title">LLM 연결 정보</h2>
+      </div>
       <Form<FormValues>
+        className="std-form-table"
         form={form}
         layout="horizontal"
         labelCol={{ flex: "140px" }}
@@ -267,14 +280,15 @@ export function GptRegisterPage() {
           </Form.Item>
         )}
 
-        <Form.Item label=" " colon={false}>
-          <Space>
-            <Button onClick={() => testMutation.mutate()} loading={testMutation.isPending}>연결 테스트</Button>
-            <Button type="primary" onClick={() => saveMutation.mutate()} loading={saveMutation.isPending}>저장</Button>
-            <Button onClick={() => navigate("/gpt/manage")}>목록</Button>
-          </Space>
-        </Form.Item>
       </Form>
-    </Card>
+      <div className="std-card-foot">
+        <Space>
+          <Button onClick={() => testMutation.mutate()} loading={testMutation.isPending}>연결 테스트</Button>
+          <Button type="primary" onClick={() => saveMutation.mutate()} loading={saveMutation.isPending}>저장</Button>
+          <Button onClick={() => navigate("/gpt/manage")}>목록</Button>
+        </Space>
+      </div>
+    </section>
+    </StdPage>
   );
 }

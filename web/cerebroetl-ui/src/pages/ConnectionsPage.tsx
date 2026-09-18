@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, Descriptions, Form, Input, InputNumber, List, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
+import { StdPage } from "../components/StdPage";
 import {
   checkCdcPrerequisites,
   createConnection,
@@ -190,25 +191,25 @@ export function ConnectionsPage() {
   );
 
   return (
-    <div>
-      <Card title="연결정보">
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
-            신규 등록
-          </Button>
-        </div>
-
+    <StdPage menu="settings" title="연결정보" icon="link">
+      {/* 디자인 작업물 connection-setting.html: 오른쪽 위 신규 등록, 그 아래 표 카드. */}
+      <div className="std-toolbar">
+        <Button type="primary" className="std-push-end" icon={<PlusOutlined />} onClick={openCreateModal}>
+          신규 등록
+        </Button>
+      </div>
+      <div className="std-card std-table-card">
         <Table<ConnectionResponse>
           rowKey="id"
           loading={isLoading}
           dataSource={connections}
-          pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
+          pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `총 ${total}건` }}
           columns={[
-            { title: "이름", dataIndex: "name" },
+            { title: "이름", dataIndex: "name", render: (value: string) => <strong>{value}</strong> },
             {
               title: "DB 유형",
               dataIndex: "dbType",
-              render: (value: DbType) => <Tag>{value}</Tag>,
+              render: (value: DbType) => <strong>{value}</strong>,
             },
             {
               title: "접속 정보",
@@ -286,7 +287,7 @@ export function ConnectionsPage() {
             },
           ]}
         />
-      </Card>
+      </div>
 
       <Modal
         title={editingId === null ? "연결정보 신규 등록" : readOnly ? "연결정보 상세" : "연결정보 수정"}
@@ -300,7 +301,11 @@ export function ConnectionsPage() {
               <Button onClick={closeModal}>취소</Button>
               <Button
                 loading={validateMutation.isPending}
-                onClick={async () => validateMutation.mutate(await form.validateFields())}
+                onClick={async () => {
+                  // 필수값 거절은 폼이 칸마다 표시한다 - 거절이 onClick 밖으로 새지 않게 삼킨다.
+                  const values = await form.validateFields().catch(() => undefined);
+                  if (values) validateMutation.mutate(values);
+                }}
               >
                 연결 테스트
               </Button>
@@ -479,6 +484,6 @@ export function ConnectionsPage() {
           </Card>
         )}
       </Modal>
-    </div>
+    </StdPage>
   );
 }

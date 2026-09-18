@@ -228,7 +228,7 @@ export function runTypeLabel(run: AirflowDagRun) {
 
 /* ------------------------------------------------------------------ task → job */
 
-export type JobKind = "job" | "call" | "marker" | "end";
+export type JobKind = "job" | "call" | "cdc" | "marker" | "end";
 
 export interface JobGroup {
   key: string;
@@ -295,6 +295,8 @@ export function groupJobs(tasks: AirflowTaskInstance[]): JobGroup[] {
     const only = steps.length === 1 ? steps[0].task_id : undefined;
     const kind: JobKind = !steps.some((step) => step.task_id.includes(".")) ? "end"
       : only?.endsWith(".run") ? "call"
+      // CDC 워크플로우 노드: 제어 DAG 에 지시만 보내는 send 한 단계. 성공은 «지시를 보냈다»는 뜻이지 CDC 가 돈다는 뜻이 아니다.
+      : only?.endsWith(".send") ? "cdc"
       : only?.endsWith(".marker") ? "marker"
       : "job";
     const starts = steps.map((step) => step.start_date).filter(Boolean) as string[];
@@ -333,6 +335,7 @@ export function countValue(text: string) {
 export function jobOutcome(job: JobGroup, logs?: Record<string, string>) {
   if (job.state === "failed") return "";
   if (job.state === "upstream_failed") return "선행 작업 실패로 미실행";
+  if (job.kind === "cdc") return job.state === "success" ? "지시 보냄" : "-";
   if (job.state !== "success" || job.kind !== "job") return "-";
   const counted = job.steps.find((step) => step.task_id.endsWith(".await")) ?? job.steps.at(-1)!;
   return logs ? loadCountOf(logs[counted.task_id]) : "…";

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Alert, Button, Input, Modal, Spin } from "antd";
+import { ArrowUpOutlined } from "@ant-design/icons";
 import { DEPLOYMENT_LABEL, type LlmCompacted } from "../../api/llm";
 import type { GptPreviewState, GptTurn } from "./useGptConversation";
 
@@ -74,12 +75,18 @@ export function GptCompactedNote({ compacted }: { compacted?: LlmCompacted }) {
   );
 }
 
-/** 질문 입력칸. Enter 보내기 · Shift+Enter 줄바꿈 · 한글 조합 중 Enter 는 무시. */
-export function GptAskBox({ busy, placeholder, onSend }: {
+/**
+ * 질문 입력칸. Enter 보내기 · Shift+Enter 줄바꿈 · 한글 조합 중 Enter 는 무시.
+ *
+ * <p>{@code variant="composer"}: ETL 관리 화면 AI 어시스턴트와 같은 모양(큰 입력칸 안 오른쪽 아래 둥근 보내기 버튼).
+ * 보내기 규칙은 기본 모양과 같다.
+ */
+export function GptAskBox({ busy, placeholder, onSend, variant = "inline" }: {
   busy: boolean;
   placeholder: string;
   /** @returns 시작 전에 거절되면 그 질문 - 입력칸으로 되돌린다 */
   onSend: (question: string) => Promise<string | undefined>;
+  variant?: "inline" | "composer";
 }) {
   const [question, setQuestion] = useState("");
   const send = async () => {
@@ -89,6 +96,37 @@ export function GptAskBox({ busy, placeholder, onSend }: {
     const rejected = await onSend(text);
     if (rejected) setQuestion(rejected);
   };
+  if (variant === "composer") {
+    return (
+      <div className="nifi-ai-composer">
+        <textarea
+          rows={3}
+          value={question}
+          maxLength={4000}
+          placeholder={placeholder}
+          aria-label="AI 어시스턴트 질문"
+          disabled={busy}
+          onChange={(event) => setQuestion(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              void send();
+            }
+          }}
+        />
+        <Button
+          className="nifi-ai-send-button"
+          shape="circle"
+          icon={<ArrowUpOutlined />}
+          loading={busy}
+          disabled={!busy && !question.trim()}
+          aria-label="보내기"
+          title="보내기"
+          onClick={() => void send()}
+        />
+      </div>
+    );
+  }
   return (
     <div className="gpt-analysis-ask">
       <Input.TextArea

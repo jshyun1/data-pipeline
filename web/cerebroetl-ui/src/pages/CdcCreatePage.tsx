@@ -1,10 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   AutoComplete,
   Button,
-  Card,
   Checkbox,
   Collapse,
   Descriptions,
@@ -16,13 +15,14 @@ import {
   Space,
   Spin,
   Table,
-  Tabs,
   Tag,
   Tooltip,
   TreeSelect,
   Typography,
 } from "antd";
-import { CheckCircleOutlined, LockOutlined } from "@ant-design/icons";
+import { StdPage } from "../components/StdPage";
+import { WfIcon } from "../components/WorkflowPageHeader";
+import { WizardStepStatus, WizardStepTitle, WizardTop, type WizardStepState } from "../components/StdWizard";
 import { useNavigate } from "react-router-dom";
 import { checkCdcTableReadiness, listConnections, listConnectionColumns, listConnectionSchemas, listConnectionTables, testConnection } from "../api/connections";
 import { createLogFilePipeline, createPipeline, createPipelineBatch } from "../api/pipelines";
@@ -42,20 +42,20 @@ const STEP_NUMBER: Record<StepKey, number> = {
   review: 5,
 };
 
-function StepLabel({ step, title, completed, unlocked }: {
+const STEP_TITLE: Record<StepKey, string> = {
+  basic: "기본 정보",
+  connections: "연결",
+  targets: "대상 선택",
+  options: "실행 옵션",
+  review: "검토 및 생성",
+};
+
+function StepLabel({ step, title, state }: {
   step: StepKey;
   title: string;
-  completed: boolean;
-  unlocked: boolean;
+  state: WizardStepState;
 }) {
-  return (
-    <Space>
-      <Tag color={completed ? "success" : unlocked ? "blue" : "default"}>{STEP_NUMBER[step]}</Tag>
-      <span>{title}</span>
-      {completed && <CheckCircleOutlined style={{ color: "#52c41a" }} />}
-      {!unlocked && <LockOutlined style={{ color: "#999" }} />}
-    </Space>
-  );
+  return <WizardStepTitle number={STEP_NUMBER[step]} title={title} state={state} />;
 }
 
 function connectionLabel(connection: ConnectionResponse) {
@@ -79,7 +79,7 @@ function findExistingTable(tables: string[] | undefined, candidate: string | und
   return tables?.find((table) => table.toLowerCase() === candidate.trim().toLowerCase());
 }
 
-function CdcCreateWizard() {
+function CdcCreateWizard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form] = Form.useForm<PipelineCreateRequest>();
@@ -182,10 +182,17 @@ function CdcCreateWizard() {
   const targetConnection = connections?.find((connection) => connection.id === targetConnectionId);
   const connectionsVerified = sourceTestedId === sourceConnectionId && targetTestedId === targetConnectionId;
 
-  const isUnlocked = (step: StepKey) => {
-    const index = STEP_ORDER.indexOf(step);
-    return index === 0 || completedSteps.includes(STEP_ORDER[index - 1]);
-  };
+  // 단계 이동은 자유롭다(ETL 생성과 같음) - 윗 단계 표시·단계 머리를 누르면 앞 단계를 끝내지 않았어도 그 단계를 연다.
+  // 각 단계의 «다음» 검사는 그대로이고, 생성은 1~4단계를 모두 «다음»으로 통과해야 된다(아래 firstIncompleteStep).
+  const firstIncompleteStep = STEP_ORDER.slice(0, -1).find((step) => !completedSteps.includes(step));
+
+  // 필수값이 비면 validateFields 가 거절한다. 칸마다 오류는 폼이 이미 그리므로, 거절을 삼키고 «통과 여부»만 돌려준다 -
+  // 그대로 await 하면 거절이 버튼 onClick 밖으로 새어 «처리 안 된 오류»가 콘솔에 남았다.
+  const passes = (fields?: Parameters<typeof form.validateFields>[0]) =>
+    form.validateFields(fields).then(() => true, () => false);
+
+  const stepState = (step: StepKey): WizardStepState =>
+    activeStep === step ? "active" : completedSteps.includes(step) ? "done" : "open";
 
   const completeAndOpen = (current: StepKey, next: StepKey) => {
     setCompletedSteps((previous) => previous.includes(current) ? previous : [...previous, current]);
@@ -270,7 +277,8 @@ function CdcCreateWizard() {
 
   if (createdPipelines.length > 0) {
     return (
-      <Card>
+      <div className="std-card std-card-body">
+        {modeSwitch}
         <Result
           status="success"
           title={`${createdPipelines.length}개 CDC 파이프라인 생성 완료`}
@@ -293,20 +301,20 @@ function CdcCreateWizard() {
             }}>하나 더 생성</Button>,
           ]}
         />
-      </Card>
+      </div>
     );
   }
 
   return (
-    <div style={{ maxWidth: 980, margin: "0 auto" }}>
-      <Card title="CDC 파이프라인 생성" style={{ marginBottom: 16 }}>
-        <Alert
-          type="info"
-          showIcon
-          message="각 단계를 완료해야 다음 단계가 열립니다"
-          description="연결 단계에서는 소스와 타깃 연결 테스트가 모두 성공해야 대상 테이블을 선택할 수 있습니다."
-        />
-      </Card>
+    <>
+      <WizardTop
+        modeSwitch={modeSwitch}
+        noticeTitle="단계는 자유롭게 이동할 수 있고, 생성은 1~4단계를 모두 완료해야 합니다"
+        noticeDesc="연결 단계에서는 소스와 타깃 연결 테스트가 모두 성공해야 대상 테이블을 선택할 수 있습니다."
+        steps={STEP_ORDER.map((key) => ({ key, title: STEP_TITLE[key] }))}
+        stateOf={(key) => stepState(key as StepKey)}
+        onStep={(key) => setActiveStep(key as StepKey)}
+      />
 
       <Form<PipelineCreateRequest>
         form={form}
@@ -315,15 +323,19 @@ function CdcCreateWizard() {
       >
         <Collapse
           accordion
+          bordered={false}
+          expandIconPlacement="end"
+          className="std-wizard"
           activeKey={activeStep}
           onChange={(key) => {
             const requested = Array.isArray(key) ? key[0] : key;
-            if (requested && isUnlocked(requested as StepKey)) setActiveStep(requested as StepKey);
+            if (requested) setActiveStep(requested as StepKey);
           }}
           items={[
             {
               key: "basic",
-              label: <StepLabel step="basic" title="기본 정보" completed={completedSteps.includes("basic")} unlocked />,
+              label: <StepLabel step="basic" title="기본 정보" state={stepState("basic")} />,
+              extra: <WizardStepStatus state={stepState("basic")} />,
               children: (
                 <>
                   <Form.Item name="name" label="파이프라인 기본명" tooltip="여러 테이블을 선택하면 기본명-테이블명으로 각각 생성됩니다." rules={[
@@ -352,7 +364,7 @@ function CdcCreateWizard() {
                   </Form.Item>
                   <div style={{ textAlign: "right" }}>
                     <Button type="primary" onClick={async () => {
-                      await form.validateFields(["name"]);
+                      if (!(await passes(["name"]))) return;
                       completeAndOpen("basic", "connections");
                     }}>다음: 연결</Button>
                   </div>
@@ -361,8 +373,8 @@ function CdcCreateWizard() {
             },
             {
               key: "connections",
-              collapsible: isUnlocked("connections") ? undefined : "disabled",
-              label: <StepLabel step="connections" title="연결" completed={completedSteps.includes("connections")} unlocked={isUnlocked("connections")} />,
+              label: <StepLabel step="connections" title="연결" state={stepState("connections")} />,
+              extra: <WizardStepStatus state={stepState("connections")} />,
               children: (
                 <>
                   {connections?.length === 0 && (
@@ -420,7 +432,7 @@ function CdcCreateWizard() {
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
                     <Button onClick={() => setActiveStep("basic")}>이전</Button>
                     <Button type="primary" disabled={!connectionsVerified} onClick={async () => {
-                      await form.validateFields(["sourceConnectionId", "targetConnectionId"]);
+                      if (!(await passes(["sourceConnectionId", "targetConnectionId"]))) return;
                       completeAndOpen("connections", "targets");
                     }}>다음: 대상 선택</Button>
                   </div>
@@ -429,8 +441,8 @@ function CdcCreateWizard() {
             },
             {
               key: "targets",
-              collapsible: isUnlocked("targets") ? undefined : "disabled",
-              label: <StepLabel step="targets" title="대상 선택" completed={completedSteps.includes("targets")} unlocked={isUnlocked("targets")} />,
+              label: <StepLabel step="targets" title="대상 선택" state={stepState("targets")} />,
+              extra: <WizardStepStatus state={stepState("targets")} />,
               children: (
                 <>
                   <Typography.Title level={5}>소스</Typography.Title>
@@ -601,7 +613,7 @@ function CdcCreateWizard() {
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <Button onClick={() => setActiveStep("connections")}>이전</Button>
                     <Button type="primary" onClick={async () => {
-                      await form.validateFields(["sourceSchema", "targetSchema"]);
+                      if (!(await passes(["sourceSchema", "targetSchema"]))) return;
                       if (selectedTables.length === 0) { message.error("소스 테이블을 하나 이상 선택하세요."); return; }
                       if (sourceColumnQueries.some((query) => query.isFetching)) { message.info("선택한 테이블의 PK와 컬럼 정보를 조회 중입니다."); return; }
                       const noPrimaryKey = selectedTables.filter((table) => !(sourceMetadataByTable[table] ?? []).some((column) => column.primaryKey));
@@ -617,8 +629,8 @@ function CdcCreateWizard() {
             },
             {
               key: "options",
-              collapsible: isUnlocked("options") ? undefined : "disabled",
-              label: <StepLabel step="options" title="실행 옵션" completed={completedSteps.includes("options")} unlocked={isUnlocked("options")} />,
+              label: <StepLabel step="options" title="실행 옵션" state={stepState("options")} />,
+              extra: <WizardStepStatus state={stepState("options")} />,
               children: (
                 <>
                   <Form.Item name="snapshotMode" label="스냅샷 모드" rules={[{ required: true }]}>
@@ -704,7 +716,7 @@ function CdcCreateWizard() {
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <Button onClick={() => setActiveStep("targets")}>이전</Button>
                     <Button type="primary" onClick={async () => {
-                      await form.validateFields(["snapshotMode", "topicPrefix", "loadMode", ...(isDelta ? ["deltaOpColumn"] : [])]);
+                      if (!(await passes(["snapshotMode", "topicPrefix", "loadMode", ...(isDelta ? ["deltaOpColumn"] : [])]))) return;
                       if (isDelta) {
                         // 소스 컬럼과 같은 이름이면 싱크가 같은 이름의 필드를 두 개 받아 깨진다.
                         const clashing = selectedTables.filter((table) => (sourceMetadataByTable[table] ?? [])
@@ -719,8 +731,8 @@ function CdcCreateWizard() {
             },
             {
               key: "review",
-              collapsible: isUnlocked("review") ? undefined : "disabled",
-              label: <StepLabel step="review" title="검토 및 생성" completed={false} unlocked={isUnlocked("review")} />,
+              label: <StepLabel step="review" title="검토 및 생성" state={stepState("review")} />,
+              extra: <WizardStepStatus state={stepState("review")} />,
               children: (
                 <>
                   <Descriptions bordered column={1} size="small">
@@ -787,7 +799,12 @@ function CdcCreateWizard() {
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
                     <Button onClick={() => setActiveStep("options")}>이전</Button>
                     <Button type="primary" loading={createMutation.isPending} onClick={async () => {
-                      await form.validateFields();
+                      if (firstIncompleteStep) {
+                        message.warning(`«${STEP_TITLE[firstIncompleteStep]}» 단계를 먼저 완료하세요. 1~4단계를 모두 «다음»으로 확인해야 생성할 수 있습니다.`);
+                        setActiveStep(firstIncompleteStep);
+                        return;
+                      }
+                      if (!(await passes())) return;
                       if (!connectionsVerified) {
                         message.error("연결정보가 변경되었습니다. 소스와 타깃 연결을 다시 테스트하세요.");
                         setActiveStep("connections");
@@ -805,14 +822,21 @@ function CdcCreateWizard() {
           ]}
         />
       </Form>
-    </div>
+    </>
   );
 }
 
 type LogStepKey = "basic" | "connection" | "target" | "options" | "review";
 const LOG_STEP_ORDER: LogStepKey[] = ["basic", "connection", "target", "options", "review"];
+const LOG_STEP_TITLE: Record<LogStepKey, string> = {
+  basic: "기본 및 파일 정보",
+  connection: "타깃 연결",
+  target: "적재 대상",
+  options: "수집 옵션",
+  review: "검토 및 생성",
+};
 
-function LogCreateWizard() {
+function LogCreateWizard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form] = Form.useForm<LogPipelineCreateRequest>();
@@ -836,10 +860,8 @@ function LogCreateWizard() {
     enabled: testedConnectionId === targetConnectionId && targetConnectionId != null && !!targetSchema,
   });
   const targetConnection = connections?.find((connection) => connection.id === targetConnectionId);
-  const unlocked = (step: LogStepKey) => {
-    const index = LOG_STEP_ORDER.indexOf(step);
-    return index === 0 || completedSteps.includes(LOG_STEP_ORDER[index - 1]);
-  };
+  // CDC 위저드와 같이 단계 이동은 자유롭고, 생성은 1~4단계를 모두 통과해야 된다.
+  const firstIncompleteStep = LOG_STEP_ORDER.slice(0, -1).find((step) => !completedSteps.includes(step));
   const advance = (current: LogStepKey, next: LogStepKey) => {
     setCompletedSteps((previous) => previous.includes(current) ? previous : [...previous, current]);
     setActiveStep(next);
@@ -848,11 +870,13 @@ function LogCreateWizard() {
     const index = LOG_STEP_ORDER.indexOf(step);
     setCompletedSteps((previous) => previous.filter((item) => LOG_STEP_ORDER.indexOf(item) < index));
   };
-  const label = (step: LogStepKey, title: string) => {
-    const isComplete = completedSteps.includes(step);
-    const isUnlocked = unlocked(step);
-    return <Space><Tag color={isComplete ? "success" : isUnlocked ? "blue" : "default"}>{LOG_STEP_ORDER.indexOf(step) + 1}</Tag><span>{title}</span>{isComplete && <CheckCircleOutlined style={{ color: "#52c41a" }} />}{!isUnlocked && <LockOutlined style={{ color: "#999" }} />}</Space>;
-  };
+  // CDC 위저드와 같은 이유로 검증 거절을 삼키고 통과 여부만 본다.
+  const passes = (fields?: Parameters<typeof form.validateFields>[0]) =>
+    form.validateFields(fields).then(() => true, () => false);
+  const logStepState = (step: LogStepKey): WizardStepState =>
+    activeStep === step ? "active" : completedSteps.includes(step) ? "done" : "open";
+  const label = (step: LogStepKey, title: string) =>
+    <WizardStepTitle number={LOG_STEP_ORDER.indexOf(step) + 1} title={title} state={logStepState(step)} />;
   const testMutation = useMutation({
     mutationFn: testConnection,
     onSuccess: (result) => {
@@ -878,46 +902,54 @@ function LogCreateWizard() {
   const notFound = (query: { isFetching: boolean; isError: boolean }, hint: string) => query.isFetching ? <Spin size="small" /> : query.isError ? "조회 실패 - 연결정보를 확인하세요" : hint;
 
   if (createdPipeline) {
-    return <Card><Result status="success" title="로그파일 파이프라인 생성 완료" subTitle={`${createdPipeline.name}이(가) 생성되었습니다.`} extra={[
+    return <div className="std-card std-card-body">{modeSwitch}<Result status="success" title="로그파일 파이프라인 생성 완료" subTitle={`${createdPipeline.name}이(가) 생성되었습니다.`} extra={[
       <Button type="primary" key="list" onClick={() => navigate("/cdc/pipelines")}>파이프라인 목록</Button>,
       <Button key="again" onClick={() => { form.resetFields(); setCompletedSteps([]); setTestedConnectionId(null); setCreatedPipeline(null); setActiveStep("basic"); }}>하나 더 생성</Button>,
-    ]} /></Card>;
+    ]} /></div>;
   }
 
   return <>
-    <Card title="로그파일 파이프라인 생성" style={{ marginBottom: 16 }}>
-      <Alert type="info" showIcon message="각 단계를 완료해야 다음 단계가 열립니다" description="타깃 연결 테스트가 성공해야 스키마와 테이블을 선택할 수 있습니다." />
-    </Card>
+    <WizardTop
+      modeSwitch={modeSwitch}
+      noticeTitle="단계는 자유롭게 이동할 수 있고, 생성은 1~4단계를 모두 완료해야 합니다"
+      noticeDesc="타깃 연결 테스트가 성공해야 스키마와 테이블을 선택할 수 있습니다."
+      steps={[
+        { key: "basic", title: "기본 및 파일 정보" }, { key: "connection", title: "타깃 연결" }, { key: "target", title: "적재 대상" },
+        { key: "options", title: "수집 옵션" }, { key: "review", title: "검토 및 생성" },
+      ]}
+      stateOf={(key) => logStepState(key as LogStepKey)}
+      onStep={(key) => setActiveStep(key as LogStepKey)}
+    />
     <Form<LogPipelineCreateRequest> form={form} layout="vertical" initialValues={{ readFrom: "END", encoding: "UTF-8" }}>
-      <Collapse accordion activeKey={activeStep} onChange={(key) => { const requested = (Array.isArray(key) ? key[0] : key) as LogStepKey; if (requested && unlocked(requested)) setActiveStep(requested); }} items={[
-        { key: "basic", label: label("basic", "기본 및 파일 정보"), children: <>
+      <Collapse accordion bordered={false} expandIconPlacement="end" className="std-wizard" activeKey={activeStep} onChange={(key) => { const requested = (Array.isArray(key) ? key[0] : key) as LogStepKey; if (requested) setActiveStep(requested); }} items={[
+        { key: "basic", label: label("basic", "기본 및 파일 정보"), extra: <WizardStepStatus state={logStepState("basic")} />, children: <>
           <Form.Item name="name" label="파이프라인명" rules={[{ required: true }, { pattern: /^[a-zA-Z0-9][a-zA-Z0-9_-]{2,149}$/, message: "영문·숫자로 시작하고 영문·숫자·_·- 조합 3자 이상으로 입력하세요." }]}><Input placeholder="예: app-log-ingest" /></Form.Item>
           <Form.Item name="filePath" label="로그 파일 경로" rules={[{ required: true }]} tooltip="Filebeat 컨테이너 기준 경로입니다. docker-compose의 ./log-sources는 /var/log/app에 마운트됩니다."><Input placeholder="예: /var/log/app/app.log" /></Form.Item>
           <Form.Item name="description" label="설명"><Input.TextArea rows={3} /></Form.Item>
-          <div style={{ textAlign: "right" }}><Button type="primary" onClick={async () => { await form.validateFields(["name", "filePath"]); advance("basic", "connection"); }}>다음: 연결</Button></div>
+          <div style={{ textAlign: "right" }}><Button type="primary" onClick={async () => { if (!(await passes(["name", "filePath"]))) return; advance("basic", "connection"); }}>다음: 연결</Button></div>
         </> },
-        { key: "connection", collapsible: unlocked("connection") ? undefined : "disabled", label: label("connection", "타깃 연결"), children: <>
+        { key: "connection", label: label("connection", "타깃 연결"), extra: <WizardStepStatus state={logStepState("connection")} />, children: <>
           <Form.Item name="targetConnectionId" label="타깃 연결" rules={[{ required: true }]}><Select loading={connectionsLoading} options={connections?.map((connection) => ({ value: connection.id, label: connectionLabel(connection) }))} placeholder="랜딩할 DB 선택" onChange={() => { setTestedConnectionId(null); invalidateFrom("connection"); form.setFieldsValue({ targetSchema: undefined, targetTable: undefined }); }} /></Form.Item>
           <Button block disabled={!targetConnectionId} loading={testMutation.isPending} onClick={() => targetConnectionId && testMutation.mutate(targetConnectionId)}>타깃 연결 테스트</Button>
           {testedConnectionId === targetConnectionId && <Alert style={{ marginTop: 8 }} type="success" showIcon message="타깃 연결 성공" />}
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}><Button onClick={() => setActiveStep("basic")}>이전</Button><Button type="primary" disabled={testedConnectionId !== targetConnectionId} onClick={() => advance("connection", "target")}>다음: 적재 대상</Button></div>
         </> },
-        { key: "target", collapsible: unlocked("target") ? undefined : "disabled", label: label("target", "적재 대상"), children: <>
+        { key: "target", label: label("target", "적재 대상"), extra: <WizardStepStatus state={logStepState("target")} />, children: <>
           <Space align="start" size="large" wrap style={{ width: "100%" }}>
             <Form.Item name="targetSchema" label="타깃 스키마" rules={[{ required: true }]} style={{ minWidth: 300, flex: 1 }}><Select showSearch loading={schemasQuery.isFetching} options={schemasQuery.data?.map((value) => ({ value }))} notFoundContent={notFound(schemasQuery, "스키마 없음")} onChange={() => { form.setFieldValue("targetTable", undefined); invalidateFrom("target"); }} /></Form.Item>
             <Form.Item name="targetTable" label="타깃 테이블" rules={[{ required: true }]} style={{ minWidth: 300, flex: 1 }}><AutoComplete disabled={!targetSchema} options={tablesQuery.data?.map((value) => ({ value }))} notFoundContent={notFound(tablesQuery, "기존 테이블 없음 - 새 이름 입력 가능")} placeholder="기존 테이블 선택 또는 새 이름 입력" onChange={() => invalidateFrom("target")} /></Form.Item>
           </Space>
-          <div style={{ display: "flex", justifyContent: "space-between" }}><Button onClick={() => setActiveStep("connection")}>이전</Button><Button type="primary" onClick={async () => { await form.validateFields(["targetSchema", "targetTable"]); advance("target", "options"); }}>다음: 수집 옵션</Button></div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}><Button onClick={() => setActiveStep("connection")}>이전</Button><Button type="primary" onClick={async () => { if (!(await passes(["targetSchema", "targetTable"]))) return; advance("target", "options"); }}>다음: 수집 옵션</Button></div>
         </> },
-        { key: "options", collapsible: unlocked("options") ? undefined : "disabled", label: label("options", "수집 옵션"), children: <>
+        { key: "options", label: label("options", "수집 옵션"), extra: <WizardStepStatus state={logStepState("options")} />, children: <>
           <Space align="start" size="large" wrap style={{ width: "100%" }}><Form.Item name="readFrom" label="읽기 시작 위치" style={{ minWidth: 300, flex: 1 }}><Select options={[{ value: "END", label: "END (신규 라인부터)" }, { value: "BEGINNING", label: "BEGINNING (파일 처음부터)" }]} /></Form.Item><Form.Item name="encoding" label="인코딩" style={{ minWidth: 300, flex: 1 }}><Input /></Form.Item></Space>
           <Form.Item name="topicName" label="CDC Topic" tooltip="비우면 log-{파이프라인 ID}로 자동 생성됩니다"><Input placeholder="비워두면 자동 생성" /></Form.Item>
           <Form.Item name="agentHost" label="Agent Host" tooltip="메타데이터용 식별 필드 (선택)"><Input placeholder="예: filebeat" /></Form.Item>
           <div style={{ display: "flex", justifyContent: "space-between" }}><Button onClick={() => setActiveStep("target")}>이전</Button><Button type="primary" onClick={() => advance("options", "review")}>다음: 검토</Button></div>
         </> },
-        { key: "review", collapsible: unlocked("review") ? undefined : "disabled", label: label("review", "검토 및 생성"), children: <>
+        { key: "review", label: label("review", "검토 및 생성"), extra: <WizardStepStatus state={logStepState("review")} />, children: <>
           <Descriptions bordered column={1} size="small"><Descriptions.Item label="파이프라인명">{values?.name ?? "—"}</Descriptions.Item><Descriptions.Item label="로그 파일">{values?.filePath ?? "—"}</Descriptions.Item><Descriptions.Item label="타깃 연결">{targetConnection ? connectionLabel(targetConnection) : "—"}</Descriptions.Item><Descriptions.Item label="적재 대상">{values?.targetSchema}.{values?.targetTable}</Descriptions.Item><Descriptions.Item label="읽기 시작">{values?.readFrom}</Descriptions.Item><Descriptions.Item label="CDC Topic">{values?.topicName || "자동 생성"}</Descriptions.Item></Descriptions>
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}><Button onClick={() => setActiveStep("options")}>이전</Button><Button type="primary" loading={createMutation.isPending} onClick={async () => { const request = await form.validateFields(); if (testedConnectionId !== targetConnectionId) { message.error("타깃 연결을 다시 테스트하세요."); setActiveStep("connection"); return; } createMutation.mutate(request); }}>로그파일 파이프라인 생성</Button></div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}><Button onClick={() => setActiveStep("options")}>이전</Button><Button type="primary" loading={createMutation.isPending} onClick={async () => { if (firstIncompleteStep) { message.warning(`«${LOG_STEP_TITLE[firstIncompleteStep]}» 단계를 먼저 완료하세요. 1~4단계를 모두 «다음»으로 확인해야 생성할 수 있습니다.`); setActiveStep(firstIncompleteStep); return; } const request = await form.validateFields().catch(() => undefined); if (!request) return; if (testedConnectionId !== targetConnectionId) { message.error("타깃 연결을 다시 테스트하세요."); setActiveStep("connection"); return; } createMutation.mutate(request); }}>로그파일 파이프라인 생성</Button></div>
         </> },
       ]} />
     </Form>
@@ -926,17 +958,22 @@ function LogCreateWizard() {
 
 export function CdcCreatePage() {
   const [activeTab, setActiveTab] = useState("cdc");
-  return (
-    <div style={{ maxWidth: 980, margin: "0 auto", minWidth: 0 }}>
-      <Tabs
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        destroyInactiveTabPane
-        items={[
-          { key: "cdc", label: "CDC 생성", children: <CdcCreateWizard /> },
-          { key: "log", label: "로그파일 생성", children: <LogCreateWizard /> },
-        ]}
-      />
+  // 디자인 작업물 cdc-create.html: 탭 대신 윗 카드 왼쪽의 모드 버튼으로 CDC 생성 ↔ 로그파일 생성을 바꾼다.
+  // 예전 탭(destroyInactiveTabPane)과 같이 바꾸면 다른 쪽 위저드는 내려가고 입력값도 비워진다.
+  const modeSwitch = (
+    <div className="std-mode-switch" role="tablist" aria-label="생성 종류">
+      {([["cdc", "grid", "CDC 생성"], ["log", "doc", "로그파일 생성"]] as const).map(([key, icon, text]) => (
+        <button key={key} type="button" role="tab" aria-selected={activeTab === key}
+                className={activeTab === key ? "is-active" : undefined} onClick={() => setActiveTab(key)}>
+          <WfIcon name={icon} size={14} />
+          {text}
+        </button>
+      ))}
     </div>
+  );
+  return (
+    <StdPage menu="cdc" title={activeTab === "cdc" ? "CDC 생성" : "로그파일 생성"} icon="database" className="cdc-create-page">
+      {activeTab === "cdc" ? <CdcCreateWizard modeSwitch={modeSwitch} /> : <LogCreateWizard modeSwitch={modeSwitch} />}
+    </StdPage>
   );
 }

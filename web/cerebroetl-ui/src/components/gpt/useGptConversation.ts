@@ -30,6 +30,8 @@ export interface GptConversationOptions {
   target: Record<string, string>;
   /** 화면에 보이는 오류 문구(오류 분석). 속성창 질문이면 없다. */
   errorText?: string;
+  /** WORKFLOW_DRAFT: 작성 중 설계를 요청 때마다 만든다(보낼 때의 최신 설계가 가게). */
+  draft?: () => string;
 }
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -44,7 +46,9 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
  *   <li>SUMMARIZED(속성창) - 앞부분을 요약했다. 화면은 요약을 받아 두고, 요약에 들어간 문답은 다음부터 보내지 않는다(흐리게 남겨 보여 준다).</li>
  * </ul>
  */
-export function useGptConversation({ agentType, targetType, target, errorText: screenError }: GptConversationOptions) {
+export function useGptConversation({ agentType, targetType, target, errorText: screenError, draft }: GptConversationOptions) {
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [turns, setTurns] = useState<GptTurn[]>([]);
   const [summary, setSummary] = useState<string | null>(null);
   /** turns 중 앞에서 몇 개가 요약에 들어갔는지. 이 앞은 보내지 않는다. */
@@ -56,7 +60,7 @@ export function useGptConversation({ agentType, targetType, target, errorText: s
   const [preview, setPreview] = useState<GptPreviewState>({ open: false, loading: false });
   const abortRef = useRef<AbortController | null>(null);
 
-  const baseRequest = useCallback((): LlmChatRequest => ({ agentType, targetType, target, errorText: screenError }),
+  const baseRequest = useCallback((): LlmChatRequest => ({ agentType, targetType, target, errorText: screenError, draft: draftRef.current?.() }),
     // target 은 호출하는 쪽이 매 렌더 새 객체로 넘긴다 - 내용으로 비교한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [agentType, targetType, JSON.stringify(target), screenError]);

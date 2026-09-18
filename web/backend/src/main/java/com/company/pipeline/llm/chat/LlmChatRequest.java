@@ -21,6 +21,8 @@ import java.util.Map;
  *                  속성창 대화가 요약된 뒤에는 요약에 들어간 부분을 빼고 보낸다
  * @param summary   속성창 GPT 탭의 앞 대화 요약(서버가 {@code compacted} 이벤트로 준 것). 없으면 비어 있다
  * @param question  이번 질문. 오류 분석의 첫 요청이면 비어 있다
+ * @param draft     WORKFLOW_DRAFT 전용 - 화면의 작성 중 설계(JSON: 속성 입력 · 노드 · 연결). 서버에 아직 없는 대상이라 화면이 보낸다.
+ *                  이름 · 단계 같은 나머지는 서버가 id 로 찾아 붙인다
  */
 public record LlmChatRequest(
         @NotNull LlmAgentType agentType,
@@ -29,7 +31,8 @@ public record LlmChatRequest(
         @Size(max = 200_000) String errorText,
         @Valid @Size(max = 400) List<Turn> history,
         @Size(max = 10_000) String summary,
-        @Size(max = 4_000) String question) {
+        @Size(max = 4_000) String question,
+        @Size(max = 100_000) String draft) {
 
     public record Turn(
             @NotNull @Pattern(regexp = "user|assistant") String role,

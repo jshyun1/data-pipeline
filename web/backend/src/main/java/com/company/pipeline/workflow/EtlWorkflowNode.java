@@ -32,6 +32,12 @@ public class EtlWorkflowNode {
     public static final String TYPE_START = "START";
     public static final String TYPE_END = "END";
     public static final String TYPE_SUBWF = "SUBWF";
+    /**
+     * CDC 파이프라인 하나를 가리키는 노드(2026-09-17). 실행하면 그 파이프라인의 제어 DAG 를
+     * 부르고 <b>기다리지 않는다</b> - CDC 의 «시작»은 끝이 없어서 기다리면 슬롯이 영구히 묶인다.
+     * 그래서 CDC 노드끼리는 잇지 않는다(순서가 성립하지 않는다).
+     */
+    public static final String TYPE_CDC = "CDC";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -51,6 +57,10 @@ public class EtlWorkflowNode {
 
     @Column(name = "sub_workflow_id")
     private Long subWorkflowId;
+
+    /** CDC 노드가 가리키는 파이프라인. nodeType=CDC 일 때만 채운다. */
+    @Column(name = "pipeline_id")
+    private Long pipelineId;
 
     @Column(name = "trigger_rule", length = 40, nullable = false)
     private String triggerRule;
@@ -80,7 +90,7 @@ public class EtlWorkflowNode {
     private LocalDateTime updatedAt;
 
     public EtlWorkflowNode(Long workflowId, String nodeKey, String nodeType, Long jobId,
-                           Long subWorkflowId, String triggerRule, String branchExpr,
+                           Long subWorkflowId, Long pipelineId, String triggerRule, String branchExpr,
                            Integer retries, Integer retryDelaySec, Double displayX, Double displayY) {
         LocalDateTime now = LocalDateTime.now();
         this.workflowId = workflowId;
@@ -88,6 +98,7 @@ public class EtlWorkflowNode {
         this.nodeType = nodeType == null ? TYPE_JOB : nodeType;
         this.jobId = jobId;
         this.subWorkflowId = subWorkflowId;
+        this.pipelineId = pipelineId;
         this.triggerRule = triggerRule == null ? "ALL_SUCCESS" : triggerRule;
         this.branchExpr = branchExpr;
         this.retries = retries == null ? 0 : retries;

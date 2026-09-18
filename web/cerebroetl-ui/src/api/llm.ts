@@ -139,7 +139,14 @@ export async function getLlmStatus(): Promise<LlmStatus> {
 // ---------------------------------------------------------------- GPT 분석(2단계)
 
 /** 분석 대상 종류. 서버가 요청마다 이 값으로 조회 권한을 다시 확인한다(설계 7절). */
-export type LlmTargetType = "ETL_ASSISTANT" | "ETL_JOB" | "CDC_PIPELINE" | "WORKFLOW_NODE" | "WORKFLOW_TASK";
+export type LlmTargetType =
+  | "ETL_ASSISTANT"
+  | "ETL_JOB"
+  | "CDC_PIPELINE"
+  | "WORKFLOW"
+  | "WORKFLOW_DRAFT"
+  | "WORKFLOW_NODE"
+  | "WORKFLOW_TASK";
 export type LlmAgentType = "ERROR_ANALYSIS" | "JOB_ANALYSIS";
 
 export interface LlmChatTurn {
@@ -158,6 +165,8 @@ export interface LlmChatRequest {
   history?: LlmChatTurn[];
   /** 속성창 대화의 앞부분 요약(서버가 compacted 이벤트로 준 것). */
   summary?: string | null;
+  /** WORKFLOW_DRAFT: 화면의 작성 중 설계(JSON - 속성 입력 · 노드 · 연결). 서버에 아직 없는 대상이라 화면이 보낸다. */
+  draft?: string | null;
   question?: string | null;
 }
 

@@ -26,7 +26,33 @@ public final class JobAnalysisAgent {
             - [이전 대화 요약] 이 있으면 앞 대화의 결론으로 보고 이어서 답한다.
             """;
 
+    /** 저장된 대상 전제 규칙. 초안 대상에서는 {@link #DRAFT_RULE} 로 바꾼다. */
+    static final String SAVED_RULE = "- 대상 정보는 질문 시점에 저장된 설계와 상태다. 화면에서 아직 저장하지 않은 변경은 들어 있지 않다.";
+    static final String DRAFT_RULE = "- 대상 정보는 운영자가 화면에서 그리고 있는, 아직 저장하지 않은 새 워크플로우 설계다(질문을 보낸 시점의 화면 그대로).";
+
+    /**
+     * 워크플로우 생성 화면(WORKFLOW_DRAFT, 2026-09-18) - 같은 자유 질문 흐름(요약 포함)에 «저장 · 게시 전 설계 검토» 관점을 더한다.
+     * 따로 에이전트를 두지 않은 이유: 묻는 방식(자유 질문 · 긴 대화 요약)이 속성창과 같고, 달라지는 것은 대상의 전제와 짚을 점뿐이다.
+     */
+    static final String DRAFT_GUIDE = """
+
+            [작성 중인 새 워크플로우]
+            - 저장 · 게시 전에 설계를 함께 검토하는 역할이다. «검증 결과» 구역은 서버의 게시 검증을 이 초안에 돌린 결과다.
+            - 설계를 봐 달라고 하면 이 순서로 짚는다: (1) 검증 오류 - 게시가 막히는 이유와 캔버스에서 고치는 방법
+              (2) 실행 순서 - 선행 연결, 함께 돌 수 있는 노드, 연결 안 된 노드 (3) 실행 조건(trigger rule) · 연결 조건이 의도와 맞는지
+              (4) 스케줄을 말로 풀기와 동시 실행 · catchup · 실패 시 중단의 영향 (5) job 단계로 본 적재 대상 겹침 · 순서 의존.
+            - 노드 배치 · 연결 · 속성 입력은 운영자가 화면에서 한다. 이름이 비어 있으면 저장할 수 없다는 점을 알려 준다.
+            """;
+
     private JobAnalysisAgent() {
+    }
+
+    /** 대상 종류에 맞는 역할 지시문. 입력 길이 계산에도 같은 것을 쓴다. */
+    public static String systemPrompt(LlmTargetType targetType) {
+        if (targetType == LlmTargetType.WORKFLOW_DRAFT) {
+            return SYSTEM_PROMPT.replace(SAVED_RULE, DRAFT_RULE) + DRAFT_GUIDE;
+        }
+        return SYSTEM_PROMPT;
     }
 
     /**
@@ -44,7 +70,7 @@ public final class JobAnalysisAgent {
         head.append("\n\n[질문]\n");
 
         List<LlmMessage> out = new ArrayList<>();
-        out.add(LlmMessage.system(SYSTEM_PROMPT));
+        out.add(LlmMessage.system(systemPrompt(targetType)));
         List<LlmMessage> conversation = new ArrayList<>(keptTurns);
         conversation.add(LlmMessage.user(question.strip()));
         LlmMessage first = conversation.get(0);

@@ -87,6 +87,30 @@ public class AirflowDagRunClient {
         }
     }
 
+    /**
+     * 지금 돌고 있는 Run 만. «이 파이프라인을 이미 감시 중인가»를 볼 때 쓴다.
+     *
+     * <p>{@link #getDagRuns} 는 최근 50건이라, 감시 Run 이 오래전에 떴고 그 뒤로 워크플로우의 일괄 지시가
+     * 건너뜀 Run 을 50건 넘게 쌓으면 창 밖으로 밀려나 «감시 없음»으로 오판한다. 상태로 걸러 받는다.
+     */
+    public List<DagRun> getRunningDagRuns(String dagId) {
+        DagRunCollection response = withAuth(token -> restClient.get()
+                .uri(uri -> uri.path("/dags/{dagId}/dagRuns")
+                        .queryParam("state", "running")
+                        .queryParam("limit", 100)
+                        .queryParam("order_by", "start_date")
+                        .build(dagId))
+                .header("Authorization", "Bearer " + token)
+                .retrieve()
+                .body(DagRunCollection.class));
+        if (response == null || response.dagRuns() == null) {
+            return List.of();
+        }
+        return response.dagRuns().stream()
+                .sorted(Comparator.comparing(DagRun::startDate, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+    }
+
     public List<DagRun> getDagRuns(String dagId) {
         DagRunCollection response = withAuth(token -> restClient.get()
                 .uri(uri -> uri.path("/dags/{dagId}/dagRuns")

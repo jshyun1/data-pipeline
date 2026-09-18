@@ -99,8 +99,7 @@ public class AirflowDagCatalogController {
         if (!isWatchAction(conf)) {
             return;
         }
-        boolean alreadyWatching = dagRunClient.getDagRuns(dagId).stream()
-                .filter(run -> "running".equalsIgnoreCase(run.state()))
+        boolean alreadyWatching = dagRunClient.getRunningDagRuns(dagId).stream()
                 .anyMatch(run -> isWatchAction(run.conf()));
         if (alreadyWatching) {
             throw new com.company.pipeline.common.BusinessException(
@@ -109,10 +108,32 @@ public class AirflowDagCatalogController {
         }
     }
 
-    /** 감시 센서까지 도달하는 동작. 이 Run이 살아 있으면 파이프라인은 이미 감시되고 있다. */
+    /**
+     * 감시 센서까지 도달하는 동작. 이 Run이 살아 있으면 파이프라인은 이미 감시되고 있다.
+     *
+     * <p>restart 도 끝에 감시가 붙는다(검증 뒤 RUNNING 을 기대하고 센서가 이어서 돈다). 처음엔 빠져 있어서,
+     * 재시작 Run 이 감시하는 중에 «감시 재개»를 누르면 감시가 둘이 됐다(2026-09-17 워크플로우 검증 중 발견).
+     */
     private static boolean isWatchAction(java.util.Map<String, Object> conf) {
         Object action = conf == null ? null : conf.get("action");
-        return "monitor".equals(action) || "start".equals(action);
+        return "monitor".equals(action) || "start".equals(action) || "restart".equals(action);
+    }
+
+    /**
+     * 이 제어 DAG 에서 지금 감시 중인 Run id, 먼저 뜬 순서.
+     *
+     * <p>제어 DAG 의 감시 센서가 «나보다 먼저 감시하는 Run 이 있는가»를 묻는다. 워크플로우의 일괄 지시
+     * (CDC 노드)는 TriggerDagRunOperator 로 제어 DAG 를 직접 띄워서 {@link #run} 의 중복 차단을 거치지
+     * 않는다. 3개 중 1개가 실패해 일괄 restart 를 쏘면 멀쩡한 2개에도 감시 Run 이 하나씩 더 붙고,
+     * 감시 둘이 max_active_runs=2 를 다 차지해 이후 stop 이 큐에 갇힌다(2026-09-17 검증 중 실측).
+     * 그래서 늦게 뜬 쪽이 스스로 물러난다 - 먼저 뜬 감시가 계속 지킨다.
+     */
+    @GetMapping("/{dagId}/watch-runs")
+    public ApiResponse<List<String>> watchRuns(@PathVariable String dagId) {
+        return ApiResponse.success(dagRunClient.getRunningDagRuns(dagId).stream()
+                .filter(run -> isWatchAction(run.conf()))
+                .map(AirflowDagRunClient.DagRun::dagRunId)
+                .toList());
     }
 
     /**

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Alert, Button, Card, Modal, Popconfirm, Radio, Space, Table, Tag, Tooltip, message } from "antd";
+import { Alert, Button, Modal, Popconfirm, Radio, Space, Table, Tag, Tooltip, message } from "antd";
+import { StdPage } from "../../components/StdPage";
 import { PlusOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import {
@@ -24,6 +25,8 @@ export function GptManagePage() {
   const queryClient = useQueryClient();
   const { data: providers = [], isLoading } = useQuery({ queryKey: ["llm-providers"], queryFn: listLlmProviders });
   const active = providers.find((p) => p.active);
+  // 확인 창은 hook 으로 연다 - 정적 Modal.confirm 은 화면 테마(StdPage)를 받지 못한다.
+  const [modal, modalHolder] = Modal.useModal();
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["llm-providers"] });
@@ -62,7 +65,7 @@ export function GptManagePage() {
   const select = (row: LlmProviderResponse) => {
     if (row.active) return;
     if (row.deployment === "EXTERNAL") {
-      Modal.confirm({
+      modal.confirm({
         title: `${row.name} 을(를) 선택합니다`,
         content: (
           <div>
@@ -80,8 +83,8 @@ export function GptManagePage() {
   };
 
   return (
-    <Card title="GPT 관리">
-      <Space direction="vertical" style={{ width: "100%" }} size={16}>
+    <StdPage menu="gpt" title="GPT 관리" icon="bot">
+      {modalHolder}
         {active ? (
           <Alert
             type="info"
@@ -103,16 +106,17 @@ export function GptManagePage() {
           <Alert type="warning" showIcon message="선택된 GPT 가 없습니다. GPT 기능이 화면에 표시되지 않습니다." />
         )}
 
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate("/gpt/register")}>등록</Button>
+        <div className="std-toolbar">
+          <Button type="primary" className="std-push-end" icon={<PlusOutlined />} onClick={() => navigate("/gpt/register")}>등록</Button>
         </div>
 
+        <div className="std-card std-table-card">
         <Table<LlmProviderResponse>
           rowKey="id"
           size="middle"
           loading={isLoading}
           dataSource={providers}
-          pagination={{ pageSize: 10, hideOnSinglePage: true, showTotal: (total) => `전체 ${total}건` }}
+          pagination={{ pageSize: 10, hideOnSinglePage: true, showTotal: (total) => `총 ${total}건` }}
           scroll={{ x: 1100 }}
           locale={{ emptyText: "등록된 GPT 가 없습니다. 오른쪽 위 «등록»으로 추가하십시오." }}
           rowClassName={(row) => (row.active ? "ant-table-row-selected" : "")}
@@ -187,7 +191,7 @@ export function GptManagePage() {
             },
           ]}
         />
-      </Space>
-    </Card>
+        </div>
+    </StdPage>
   );
 }
