@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Checkbox, Form, Input, Modal, Popconfirm, Table, Tag, message } from "antd";
+import { Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag, message } from "antd";
 import { StdPage } from "../../components/StdPage";
+import { byNumber, byText, matchesText } from "../../utils/listSort";
 import { WfIcon } from "../../components/WorkflowPageHeader";
 import type { ColumnsType } from "antd/es/table";
 import {
@@ -29,6 +30,8 @@ export function RolePermissionPage() {
 
   const [selected, setSelected] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  // 역할 목록 위 검색(2026-09-18 목록 화면 공통 규격). 오른쪽 «시스템 권한» 카드는 표가 아니라 그대로 둔다.
+  const [roleSearch, setRoleSearch] = useState("");
   const [createForm] = Form.useForm();
   const [edited, setEdited] = useState<Record<string, RowState>>({});
 
@@ -105,13 +108,14 @@ export function RolePermissionPage() {
       dataIndex: "roleId",
       key: "roleId",
       width: 190,
+      sorter: (a, b) => byText(a.roleId, b.roleId),
       render: (v: string) => <span style={{ fontFamily: "monospace", color: "#555" }}>{v}</span>,
     },
-    { title: "역할명", dataIndex: "roleNm", key: "roleNm", render: (v, r) => (
+    { title: "역할명", dataIndex: "roleNm", key: "roleNm", sorter: (a, b) => byText(a.roleNm, b.roleNm), render: (v, r) => (
       <span>{v} {r.builtIn && <Tag>기본</Tag>}</span>
     ) },
-    { title: "설명", dataIndex: "roleDesc", key: "roleDesc", render: (v) => v ?? "-" },
-    { title: "사용자", dataIndex: "userCount", key: "userCount", width: 90 },
+    { title: "설명", dataIndex: "roleDesc", key: "roleDesc", sorter: (a, b) => byText(a.roleDesc, b.roleDesc), render: (v) => v ?? "-" },
+    { title: "사용자", dataIndex: "userCount", key: "userCount", width: 90, sorter: (a, b) => byNumber(a.userCount, b.userCount) },
     {
       title: "작업",
       key: "action",
@@ -158,22 +162,35 @@ export function RolePermissionPage() {
     },
   ];
 
+  const visibleRoles = (roles ?? []).filter((row) =>
+    matchesText(roleSearch, row.roleId, row.roleNm, row.roleDesc));
+
   return (
-    <StdPage menu="settings" title="역할 및 권한" icon="shield">
-      {/* 디자인 작업물 role-setting.html: 왼쪽 «역할 목록» 카드(표) · 오른쪽 «시스템 권한» 카드. */}
-      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <section className="std-card std-table-card" style={{ flex: "1 1 460px" }}>
+    <StdPage menu="settings" title="역할 및 권한" icon="shield" fill>
+      {/* 디자인 작업물 role-setting.html: 왼쪽 «역할 목록» 카드(표) · 오른쪽 «시스템 권한» 카드.
+          두 카드가 나란히 있어 어느 쪽인지 알아야 하므로 제목 줄은 남기고, 그 아래에 검색 띠를 둔다. */}
+      <div className="role-setting-layout">
+        <section className="std-card std-table-card role-setting-list">
           <div className="std-card-head">
             <h2 className="std-card-title">역할 목록</h2>
-            <Button type="primary" onClick={() => setCreateOpen(true)}>
-              + 역할 추가
-            </Button>
+          </div>
+          <div className="std-filter-card">
+            <Space wrap>
+              <Input placeholder="역할 ID·역할명·설명 검색" allowClear style={{ width: 240 }}
+                     value={roleSearch} onChange={(event) => setRoleSearch(event.target.value)} />
+            </Space>
+            <Space wrap className="std-push-end">
+              <Button type="primary" onClick={() => setCreateOpen(true)}>
+                + 역할 추가
+              </Button>
+            </Space>
           </div>
           <Table<RoleView>
             rowKey="roleId"
+            className="std-full-table"
             loading={isLoading}
             columns={roleColumns}
-            dataSource={roles}
+            dataSource={visibleRoles}
             size="middle"
             pagination={false}
             onRow={(r) => ({ onClick: () => setSelected(r.roleId), style: { cursor: "pointer" } })}
@@ -181,7 +198,7 @@ export function RolePermissionPage() {
           />
         </section>
 
-        <section className="std-card std-table-card" style={{ flex: "1 1 380px" }}>
+        <section className="std-card std-table-card role-setting-perm">
           <div className="std-card-head">
             <h2 className="std-card-title">{selected ? `시스템 권한 — ${detail?.roleNm ?? selected}` : "시스템 권한"}</h2>
             {selected ? (

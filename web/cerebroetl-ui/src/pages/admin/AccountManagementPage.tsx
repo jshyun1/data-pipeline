@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Tooltip, message } from "antd";
+import { Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Tooltip, message } from "antd";
 import { StdPage } from "../../components/StdPage";
 import { WfIcon } from "../../components/WorkflowPageHeader";
+import { byBool, byDate, byNumber, byText, matchesText } from "../../utils/listSort";
 import type { ColumnsType } from "antd/es/table";
 import {
   createAccount,
@@ -30,6 +31,10 @@ export function AccountManagementPage() {
   const [pwTarget, setPwTarget] = useState<AccountView | null>(null);
   const [roleTarget, setRoleTarget] = useState<AccountView | null>(null);
   const [checkedRoles, setCheckedRoles] = useState<string[]>([]);
+  // 표 위 검색·필터(2026-09-18).
+  const [accountSearch, setAccountSearch] = useState("");
+  const [authorityFilter, setAuthorityFilter] = useState<string[]>([]);
+  const [useYnFilter, setUseYnFilter] = useState<string[]>([]);
   const [createForm] = Form.useForm();
   const [editForm] = Form.useForm();
   const [pwForm] = Form.useForm();
@@ -126,18 +131,24 @@ export function AccountManagementPage() {
   });
 
   const columns: ColumnsType<AccountView> = [
-    { title: "계정", dataIndex: "userId", key: "userId" },
-    { title: "이름", dataIndex: "userNm", key: "userNm" },
-    { title: "이메일", dataIndex: "email", key: "email", render: (v) => v ?? "-" },
+    { title: "계정", dataIndex: "userId", key: "userId", sorter: (a, b) => byText(a.userId, b.userId) },
+    { title: "이름", dataIndex: "userNm", key: "userNm", sorter: (a, b) => byText(a.userNm, b.userNm) },
+    { title: "이메일", dataIndex: "email", key: "email", sorter: (a, b) => byText(a.email, b.email), render: (v) => v ?? "-" },
     {
       title: "권한",
       dataIndex: "admin",
       key: "admin",
+      sorter: (a, b) => byBool(a.admin, b.admin),
       render: (admin: boolean) => (admin ? <Tag color="gold">관리자</Tag> : <Tag>일반</Tag>),
     },
     {
       title: "역할",
       key: "roles",
+      // 관리자는 역할이 무시되므로 «역할 무시됨»으로 묶어 맨 뒤로 보낸다.
+      sorter: (a, b) => byText(
+        a.admin ? undefined : (rolesByUser.get(a.userId)?.roleNames ?? []).join(", "),
+        b.admin ? undefined : (rolesByUser.get(b.userId)?.roleNames ?? []).join(", "),
+      ),
       // admin_yn='Y' 는 PermissionService 에서 역할 계산 결과를 전 시스템 최대 권한으로
       // 덮어쓴다(부트스트랩용 백도어). 그래서 관리자에게 배정된 역할은 실제로 아무 효과가
       // 없는데, 파란 태그로 나란히 보이면 "이 역할 때문에 이만큼 되는구나"로 읽힌다.
@@ -168,6 +179,7 @@ export function AccountManagementPage() {
       title: "상태",
       dataIndex: "useYn",
       key: "useYn",
+      sorter: (a, b) => byText(a.useYn, b.useYn),
       render: (useYn: string) =>
         useYn === "Y" ? <Tag color="green">사용</Tag> : <Tag color="default">비활성</Tag>,
     },
@@ -175,12 +187,14 @@ export function AccountManagementPage() {
       title: "최종 로그인",
       dataIndex: "lastLoginDt",
       key: "lastLoginDt",
+      sorter: (a, b) => byDate(a.lastLoginDt, b.lastLoginDt),
       render: (v: string | null) => (v ? v.replace("T", " ").slice(0, 19) : "-"),
     },
     {
       title: "잠금",
       dataIndex: "locked",
       key: "locked",
+      sorter: (a, b) => byBool(a.locked, b.locked) || byNumber(a.loginFailCount, b.loginFailCount),
       render: (locked: boolean, row) =>
         locked ? <Tag color="red">🔒 {row.loginFailCount}회</Tag> : <span>-</span>,
     },
@@ -231,36 +245,56 @@ export function AccountManagementPage() {
     },
   ];
 
+  // 표 위 검색·필터(2026-09-18 목록 화면 공통 규격).
+  const visibleAccounts = (accounts ?? []).filter((row) =>
+    matchesText(accountSearch, row.userId, row.userNm, row.email,
+      (rolesByUser.get(row.userId)?.roleNames ?? []).join(" "))
+    && (authorityFilter.length === 0 || authorityFilter.includes(row.admin ? "ADMIN" : "USER"))
+    && (useYnFilter.length === 0 || useYnFilter.includes(row.useYn)));
+
   return (
-    <StdPage menu="settings" title="계정 관리" icon="user">
-      {/* 디자인 작업물 account-setting.html: 안내문구 ··· 동기화 · 계정 추가, 그 아래 표 카드. */}
+    <StdPage menu="settings" title="계정 관리" icon="user" fill>
+      {/* 디자인 작업물 account-setting.html: 안내문구는 표 위에, 조작은 필터 띠 오른쪽 끝에 둔다. */}
       <div className="std-toolbar">
         <span className="std-notice">
           <WfIcon name="info" size={14} />
           관리자도 기존 비밀번호를 볼 수 없습니다. 초기화하면 사용자는 다음 로그인 때 변경을 요구받습니다.
           삭제 대신 비활성화를 권장합니다(실행 이력·감사 로그가 계정을 참조).
         </span>
-        <Space className="std-push-end">
-          <Button
-            loading={syncMut.isPending}
-            onClick={() => syncMut.mutate()}
-            title="배정된 역할 기준으로 전체 사용자를 ETL/Airflow 개인계정으로 일괄 재조정합니다."
-          >
-            ETL/Airflow 전체 동기화
-          </Button>
-          <Button type="primary" onClick={() => setCreateOpen(true)}>
-            + 계정 추가
-          </Button>
-        </Space>
       </div>
       <div className="std-card std-table-card">
+        <div className="std-filter-card">
+          <Space wrap>
+            <Input placeholder="계정·이름·이메일·역할 검색" allowClear style={{ width: 260 }}
+                   value={accountSearch} onChange={(event) => setAccountSearch(event.target.value)} />
+            <Select mode="multiple" allowClear placeholder="권한" style={{ minWidth: 130 }}
+                    options={[{ value: "ADMIN", label: "관리자" }, { value: "USER", label: "일반" }]}
+                    value={authorityFilter} onChange={setAuthorityFilter} />
+            <Select mode="multiple" allowClear placeholder="상태" style={{ minWidth: 130 }}
+                    options={[{ value: "Y", label: "사용" }, { value: "N", label: "비활성" }]}
+                    value={useYnFilter} onChange={setUseYnFilter} />
+          </Space>
+          <Space wrap className="std-push-end">
+            <Button
+              loading={syncMut.isPending}
+              onClick={() => syncMut.mutate()}
+              title="배정된 역할 기준으로 전체 사용자를 ETL/Airflow 개인계정으로 일괄 재조정합니다."
+            >
+              ETL/Airflow 전체 동기화
+            </Button>
+            <Button type="primary" onClick={() => setCreateOpen(true)}>
+              + 계정 추가
+            </Button>
+          </Space>
+        </div>
         <Table<AccountView>
           rowKey="userId"
+          className="std-full-table"
           loading={isLoading}
           columns={columns}
-          dataSource={accounts}
+          dataSource={visibleAccounts}
           size="middle"
-          pagination={{ pageSize: 15, showTotal: (total) => `총 ${total}건` }}
+          pagination={{ pageSize: 15, showSizeChanger: true, showTotal: (total) => `총 ${total}건` }}
         />
       </div>
 

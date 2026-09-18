@@ -5,6 +5,7 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { AlertHistoryTab } from "../components/AlertHistoryTab";
 import { StdPage } from "../components/StdPage";
 import { WfIcon } from "../components/WorkflowPageHeader";
+import { byBool, byDate, byText, matchesText } from "../utils/listSort";
 import {
   Alert,
   Button,
@@ -252,6 +253,7 @@ function RulesTab() {
   // 규칙은 대부분 꺼 둔 채로 두고 쓰는 것만 켜서 운영한다. 기본을 «사용»으로 두면
   // 화면을 열자마자 지금 실제로 도는 규칙만 보인다(전체/미사용은 골라서 본다).
   const [enabledFilter, setEnabledFilter] = useState<"all" | "on" | "off">("on");
+  const [ruleSearch, setRuleSearch] = useState("");
 
   // 검사대상 컬럼에 이름을 붙이려면 후보 목록이 필요하다. 카테고리가 3종뿐이라 한 번에 받는다.
   const scopeQueries = useQuery({
@@ -276,8 +278,10 @@ function RulesTab() {
   }, [types]);
 
   const filtered = useMemo(
-    () => rules.filter((r) => enabledFilter === "all" || (enabledFilter === "on" ? r.enabled : !r.enabled)),
-    [rules, enabledFilter],
+    () => rules.filter((r) =>
+      (enabledFilter === "all" || (enabledFilter === "on" ? r.enabled : !r.enabled))
+      && matchesText(ruleSearch, r.name, r.type_label)),
+    [rules, enabledFilter, ruleSearch],
   );
 
   async function toggle(rule: AlertRule, enabled: boolean) {
@@ -302,33 +306,40 @@ function RulesTab() {
   }
 
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size="middle">
-      <div className="std-toolbar">
-        <span className="std-field-label">사용여부</span>
-        <Select
-          value={enabledFilter}
-          style={{ width: 110 }}
-          onChange={setEnabledFilter}
-          options={[
-            { label: "전체", value: "all" },
-            { label: "사용", value: "on" },
-            { label: "미사용", value: "off" },
-          ]}
-        />
-        <Button type="primary" className="std-push-end" onClick={() => setCreating(true)}>
-          + 규칙 추가
-        </Button>
-      </div>
+    <div className="std-tab-body">
       <div className="std-card std-table-card">
+      <div className="std-filter-card">
+        <Space wrap>
+          <Input placeholder="규칙명·유형 검색" allowClear style={{ width: 220 }}
+                 value={ruleSearch} onChange={(event) => setRuleSearch(event.target.value)} />
+          <span className="std-field-label">사용여부</span>
+          <Select
+            value={enabledFilter}
+            style={{ width: 110 }}
+            onChange={setEnabledFilter}
+            options={[
+              { label: "전체", value: "all" },
+              { label: "사용", value: "on" },
+              { label: "미사용", value: "off" },
+            ]}
+          />
+        </Space>
+        <Space wrap className="std-push-end">
+          <Button type="primary" onClick={() => setCreating(true)}>
+            + 규칙 추가
+          </Button>
+        </Space>
+      </div>
       <Table<AlertRule>
         rowKey="id"
+        className="std-full-table"
         loading={isLoading}
         dataSource={filtered}
         pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (t) => `총 ${t}건` }}
         size="middle"
         columns={[
-          { title: "규칙명", dataIndex: "name", width: 190 },
-          { title: "유형", dataIndex: "type_label", width: 140 },
+          { title: "규칙명", dataIndex: "name", width: 190, sorter: (a, b) => byText(a.name, b.name) },
+          { title: "유형", dataIndex: "type_label", width: 140, sorter: (a, b) => byText(a.type_label, b.type_label) },
           {
             title: "조건",
             width: 240,
@@ -336,10 +347,11 @@ function RulesTab() {
               <span>{describeCondition(r, specByCode.get(r.rule_type_code) ?? [])}</span>
             ),
           },
-          { title: "심각도", dataIndex: "severity", width: 90, render: severityTag },
+          { title: "심각도", dataIndex: "severity", width: 90, sorter: (a, b) => byText(a.severity, b.severity), render: severityTag },
           {
             title: "점검",
             width: 120,
+            sorter: (a, b) => byBool(a.schedule_enabled, b.schedule_enabled) || byText(hhmm(a.schedule_time), hhmm(b.schedule_time)),
             render: (_: unknown, r) =>
               r.schedule_enabled ? (
                 <Tooltip title={scheduleHint(r)}>
@@ -359,24 +371,27 @@ function RulesTab() {
             width: 170,
             render: (_: unknown, r) => scopeSummary(r, scopeNameById),
           },
-          { title: "생성자", dataIndex: "created_by", width: 110, render: (v: string | null) => v ?? "-" },
+          { title: "생성자", dataIndex: "created_by", width: 110, sorter: (a, b) => byText(a.created_by, b.created_by), render: (v: string | null) => v ?? "-" },
           {
             title: "생성일시",
             dataIndex: "created_at",
             width: 150,
+            sorter: (a, b) => byDate(a.created_at, b.created_at),
             render: (v: string | null) => (v ? dayjs(v).format("YYYY-MM-DD HH:mm") : "-"),
           },
-          { title: "마지막 수정자", dataIndex: "updated_by", width: 120, render: (v: string | null) => v ?? "-" },
+          { title: "마지막 수정자", dataIndex: "updated_by", width: 120, sorter: (a, b) => byText(a.updated_by, b.updated_by), render: (v: string | null) => v ?? "-" },
           {
             title: "수정일시",
             dataIndex: "updated_at",
             width: 150,
+            sorter: (a, b) => byDate(a.updated_at, b.updated_at),
             render: (v: string | null) => (v ? dayjs(v).format("YYYY-MM-DD HH:mm") : "-"),
           },
           {
             title: "사용",
             dataIndex: "enabled",
             width: 80,
+            sorter: (a, b) => byBool(a.enabled, b.enabled),
             // 필수 규칙도 운영자가 끌 수 있게 한다(환경마다 감시 대상이 다르다).
             render: (enabled: boolean, r) => <Switch checked={enabled} onChange={(v) => toggle(r, v)} />,
           },
@@ -432,7 +447,7 @@ function RulesTab() {
           qc.invalidateQueries({ queryKey: ["alert-rules"] });
         }}
       />
-    </Space>
+    </div>
   );
 }
 
@@ -872,7 +887,7 @@ function ChannelsTab() {
   // 토글만 켜고 서버 릴레이가 없으면 한 건도 못 나간다. 그 조합을 화면에서 먼저 알려 준다.
   const onButUnconfigured = external.filter((c) => c.enabled && !c.relay_configured);
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size="small">
+    <div className="std-tab-body">
       <span className="std-notice">
         <WfIcon name="info" size={14} />
         화면알림은 별도 설정이 없습니다 — 알림 규칙을 «사용»으로 켜면 조치 대기열·헤더 알림에 자동으로 표시됩니다.
@@ -889,16 +904,18 @@ function ChannelsTab() {
       <div className="std-card std-table-card">
       <Table<ChannelConfig>
         rowKey="channel_type"
+        className="std-full-table"
         loading={isLoading}
         dataSource={external}
         pagination={false}
         columns={[
-          { title: "채널", dataIndex: "channel_type", width: 160, render: (v: string) => channelLabel(v) },
+          { title: "채널", dataIndex: "channel_type", width: 160, sorter: (a, b) => byText(channelLabel(a.channel_type), channelLabel(b.channel_type)), render: (v: string) => channelLabel(v) },
         {
           title: "상태",
           key: "status",
           dataIndex: "enabled",
           width: 120,
+          sorter: (a: ChannelConfig, b: ChannelConfig) => byBool(a.enabled, b.enabled),
           render: (enabled: boolean) =>
             enabled ? <Tag color="success">정상</Tag> : <Tag>중지</Tag>,
         },
@@ -907,6 +924,7 @@ function ChannelsTab() {
           title: "발송 경로",
           key: "relay",
           width: 130,
+          sorter: (a: ChannelConfig, b: ChannelConfig) => byBool(a.relay_configured, b.relay_configured),
           render: (_: unknown, ch) =>
             ch.relay_configured ? (
               <Tag color="success">설정됨</Tag>
@@ -935,7 +953,7 @@ function ChannelsTab() {
         ]}
       />
       </div>
-    </Space>
+    </div>
   );
 }
 
@@ -944,10 +962,13 @@ function RecipientsTab() {
   const [form] = Form.useForm();
   const [editing, setEditing] = useState<Recipient | null>(null);
   const [enabledFilter, setEnabledFilter] = useState<"all" | "on" | "off">("all");
+  const [recipientSearch, setRecipientSearch] = useState("");
   const { data: recipients = [], isLoading } = useQuery({ queryKey: ["recipients"], queryFn: getRecipients });
   const filtered = useMemo(
-    () => recipients.filter((r) => enabledFilter === "all" || (enabledFilter === "on" ? r.enabled : !r.enabled)),
-    [recipients, enabledFilter],
+    () => recipients.filter((r) =>
+      (enabledFilter === "all" || (enabledFilter === "on" ? r.enabled : !r.enabled))
+      && matchesText(recipientSearch, r.display_name, r.email, r.phone)),
+    [recipients, enabledFilter, recipientSearch],
   );
 
   async function add(values: { displayName: string; email?: string; phone?: string }) {
@@ -986,7 +1007,7 @@ function RecipientsTab() {
   }
 
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size="middle">
+    <div className="std-tab-body">
       <span className="std-notice">
         <WfIcon name="info" size={14} />
         «이메일 수신»·«문자 수신»을 켜야 실제로 발송됩니다. 등록만 해두면 화면 알림에만 남습니다.
@@ -1008,30 +1029,35 @@ function RecipientsTab() {
         </Button>
       </Form>
       </div>
-      <div className="std-toolbar">
-        <span className="std-field-label">사용여부</span>
-        <Select
-          value={enabledFilter}
-          style={{ width: 110 }}
-          onChange={setEnabledFilter}
-          options={[
-            { label: "전체", value: "all" },
-            { label: "사용", value: "on" },
-            { label: "미사용", value: "off" },
-          ]}
-        />
-      </div>
       <div className="std-card std-table-card">
+      <div className="std-filter-card">
+        <Space wrap>
+          <Input placeholder="이름·이메일·전화 검색" allowClear style={{ width: 220 }}
+                 value={recipientSearch} onChange={(event) => setRecipientSearch(event.target.value)} />
+          <span className="std-field-label">사용여부</span>
+          <Select
+            value={enabledFilter}
+            style={{ width: 110 }}
+            onChange={setEnabledFilter}
+            options={[
+              { label: "전체", value: "all" },
+              { label: "사용", value: "on" },
+              { label: "미사용", value: "off" },
+            ]}
+          />
+        </Space>
+      </div>
       <Table<Recipient>
         rowKey="id"
+        className="std-full-table"
         loading={isLoading}
         dataSource={filtered}
         pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (t) => `총 ${t}건` }}
         columns={[
-          { title: "이름", dataIndex: "display_name", width: 140 },
-          { title: "이메일", dataIndex: "email", render: (v: string | null) => v ?? "-" },
+          { title: "이름", dataIndex: "display_name", width: 140, sorter: (a, b) => byText(a.display_name, b.display_name) },
+          { title: "이메일", dataIndex: "email", sorter: (a, b) => byText(a.email, b.email), render: (v: string | null) => v ?? "-" },
           // 마스킹하지 않는다 - 가려진 번호로는 맞는지 확인할 수도, 고칠 수도 없다.
-          { title: "전화", dataIndex: "phone", width: 160, render: (v: string | null) => v ?? "-" },
+          { title: "전화", dataIndex: "phone", width: 160, sorter: (a, b) => byText(a.phone, b.phone), render: (v: string | null) => v ?? "-" },
           {
             // 등록만으로는 안 나간다. «이 사람을 어디로 보낼지»를 여기서 켠다.
             title: (
@@ -1104,7 +1130,7 @@ function RecipientsTab() {
           qc.invalidateQueries({ queryKey: ["recipients"] });
         }}
       />
-    </Space>
+    </div>
   );
 }
 
@@ -1334,7 +1360,7 @@ export function SettingsPage() {
   const active = params.get("tab") ?? "history";
   // 디자인 작업물 alarm-setting.html: 제목 + 설정 하위 탭, 그 아래 화면 안 탭 → 필터 띠 → 표 카드.
   return (
-    <StdPage menu="settings" title="알림/발송 설정" icon="bell">
+    <StdPage menu="settings" title="알림/발송 설정" icon="bell" fill>
       <Tabs
         activeKey={active}
         onChange={(k) => setParams({ tab: k })}

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, DatePicker, Input, Select, Space, Table, Tag } from "antd";
 import { StdPage } from "../../components/StdPage";
+import { byDate, byText } from "../../utils/listSort";
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import { activeDayPreset, dayPresetRange } from "../../components/dayPreset";
@@ -130,7 +131,7 @@ export function AuditLogPage() {
       key: "occurredAt",
       width: 180,
       defaultSortOrder: "descend",
-      sorter: (a, b) => (a.occurredAt ?? "").localeCompare(b.occurredAt ?? ""),
+      sorter: (a, b) => byDate(a.occurredAt, b.occurredAt),
       render: (v: string | null) => (v ? v.replace("T", " ").slice(0, 19) : "-"),
     },
     {
@@ -138,28 +139,32 @@ export function AuditLogPage() {
       dataIndex: "action",
       key: "area",
       width: 110,
+      sorter: (a, b) => byText(auditArea(a.action).label, auditArea(b.action).label),
       render: (action: string) => {
         const area = auditArea(action);
         return <Tag color={area.color}>{area.label}</Tag>;
       },
     },
-    { title: "수행자", dataIndex: "actorId", key: "actorId", width: 140 },
+    { title: "수행자", dataIndex: "actorId", key: "actorId", width: 140, sorter: (a, b) => byText(a.actorId, b.actorId) },
     {
       title: "동작",
       dataIndex: "action",
       key: "action",
       width: 150,
+      sorter: (a, b) => byText(a.action, b.action),
       render: (a: string) => <Tag color={actionColor(a)}>{a}</Tag>,
     },
     {
       title: "대상",
       key: "target",
       width: 180,
+      sorter: (a, b) => byText(`${a.targetType ?? ""}:${a.targetId ?? ""}`, `${b.targetType ?? ""}:${b.targetId ?? ""}`),
       render: (_, r) => (r.targetId ? `${r.targetType ?? ""}:${r.targetId}` : "-"),
     },
     {
       title: "변경",
       key: "change",
+      sorter: (a, b) => byText(a.beforeValue ?? a.detail, b.beforeValue ?? b.detail),
       render: (_, r) =>
         r.beforeValue || r.afterValue ? (
           <span style={{ fontSize: 12 }}>
@@ -171,13 +176,14 @@ export function AuditLogPage() {
           r.detail ?? "-"
         ),
     },
-    { title: "IP", dataIndex: "clientIp", key: "clientIp", width: 130, render: (v) => v ?? "-" },
+    { title: "IP", dataIndex: "clientIp", key: "clientIp", width: 130, sorter: (a, b) => byText(a.clientIp, b.clientIp), render: (v) => v ?? "-" },
   ];
 
   return (
-    <StdPage menu="settings" title="감사 로그" icon="doc">
-      {/* 디자인 작업물 audit-setting.html: 필터 띠 카드 + 표 카드. */}
-      <div className="std-card std-filter-card">
+    <StdPage menu="settings" title="감사 로그" icon="doc" fill>
+      {/* 디자인 작업물 audit-setting.html: 필터 띠와 표를 한 카드에 담는다(2026-09-18 목록 화면 공통 규격). */}
+      <div className="std-card std-table-card">
+      <div className="std-filter-card">
           <Space.Compact className="std-date-preset">
             <Button type={selectedPreset === 0 ? "primary" : "default"} onClick={() => applyDayPreset(0)}>당일</Button>
             <Button type={selectedPreset === 1 ? "primary" : "default"} onClick={() => applyDayPreset(1)}>전일</Button>
@@ -212,9 +218,9 @@ export function AuditLogPage() {
             새로고침
           </Button>
       </div>
-      <div className="std-card std-table-card">
         <Table<AuditView>
           rowKey="id"
+          className="std-full-table"
           loading={isFetching}
           columns={columns}
           dataSource={filtered}

@@ -3,6 +3,7 @@ import { Space, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { RealtimePipelineMetricResponse } from "../api/dashboard";
 import type { PipelineResponse, PipelineRuntimeStatusResponse } from "../types/pipeline";
+import { byDate, byNumber, byText } from "./listSort";
 
 // CDC 파이프라인을 화면에 그리는 규칙. CDC 관리 화면과 워크플로우 실행 현황이 같은 목록을
 // 보여줘야 해서 공용으로 뺐다 - 각자 그리면 "화면마다 상태 표기가 다르다"가 된다.
@@ -150,16 +151,18 @@ export function cdcPipelineColumns(
   workflowStatus?: { render: (pipeline: PipelineResponse) => ReactNode },
 ): ColumnsType<PipelineResponse> {
   return [
-    { title: "이름", dataIndex: "name", width: 130 },
+    { title: "이름", dataIndex: "name", width: 130, sorter: (a, b) => byText(a.name, b.name) },
     {
       title: "유형",
       dataIndex: "pipelineType",
       width: 84,
+      sorter: (a, b) => byText(a.pipelineType, b.pipelineType),
       render: (value: string) => <Tag color={value === "LOG_FILE" ? "purple" : "blue"}>{value}</Tag>,
     },
     {
       // 여기만 폭을 안 준다 - 남는 자리를 이 열이 흡수해야 표가 가로로 넘치지 않는다.
       title: "소스 → 타깃",
+      sorter: (a, b) => byText(sourceLabel(a), sourceLabel(b)) || byText(targetLabel(a), targetLabel(b)),
       render: (_, row) => (
         <div>
           <div>{sourceLabel(row)}</div>
@@ -167,7 +170,7 @@ export function cdcPipelineColumns(
         </div>
       ),
     },
-    { title: "Topic", dataIndex: "topicName", width: 120, ellipsis: true },
+    { title: "Topic", dataIndex: "topicName", width: 120, ellipsis: true, sorter: (a, b) => byText(a.topicName, b.topicName) },
     // 상태 열은 하나. 모니터링은 워크플로우 상태를, 관리 화면은 커넥터 상태를 쓴다.
     workflowStatus
       ? {
@@ -178,17 +181,25 @@ export function cdcPipelineColumns(
       : {
           title: "상태",
           width: 150,
+          sorter: (a: PipelineResponse, b: PipelineResponse) => byText(
+            runtimeByPipeline.get(a.id)?.runtimeStatus ?? a.status,
+            runtimeByPipeline.get(b.id)?.runtimeStatus ?? b.status,
+          ),
           render: (_: unknown, row: PipelineResponse) =>
             renderRuntimeStatus(row, runtimeByPipeline.get(row.id)),
         },
     {
       title: "지연",
       width: 68,
+      sorter: (a, b) => byNumber(
+        metricByPipeline.get(a.id)?.consumerLag, metricByPipeline.get(b.id)?.consumerLag),
       render: (_, row) => renderLag(metricByPipeline.get(row.id)),
     },
     {
       title: "마지막 처리",
       width: 92,
+      sorter: (a, b) => byDate(
+        metricByPipeline.get(a.id)?.lastProgressAt, metricByPipeline.get(b.id)?.lastProgressAt),
       render: (_, row) => {
         const lastProgressAt = metricByPipeline.get(row.id)?.lastProgressAt ?? null;
         return <span title={lastProgressAt ?? undefined}>{formatRelativeTime(lastProgressAt)}</span>;

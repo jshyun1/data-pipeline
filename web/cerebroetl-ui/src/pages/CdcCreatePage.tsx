@@ -366,7 +366,7 @@ function CdcCreateWizard({ modeSwitch }: { modeSwitch: ReactNode }) {
                     <Button type="primary" onClick={async () => {
                       if (!(await passes(["name"]))) return;
                       completeAndOpen("basic", "connections");
-                    }}>다음: 연결</Button>
+                    }}>다음</Button>
                   </div>
                 </>
               ),
@@ -434,7 +434,7 @@ function CdcCreateWizard({ modeSwitch }: { modeSwitch: ReactNode }) {
                     <Button type="primary" disabled={!connectionsVerified} onClick={async () => {
                       if (!(await passes(["sourceConnectionId", "targetConnectionId"]))) return;
                       completeAndOpen("connections", "targets");
-                    }}>다음: 대상 선택</Button>
+                    }}>다음</Button>
                   </div>
                 </>
               ),
@@ -622,7 +622,7 @@ function CdcCreateWizard({ modeSwitch }: { modeSwitch: ReactNode }) {
                       if (captureBlockedTables.length > 0) { message.error(`변경분(UPDATE) 캡처 조건이 갖춰지지 않은 테이블이 있습니다: ${captureBlockedTables.join(", ")}`); return; }
                       if (selectedTables.some((table) => !(targetTableBySource[table] ?? "").trim())) { message.error("선택한 모든 타깃 테이블명을 입력하세요."); return; }
                       completeAndOpen("targets", "options");
-                    }}>다음: 실행 옵션</Button>
+                    }}>다음</Button>
                   </div>
                 </>
               ),
@@ -724,7 +724,7 @@ function CdcCreateWizard({ modeSwitch }: { modeSwitch: ReactNode }) {
                         if (clashing.length > 0) { message.error(`구분컬럼명 '${deltaOpColumn}'이(가) 소스 컬럼과 겹칩니다: ${clashing.join(", ")}`); return; }
                       }
                       completeAndOpen("options", "review");
-                    }}>다음: 검토</Button>
+                    }}>다음</Button>
                   </div>
                 </>
               ),
@@ -814,7 +814,7 @@ function CdcCreateWizard({ modeSwitch }: { modeSwitch: ReactNode }) {
                       const names = batchRequests.map((request) => request.name);
                       if (new Set(names).size !== names.length) { message.error("생성될 파이프라인명이 중복됩니다. 기본명을 줄이거나 테이블 선택을 확인하세요."); return; }
                       createMutation.mutate(batchRequests);
-                    }}>{batchRequests.length > 1 ? `${batchRequests.length}개 파이프라인 생성` : "파이프라인 생성"}</Button>
+                    }}>완료</Button>
                   </div>
                 </>
               ),
@@ -926,30 +926,30 @@ function LogCreateWizard({ modeSwitch }: { modeSwitch: ReactNode }) {
           <Form.Item name="name" label="파이프라인명" rules={[{ required: true }, { pattern: /^[a-zA-Z0-9][a-zA-Z0-9_-]{2,149}$/, message: "영문·숫자로 시작하고 영문·숫자·_·- 조합 3자 이상으로 입력하세요." }]}><Input placeholder="예: app-log-ingest" /></Form.Item>
           <Form.Item name="filePath" label="로그 파일 경로" rules={[{ required: true }]} tooltip="Filebeat 컨테이너 기준 경로입니다. docker-compose의 ./log-sources는 /var/log/app에 마운트됩니다."><Input placeholder="예: /var/log/app/app.log" /></Form.Item>
           <Form.Item name="description" label="설명"><Input.TextArea rows={3} /></Form.Item>
-          <div style={{ textAlign: "right" }}><Button type="primary" onClick={async () => { if (!(await passes(["name", "filePath"]))) return; advance("basic", "connection"); }}>다음: 연결</Button></div>
+          <div style={{ textAlign: "right" }}><Button type="primary" onClick={async () => { if (!(await passes(["name", "filePath"]))) return; advance("basic", "connection"); }}>다음</Button></div>
         </> },
         { key: "connection", label: label("connection", "타깃 연결"), extra: <WizardStepStatus state={logStepState("connection")} />, children: <>
           <Form.Item name="targetConnectionId" label="타깃 연결" rules={[{ required: true }]}><Select loading={connectionsLoading} options={connections?.map((connection) => ({ value: connection.id, label: connectionLabel(connection) }))} placeholder="랜딩할 DB 선택" onChange={() => { setTestedConnectionId(null); invalidateFrom("connection"); form.setFieldsValue({ targetSchema: undefined, targetTable: undefined }); }} /></Form.Item>
           <Button block disabled={!targetConnectionId} loading={testMutation.isPending} onClick={() => targetConnectionId && testMutation.mutate(targetConnectionId)}>타깃 연결 테스트</Button>
           {testedConnectionId === targetConnectionId && <Alert style={{ marginTop: 8 }} type="success" showIcon message="타깃 연결 성공" />}
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}><Button onClick={() => setActiveStep("basic")}>이전</Button><Button type="primary" disabled={testedConnectionId !== targetConnectionId} onClick={() => advance("connection", "target")}>다음: 적재 대상</Button></div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}><Button onClick={() => setActiveStep("basic")}>이전</Button><Button type="primary" disabled={testedConnectionId !== targetConnectionId} onClick={() => advance("connection", "target")}>다음</Button></div>
         </> },
         { key: "target", label: label("target", "적재 대상"), extra: <WizardStepStatus state={logStepState("target")} />, children: <>
           <Space align="start" size="large" wrap style={{ width: "100%" }}>
             <Form.Item name="targetSchema" label="타깃 스키마" rules={[{ required: true }]} style={{ minWidth: 300, flex: 1 }}><Select showSearch loading={schemasQuery.isFetching} options={schemasQuery.data?.map((value) => ({ value }))} notFoundContent={notFound(schemasQuery, "스키마 없음")} onChange={() => { form.setFieldValue("targetTable", undefined); invalidateFrom("target"); }} /></Form.Item>
             <Form.Item name="targetTable" label="타깃 테이블" rules={[{ required: true }]} style={{ minWidth: 300, flex: 1 }}><AutoComplete disabled={!targetSchema} options={tablesQuery.data?.map((value) => ({ value }))} notFoundContent={notFound(tablesQuery, "기존 테이블 없음 - 새 이름 입력 가능")} placeholder="기존 테이블 선택 또는 새 이름 입력" onChange={() => invalidateFrom("target")} /></Form.Item>
           </Space>
-          <div style={{ display: "flex", justifyContent: "space-between" }}><Button onClick={() => setActiveStep("connection")}>이전</Button><Button type="primary" onClick={async () => { if (!(await passes(["targetSchema", "targetTable"]))) return; advance("target", "options"); }}>다음: 수집 옵션</Button></div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}><Button onClick={() => setActiveStep("connection")}>이전</Button><Button type="primary" onClick={async () => { if (!(await passes(["targetSchema", "targetTable"]))) return; advance("target", "options"); }}>다음</Button></div>
         </> },
         { key: "options", label: label("options", "수집 옵션"), extra: <WizardStepStatus state={logStepState("options")} />, children: <>
           <Space align="start" size="large" wrap style={{ width: "100%" }}><Form.Item name="readFrom" label="읽기 시작 위치" style={{ minWidth: 300, flex: 1 }}><Select options={[{ value: "END", label: "END (신규 라인부터)" }, { value: "BEGINNING", label: "BEGINNING (파일 처음부터)" }]} /></Form.Item><Form.Item name="encoding" label="인코딩" style={{ minWidth: 300, flex: 1 }}><Input /></Form.Item></Space>
           <Form.Item name="topicName" label="CDC Topic" tooltip="비우면 log-{파이프라인 ID}로 자동 생성됩니다"><Input placeholder="비워두면 자동 생성" /></Form.Item>
           <Form.Item name="agentHost" label="Agent Host" tooltip="메타데이터용 식별 필드 (선택)"><Input placeholder="예: filebeat" /></Form.Item>
-          <div style={{ display: "flex", justifyContent: "space-between" }}><Button onClick={() => setActiveStep("target")}>이전</Button><Button type="primary" onClick={() => advance("options", "review")}>다음: 검토</Button></div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}><Button onClick={() => setActiveStep("target")}>이전</Button><Button type="primary" onClick={() => advance("options", "review")}>다음</Button></div>
         </> },
         { key: "review", label: label("review", "검토 및 생성"), extra: <WizardStepStatus state={logStepState("review")} />, children: <>
           <Descriptions bordered column={1} size="small"><Descriptions.Item label="파이프라인명">{values?.name ?? "—"}</Descriptions.Item><Descriptions.Item label="로그 파일">{values?.filePath ?? "—"}</Descriptions.Item><Descriptions.Item label="타깃 연결">{targetConnection ? connectionLabel(targetConnection) : "—"}</Descriptions.Item><Descriptions.Item label="적재 대상">{values?.targetSchema}.{values?.targetTable}</Descriptions.Item><Descriptions.Item label="읽기 시작">{values?.readFrom}</Descriptions.Item><Descriptions.Item label="CDC Topic">{values?.topicName || "자동 생성"}</Descriptions.Item></Descriptions>
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}><Button onClick={() => setActiveStep("options")}>이전</Button><Button type="primary" loading={createMutation.isPending} onClick={async () => { if (firstIncompleteStep) { message.warning(`«${LOG_STEP_TITLE[firstIncompleteStep]}» 단계를 먼저 완료하세요. 1~4단계를 모두 «다음»으로 확인해야 생성할 수 있습니다.`); setActiveStep(firstIncompleteStep); return; } const request = await form.validateFields().catch(() => undefined); if (!request) return; if (testedConnectionId !== targetConnectionId) { message.error("타깃 연결을 다시 테스트하세요."); setActiveStep("connection"); return; } createMutation.mutate(request); }}>로그파일 파이프라인 생성</Button></div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}><Button onClick={() => setActiveStep("options")}>이전</Button><Button type="primary" loading={createMutation.isPending} onClick={async () => { if (firstIncompleteStep) { message.warning(`«${LOG_STEP_TITLE[firstIncompleteStep]}» 단계를 먼저 완료하세요. 1~4단계를 모두 «다음»으로 확인해야 생성할 수 있습니다.`); setActiveStep(firstIncompleteStep); return; } const request = await form.validateFields().catch(() => undefined); if (!request) return; if (testedConnectionId !== targetConnectionId) { message.error("타깃 연결을 다시 테스트하세요."); setActiveStep("connection"); return; } createMutation.mutate(request); }}>완료</Button></div>
         </> },
       ]} />
     </Form>

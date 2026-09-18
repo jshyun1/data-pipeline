@@ -2256,23 +2256,6 @@ button.airflow-task-name:hover {
   padding: 16px;
 }
 
-.airflow-property-panel > h3 {
-  margin: 0;
-  color: #0f172a;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.airflow-property-panel > h2 {
-  margin: 6px 0 12px;
-  color: #0f172a;
-  font-size: 16px;
-  font-weight: 800;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
 .airflow-property-panel--inline {
   margin: 14px;
   border: 0;
@@ -7493,6 +7476,12 @@ button.alert-compact-trigger.is-clear:hover {
   min-width: 0;
 }
 
+/* 목록 카드 첫 줄인 필터 띠. 카드 안에 들어가므로 아래 표와 선 하나로 나뉘고, 표는 남은 높이를 갖는다. */
+.wf-list-filter {
+  flex-shrink: 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
 .wf-tree-search {
   position: relative;
   flex-shrink: 0;
@@ -7744,17 +7733,17 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 /* 목록 표: 표만 안에서 스크롤하고, «전체 N건 · 페이지»는 카드 아래에 붙어 있다. */
-.wf-design-table.ant-table-wrapper {
+:is(.wf-design-table, .std-full-table).ant-table-wrapper {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-.wf-design-table > .ant-spin,
-.wf-design-table > .ant-spin > .ant-spin-container,
-.wf-design-table > .ant-spin-nested-loading,
-.wf-design-table > .ant-spin-nested-loading > .ant-spin-container {
+:is(.wf-design-table, .std-full-table) > .ant-spin,
+:is(.wf-design-table, .std-full-table) > .ant-spin > .ant-spin-container,
+:is(.wf-design-table, .std-full-table) > .ant-spin-nested-loading,
+:is(.wf-design-table, .std-full-table) > .ant-spin-nested-loading > .ant-spin-container {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
@@ -7762,7 +7751,7 @@ button.alert-compact-trigger.is-clear:hover {
   flex-direction: column;
 }
 
-.wf-design-table .ant-spin-container > .ant-table {
+:is(.wf-design-table, .std-full-table) .ant-spin-container > .ant-table {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
@@ -7796,14 +7785,14 @@ button.alert-compact-trigger.is-clear:hover {
   background: #f8fafc;
 }
 
-.wf-design-table .ant-table-pagination.ant-pagination {
+:is(.wf-design-table, .std-full-table) .ant-table-pagination.ant-pagination {
   flex-shrink: 0;
   margin: 0;
   padding: 10px 18px;
   border-top: 1px solid #f1f5f9;
 }
 
-.wf-design-table .ant-pagination-total-text {
+:is(.wf-design-table, .std-full-table) .ant-pagination-total-text {
   margin-right: auto;
   color: #64748b;
   font-size: 12.5px;
@@ -8090,6 +8079,39 @@ body.lv2-resizing { cursor: row-resize; user-select: none; }
 .lv2-handle-label { margin-left: auto; color: #64748b; font-weight: 700; }
 .lv2-curtain.open .lv2-handle-label { margin: 0; font-size: 11px; }
 
+/* 현황 줄: 손잡이 + 오른쪽 조작(동기화 · 갱신 주기). 손잡이 안에 넣을 수 없어서(버튼 안 버튼)
+   한 줄로 나란히 둔다. 펼치면 손잡이만 작은 탭으로 줄고 조작은 제자리에 남는다. */
+.lv2-curtain-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.lv2-curtain-bar > .lv2-curtain-handle {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 펼치면 손잡이가 작은 탭으로 줄어든다. 오른쪽 갱신 주기와 같은 줄에 두면서도
+   «CDC 카드와 ETL 카드 사이»(= 화면 한가운데)에 오도록 줄에서 띄워 가운데에 못 박는다. */
+.lv2-curtain.open .lv2-curtain-bar {
+  position: relative;
+  justify-content: flex-end;
+  min-height: 28px;
+}
+
+.lv2-curtain.open .lv2-curtain-bar > .lv2-curtain-handle {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  flex: none;
+}
+
+.lv2-curtain-bar > .airflow-refresh-controls {
+  flex-shrink: 0;
+}
+
 /* ----- 작업 공간: 트리 | 메인 ----- */
 .lv2-workspace {
   flex: 1 1 auto;
@@ -8168,6 +8190,13 @@ body.lv2-resizing { cursor: row-resize; user-select: none; }
 .lv2-seg button.on { background: #ffffff; color: var(--color-primary); font-weight: 700; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); }
 .lv2-seg button:disabled { opacity: 0.4; cursor: default; }
 .lv2-ctx-right { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* 이 줄로 내려온 동기화 버튼(2026-09-18): 기본 34px 는 옆 기간 칩(26px+테두리)보다 커서 줄이 두꺼워진다. */
+.lv2-ctx-right .btn-wf-sync {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
 .lv2-ctx-label { color: #94a3b8; font-size: 11.5px; font-weight: 600; }
 .lv2-chips { display: inline-flex; gap: 4px; }
 .lv2-chip {
@@ -8614,6 +8643,120 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   font-size: 13px;
 }
 
+/*
+ * 목록 화면 공통 틀(2026-09-18 요청) - 워크플로우 관리 화면과 같은 규격.
+ * 내역이 0건이어도 표 카드가 화면 바닥까지 내려오고, 표만 카드 안에서 스크롤한다.
+ * 필터 띠는 카드 밖에 따로 두지 않고 표와 한 카드에 담는다(CDC 관리 화면이 이미 그렇다).
+ */
+.std-page--fill {
+  height: calc(100vh - var(--app-offset));
+}
+
+.std-page--fill > .std-table-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 카드가 남은 높이를 다 갖도록, 위에 놓인 것(머리줄·안내·요약·조작 줄)은 줄어들지 않게 못 박는다. */
+.std-page--fill > *:not(.std-table-card) {
+  flex-shrink: 0;
+}
+
+/*
+ * 탭이 있는 목록 화면(알림/발송 설정): 탭 줄 아래 본문이 남은 높이를 갖고,
+ * 그 안에서 표 카드가 바닥까지 내려온다.
+ */
+.std-page--fill > .ant-tabs {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.std-page--fill > .ant-tabs > .ant-tabs-content-holder,
+.std-page--fill > .ant-tabs > .ant-tabs-content-holder > .ant-tabs-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.std-page--fill .ant-tabs-tabpane-active {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 탭 본문. antd Space 를 쓰면 자식마다 .ant-space-item 이 끼어 «표 카드만 늘리기»를 걸 수 없어 평범한 div 로 둔다. */
+.std-tab-body {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.std-tab-body > *:not(.std-table-card) {
+  flex-shrink: 0;
+}
+
+.std-tab-body > .std-table-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 역할 및 권한: 왼쪽 목록 · 오른쪽 권한 카드가 나란히 화면 바닥까지 내려온다. */
+.std-page--fill > .role-setting-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.role-setting-layout > .std-table-card {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.role-setting-list {
+  flex: 1 1 460px;
+}
+
+.role-setting-perm {
+  flex: 1 1 380px;
+  overflow-y: auto;
+}
+
+.role-setting-layout > .std-table-card > .std-card-head {
+  flex-shrink: 0;
+}
+
+/* 표 안쪽이 스크롤되므로 머리줄은 고정한다(워크플로우 관리 표와 같다). */
+.std-full-table .ant-table-thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.std-full-table .ant-table-thead > tr > th::before {
+  background-color: transparent !important;
+}
+
+/* 표 카드 안 첫 줄인 필터 띠. 표와는 선 하나로 나뉜다. */
+.std-table-card > .std-filter-card {
+  flex-shrink: 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
 /* 카드: 흰 바탕 · 8px 라운드 · 옅은 테두리. 표는 카드에 바로 담고(카드 안 카드 금지) 모서리를 카드가 자른다. */
 .std-card {
   min-width: 0;
@@ -8991,12 +9134,14 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
 }
 
 /* CDC 관리(PipelinesPage) — 디자인 작업물 cdc-manage.html: 트리 카드 280px + 표 카드, 둘 다 화면 바닥까지. */
+/* 화면 틀(std-page--fill)이 높이를 잡아 주므로, 여기서는 남은 높이를 받아 쓰기만 한다. */
 .cdc-manage-layout {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   align-items: stretch;
   gap: 16px;
-  min-height: calc(100vh - var(--app-offset) - 64px);
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .cdc-manage-layout > .cdc-tree-card {
@@ -9011,6 +9156,10 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
 
 .cdc-manage-main {
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .cdc-manage-filter {
@@ -9852,9 +10001,15 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 
+/* 이름 줄이 맨 위로 왔으므로 둥근 모서리도 여기가 받는다(탭 줄은 더 이상 첫 줄이 아니다). */
+.airflow-property-shell > .nifi-detail-header {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  border-radius: 12px 12px 0 0;
+}
+
 .airflow-property-shell > .nifi-detail-tabs {
   flex-shrink: 0;
-  border-radius: 12px 12px 0 0;
 }
 
 .airflow-property-shell > .airflow-property-panel {

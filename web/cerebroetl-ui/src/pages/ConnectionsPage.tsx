@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, Descriptions, Form, Input, InputNumber, List, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { StdPage } from "../components/StdPage";
+import { byText, matchesText } from "../utils/listSort";
 import {
   checkCdcPrerequisites,
   createConnection,
@@ -38,6 +39,10 @@ export function ConnectionsPage() {
   const [readOnly, setReadOnly] = useState(false);
   const [formTestResult, setFormTestResult] = useState<ConnectionTestResponse | null>(null);
   const [prerequisites, setPrerequisites] = useState<CdcPrerequisiteResponse | null>(null);
+  // 표 위 검색·필터(2026-09-18). 선택지는 등록된 값에서 뽑는다 - 쓰지도 않는 유형이 목록에 뜨지 않게.
+  const [connectionSearch, setConnectionSearch] = useState("");
+  const [dbTypeFilter, setDbTypeFilter] = useState<string[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [form] = Form.useForm<ConnectionCreateRequest>();
 
   const { data: connections, isLoading } = useQuery({
@@ -50,6 +55,12 @@ export function ConnectionsPage() {
     queryFn: listConnectionUsages,
   });
   const usageById = new Map((usages ?? []).map((usage) => [usage.connectionId, usage]));
+  const distinct = (values: Array<string | null | undefined>) =>
+    [...new Set(values.filter((value): value is string => Boolean(value)))]
+      .sort((a, b) => a.localeCompare(b, "ko"))
+      .map((value) => ({ value, label: value }));
+  const dbTypeOptions = distinct((connections ?? []).map((row) => row.dbType));
+  const statusOptions = distinct((connections ?? []).map((row) => row.status));
 
   // 수정 화면에서 "이미 배포된 파이프라인은 재배포해야 반영된다"는 안내에 쓴다 -
   // 연결정보를 바꿔도 Kafka Connect에 이미 등록된 커넥터 설정은 자동으로 안 바뀐다.
@@ -190,36 +201,56 @@ export function ConnectionsPage() {
     (p) => p.sourceConnectionId === editingId || p.targetConnectionId === editingId,
   );
 
+  // 표 위 검색·필터(2026-09-18 목록 화면 공통 규격). 신규 등록은 필터 띠 오른쪽 끝으로 옮겼다.
+  const visibleConnections = (connections ?? []).filter((row) =>
+    matchesText(connectionSearch, row.name, row.host, row.username, row.serviceName, row.databaseName)
+    && (dbTypeFilter.length === 0 || dbTypeFilter.includes(row.dbType))
+    && (statusFilter.length === 0 || statusFilter.includes(row.status)));
+
   return (
-    <StdPage menu="settings" title="연결정보" icon="link">
-      {/* 디자인 작업물 connection-setting.html: 오른쪽 위 신규 등록, 그 아래 표 카드. */}
-      <div className="std-toolbar">
-        <Button type="primary" className="std-push-end" icon={<PlusOutlined />} onClick={openCreateModal}>
-          신규 등록
-        </Button>
-      </div>
+    <StdPage menu="settings" title="연결정보" icon="link" fill>
+      {/* 디자인 작업물 connection-setting.html: 필터 띠 오른쪽에 신규 등록, 그 아래 표. 한 카드에 담는다. */}
       <div className="std-card std-table-card">
+        <div className="std-filter-card">
+          <Space wrap>
+            <Input placeholder="이름·호스트·사용자 검색" allowClear style={{ width: 240 }}
+                   value={connectionSearch} onChange={(event) => setConnectionSearch(event.target.value)} />
+            <Select mode="multiple" allowClear placeholder="DB 유형" style={{ minWidth: 140 }}
+                    options={dbTypeOptions} value={dbTypeFilter} onChange={setDbTypeFilter} />
+            <Select mode="multiple" allowClear placeholder="상태" style={{ minWidth: 140 }}
+                    options={statusOptions} value={statusFilter} onChange={setStatusFilter} />
+          </Space>
+          <Space wrap className="std-push-end">
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
+              신규 등록
+            </Button>
+          </Space>
+        </div>
         <Table<ConnectionResponse>
           rowKey="id"
+          className="std-full-table"
           loading={isLoading}
-          dataSource={connections}
+          dataSource={visibleConnections}
           pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `총 ${total}건` }}
           columns={[
-            { title: "이름", dataIndex: "name", render: (value: string) => <strong>{value}</strong> },
+            { title: "이름", dataIndex: "name", sorter: (a, b) => byText(a.name, b.name), render: (value: string) => <strong>{value}</strong> },
             {
               title: "DB 유형",
               dataIndex: "dbType",
+              sorter: (a, b) => byText(a.dbType, b.dbType),
               render: (value: DbType) => <strong>{value}</strong>,
             },
             {
               title: "접속 정보",
+              sorter: (a, b) => byText(`${a.host}:${a.port}`, `${b.host}:${b.port}`),
               render: (_, record) => `${record.host}:${record.port}`,
             },
-            { title: "Service/DB명", render: (_, r) => r.serviceName ?? r.databaseName ?? "-" },
-            { title: "사용자", dataIndex: "username" },
+            { title: "Service/DB명", sorter: (a, b) => byText(a.serviceName ?? a.databaseName, b.serviceName ?? b.databaseName), render: (_, r) => r.serviceName ?? r.databaseName ?? "-" },
+            { title: "사용자", dataIndex: "username", sorter: (a, b) => byText(a.username, b.username) },
             {
               title: "상태",
               dataIndex: "status",
+              sorter: (a, b) => byText(a.status, b.status),
               render: (value: string, record) => (
                 <Tooltip title={record.lastTestedAt ? `마지막 테스트: ${record.lastTestedAt}` : "아직 테스트 안 함"}>
                   <Tag color={STATUS_COLOR[value] ?? "default"}>{value}</Tag>
@@ -228,6 +259,13 @@ export function ConnectionsPage() {
             },
             {
               title: "사용처",
+              sorter: (a, b) => {
+                const count = (id: number) => {
+                  const usage = usageById.get(id);
+                  return usage ? usage.cdcSourceCount + usage.cdcTargetCount + usage.etlJobCount : 0;
+                };
+                return count(a.id) - count(b.id);
+              },
               render: (_, record) => {
                 const usage = usageById.get(record.id);
                 if (!usage || usage.references.length === 0) return <Tag>미사용</Tag>;

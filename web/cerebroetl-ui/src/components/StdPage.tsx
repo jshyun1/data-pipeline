@@ -20,6 +20,7 @@ export function StdPage({
   icon,
   actions,
   className,
+  fill = false,
   children,
 }: {
   menu: MenuKey;
@@ -27,6 +28,12 @@ export function StdPage({
   icon: WfIconName;
   actions?: ReactNode;
   className?: string;
+  /**
+   * 목록 화면 여부. 켜면 화면 높이를 뷰포트에 못 박아, 내역이 0건이어도 표 카드가
+   * 바닥까지 내려온다(2026-09-18 요청). 표 카드에는 std-table-card 가 붙어 있어야 한다.
+   * 입력 폼 화면(생성·등록)은 내용 길이가 제각각이라 켜지 않는다.
+   */
+  fill?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -35,7 +42,7 @@ export function StdPage({
       modal={{ classNames: { root: "std-modal" } }}
       drawer={{ classNames: { root: "std-drawer" } }}
     >
-      <div className={`std-page${className ? ` ${className}` : ""}`}>
+      <div className={`std-page${fill ? " std-page--fill" : ""}${className ? ` ${className}` : ""}`}>
         <MenuPageHeader menu={menu} title={title} icon={<WfIcon name={icon} size={22} strokeWidth={2.2} />} actions={actions} />
         {children}
       </div>

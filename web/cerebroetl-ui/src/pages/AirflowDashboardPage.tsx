@@ -1629,11 +1629,9 @@ function PropertyPanel({
   if (!inline && pipeline) {
     return (
       <aside className="airflow-dashboard-panel airflow-property-panel">
-        <h3>속성</h3><h2>{pipeline.name}</h2>
         <section>
           <strong>기본정보</strong>
           <dl>
-            <dt>이름</dt><dd>{pipeline.name}</dd>
             <dt>유형</dt><dd>{pipeline.pipelineType}</dd>
             <dt>소스</dt><dd>{sourceLabel(pipeline)}</dd>
             <dt>타겟</dt><dd>{targetLabel(pipeline)}</dd>
@@ -1674,11 +1672,9 @@ function PropertyPanel({
   const category = categoryOf(dag);
   return (
     <aside className={`airflow-dashboard-panel airflow-property-panel${inline ? " airflow-property-panel--inline" : ""}`}>
-      {!inline && <><h3>속성</h3><h2>{displayName(dag)}</h2></>}
       {!inline && <section>
         <strong>기본정보</strong>
         <dl>
-          <dt>이름</dt><dd>{displayName(dag)}</dd>
           <dt>DAG ID</dt><dd>{dag.dag_id}</dd>
           <dt>업무 구분</dt><dd>{isCdcWorkflowDag(dag) ? "CDC 워크플로우" : category}</dd>
           <dt>업무 폴더</dt><dd>{folderName(dag)}</dd>
@@ -2092,32 +2088,11 @@ export function AirflowDashboardPage() {
   return (
     <ConfigProvider theme={cerebroBrandTheme}>
     <div className="airflow-dashboard-page">
-      {/* 초안(workflow-monitoring.html)의 머리줄: 화면 제목 + 워크플로우 하위 탭 ··· 동기화·갱신 주기. */}
+      {/* 동기화·갱신 주기는 아래 현황 줄(커튼 손잡이) 오른쪽으로 옮겼다(2026-09-18 요청).
+          actions 를 주지 않으면 이 머리줄은 아무것도 그리지 않는다 - 별도의 조작 띠가 사라진다. */}
       <WorkflowPageHeader
         title="워크플로우 로그"
         icon={<WfIcon name="pulse" size={22} strokeWidth={2.2} />}
-        actions={
-          <div className="airflow-refresh-controls">
-            {canRunTop && (
-              // antd 버튼의 loading 과 같게: 동기화 중에는 누름을 무시하고 아이콘만 돈다.
-              <button type="button" className={syncBusy ? "btn-wf-sync spinning" : "btn-wf-sync"}
-                      aria-busy={syncBusy}
-                      onClick={() => {
-                        if (!syncBusy) {
-                          void synchronizeDags();
-                        }
-                      }}>
-                <WfIcon name="sync" size={15} strokeWidth={2.2} />
-                동기화
-              </button>
-            )}
-            <span className="refresh-label">갱신 주기</span>
-            <Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} aria-label="갱신 주기" />
-            <span className="last-refresh-time">
-              마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}
-            </span>
-          </div>
-        }
       />
 
       {initialLoading ? <div className="airflow-dashboard-loading"><Spin size="large" /><span>{canRunTop && !initialSyncQuery.isFetched ? "DAG 동기화 중..." : "대시보드 로딩 중..."}</span></div> : dashboardQuery.isError ? <Empty description="Airflow 현황을 불러올 수 없습니다." /> : (
@@ -2140,6 +2115,9 @@ export function AirflowDashboardPage() {
             ))}
           </div>
           </div>
+          {/* 현황 줄: 왼쪽 손잡이(접힘일 때 요약) · 오른쪽 동기화·갱신 주기.
+              펼쳐도 이 줄은 그대로 있으므로 조작이 화면에서 사라지지 않는다. */}
+          <div className="lv2-curtain-bar">
           <button type="button" className="lv2-curtain-handle" aria-expanded={curtainOpen} onClick={() => setCurtainOpen((open) => !open)}>
             {!curtainOpen && (
               <span className="lv2-mini">
@@ -2160,6 +2138,15 @@ export function AirflowDashboardPage() {
             )}
             <span className="lv2-handle-label">{curtainOpen ? "접기 ▴" : "현황 펼치기 ▾"}</span>
           </button>
+          {/* 동기화는 아래 실행 목록의 «기간» 왼쪽으로 옮겼다(2026-09-18 요청). 여기는 갱신 주기만 남는다. */}
+          <div className="airflow-refresh-controls">
+            <span className="refresh-label">갱신 주기</span>
+            <Select value={refreshSeconds} options={REFRESH_OPTIONS} onChange={setRefreshSeconds} aria-label="갱신 주기" />
+            <span className="last-refresh-time">
+              마지막 갱신 {dashboardQuery.dataUpdatedAt ? dayjs(dashboardQuery.dataUpdatedAt).format("HH:mm:ss") : "-"}
+            </span>
+          </div>
+          </div>
           </section>
           {/* 양옆 패널은 ETL 관리 화면처럼 접고 너비를 끌어 바꾼다(2026-09-18 요청). 가운데 열이 남은 폭을 가져간다. */}
           <div className="airflow-dashboard-workspace"
@@ -2190,6 +2177,7 @@ export function AirflowDashboardPage() {
                     setSelectedDagId(dagId);
                     setSelectedPipelineId(undefined);
                   }}
+                  sync={canRunTop ? { busy: syncBusy, onSync: () => { void synchronizeDags(); } } : undefined}
                 />
               </main>
             ) : (
@@ -2228,6 +2216,17 @@ export function AirflowDashboardPage() {
             {/* 오른쪽 속성창: 워크플로우 설계 화면과 같은 «상세정보 | AI 어시스턴트» 탭(2026-09-18 요청). 상세정보는 예전 속성창 그대로. */}
             <SideDock side="right" dock={propertyDock} label="속성 패널">
             <div className={`airflow-property-shell${aiTarget && propertyTab === "ai" ? " is-ai" : ""}`}>
+              {/* 탭 위 이름 줄. 워크플로우 설계 화면 속성창과 같은 자리다(2026-09-18 요청).
+                  아래 «속성 / 이름» 이 하던 역할을 여기로 올렸으므로 그쪽에서는 지웠다 - 같은 이름을 두 번 적지 않는다. */}
+              <div className="nifi-detail-header">
+                <div className="nifi-detail-title">
+                  {selectedPipeline
+                    ? `파이프라인: ${selectedPipeline.name}`
+                    : selectedDag
+                      ? `워크플로우: ${displayName(selectedDag)}`
+                      : "속성"}
+                </div>
+              </div>
               <div className="nifi-detail-tabs" role="tablist" aria-label="속성 패널 탭">
                 <button type="button" role="tab" aria-selected={!(aiTarget && propertyTab === "ai")}
                         className={`nifi-detail-tab${aiTarget && propertyTab === "ai" ? "" : " active"}`}

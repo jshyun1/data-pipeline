@@ -352,7 +352,8 @@ export function CdcLogsPage() {
 
   const filters = (
     // 디자인 작업물 cdc-log.html 필터 띠(날짜 프리셋 · 기간 · 검색 · 파이프라인 · 조회).
-    <div className="std-card std-filter-card">
+    // 카드를 따로 두지 않고 표와 한 카드에 담는다(2026-09-18 목록 화면 공통 규격).
+    <div className="std-filter-card">
       <Space.Compact className="std-date-preset">
         <Button type={selectedPreset === 0 ? "primary" : "default"} onClick={() => applyDatePreset(0)}>당일</Button>
         <Button type={selectedPreset === 1 ? "primary" : "default"} onClick={() => applyDatePreset(1)}>전일</Button>
@@ -410,7 +411,7 @@ export function CdcLogsPage() {
   );
 
   return (
-    <StdPage menu="cdc" title="CDC 로그" icon="database" className="cdc-log-page">
+    <StdPage menu="cdc" title="CDC 로그" icon="database" className="cdc-log-page" fill>
       <div className={`etl-log-dashboard-curtain${dashboardOpen ? " open" : " closed"}`}>
         <button
           type="button"
@@ -433,11 +434,12 @@ export function CdcLogsPage() {
           </section>
         </div>
       </div>
-      {filters}
       <div className="std-card std-table-card">
+      {filters}
       <Table<UnifiedCdcLogRow>
         rowKey="key"
         size="middle"
+        className="std-full-table"
         loading={(processingQuery.isLoading && !processingQuery.data) || (eventsQuery.isLoading && !eventsQuery.data)}
         dataSource={rows}
         pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `총 ${total}건` }}

@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Alert, Button, Modal, Popconfirm, Radio, Space, Table, Tag, Tooltip, message } from "antd";
+import { Alert, Button, Input, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Tooltip, message } from "antd";
 import { StdPage } from "../../components/StdPage";
+import { byBool, byDate, byNumber, byText, matchesText } from "../../utils/listSort";
 import { PlusOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import {
@@ -82,8 +84,15 @@ export function GptManagePage() {
     activateMutation.mutate(row.id);
   };
 
+  // 표 위 검색·필터(2026-09-18 목록 화면 공통 규격).
+  const [search, setSearch] = useState("");
+  const [deploymentFilter, setDeploymentFilter] = useState<string[]>([]);
+  const visible = (providers ?? []).filter((row) =>
+    matchesText(search, row.name, row.modelName, PROVIDER_LABEL[row.provider])
+    && (deploymentFilter.length === 0 || deploymentFilter.includes(row.deployment)));
+
   return (
-    <StdPage menu="gpt" title="GPT 관리" icon="bot">
+    <StdPage menu="gpt" title="GPT 관리" icon="bot" fill>
       {modalHolder}
         {active ? (
           <Alert
@@ -106,16 +115,25 @@ export function GptManagePage() {
           <Alert type="warning" showIcon message="선택된 GPT 가 없습니다. GPT 기능이 화면에 표시되지 않습니다." />
         )}
 
-        <div className="std-toolbar">
-          <Button type="primary" className="std-push-end" icon={<PlusOutlined />} onClick={() => navigate("/gpt/register")}>등록</Button>
-        </div>
-
         <div className="std-card std-table-card">
+        <div className="std-filter-card">
+          <Space wrap>
+            <Input placeholder="이름·모델·제공자 검색" allowClear style={{ width: 240 }}
+                   value={search} onChange={(event) => setSearch(event.target.value)} />
+            <Select mode="multiple" allowClear placeholder="배치" style={{ minWidth: 140 }}
+                    options={Object.entries(DEPLOYMENT_LABEL).map(([value, label]) => ({ value, label }))}
+                    value={deploymentFilter} onChange={setDeploymentFilter} />
+          </Space>
+          <Space wrap className="std-push-end">
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate("/gpt/register")}>등록</Button>
+          </Space>
+        </div>
         <Table<LlmProviderResponse>
           rowKey="id"
           size="middle"
+          className="std-full-table"
           loading={isLoading}
-          dataSource={providers}
+          dataSource={visible}
           pagination={{ pageSize: 10, hideOnSinglePage: true, showTotal: (total) => `총 ${total}건` }}
           scroll={{ x: 1100 }}
           locale={{ emptyText: "등록된 GPT 가 없습니다. 오른쪽 위 «등록»으로 추가하십시오." }}
@@ -129,27 +147,38 @@ export function GptManagePage() {
                 <Radio checked={row.active} disabled={activateMutation.isPending} onChange={() => select(row)} />
               ),
             },
-            { title: "이름", dataIndex: "name", render: (v: string) => <strong>{v}</strong> },
+            { title: "이름", dataIndex: "name", sorter: (a, b) => byText(a.name, b.name), render: (v: string) => <strong>{v}</strong> },
             {
               title: "배치",
               dataIndex: "deployment",
               width: 80,
+              sorter: (a, b) => byText(DEPLOYMENT_LABEL[a.deployment], DEPLOYMENT_LABEL[b.deployment]),
               render: (v: LlmProviderResponse["deployment"]) => <Tag color={v === "EXTERNAL" ? "blue" : "green"}>{DEPLOYMENT_LABEL[v]}</Tag>,
             },
-            { title: "제공자", dataIndex: "provider", width: 120, render: (v: LlmProviderResponse["provider"]) => PROVIDER_LABEL[v] },
+            { title: "제공자", dataIndex: "provider", width: 120, sorter: (a, b) => byText(PROVIDER_LABEL[a.provider], PROVIDER_LABEL[b.provider]), render: (v: LlmProviderResponse["provider"]) => PROVIDER_LABEL[v] },
             {
               title: "모델",
               dataIndex: "modelName",
+              sorter: (a, b) => byText(a.modelName, b.modelName),
               render: (v: string, row) => (
                 <Tooltip title={row.effectiveBaseUrl ?? undefined}><span>{v}</span></Tooltip>
               ),
             },
-            { title: "과금", dataIndex: "billingType", width: 70, render: (v: LlmProviderResponse["billingType"]) => BILLING_LABEL[v] },
-            { title: "마스킹", dataIndex: "maskSensitive", width: 80, render: (v: boolean) => (v ? "켜짐" : "꺼짐") },
-            { title: "키", width: 90, render: (_, row) => (row.apiKeySet ? row.apiKeyHint : "-") },
+            {
+              // 대화가 쓰는 몫과 헷갈리지 않게 «자»를 붙여 단위를 밝힌다(값은 설정에 넣은 그대로).
+              title: "최대 입력 길이",
+              dataIndex: "maxInputChars",
+              width: 120,
+              align: "right",
+              sorter: (a, b) => byNumber(a.maxInputChars, b.maxInputChars),
+              render: (v: number) => (v != null ? `${v.toLocaleString()}자` : "-"),
+            },
+            { title: "과금", dataIndex: "billingType", width: 70, sorter: (a, b) => byText(BILLING_LABEL[a.billingType], BILLING_LABEL[b.billingType]), render: (v: LlmProviderResponse["billingType"]) => BILLING_LABEL[v] },
+            { title: "마스킹", dataIndex: "maskSensitive", width: 80, sorter: (a, b) => byBool(a.maskSensitive, b.maskSensitive), render: (v: boolean) => (v ? "켜짐" : "꺼짐") },
             {
               title: "최근 테스트",
               width: 190,
+              sorter: (a, b) => byDate(a.lastTestedAt, b.lastTestedAt),
               render: (_, row) => {
                 if (!row.lastTestStatus) return <span style={{ color: "#9ca3af" }}>테스트 안 함</span>;
                 const ok = row.lastTestStatus === "SUCCESS";

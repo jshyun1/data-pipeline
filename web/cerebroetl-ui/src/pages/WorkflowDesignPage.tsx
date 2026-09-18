@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ConfigProvider, Empty, message, Popconfirm, Table } from "antd";
+import { ConfigProvider, Empty, Input, message, Popconfirm, Select, Space, Table } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useAuth } from "../auth/AuthContext";
@@ -31,6 +31,12 @@ import { cerebroBrandTheme } from "../theme/cerebro";
 // 워크플로우는 업무 그룹(NiFi 그룹)에 속하지 않는다. 분류는 이 계층이 전부다.
 //
 // 모양은 디자인 초안 workflow-scheduling.html(왼쪽 트리 카드 + 오른쪽 목록 카드)을 따른다.
+
+/** 표 위 «게시 상태» 필터. 표의 게시 상태 열과 같은 말을 쓴다. */
+const PUBLISH_OPTIONS = [
+  { value: "PUBLISHED", label: "게시됨" },
+  { value: "UNPUBLISHED", label: "미게시" },
+];
 
 /**
  * 목록 표의 열별 정렬(2026-09-11 요청). antd 는 오름차순 비교 하나만 받고 내림차순은 뒤집어 쓴다.
@@ -166,6 +172,9 @@ export function WorkflowDesignPage() {
   const canPublish = !permissionsLoaded || can("AIRFLOW", "WRITE");
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<number>();
   const [treeSearch, setTreeSearch] = useState("");
+  // 표 위 필터. 왼쪽 트리 검색과는 역할이 다르다 - 트리는 «어느 갈래를 볼지», 이쪽은 «그 안에서 무엇을 추릴지».
+  const [nameFilter, setNameFilter] = useState("");
+  const [publishFilter, setPublishFilter] = useState<string[]>([]);
 
   const { data, isLoading } = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
 
@@ -252,7 +261,20 @@ export function WorkflowDesignPage() {
   const selectedSubtree = selectedWorkflowId === undefined
     ? undefined
     : findSubtree(workflowTree, selectedWorkflowId);
-  const visible = selectedSubtree ? flattenWorkflowTree([selectedSubtree]) : workflows;
+  const scoped = selectedSubtree ? flattenWorkflowTree([selectedSubtree]) : workflows;
+  const nameNeedle = nameFilter.trim().toLowerCase();
+  const visible = scoped.filter((row) => {
+    // 이름으로 못 찾을 때 DAG ID 로도 찾히게 한다 - 로그·Airflow 쪽에서 DAG ID 만 들고 오는 일이 잦다.
+    if (nameNeedle
+        && !row.name.toLowerCase().includes(nameNeedle)
+        && !row.dagId.toLowerCase().includes(nameNeedle)) {
+      return false;
+    }
+    if (publishFilter.length && !publishFilter.includes(row.published ? "PUBLISHED" : "UNPUBLISHED")) {
+      return false;
+    }
+    return true;
+  });
 
   const columns: ColumnsType<WorkflowSummary> = [
     {
@@ -349,31 +371,11 @@ export function WorkflowDesignPage() {
   return (
     <ConfigProvider theme={cerebroBrandTheme}>
     <div className="wf-design-page">
+      {/* 조작 줄은 아래 목록 카드 안 필터 띠로 옮겼다(2026-09-18 요청) - CDC 관리 화면과 같은 구성이다.
+          actions 를 주지 않으면 이 머리줄은 아무것도 그리지 않는다. */}
       <WorkflowPageHeader
         title="워크플로우 관리"
         icon={<WfIcon name="calendar" size={22} strokeWidth={2.2} />}
-        actions={
-          <>
-            {/* antd 버튼의 loading 과 같게: 동기화 중에는 누름을 무시하고 아이콘만 돈다. */}
-            <button type="button" className={syncMutation.isPending ? "btn-wf-sync spinning" : "btn-wf-sync"}
-                    aria-busy={syncMutation.isPending}
-                    title="ETL 에서 만든 job 을 기다리지 않고 바로 가져옵니다"
-                    onClick={() => {
-                      if (!syncMutation.isPending) {
-                        syncMutation.mutate();
-                      }
-                    }}>
-              <WfIcon name="sync" size={15} strokeWidth={2.2} />
-              동기화
-            </button>
-            {/* 생성은 이름 없이 빈 캔버스에서 시작한다(«생성» 메뉴와 같은 길). */}
-            <button type="button" className="btn-wf-create" disabled={!canWrite}
-                    onClick={() => navigate("/workflows/create")}>
-              <WfIcon name="plus" size={15} strokeWidth={2.4} />
-              새 워크플로우
-            </button>
-          </>
-        }
       />
 
       <div className="wf-design-body">
@@ -406,6 +408,47 @@ export function WorkflowDesignPage() {
         <section className="wf-list-card">
           {/* 표 위 «○○ · 하위 포함 / 전체 보기» 줄은 뺐다(2026-09-11 요청) - 무엇을 골랐는지는 왼쪽 트리가
               이미 보여준다. 선택 해제는 트리에서 고른 줄을 다시 누르면 된다. */}
+          {/* 필터 띠: 왼쪽에 조회 조건, 오른쪽 끝에 주 동작. CDC 관리 화면(std-filter-card)과 같은 마크업이다. */}
+          <div className="std-filter-card wf-list-filter">
+            <Space wrap>
+              <Input
+                placeholder="이름 검색"
+                allowClear
+                style={{ width: 200 }}
+                value={nameFilter}
+                onChange={(event) => setNameFilter(event.target.value)}
+              />
+              <Select
+                mode="multiple"
+                allowClear
+                placeholder="게시 상태"
+                style={{ minWidth: 160 }}
+                options={PUBLISH_OPTIONS}
+                value={publishFilter}
+                onChange={setPublishFilter}
+              />
+            </Space>
+            <Space wrap className="std-push-end">
+              {/* antd 버튼의 loading 과 같게: 동기화 중에는 누름을 무시하고 아이콘만 돈다. */}
+              <button type="button" className={syncMutation.isPending ? "btn-wf-sync spinning" : "btn-wf-sync"}
+                      aria-busy={syncMutation.isPending}
+                      title="ETL 에서 만든 job 을 기다리지 않고 바로 가져옵니다"
+                      onClick={() => {
+                        if (!syncMutation.isPending) {
+                          syncMutation.mutate();
+                        }
+                      }}>
+                <WfIcon name="sync" size={15} strokeWidth={2.2} />
+                동기화
+              </button>
+              {/* 생성은 이름 없이 빈 캔버스에서 시작한다(«생성» 메뉴와 같은 길). */}
+              <button type="button" className="btn-wf-create" disabled={!canWrite}
+                      onClick={() => navigate("/workflows/create")}>
+                <WfIcon name="plus" size={15} strokeWidth={2.4} />
+                새 워크플로우
+              </button>
+            </Space>
+          </div>
           <Table<WorkflowSummary>
             rowKey="id"
             size="middle"

@@ -432,7 +432,7 @@ export function PipelinesPage() {
   );
 
   return (
-    <StdPage menu="cdc" title="CDC 파이프라인" icon="database">
+    <StdPage menu="cdc" title="CDC 파이프라인" icon="database" fill>
       {modalHolder}
         {Object.entries(driftByPipeline).map(([pipelineId, info]) => (
           <Alert
@@ -545,6 +545,7 @@ export function PipelinesPage() {
 
         <Table<PipelineResponse>
         rowKey="id"
+        className="std-full-table"
         loading={isLoading}
         dataSource={filteredPipelines}
         scroll={{ x: 1120 }}

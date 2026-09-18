@@ -6,6 +6,7 @@ import dayjs from "dayjs";
 import { listAllAirflowDagRuns, type AirflowDagRun } from "../../api/platform";
 import type { WorkflowSummary } from "../../api/workflows";
 import { TaskFailureLogModal, type FailureLogTarget } from "../../components/TaskFailureLogModal";
+import { WfIcon } from "../../components/WorkflowPageHeader";
 import {
   childRunIdOf,
   displayName,
@@ -52,6 +53,7 @@ export function EtlRunsPane({
   dashboardRuns,
   refreshSeconds,
   onSelectDag,
+  sync,
 }: {
   title: string;
   /** 범위가 CDC 워크플로우 하나면 머리줄 칩을 CDC 로(속성창 «CDC 워크플로우»와 맞춘다). */
@@ -64,6 +66,11 @@ export function EtlRunsPane({
   dashboardRuns: AirflowDagRun[];
   refreshSeconds: number;
   onSelectDag: (dagId: string) => void;
+  /**
+   * DAG 카탈로그 동기화(2026-09-18 요청으로 화면 위 조작 띠에서 여기 «기간» 왼쪽으로 내려왔다).
+   * 쓰기 권한이 없으면 화면에서 아예 뺀다 - 눌러도 403 인 버튼을 남기지 않는다.
+   */
+  sync?: { busy: boolean; onSync: () => void };
 }) {
   const [period, setPeriod] = useState<PeriodKey>("today");
   const [customRange, setCustomRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(6, "day").startOf("day"), dayjs().endOf("day")]);
@@ -246,6 +253,20 @@ export function EtlRunsPane({
           {includesChildren && <span className="lv2-crumb-note">· 하위 워크플로우 포함</span>}
         </div>
         <div className="lv2-ctx-right">
+          {sync && (
+            // antd 버튼의 loading 과 같게: 동기화 중에는 누름을 무시하고 아이콘만 돈다.
+            <button type="button" className={sync.busy ? "btn-wf-sync spinning" : "btn-wf-sync"}
+                    aria-busy={sync.busy}
+                    title="ETL 에서 만든 job 을 기다리지 않고 바로 가져옵니다"
+                    onClick={() => {
+                      if (!sync.busy) {
+                        sync.onSync();
+                      }
+                    }}>
+              <WfIcon name="sync" size={15} strokeWidth={2.2} />
+              동기화
+            </button>
+          )}
           <span className="lv2-ctx-label">기간</span>
           <div className="lv2-seg">
             {PERIODS.map(([key, label]) => (
