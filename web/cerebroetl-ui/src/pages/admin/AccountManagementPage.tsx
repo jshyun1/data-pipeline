@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, message } from "antd";
+import { Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Tooltip, message } from "antd";
+import { StdPage } from "../../components/StdPage";
+import { WfIcon } from "../../components/WorkflowPageHeader";
 import type { ColumnsType } from "antd/es/table";
 import {
   createAccount,
@@ -202,57 +204,65 @@ export function AccountManagementPage() {
               잠금 해제
             </Button>
           )}
-          {row.useYn === "Y" ? (
-            <Popconfirm
-              title="이 계정을 비활성화하시겠습니까?"
-              onConfirm={() => toggleMut.mutate({ userId: row.userId, enable: false })}
-            >
-              <Button size="small" danger>
-                비활성화
-              </Button>
-            </Popconfirm>
-          ) : (
-            <Button size="small" onClick={() => toggleMut.mutate({ userId: row.userId, enable: true })}>
-              활성화
-            </Button>
-          )}
         </Space>
       ),
+    },
+    {
+      // 디자인 작업물 account-setting.html «계정활성화» 스위치. 동작은 예전 [비활성화]/[활성화] 버튼과 같다 -
+      // 끌 때만 확인을 받고(Popconfirm), 켤 때는 바로 활성화한다. 스위치 표시는 서버 값(useYn)을 따른다.
+      title: "계정활성화",
+      key: "enable",
+      width: 100,
+      align: "center",
+      render: (_, row) =>
+        row.useYn === "Y" ? (
+          <Popconfirm
+            title="이 계정을 비활성화하시겠습니까?"
+            onConfirm={() => toggleMut.mutate({ userId: row.userId, enable: false })}
+          >
+            <Switch checked size="small" loading={toggleMut.isPending && toggleMut.variables?.userId === row.userId}
+                    aria-label={`${row.userId} 비활성화`} />
+          </Popconfirm>
+        ) : (
+          <Switch checked={false} size="small" loading={toggleMut.isPending && toggleMut.variables?.userId === row.userId}
+                  aria-label={`${row.userId} 활성화`}
+                  onChange={() => toggleMut.mutate({ userId: row.userId, enable: true })} />
+        ),
     },
   ];
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>계정 관리</h2>
-      <Card
-        extra={
-          <Space>
-            <Button
-              loading={syncMut.isPending}
-              onClick={() => syncMut.mutate()}
-              title="배정된 역할 기준으로 전체 사용자를 ETL/Airflow 개인계정으로 일괄 재조정합니다."
-            >
-              ETL/Airflow 전체 동기화
-            </Button>
-            <Button type="primary" onClick={() => setCreateOpen(true)}>
-              계정 추가
-            </Button>
-          </Space>
-        }
-      >
+    <StdPage menu="settings" title="계정 관리" icon="user">
+      {/* 디자인 작업물 account-setting.html: 안내문구 ··· 동기화 · 계정 추가, 그 아래 표 카드. */}
+      <div className="std-toolbar">
+        <span className="std-notice">
+          <WfIcon name="info" size={14} />
+          관리자도 기존 비밀번호를 볼 수 없습니다. 초기화하면 사용자는 다음 로그인 때 변경을 요구받습니다.
+          삭제 대신 비활성화를 권장합니다(실행 이력·감사 로그가 계정을 참조).
+        </span>
+        <Space className="std-push-end">
+          <Button
+            loading={syncMut.isPending}
+            onClick={() => syncMut.mutate()}
+            title="배정된 역할 기준으로 전체 사용자를 ETL/Airflow 개인계정으로 일괄 재조정합니다."
+          >
+            ETL/Airflow 전체 동기화
+          </Button>
+          <Button type="primary" onClick={() => setCreateOpen(true)}>
+            + 계정 추가
+          </Button>
+        </Space>
+      </div>
+      <div className="std-card std-table-card">
         <Table<AccountView>
           rowKey="userId"
           loading={isLoading}
           columns={columns}
           dataSource={accounts}
           size="middle"
-          pagination={{ pageSize: 15 }}
+          pagination={{ pageSize: 15, showTotal: (total) => `총 ${total}건` }}
         />
-        <p style={{ color: "#888", marginTop: 12, marginBottom: 0 }}>
-          ⓘ 관리자도 기존 비밀번호를 볼 수 없습니다. 초기화하면 사용자는 다음 로그인 때 변경을 요구받습니다.
-          삭제 대신 비활성화를 권장합니다(실행 이력·감사 로그가 계정을 참조).
-        </p>
-      </Card>
+      </div>
 
       {/* 계정 추가 */}
       <Modal
@@ -359,6 +369,6 @@ export function AccountManagementPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </div>
+    </StdPage>
   );
 }

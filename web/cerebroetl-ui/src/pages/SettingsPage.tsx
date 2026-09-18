@@ -3,10 +3,11 @@ import dayjs from "dayjs";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { AlertHistoryTab } from "../components/AlertHistoryTab";
+import { StdPage } from "../components/StdPage";
+import { WfIcon } from "../components/WorkflowPageHeader";
 import {
   Alert,
   Button,
-  Card,
   Form,
   Input,
   InputNumber,
@@ -302,25 +303,23 @@ function RulesTab() {
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="middle">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span>
-          사용여부{" "}
-          <Select
-            size="small"
-            value={enabledFilter}
-            style={{ width: 110 }}
-            onChange={setEnabledFilter}
-            options={[
-              { label: "전체", value: "all" },
-              { label: "사용", value: "on" },
-              { label: "미사용", value: "off" },
-            ]}
-          />
-        </span>
-        <Button type="primary" onClick={() => setCreating(true)}>
+      <div className="std-toolbar">
+        <span className="std-field-label">사용여부</span>
+        <Select
+          value={enabledFilter}
+          style={{ width: 110 }}
+          onChange={setEnabledFilter}
+          options={[
+            { label: "전체", value: "all" },
+            { label: "사용", value: "on" },
+            { label: "미사용", value: "off" },
+          ]}
+        />
+        <Button type="primary" className="std-push-end" onClick={() => setCreating(true)}>
           + 규칙 추가
         </Button>
       </div>
+      <div className="std-card std-table-card">
       <Table<AlertRule>
         rowKey="id"
         loading={isLoading}
@@ -403,6 +402,7 @@ function RulesTab() {
           },
         ]}
       />
+      </div>
       {rules.some((r) => r.last_eval_error) ? (
         <div style={{ color: "#b45309", fontSize: 12 }}>
           ⚠ 일부 규칙에서 평가 오류가 있습니다 — 자가진단 화면에서 확인하세요.
@@ -873,7 +873,8 @@ function ChannelsTab() {
   const onButUnconfigured = external.filter((c) => c.enabled && !c.relay_configured);
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="small">
-      <span style={{ color: "#888", fontSize: 13 }}>
+      <span className="std-notice">
+        <WfIcon name="info" size={14} />
         화면알림은 별도 설정이 없습니다 — 알림 규칙을 «사용»으로 켜면 조치 대기열·헤더 알림에 자동으로 표시됩니다.
         외부 발송(이메일·SMS)만 여기서 켜고 끕니다.
       </span>
@@ -885,6 +886,7 @@ function ChannelsTab() {
           description="실제 발송에는 서버 설정(.env)의 SMTP 릴레이 / SMS 게이트웨이 주소가 필요합니다. 지금 상태로는 발송 건이 모두 실패 처리됩니다."
         />
       )}
+      <div className="std-card std-table-card">
       <Table<ChannelConfig>
         rowKey="channel_type"
         loading={isLoading}
@@ -932,6 +934,7 @@ function ChannelsTab() {
         },
         ]}
       />
+      </div>
     </Space>
   );
 }
@@ -984,10 +987,12 @@ function RecipientsTab() {
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="middle">
-      <span style={{ color: "#888", fontSize: 13 }}>
+      <span className="std-notice">
+        <WfIcon name="info" size={14} />
         «이메일 수신»·«문자 수신»을 켜야 실제로 발송됩니다. 등록만 해두면 화면 알림에만 남습니다.
         추가할 때 적은 연락처는 자동으로 켜집니다. (메일·문자는 «위험» 등급만 발송됩니다)
       </span>
+      <div className="std-card std-filter-card">
       <Form form={form} layout="inline" onFinish={add}>
         <Form.Item name="displayName" rules={[{ required: true, message: "이름" }]}>
           <Input placeholder="이름" />
@@ -1002,10 +1007,10 @@ function RecipientsTab() {
           추가
         </Button>
       </Form>
-      <div>
-        사용여부{" "}
+      </div>
+      <div className="std-toolbar">
+        <span className="std-field-label">사용여부</span>
         <Select
-          size="small"
           value={enabledFilter}
           style={{ width: 110 }}
           onChange={setEnabledFilter}
@@ -1016,6 +1021,7 @@ function RecipientsTab() {
           ]}
         />
       </div>
+      <div className="std-card std-table-card">
       <Table<Recipient>
         rowKey="id"
         loading={isLoading}
@@ -1089,6 +1095,7 @@ function RecipientsTab() {
           },
         ]}
       />
+      </div>
       <RecipientEditModal
         recipient={editing}
         onClose={() => setEditing(null)}
@@ -1325,21 +1332,19 @@ function RecipientEditModal({
 export function SettingsPage() {
   const [params, setParams] = useSearchParams();
   const active = params.get("tab") ?? "history";
+  // 디자인 작업물 alarm-setting.html: 제목 + 설정 하위 탭, 그 아래 화면 안 탭 → 필터 띠 → 표 카드.
   return (
-    <div style={{ padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>알림/발송 설정</h2>
-      <Card>
-        <Tabs
-          activeKey={active}
-          onChange={(k) => setParams({ tab: k })}
-          items={[
-            { key: "history", label: "알림 이력", children: <AlertHistoryTab /> },
-            { key: "rules", label: "알림 규칙", children: <RulesTab /> },
-            { key: "channels", label: "발송 채널", children: <ChannelsTab /> },
-            { key: "recipients", label: "수신자", children: <RecipientsTab /> },
-          ]}
-        />
-      </Card>
-    </div>
+    <StdPage menu="settings" title="알림/발송 설정" icon="bell">
+      <Tabs
+        activeKey={active}
+        onChange={(k) => setParams({ tab: k })}
+        items={[
+          { key: "history", label: "알림 이력", children: <AlertHistoryTab /> },
+          { key: "rules", label: "알림 규칙", children: <RulesTab /> },
+          { key: "channels", label: "발송 채널", children: <ChannelsTab /> },
+          { key: "recipients", label: "수신자", children: <RecipientsTab /> },
+        ]}
+      />
+    </StdPage>
   );
 }

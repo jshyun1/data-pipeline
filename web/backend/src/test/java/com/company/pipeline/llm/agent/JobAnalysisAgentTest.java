@@ -19,6 +19,19 @@ class JobAnalysisAgentTest {
     }
 
     @Test
+    void draftTarget_swapsSavedRuleForDraftRuleAndAddsReviewGuide() {
+        String prompt = JobAnalysisAgent.systemPrompt(LlmTargetType.WORKFLOW_DRAFT);
+
+        assertThat(JobAnalysisAgent.SYSTEM_PROMPT).contains(JobAnalysisAgent.SAVED_RULE);
+        assertThat(prompt).doesNotContain(JobAnalysisAgent.SAVED_RULE).contains(JobAnalysisAgent.DRAFT_RULE, "[작성 중인 새 워크플로우]");
+        assertThat(JobAnalysisAgent.systemPrompt(LlmTargetType.WORKFLOW)).isEqualTo(JobAnalysisAgent.SYSTEM_PROMPT);
+
+        List<LlmMessage> messages = JobAnalysisAgent.messages(LlmTargetType.WORKFLOW_DRAFT, "ctx", null, List.of(), "봐 줘");
+        assertThat(messages.get(0).content()).isEqualTo(prompt);
+        assertThat(messages.get(1).content()).startsWith("[대상: 작성 중인 새 워크플로우(저장 전)]");
+    }
+
+    @Test
     void summaryAndOldestKeptQuestionShareFirstMessage_rolesAlternate() {
         List<LlmMessage> kept = List.of(LlmMessage.user("q3"), LlmMessage.assistant("a3"));
 

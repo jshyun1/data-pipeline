@@ -419,7 +419,7 @@ export function WorkflowDesignPage() {
               defaultPageSize: 20,
               showSizeChanger: true,
               pageSizeOptions: [10, 20, 50, 100],
-              showTotal: (total) => `전체 ${total}건`,
+              showTotal: (total) => `총 ${total}건`,
               locale: { items_per_page: "/ 페이지" },
             }}
             locale={{

@@ -1149,7 +1149,8 @@ body {
   align-items: center;
   gap: 2px;
   border-radius: 8px;
-  background: #e9edf2;
+  /* 2026-09-17 디자인 작업물 base.css «Sub-Tabs System» 바탕색(예전 #e9edf2). */
+  background: #f1f5f9;
 }
 
 .workflow-sub-tab {
@@ -1963,7 +1964,7 @@ body {
 }
 
 .airflow-jobs-panel .ant-table-wrapper .ant-table-thead > tr > th {
-  padding: 10px 14px;
+  padding: 12px 14px;
   background: #f8fafc;
   color: #475569;
   font-size: 12px;
@@ -1976,7 +1977,7 @@ body {
 }
 
 .airflow-jobs-panel .ant-table-wrapper .ant-table-tbody > tr > td {
-  padding: 11px 14px;
+  padding: 12px 14px;
   border-bottom-color: #f1f5f9;
   color: #1e293b;
   font-size: 12.5px;
@@ -2247,6 +2248,20 @@ button.airflow-task-name:hover {
 }
 
 /* ----- 오른쪽: 속성 ----- */
+/* CDC 워크플로우 속성창의 파이프라인 줄. 실패한 것을 눌러 바로 그 파이프라인으로 간다. */
+.airflow-cdc-member {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.airflow-cdc-member:last-child {
+  border-bottom: none;
+}
+
 .airflow-property-panel {
   padding: 16px;
 }
@@ -5130,17 +5145,19 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 /* ----- 오류·실행 상세 팝업 (HistoryModal) — 초안 «ETL 오류 상세» ----- */
+/* 2026-09-17 디자인 작업물 dashboard.css .etl-error-table: 머리 12px · #fafbfc · 12px 14px, 본문 12.5px. */
 .history-modal .ant-table-wrapper .ant-table-thead > tr > th {
-  background: #f8fafc;
+  padding: 12px 14px;
+  background: #fafbfc;
   color: #475569;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: -0.2px;
 }
 
 .history-modal .ant-table-wrapper .ant-table-tbody > tr > td {
   color: #1e293b;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
   line-height: 1.55;
 }
@@ -7325,6 +7342,17 @@ button.alert-compact-trigger.is-clear:hover {
   background: #7c3aed;
 }
 
+/* CDC 노드. job·워크플로우와 한눈에 갈리도록 청록 계열로 둔다.
+   연결점이 없어(잇지 못한다) 노드 좌우에 점이 뜨지 않는다. */
+.react-flow__node.wf-node--cdc {
+  border-left: none;
+  background: #ecfeff;
+}
+
+.react-flow__node.wf-node--cdc .wf-node__kind {
+  background: #0891b2;
+}
+
 
 /* 캔버스 양옆 카드(job 팔레트 · 워크플로우 속성).
    내용이 길어지면 패널이 아래로 늘어져 화면 밖으로 잘렸다. 카드 높이를 칸에 맞추고
@@ -7735,7 +7763,7 @@ button.alert-compact-trigger.is-clear:hover {
   position: sticky;
   top: 0;
   z-index: 2;
-  padding: 10px 16px;
+  padding: 12px 14px;
   background: #f8fafc;
   color: #475569;
   font-size: 12px;
@@ -7749,14 +7777,14 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 .wf-design-table .ant-table-tbody > tr > td {
-  padding: 12px 16px;
+  padding: 12px 14px;
   border-bottom-color: #f1f5f9;
   color: #1e293b;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .wf-design-table .ant-table-tbody > tr.ant-table-row:hover > td {
-  background: #fafbfc;
+  background: #f8fafc;
 }
 
 .wf-design-table .ant-table-pagination.ant-pagination {
@@ -8553,4 +8581,1368 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
 /* 캔버스 노드 속성창의 [속성] [GPT] 탭 - 좁은 카드라 탭 줄 여백을 줄인다 */
 .wf-node-panel-tabs > .ant-tabs-nav {
   margin-bottom: 10px;
+}
+
+/* ===== 표준 화면 (components/StdPage) — 디자인 작업물 CEREBRO_ETL_UI_DESIGN_20260917 «UI Standard v2.0» =====
+ *
+ * 표 · 버튼 · 탭 · 페이지 번호의 치수와 색은 antd 토큰(theme/cerebro.ts cerebroStandardTheme)으로 준다.
+ * 여기에는 토큰으로 줄 수 없는 것만 둔다: 화면 틀 · 카드 · 필터 띠 · 배지 알약 모양 · 모달/서랍 머리·바닥 띠 ·
+ * 페이지 번호 배치 · 날짜 프리셋 · 안내문구. 모두 .std-page / .std-modal / .std-drawer 안으로 한정한다 -
+ * 아직 이 틀을 쓰지 않는 화면(ETL 등)에는 닿지 않는다. */
+.std-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: #1e293b;
+  font-size: 13px;
+}
+
+/* 카드: 흰 바탕 · 8px 라운드 · 옅은 테두리. 표는 카드에 바로 담고(카드 안 카드 금지) 모서리를 카드가 자른다. */
+.std-card {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.std-card-head {
+  min-height: 52px;
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.std-card-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+
+.std-card-body {
+  padding: 16px 20px;
+}
+
+.std-table-card {
+  overflow: hidden;
+}
+
+/* 필터 띠: 카드 한 줄에 조회 조건을 늘어놓고, 오른쪽 끝(.std-push-end)에 검색·주 동작을 붙인다. */
+.std-filter-card {
+  padding: 10px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+/* 카드 없이 표 위에 놓이는 조작 줄(목록 필터 · 신규 등록). */
+.std-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.std-push-end {
+  margin-left: auto;
+}
+
+.std-field-label {
+  color: #475569;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 날짜 프리셋(당일 · 전일): 회색 바탕 묶음, 고른 것은 빨간 바탕 흰 글자. antd Space.Compact 버튼에 붙인다. */
+.std-page .std-date-preset {
+  padding: 2px;
+  display: inline-flex;
+  gap: 2px;
+  border-radius: 6px;
+  background: #f1f5f9;
+}
+
+.std-page .std-date-preset .ant-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px !important;
+  background: transparent;
+  box-shadow: none;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.std-page .std-date-preset .ant-btn:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.7);
+  color: #0f172a;
+}
+
+.std-page .std-date-preset .ant-btn.ant-btn-variant-solid,
+.std-page .std-date-preset .ant-btn.ant-btn-variant-solid:not(:disabled):hover {
+  background: var(--color-primary);
+  box-shadow: 0 1px 3px rgba(255, 59, 48, 0.25);
+  color: #ffffff;
+  font-weight: 700;
+}
+
+/* 표가 카드에 담기면 표 자체의 둥근 모서리 · 바깥 여백을 없앤다. 페이지 번호는 카드 바닥 띠로. */
+.std-page .std-table-card .ant-table,
+.std-modal .std-table-card .ant-table {
+  border-radius: 0;
+}
+
+.std-page .std-table-card .ant-table-container,
+.std-page .std-table-card .ant-table-container table > thead > tr:first-child > *:first-child,
+.std-page .std-table-card .ant-table-container table > thead > tr:first-child > *:last-child {
+  border-radius: 0 !important;
+}
+
+/* 페이지 번호: «총 N건»은 왼쪽 끝, 쪽 크기 선택은 오른쪽 끝(디자인 작업물 공통 페이저). */
+.std-page .ant-table-wrapper .ant-table-pagination.ant-pagination,
+.std-modal .ant-table-wrapper .ant-table-pagination.ant-pagination {
+  margin: 0;
+  padding: 10px 16px;
+  justify-content: flex-end;
+  border-top: 1px solid #f1f5f9;
+}
+
+.std-page .ant-pagination .ant-pagination-total-text {
+  margin-right: auto;
+  color: #64748b;
+  font-size: 12.5px;
+}
+
+.std-page .ant-pagination .ant-pagination-item,
+.std-page .ant-pagination .ant-pagination-prev,
+.std-page .ant-pagination .ant-pagination-next {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.std-page .ant-pagination .ant-pagination-item-active {
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 5px rgba(255, 59, 48, 0.25);
+}
+
+.std-page .ant-pagination .ant-pagination-options {
+  margin-inline-start: 16px;
+}
+
+/* 표 머리글 굵기 · 크기(토큰에 없는 값). */
+.std-page .ant-table-thead > tr > th,
+.std-modal .ant-table-thead > tr > th,
+.std-drawer .ant-table-thead > tr > th {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  white-space: nowrap;
+}
+
+/* 위험 동작 보조 버튼(삭제 · 비활성화): 옅은 분홍 바탕 · 빨간 글자(디자인 btn-table-delete). */
+.std-page .ant-btn.ant-btn-color-dangerous.ant-btn-variant-outlined:not(:disabled),
+.std-modal .ant-btn.ant-btn-color-dangerous.ant-btn-variant-outlined:not(:disabled) {
+  border-color: #fecaca;
+  background: #fff5f5;
+  color: #ef4444;
+}
+
+.std-page .ant-btn.ant-btn-color-dangerous.ant-btn-variant-outlined:not(:disabled):hover,
+.std-modal .ant-btn.ant-btn-color-dangerous.ant-btn-variant-outlined:not(:disabled):hover {
+  border-color: #ef4444;
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+/* 배지: 12px 알약 · 11px 600 · 1px 테두리, 7색(초록 · 빨강 · 주황 · 보라 · 파랑 · 청록 · 회색). */
+:is(.std-page, .std-modal, .std-drawer) .ant-tag {
+  margin-inline-end: 4px;
+  padding: 1px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.1px;
+  white-space: nowrap;
+}
+
+:is(.std-page, .std-modal, .std-drawer) :is(.ant-tag-success, .ant-tag-green, .ant-tag-lime) {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+:is(.std-page, .std-modal, .std-drawer) :is(.ant-tag-error, .ant-tag-red, .ant-tag-volcano, .ant-tag-magenta) {
+  border-color: #fca5a5;
+  background: #fee2e2;
+  color: #ef4444;
+}
+
+:is(.std-page, .std-modal, .std-drawer) :is(.ant-tag-warning, .ant-tag-orange, .ant-tag-gold, .ant-tag-yellow) {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #d97706;
+}
+
+:is(.std-page, .std-modal, .std-drawer) :is(.ant-tag-processing, .ant-tag-blue, .ant-tag-geekblue) {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+:is(.std-page, .std-modal, .std-drawer) .ant-tag-purple {
+  border-color: #e9d5ff;
+  background: #faf5ff;
+  color: #9333ea;
+}
+
+:is(.std-page, .std-modal, .std-drawer) .ant-tag-cyan {
+  border-color: #a5f3fc;
+  background: #ecfeff;
+  color: #0891b2;
+}
+
+/* 안내문구: 12px 회색 + 원형 i 아이콘(디자인 cerebro-inline-desc). */
+.std-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.std-notice svg {
+  flex-shrink: 0;
+  color: #94a3b8;
+}
+
+/* antd Alert → 안내 배너(정보 파랑 · 주의 주황 · 오류 빨강). */
+:is(.std-page, .std-modal, .std-drawer) .ant-alert {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
+:is(.std-page, .std-modal, .std-drawer) .ant-alert-info {
+  border-color: #dbeafe;
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+:is(.std-page, .std-modal, .std-drawer) .ant-alert-warning {
+  border-color: #fef3c7;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+:is(.std-page, .std-modal, .std-drawer) .ant-alert-error {
+  border-color: #fecaca;
+  background: #fff5f5;
+  color: #991b1b;
+}
+
+:is(.std-page, .std-modal, .std-drawer) .ant-alert .ant-alert-title,
+:is(.std-page, .std-modal, .std-drawer) .ant-alert .ant-alert-message {
+  font-weight: 700;
+}
+
+/* 탭(화면 안 구분: 알림 이력 · 알림 규칙 …): 13px 굵게, 고른 탭은 빨간 밑줄. */
+.std-page .ant-tabs-top > .ant-tabs-nav {
+  margin-bottom: 14px;
+}
+
+.std-page .ant-tabs-top > .ant-tabs-nav::before {
+  border-bottom-color: #e2e8f0;
+}
+
+.std-page .ant-tabs-tab .ant-tabs-tab-btn {
+  font-weight: 600;
+}
+
+.std-page .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  font-weight: 700;
+}
+
+/* 모달: 8px 라운드 · 테두리, 머리/바닥은 #fafbfc 띠 + 경계선, 본문 20px 24px(디자인 공통 모달). */
+.std-modal .ant-modal-container {
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  box-shadow:
+    0 20px 40px -10px rgba(15, 23, 42, 0.25),
+    0 8px 16px -4px rgba(15, 23, 42, 0.1);
+}
+
+.std-modal .ant-modal-header {
+  margin: 0;
+  padding: 16px 56px 16px 22px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.std-modal .ant-modal-title {
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+
+.std-modal .ant-modal-close {
+  top: 13px;
+  inset-inline-end: 14px;
+}
+
+.std-modal .ant-modal-body {
+  padding: 20px 24px;
+}
+
+.std-modal .ant-modal-footer {
+  margin: 0;
+  padding: 12px 22px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.std-modal .ant-modal-footer .ant-btn {
+  height: 34px;
+  padding-inline: 16px;
+  font-size: 13px;
+}
+
+/* 확인 창(Modal.confirm 을 hook 으로 연 것)은 머리/바닥 띠 없이 본문만 여백. */
+.std-modal.ant-modal-confirm .ant-modal-body,
+.std-modal .ant-modal-confirm-body-wrapper {
+  padding: 20px 24px 16px;
+}
+
+/* 서랍: 머리 띠 #fafbfc. */
+.std-drawer .ant-drawer-header {
+  padding: 14px 22px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fafbfc;
+}
+
+.std-drawer .ant-drawer-title {
+  color: #0f172a;
+  font-size: 15.5px;
+  font-weight: 700;
+}
+
+/* 속성 표(antd Descriptions): 왼쪽 이름 칸 회색 바탕 · 12.5px. */
+:is(.std-page, .std-modal, .std-drawer) .ant-descriptions-bordered .ant-descriptions-item-label {
+  background: #fafbfc;
+  color: #475569;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+:is(.std-page, .std-modal, .std-drawer) .ant-descriptions-bordered .ant-descriptions-item-content {
+  color: #1e293b;
+  font-size: 12.5px;
+}
+
+/* 빈 상태: 가운데 선 아이콘 + 회색 안내(디자인 role-setting «왼쪽에서 역할을 선택하세요»). */
+.std-empty {
+  padding: 48px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: #94a3b8;
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.std-empty svg {
+  color: #cbd5e1;
+}
+
+/* CDC 관리(PipelinesPage) — 디자인 작업물 cdc-manage.html: 트리 카드 280px + 표 카드, 둘 다 화면 바닥까지. */
+.cdc-manage-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 16px;
+  min-height: calc(100vh - var(--app-offset) - 64px);
+}
+
+.cdc-manage-layout > .cdc-tree-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cdc-manage-layout > .cdc-tree-card .cdc-tree-scroll {
+  flex: 1 1 auto;
+}
+
+.cdc-manage-main {
+  min-width: 0;
+}
+
+.cdc-manage-filter {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.cdc-manage-name {
+  color: #0f172a;
+  white-space: nowrap;
+}
+
+/* ----- 생성 위저드(components/StdWizard) — 디자인 작업물 cdc-create.html ----- */
+.std-wizard-top-bar {
+  padding: 10px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.std-wizard-notice {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #334155;
+  font-size: 12.5px;
+}
+
+.std-wizard-notice b {
+  font-weight: 700;
+}
+
+.std-wizard-notice small {
+  color: #94a3b8;
+  font-size: 11.5px;
+}
+
+.std-wizard-notice svg {
+  color: #64748b;
+}
+
+/* 모드 전환: 고른 쪽은 빨간 바탕, 나머지는 흰 테두리 버튼. */
+.std-mode-switch {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.std-mode-switch button {
+  height: 32px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.std-mode-switch button:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.std-mode-switch button.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  box-shadow: 0 2px 6px rgba(255, 59, 48, 0.25);
+  color: #ffffff;
+}
+
+.std-card-body > .std-mode-switch {
+  margin-bottom: 8px;
+}
+
+/* 가로 단계 표시: 번호 원 36px, 사이를 잇는 선. 지금 단계는 빨간 원 + 옅은 빨간 테 · 끝낸 단계는 초록. */
+.std-stepper {
+  margin: 0;
+  padding: 18px 24px 16px;
+  display: flex;
+  justify-content: center;
+  list-style: none;
+}
+
+.std-stepper-item {
+  position: relative;
+  flex: 0 1 180px;
+  display: flex;
+  justify-content: center;
+}
+
+.std-stepper-item + .std-stepper-item::before {
+  content: "";
+  position: absolute;
+  top: 18px;
+  right: calc(50% + 30px);
+  left: calc(-50% + 30px);
+  height: 2px;
+  border-radius: 2px;
+  background: #e2e8f0;
+}
+
+.std-stepper-item.is-done + .std-stepper-item::before {
+  background: #bbf7d0;
+}
+
+.std-stepper-item > button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.std-stepper-item > button:disabled {
+  cursor: default;
+}
+
+.std-stepper-dot {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #e2e8f0;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.std-stepper-label {
+  color: #94a3b8;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.std-stepper-item.is-open .std-stepper-dot {
+  border-color: #cbd5e1;
+  color: #475569;
+}
+
+.std-stepper-item.is-open .std-stepper-label {
+  color: #475569;
+}
+
+.std-stepper-item.is-done .std-stepper-dot {
+  border-color: #16a34a;
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.std-stepper-item.is-done .std-stepper-label {
+  color: #15803d;
+}
+
+.std-stepper-item.is-active .std-stepper-dot {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.15);
+  color: #ffffff;
+}
+
+.std-stepper-item.is-active .std-stepper-label {
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+/* 접이식 단계: 단계마다 떨어진 카드, 지금 단계는 왼쪽 빨간 띠. */
+.std-page .ant-collapse.std-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: transparent;
+}
+
+.std-page .ant-collapse.std-wizard > .ant-collapse-item {
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.std-page .ant-collapse.std-wizard > .ant-collapse-item-active {
+  border-left: 4px solid var(--color-primary);
+}
+
+.std-page .ant-collapse.std-wizard > .ant-collapse-item > .ant-collapse-header {
+  padding: 16px 22px;
+  align-items: center;
+}
+
+.std-page .ant-collapse.std-wizard > .ant-collapse-item-active > .ant-collapse-header {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.std-page .ant-collapse.std-wizard > .ant-collapse-item > .ant-collapse-panel > .ant-collapse-body,
+.std-page .ant-collapse.std-wizard > .ant-collapse-item .ant-collapse-body {
+  padding: 18px 22px 20px;
+}
+
+.std-step-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.std-step-no {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.std-step-title.is-active .std-step-no {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.std-step-title.is-done .std-step-no {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.std-step-title.is-locked {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.std-step-status {
+  padding: 2px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.std-step-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.2);
+}
+
+.std-step-status.is-active {
+  border-color: #fecaca;
+  background: #fff1f0;
+  color: var(--color-primary);
+}
+
+.std-step-status.is-done {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.std-step-status.is-locked {
+  color: #94a3b8;
+}
+
+/* 단계 본문에 바로 놓인 입력칸은 «왼쪽 이름 칸(회색) · 오른쪽 입력» 표 모양으로(디자인). 두 칸씩 나란히 놓은 묶음
+   (소스/타깃 연결 · 스키마)은 그대로 위아래 모양이다 - 그 안의 배치를 바꾸면 버튼 · 결과 안내가 흩어진다. */
+.std-wizard .ant-collapse-body > .ant-form-item {
+  margin: 0;
+  border-top: 1px solid #f1f5f9;
+}
+
+.std-wizard .ant-collapse-body > .ant-form-item:first-of-type {
+  border-top: 0;
+}
+
+.std-wizard .ant-collapse-body > .ant-form-item > .ant-row {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 720px);
+  align-items: stretch;
+}
+
+.std-wizard .ant-collapse-body > .ant-form-item > .ant-row > .ant-form-item-label {
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  background: #fafbfc;
+}
+
+.std-wizard .ant-collapse-body > .ant-form-item > .ant-row > .ant-form-item-label > label {
+  height: auto;
+  color: #334155;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.std-wizard .ant-collapse-body > .ant-form-item > .ant-row > .ant-form-item-control {
+  padding: 10px 14px;
+}
+
+.std-wizard .ant-collapse-body > .ant-form-item > .ant-row > .ant-form-item-label:empty {
+  background: transparent;
+}
+
+/* 단계 끝 «이전 · 다음» 줄: 위에 선을 긋고 버튼을 38px 로(디자인 위저드 버튼). */
+.std-wizard .ant-collapse-body > div:last-child:not(.ant-form-item) {
+  margin-top: 16px !important;
+  padding-top: 16px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.std-wizard .ant-collapse-body > div:last-child:not(.ant-form-item) > .ant-btn {
+  height: 38px;
+  padding-inline: 20px;
+  font-size: 13px;
+}
+
+.std-wizard .ant-collapse-body > .ant-form-item > .ant-row > .ant-form-item-control:first-child {
+  grid-column: 2;
+}
+
+/* CDC 로그(CdcLogsPage) 윗단 지표 커튼 — ETL 로그 화면과 같은 마크업(etl-log-*)을 쓰므로 모양도 ETL 로그 화면 규칙을
+   CDC 화면 범위로 옮겨 적었다. ETL 쪽 규칙은 ETL 담당 소관이라 건드리지 않는다(바꾸면 두 곳을 맞출 것). */
+.cdc-log-page .etl-log-dashboard-curtain {
+  margin-bottom: 0;
+  padding-top: 14px;
+}
+
+.cdc-log-page .etl-log-dashboard-toggle {
+  right: 14px;
+  height: 25px;
+  border-color: #e2e8f0;
+  border-bottom-color: #ffffff;
+  border-radius: 8px 8px 0 0;
+  color: #64748b;
+  box-shadow: 0 -1px 2px rgba(15, 23, 42, 0.02);
+}
+
+.cdc-log-page .etl-log-dashboard-toggle:hover {
+  color: var(--color-primary);
+}
+
+.cdc-log-page .etl-log-dashboard-panel {
+  max-height: 92px;
+}
+
+.cdc-log-page .etl-log-monitoring-card {
+  min-height: 58px;
+  padding: 8px 10px;
+  align-items: center;
+  gap: 4px;
+  border-color: #e2e8f0;
+  border-radius: 10px;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.03),
+    0 1px 2px rgba(15, 23, 42, 0.02);
+}
+
+.cdc-log-page .etl-log-monitoring-metric {
+  min-width: 126px;
+  min-height: 40px;
+  padding: 6px 14px;
+  justify-content: center;
+  border: 1.5px solid transparent;
+  color: #475569;
+  font-size: 16px;
+}
+
+.cdc-log-page .etl-log-monitoring-metric:hover {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  box-shadow: 0 2px 5px rgba(15, 23, 42, 0.05);
+}
+
+.cdc-log-page .etl-log-monitoring-metric.active {
+  border-color: var(--color-primary);
+  background: #fff5f5;
+  box-shadow: 0 2px 8px rgba(255, 59, 48, 0.15);
+}
+
+.cdc-log-page .etl-log-monitoring-metric span {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cdc-log-page .etl-log-monitoring-metric strong {
+  color: #0f172a;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cdc-log-page .etl-log-monitoring-metric.active span,
+.cdc-log-page .etl-log-monitoring-metric.active strong {
+  color: #dc2626;
+  font-weight: 800;
+}
+
+.cdc-log-page .etl-log-monitoring-metric--success,
+.cdc-log-page .etl-log-monitoring-metric--success strong {
+  color: #16a34a;
+}
+
+.cdc-log-page .etl-log-monitoring-metric--success.active {
+  border-color: #16a34a;
+  background: #ecfdf3;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.12);
+}
+
+.cdc-log-page .etl-log-monitoring-metric--success.active span,
+.cdc-log-page .etl-log-monitoring-metric--success.active strong {
+  color: #15803d;
+}
+
+.cdc-log-page .etl-log-monitoring-metric--danger.active {
+  border-color: var(--color-primary);
+  background: #fff5f5;
+}
+
+/* ----- 표준 입력 표(.std-form-table · antd 가로 Form) — 왼쪽 회색 이름 칸 · 오른쪽 입력, 줄마다 옅은 경계선 ----- */
+.std-form-table .ant-form-item {
+  margin: 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.std-form-table .ant-form-item > .ant-row {
+  align-items: stretch;
+}
+
+.std-form-table .ant-form-item .ant-form-item-label {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  background: #fafbfc;
+  text-align: left;
+}
+
+.std-form-table .ant-form-item .ant-form-item-label > label {
+  height: auto;
+  color: #334155;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.std-form-table .ant-form-item .ant-form-item-label > label::after {
+  content: none;
+}
+
+.std-form-table .ant-form-item .ant-form-item-control {
+  padding: 10px 16px;
+}
+
+.std-form-table .ant-form-item-extra {
+  margin-top: 4px;
+  color: #94a3b8;
+  font-size: 11.5px;
+}
+
+/* 카드 바닥 동작 띠: #fafbfc 바탕 · 오른쪽 정렬. */
+.std-card-foot {
+  padding: 12px 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid #e2e8f0;
+  border-radius: 0 0 8px 8px;
+  background: #fafbfc;
+}
+
+/* 워크플로우 관리 · 로그 표의 페이지 번호도 표준 페이저 모양(지금 페이지 빨간 바탕 · 칸 테두리)으로 맞춘다. */
+:is(.wf-design-table, .airflow-jobs-panel) .ant-pagination .ant-pagination-item,
+:is(.wf-design-table, .airflow-jobs-panel) .ant-pagination .ant-pagination-prev,
+:is(.wf-design-table, .airflow-jobs-panel) .ant-pagination .ant-pagination-next {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+:is(.wf-design-table, .airflow-jobs-panel) .ant-pagination .ant-pagination-item-active,
+:is(.wf-design-table, .airflow-jobs-panel) .ant-pagination .ant-pagination-item-active:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  box-shadow: 0 2px 5px rgba(255, 59, 48, 0.25);
+}
+
+:is(.wf-design-table, .airflow-jobs-panel) .ant-pagination .ant-pagination-item-active a,
+:is(.wf-design-table, .airflow-jobs-panel) .ant-pagination .ant-pagination-item-active:hover a {
+  color: #ffffff;
+}
+
+/* CDC 생성은 ETL 생성 화면(.etl-create-page)과 같은 폭(최대 1280px, 가운데)으로 - 머리줄까지 같은 폭에 맞춘다. */
+.std-page.cdc-create-page {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+/* ----- 워크플로우 속성창 공통 구역(components/WorkflowInfoSections) ----- */
+.wf-info-notice {
+  padding: 8px 10px;
+  display: grid;
+  gap: 2px;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.wf-info-notice-title {
+  font-weight: 700;
+}
+
+.wf-settings-info {
+  margin-top: 6px;
+  border-top: 1px solid #d5dbe3;
+}
+
+.wf-settings-info .nifi-detail-section:first-child {
+  padding-top: 10px;
+}
+
+.wf-info-warn {
+  color: #b45309;
+}
+
+.wf-recent-runs {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  list-style: none;
+}
+
+.wf-recent-runs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: 12px;
+}
+
+.wf-recent-runs .ant-tag {
+  margin: 0;
+}
+
+.wf-recent-runs-time {
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+}
+
+.wf-recent-runs-sub {
+  color: #64748b;
+}
+
+.wf-recent-runs .ant-btn {
+  margin-left: auto;
+}
+
+/* GPT 등록 · 수정: 입력 표가 왼쪽에 붙어 보이지 않게 머리줄까지 최대 980px 로 가운데에 둔다(CDC 생성 화면과 같은 방식). */
+.std-page.gpt-register-page {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+/* 화면 머리줄은 오른쪽 조작만 남는다(제목 · 하위 탭 제거, 2026-09-17). */
+.workflow-page-header--actions-only {
+  justify-content: flex-end;
+}
+
+/* ===== ETL 관리 화면과 같은 패널 모양 (2026-09-17 요청) =====
+ * 워크플로우 설계(WorkflowCanvasPage) 왼쪽 팔레트 · 가운데 캔버스 · 오른쪽 속성, CDC 파이프라인 상세 창의 «상세정보 | AI 어시스턴트»,
+ * 속성창 AI 어시스턴트(GptChatPanel) 가 ETL 관리 화면(ConsoleFramePage)의 nifi-tree-panel · nifi-detail-panel · nifi-ai-* 를 그대로 쓴다.
+ * 여기에는 좁은 격자 칸 · 서랍 안에 맞추는 치수만 둔다. */
+
+/* 워크플로우 설계: 바깥 카드는 걷고 머리(뒤로 · 이름 · 게시 상태 · 저장/검증/게시)만 흰 띠로 */
+.wf-canvas-shell.ant-card {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.wf-canvas-shell > .ant-card-head {
+  min-height: 46px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.wf-canvas-shell > .ant-card-body {
+  padding: 10px 0 0;
+}
+
+.wf-palette-panel.nifi-tree-panel {
+  flex: none;
+  width: auto;
+  min-width: 0;
+  height: 100%;
+}
+
+.wf-palette-panel .wf-palette-scroll {
+  min-height: 0;
+}
+
+.wf-canvas-frame.console-frame-shell {
+  height: 100%;
+}
+
+.wf-detail-panel.nifi-detail-panel {
+  flex: none;
+  width: auto;
+  min-width: 0;
+  height: 100%;
+  max-height: none;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.wf-detail-panel .nifi-detail-header {
+  flex-shrink: 0;
+  padding: 12px 16px;
+}
+
+.wf-detail-panel .nifi-detail-tabs {
+  flex-shrink: 0;
+}
+
+.wf-detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 16px;
+  overflow-y: auto;
+}
+
+.wf-detail-ai {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* CDC 파이프라인 상세 창: 서랍 몸통을 꽉 채우는 2단 탭 */
+.cdc-detail-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #f8fafc;
+}
+
+.cdc-detail-shell > .nifi-detail-tabs {
+  flex-shrink: 0;
+  padding-inline: 16px;
+}
+
+.cdc-detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 24px 24px;
+  overflow-y: auto;
+  background: #ffffff;
+}
+
+/* 속성창 AI 어시스턴트(GptChatPanel): 남은 높이를 다 쓰고, 대화 칸이 늘어난다 */
+.wf-detail-ai > .gpt-chat.nifi-ai-panel,
+.cdc-detail-shell > .gpt-chat.nifi-ai-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.gpt-chat.nifi-ai-panel .nifi-ai-summary .gpt-chat-meta {
+  color: #64748b;
+  font-size: 11.5px;
+}
+
+.gpt-chat.nifi-ai-panel .nifi-ai-conversation {
+  min-height: 160px;
+}
+
+.gpt-chat.nifi-ai-panel .nifi-ai-composer textarea:disabled {
+  background: #f8fafc;
+}
+
+.gpt-chat.nifi-ai-panel .gpt-chat-actions {
+  margin-top: -4px;
+  min-height: 0;
+}
+
+/* 대화 줄: ETL 쪽 nifi-ai-message 와 같은 «나 / AI» 이름 + 말풍선 */
+.gpt-chat-conversation > div:has(> .gpt-analysis-question)::before,
+.gpt-chat-conversation > div:has(> .gpt-analysis-reply)::before {
+  display: block;
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.gpt-chat-conversation > div:has(> .gpt-analysis-question)::before {
+  content: "나";
+}
+
+.gpt-chat-conversation > div:has(> .gpt-analysis-reply)::before {
+  content: "AI";
+}
+
+.gpt-chat-conversation .gpt-analysis-question,
+.gpt-chat-conversation .gpt-analysis-reply {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #111827;
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.gpt-chat-conversation .gpt-analysis-question {
+  border-color: #ccfbf1;
+  background: #f0fdfa;
+  white-space: pre-wrap;
+}
+
+.gpt-chat-conversation .gpt-analysis-question {
+  width: auto;
+  max-width: none;
+}
+
+/* 워크플로우 설계 속성 구역 제목: ETL 관리 상세 패널의 «■ 정보» 제목과 같은 모양 */
+.wf-detail-panel .wf-node-detail .nifi-detail-section h3 {
+  margin: 0 0 8px;
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.wf-detail-panel .wf-node-detail .nifi-detail-section h3::before {
+  content: "■ ";
+}
+
+/* 워크플로우 설계 CDC 노드 «기본정보»: 로그 화면 CDC 속성창과 같은 이름/값 두 칸 */
+.wf-detail-panel .wf-cdc-basic > div {
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+
+.wf-detail-panel .wf-cdc-basic dt {
+  color: #64748b;
+  font-size: 12.5px;
+}
+
+.wf-detail-panel .wf-cdc-basic dd {
+  margin: 0;
+  color: #111827;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+/* 속성창 AI 어시스턴트 윗줄: 왼쪽 GPT 이름 · 오른쪽 «전송 정보» 버튼 한 줄(2026-09-18) */
+.gpt-chat .nifi-ai-summary.gpt-chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.gpt-chat .nifi-ai-summary.gpt-chat-head .ant-btn {
+  margin-top: 0;
+}
+
+/* ===== 워크플로우 로그(AirflowDashboardPage) - 로그2 식 가운데 · 커튼 · 속성 탭 (2026-09-18) ===== */
+.airflow-status-curtain {
+  flex: 0 0 auto;
+}
+
+.airflow-status-curtain .lv2-curtain-body {
+  max-height: 110px;
+}
+
+.airflow-dashboard-workspace > .airflow-jobs-panel--runs {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.etl-runs-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.etl-runs-pane > .lv2-ctx {
+  padding: 10px 14px;
+}
+
+/* 오른쪽 속성창 탭 틀: 탭 줄 아래에 예전 속성창(aside) 또는 AI 어시스턴트가 남은 높이를 채운다. */
+.airflow-dashboard-workspace > .airflow-property-shell {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--color-border-light);
+  border-radius: 12px;
+  background: #f8fafc;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.airflow-property-shell > .nifi-detail-tabs {
+  flex-shrink: 0;
+  border-radius: 12px 12px 0 0;
+}
+
+.airflow-property-shell > .airflow-property-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0 0 12px 12px;
+  box-shadow: none;
+}
+
+.airflow-property-ai {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.airflow-property-ai > .gpt-chat.nifi-ai-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  font-size: 12px;
+}
+
+/* 실행 설정 창 동작 선택: 칸이 좁아 «재시작 (Restart)»가 두 줄이 되면 글자가 칸 밖으로 넘쳤다 - 칸 높이가 글자를 따라가게 한다. */
+.airflow-execution-actions .ant-radio-button-wrapper {
+  height: auto;
+  min-height: 32px;
+  padding: 5px 8px;
+  line-height: 1.35;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+/* ===== 옆 패널 접기 · 너비 조절(워크플로우 설계 · 로그, 2026-09-18) - ETL 관리 화면 .console-side 와 같은 모양 =====
+ * 버튼 · 손잡이는 .console-curtain-toggle · .console-resize-handle 을 그대로 쓰고, 칸 틀만 격자용으로 둔다. */
+.side-dock {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+/* 칸 안 패널이 칸 폭을 다 쓴다. 설계 화면 패널(.wf-palette-panel.nifi-tree-panel 의 flex:none 등)보다 앞서도록 클래스를 겹쳐 쓴다. */
+.side-dock.side-dock > :not(button) {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  height: 100%;
+}
+
+.side-dock.collapsed {
+  border: 1px solid #d5dbe3;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgb(15 23 42 / 8%);
+}
+
+.side-dock.collapsed > :not(button) {
+  display: none !important;
+}
+
+/* 버튼은 칸 사이 틈에 걸친다 - 패널 머리의 새로고침 버튼 · 제목을 가리지 않게(ETL 관리보다 조금 더 바깥). */
+.side-dock--left .console-curtain-toggle {
+  right: -18px;
+}
+
+.side-dock--right .console-curtain-toggle {
+  left: -18px;
+}
+
+.side-dock.collapsed .console-curtain-toggle {
+  top: 8px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  box-shadow: none;
+}
+
+/* 왼쪽 패널은 오른쪽 끝을 끈다. */
+.side-dock--left .console-resize-handle {
+  left: auto;
+  right: 0;
+}
+
+/* 로그 화면: 격자 바로 아래 자식에 걸던 규칙을 칸 안의 패널에도 건다. */
+.airflow-dashboard-workspace > .side-dock {
+  overflow: visible;
+}
+
+.side-dock > .airflow-business-tree {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.side-dock > .airflow-property-shell {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--color-border-light);
+  border-radius: 12px;
+  background: #f8fafc;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }

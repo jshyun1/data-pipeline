@@ -54,3 +54,105 @@ export const loginTheme: ThemeConfig = {
     },
   },
 };
+
+/**
+ * 표준 화면 테마 — 디자인 작업물(CEREBRO_ETL_UI_DESIGN_20260917 «CEREBRO Enterprise UI Standard v2.0»)의
+ * 표 · 버튼 · 탭 · 페이지 번호 규격을 antd 토큰으로 옮겼다(README 4절 · css/base.css).
+ *
+ * <p>CSS 로 antd 를 덮어쓰면 antd 가 올린 선택자와 우선순위 싸움이 되고, 버전이 오르면 조용히 깨진다.
+ * 토큰으로 줄 수 있는 것은 토큰으로 주고, 토큰이 없는 것(배지 알약 모양 · 모달 머리/바닥 띠 · 페이지 번호 배치)만
+ * index.css 의 «표준 화면» 블록(.std-page · .std-modal)에 둔다. {@code components/StdPage} 가 이 테마로 감싼다.
+ *
+ * <p>ETL 화면은 ETL 담당 작업자 소관이라 이 테마를 쓰지 않는다.
+ */
+export const cerebroStandardTheme: ThemeConfig = {
+  token: {
+    ...cerebroBrandTheme.token,
+    fontSize: 13,
+    borderRadius: 6,
+    borderRadiusSM: 4,
+    colorText: "#1e293b",
+    colorTextSecondary: "#64748b",
+    colorBorder: "#cbd5e1",
+    colorBorderSecondary: "#e2e8f0",
+    colorError: "#ef4444",
+    colorSuccess: "#16a34a",
+    colorWarning: "#d97706",
+    colorInfo: "#2563eb",
+  },
+  components: {
+    // 표: 머리 12px 굵게 · #fafbfc 바탕, 칸 12.5px · 12px 14px 여백, 줄 경계 #f1f5f9, 머리 칸 사이 세로선 없음.
+    Table: {
+      headerBg: "#fafbfc",
+      headerColor: "#475569",
+      headerSplitColor: "transparent",
+      headerBorderRadius: 0,
+      headerSortActiveBg: "#f1f5f9",
+      headerSortHoverBg: "#f1f5f9",
+      bodySortBg: "#fcfcfd",
+      rowHoverBg: "#f8fafc",
+      rowExpandedBg: "#fbfcfd",
+      rowSelectedBg: "#fff1f0",
+      rowSelectedHoverBg: "#ffe8e6",
+      borderColor: "#f1f5f9",
+      cellFontSize: 12.5,
+      cellFontSizeMD: 12.5,
+      cellFontSizeSM: 12,
+      cellPaddingBlock: 12,
+      cellPaddingInline: 14,
+      cellPaddingBlockMD: 12,
+      cellPaddingInlineMD: 14,
+      cellPaddingBlockSM: 8,
+      cellPaddingInlineSM: 12,
+    },
+    // 버튼: 기본 32px · 12.5px 굵게, 표 안 작은 버튼 24px · 11.5px. 보조 버튼은 회색 테두리 → 올리면 진한 회색.
+    Button: {
+      fontWeight: 600,
+      contentFontSize: 12.5,
+      contentFontSizeSM: 11.5,
+      paddingInline: 14,
+      paddingInlineSM: 8,
+      defaultColor: "#475569",
+      defaultBorderColor: "#cbd5e1",
+      defaultHoverBg: "#f8fafc",
+      defaultHoverColor: "#0f172a",
+      defaultHoverBorderColor: "#94a3b8",
+      defaultActiveBg: "#f1f5f9",
+      defaultActiveColor: "#0f172a",
+      defaultActiveBorderColor: "#94a3b8",
+      defaultShadow: "none",
+      dangerShadow: "none",
+      primaryShadow: "0 2px 6px rgba(255, 59, 48, 0.22)",
+    },
+    Tabs: {
+      titleFontSize: 13,
+      itemColor: "#64748b",
+      itemHoverColor: "#0f172a",
+      horizontalItemGutter: 28,
+    },
+    // 페이지 번호: 28px 칸, 지금 페이지는 빨간 바탕 흰 글자.
+    Pagination: {
+      itemSize: 28,
+      itemSizeSM: 26,
+      itemActiveBg: CEREBRO_RED,
+      itemActiveColor: "#ffffff",
+      itemActiveColorHover: "#ffffff",
+    },
+    Segmented: {
+      trackBg: "#f1f5f9",
+      itemColor: "#64748b",
+      itemHoverColor: "#0f172a",
+      itemSelectedBg: "#ffffff",
+      itemSelectedColor: "#0f172a",
+    },
+    Modal: {
+      headerBg: "#fafbfc",
+      footerBg: "#fafbfc",
+      titleFontSize: 15.5,
+      titleColor: "#0f172a",
+    },
+    Card: {
+      headerFontSize: 15,
+    },
+  },
+};

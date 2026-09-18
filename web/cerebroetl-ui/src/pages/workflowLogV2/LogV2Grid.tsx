@@ -95,12 +95,19 @@ function runTotals(jobs?: JobGroup[], logs?: Record<string, string>) {
  * 워크플로우 실행 한 줄(+ 펼치면 그 아래 job 들). 목록의 맨 위 단위다.
  * 펼치거나 고른 실행만 task 를 받는다 - 기간을 30일로 넓혀도 줄마다 요청이 나가지 않게.
  */
-export function RunRow({ run, ctx, scale, showDate }: { run: AirflowDagRun; ctx: GridCtx; scale: number; showDate: boolean }) {
+export function RunRow({ run, ctx, scale, showDate, expandable = true }: {
+  run: AirflowDagRun;
+  ctx: GridCtx;
+  scale: number;
+  showDate: boolean;
+  /** false 면 펼치지 않는 한 줄(워크플로우 «로그» 화면 가운데 - job 은 아래 실행 이력에서 본다). */
+  expandable?: boolean;
+}) {
   const dagId = run.dag_id ?? "";
   const dag = ctx.dagsById.get(dagId);
   const sel: Selection = { kind: "run", dagId, runId: run.dag_run_id };
   const key = selectionKey(sel);
-  const expanded = ctx.expanded.has(key);
+  const expanded = expandable && ctx.expanded.has(key);
   const selected = ctx.selectedKey === key;
   const { jobs, logs, tasks } = useRunTasks(dagId, run.dag_run_id, { enabled: expanded || selected, refreshSeconds: ctx.refreshSeconds });
   const totals = runTotals(jobs, logs);
@@ -113,7 +120,7 @@ export function RunRow({ run, ctx, scale, showDate }: { run: AirflowDagRun; ctx:
       <tr className={`lv2-r k-run f-${run.state ?? "none"}${selected ? " sel" : ""}`} onClick={() => ctx.select(sel)}>
         <td>
           <div className="lv2-nm">
-            <Toggle open={expanded} onToggle={() => ctx.toggle(key)} />
+            {expandable && <Toggle open={expanded} onToggle={() => ctx.toggle(key)} />}
             <span className="lv2-kind run">실행</span>
             <span className="lv2-nm-text" title={`${name} (${dagId})`}>
               {name}
@@ -147,7 +154,7 @@ export function RunRow({ run, ctx, scale, showDate }: { run: AirflowDagRun; ctx:
 }
 
 /** 실행 하나의 job 줄들. 하위 워크플로우 호출 job 은 펼치면 그 하위 실행의 job 들이 한 칸 더 들여 나온다. */
-function RunBody({ dagId, runId, depth, ctx, scale }: { dagId: string; runId: string; depth: number; ctx: GridCtx; scale: number }) {
+export function RunBody({ dagId, runId, depth, ctx, scale }: { dagId: string; runId: string; depth: number; ctx: GridCtx; scale: number }) {
   const { tasksQuery, tasks, jobs, logs } = useRunTasks(dagId, runId, { enabled: true, refreshSeconds: ctx.refreshSeconds });
   const { busyKey, rerun } = useRerun(dagId, runId, tasks, () => tasksQuery.refetch());
   const pad = { paddingLeft: depth * 20 };
@@ -195,6 +202,7 @@ function JobRow({
   const ended = child ? child.end_date : job.endedAt;
   const typeLabel = job.kind === "job" ? `JOB (${job.steps.length}단계)`
     : job.kind === "call" ? "하위 워크플로우"
+    : job.kind === "cdc" ? "CDC 지시"
     : job.kind === "marker" ? "표시 노드"
     : "워크플로우 종단";
   const outcome = jobOutcome(job, logs);

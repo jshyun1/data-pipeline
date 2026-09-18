@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag, message } from "antd";
+import { Button, Checkbox, Form, Input, Modal, Popconfirm, Table, Tag, message } from "antd";
+import { StdPage } from "../../components/StdPage";
+import { WfIcon } from "../../components/WorkflowPageHeader";
 import type { ColumnsType } from "antd/es/table";
 import {
   BIT_READ,
@@ -157,18 +159,16 @@ export function RolePermissionPage() {
   ];
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>역할 및 권한</h2>
+    <StdPage menu="settings" title="역할 및 권한" icon="shield">
+      {/* 디자인 작업물 role-setting.html: 왼쪽 «역할 목록» 카드(표) · 오른쪽 «시스템 권한» 카드. */}
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <Card
-          title="역할 목록"
-          style={{ flex: "1 1 460px" }}
-          extra={
+        <section className="std-card std-table-card" style={{ flex: "1 1 460px" }}>
+          <div className="std-card-head">
+            <h2 className="std-card-title">역할 목록</h2>
             <Button type="primary" onClick={() => setCreateOpen(true)}>
-              역할 추가
+              + 역할 추가
             </Button>
-          }
-        >
+          </div>
           <Table<RoleView>
             rowKey="roleId"
             loading={isLoading}
@@ -179,12 +179,17 @@ export function RolePermissionPage() {
             onRow={(r) => ({ onClick: () => setSelected(r.roleId), style: { cursor: "pointer" } })}
             rowClassName={(r) => (r.roleId === selected ? "ant-table-row-selected" : "")}
           />
-        </Card>
+        </section>
 
-        <Card
-          title={selected ? `시스템 권한 — ${detail?.roleNm ?? selected}` : "시스템 권한"}
-          style={{ flex: "1 1 380px" }}
-        >
+        <section className="std-card std-table-card" style={{ flex: "1 1 380px" }}>
+          <div className="std-card-head">
+            <h2 className="std-card-title">{selected ? `시스템 권한 — ${detail?.roleNm ?? selected}` : "시스템 권한"}</h2>
+            {selected ? (
+              <Button type="primary" loading={saveMut.isPending} onClick={() => saveMut.mutate()}>
+                저장
+              </Button>
+            ) : null}
+          </div>
           {selected ? (
             <>
               <Table<{ system: SystemCode }>
@@ -194,17 +199,20 @@ export function RolePermissionPage() {
                 size="small"
                 pagination={false}
               />
-              <p style={{ color: "#888", margin: "10px 0" }}>ⓘ '쓰기'는 변경과 실행을 함께 허용합니다.</p>
-              <Space>
-                <Button type="primary" loading={saveMut.isPending} onClick={() => saveMut.mutate()}>
-                  저장
-                </Button>
-              </Space>
+              <div className="std-card-body">
+                <span className="std-notice">
+                  <WfIcon name="info" size={14} />
+                  &apos;쓰기&apos;는 변경과 실행을 함께 허용합니다.
+                </span>
+              </div>
             </>
           ) : (
-            <p style={{ color: "#888" }}>왼쪽에서 역할을 선택하세요.</p>
+            <div className="std-empty">
+              <WfIcon name="shield" size={34} strokeWidth={1.6} />
+              왼쪽에서 역할을 선택하세요.
+            </div>
           )}
-        </Card>
+        </section>
       </div>
 
       <Modal
@@ -228,6 +236,6 @@ export function RolePermissionPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </div>
+    </StdPage>
   );
 }

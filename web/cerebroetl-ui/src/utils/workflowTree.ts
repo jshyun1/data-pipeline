@@ -1,4 +1,4 @@
-import type { WorkflowSummary } from "../api/workflows";
+import type { WorkflowDetail, WorkflowSummary } from "../api/workflows";
 
 /**
  * 워크플로우 계층 한 칸. 자식은 «그 워크플로우 캔버스에 노드로 놓인 하위 워크플로우»다.
@@ -98,4 +98,14 @@ export function workflowPathOf(workflows: WorkflowSummary[], targetId: number): 
  */
 export function parentWorkflowPathOf(workflows: WorkflowSummary[], targetId: number): string[] {
   return workflowPathOf(workflows, targetId).slice(0, -1);
+}
+
+type Parent = NonNullable<WorkflowDetail["parents"]>[number];
+
+/**
+ * 스케줄이 «실제로» 도는지. DAG 생성기(etl_workflows_dynamic.py)는 <b>게시된</b> 상위 워크플로우가 노드로 품은 워크플로우의
+ * 자체 스케줄을 끄고 상위가 부를 때만 돌린다. 미게시 상위는 DAG 가 없어 끄지 않는다 - 그래서 게시된 상위만 센다.
+ */
+export function publishedParentsOf(detail: WorkflowDetail): Parent[] {
+  return (detail.parents ?? []).filter((parent) => parent.published);
 }

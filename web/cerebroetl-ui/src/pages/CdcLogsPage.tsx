@@ -13,6 +13,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { activeDayPresetByDate } from "../components/dayPreset";
 import { GptErrorAnalysis } from "../components/gpt/GptErrorAnalysis";
 import { useGptEnabled } from "../components/gpt/useGptEnabled";
+import { StdPage } from "../components/StdPage";
 import {
   listCdcEventLogs,
   listCdcProcessingLogs,
@@ -350,8 +351,9 @@ export function CdcLogsPage() {
   const selectedPreset = activeDayPresetByDate(appliedRange[0], appliedRange[1]);
 
   const filters = (
-    <Space style={{ marginBottom: 16 }} wrap>
-      <Space.Compact>
+    // 디자인 작업물 cdc-log.html 필터 띠(날짜 프리셋 · 기간 · 검색 · 파이프라인 · 조회).
+    <div className="std-card std-filter-card">
+      <Space.Compact className="std-date-preset">
         <Button type={selectedPreset === 0 ? "primary" : "default"} onClick={() => applyDatePreset(0)}>당일</Button>
         <Button type={selectedPreset === 1 ? "primary" : "default"} onClick={() => applyDatePreset(1)}>전일</Button>
       </Space.Compact>
@@ -385,7 +387,7 @@ export function CdcLogsPage() {
       <Button type="primary" onClick={() => setAppliedRange(dateRange)}>
         조회
       </Button>
-    </Space>
+    </div>
   );
 
   const metric = (
@@ -408,7 +410,7 @@ export function CdcLogsPage() {
   );
 
   return (
-    <div>
+    <StdPage menu="cdc" title="CDC 로그" icon="database" className="cdc-log-page">
       <div className={`etl-log-dashboard-curtain${dashboardOpen ? " open" : " closed"}`}>
         <button
           type="button"
@@ -432,12 +434,13 @@ export function CdcLogsPage() {
         </div>
       </div>
       {filters}
+      <div className="std-card std-table-card">
       <Table<UnifiedCdcLogRow>
         rowKey="key"
-        size="small"
+        size="middle"
         loading={(processingQuery.isLoading && !processingQuery.data) || (eventsQuery.isLoading && !eventsQuery.data)}
         dataSource={rows}
-        pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
+        pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `총 ${total}건` }}
         scroll={{ x: 1150 }}
         columns={[
           {
@@ -510,6 +513,7 @@ export function CdcLogsPage() {
           rowExpandable: (row) => row.kind === "processing" || row.status === "FAILED" || Boolean(row.message) || Boolean(row.event?.requestedBy),
         }}
       />
-    </div>
+      </div>
+    </StdPage>
   );
 }

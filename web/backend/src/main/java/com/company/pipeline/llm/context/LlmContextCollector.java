@@ -20,6 +20,13 @@ public interface LlmContextCollector {
     CollectedTarget collect(Map<String, String> target, String errorText);
 
     /**
+     * 화면이 작성 중 설계(draft)를 같이 보내는 대상(WORKFLOW_DRAFT)용. 나머지 수집기는 draft 를 쓰지 않는다.
+     */
+    default CollectedTarget collect(Map<String, String> target, String errorText, String draft) {
+        return collect(target, errorText);
+    }
+
+    /**
      * @param targetId 호출 기록에 남길 식별자(짧게)
      * @param label    화면에 보여 줄 대상 이름
      */
