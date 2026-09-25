@@ -1788,6 +1788,30 @@ body {
   color: #64748b;
 }
 
+.etl-log-detail-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 3px;
+  background: #ffffff;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.etl-log-detail-open:hover,
+.etl-log-detail-open:focus-visible {
+  border-color: #5b8def;
+  color: #1d4ed8;
+  outline: none;
+}
+
 .etl-log-table pre {
   padding: 12px 14px;
   border: 1px solid #e2e8f0;
@@ -1795,6 +1819,50 @@ body {
   background: #0f172a;
   color: #e2e8f0;
   line-height: 1.55;
+}
+
+.etl-log-detail-modal {
+  display: grid;
+  gap: 14px;
+}
+
+.etl-log-detail-modal .gpt-analysis {
+  margin: 0;
+}
+
+.etl-log-detail-raw {
+  display: grid;
+  gap: 8px;
+}
+
+.etl-log-detail-raw h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.etl-log-detail-raw pre {
+  max-height: min(42vh, 520px);
+  margin: 0;
+  padding: 14px 16px;
+  overflow: auto;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.etl-log-detail-gpt-empty {
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
 }
 
 /* 하단 «인프라 상태» 줄을 없앤 자리를 이 영역이 가져간다. 헤더·상태카드 높이만 빼고
@@ -2892,16 +2960,17 @@ button.airflow-task-name:hover {
 }
 
 .etl-column-flow-canvas path {
+  cursor: pointer;
   fill: none;
   marker-end: url("#etl-column-flow-arrow");
-  stroke: #16a34a;
+  stroke: rgb(163, 204, 163);
   stroke-linecap: round;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 
 .etl-column-flow-canvas marker path {
-  fill: #16a34a;
+  fill: rgb(163, 204, 163);
   stroke: none;
 }
 
@@ -6003,14 +6072,50 @@ button.alert-compact-trigger.is-clear:hover {
   max-height: none;
   min-height: 120px;
   overflow: auto;
-  padding: 2px 8px 12px;
+  padding: 4px 8px 12px;
+}
+
+.nifi-tree-node {
+  position: relative;
+  --tree-indent: calc(var(--tree-depth, 0) * 18px);
+}
+
+.nifi-tree-node::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--tree-indent) + 8px);
+  top: 0;
+  bottom: 0;
+  border-left: 1px dotted #a8b0bb;
+  pointer-events: none;
+}
+
+.nifi-tree-node.last::before {
+  bottom: calc(100% - 14px);
+}
+
+.nifi-tree-node::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--tree-indent) + 8px);
+  top: 14px;
+  width: 13px;
+  border-top: 1px dotted #a8b0bb;
+  pointer-events: none;
+}
+
+.nifi-tree-node[style*="--tree-depth: 0"]::before,
+.nifi-tree-node[style*="--tree-depth: 0"]::after {
+  display: none;
 }
 
 .nifi-tree-row {
+  position: relative;
   display: flex;
   align-items: center;
   min-height: 27px;
   border-radius: 6px;
+  padding-left: var(--tree-indent);
   white-space: nowrap;
 }
 
@@ -6028,15 +6133,27 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 .nifi-tree-toggle {
-  width: 16px;
-  min-width: 16px;
+  position: relative;
+  z-index: 1;
+  width: 17px;
+  min-width: 17px;
+  height: 17px;
+  margin-right: 4px;
   padding: 0;
+  border: 1px solid #9aa5b1;
+  border-radius: 2px;
+  background: #ffffff;
   cursor: pointer;
-  color: #334155;
-  font-size: 10px;
+  color: #111827;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 14px;
 }
 
 .nifi-tree-toggle.empty {
+  border-color: transparent;
+  background: transparent;
   cursor: default;
 }
 
@@ -6246,9 +6363,20 @@ button.alert-compact-trigger.is-clear:hover {
   color: #0f172a;
 }
 
+.nifi-detail-tab:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
 .nifi-detail-tab:hover,
 .nifi-detail-tab:focus-visible {
   color: #0f766e;
+}
+
+.nifi-detail-tab:disabled:hover,
+.nifi-detail-tab:disabled:focus-visible {
+  color: #94a3b8;
 }
 
 .nifi-detail-tab:focus-visible {
@@ -6308,6 +6436,38 @@ button.alert-compact-trigger.is-clear:hover {
   color: #64748b;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.nifi-ai-empty strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.nifi-ai-default-info {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.nifi-ai-default-info > div {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.nifi-ai-default-info dt {
+  color: #64748b;
+  font-weight: 700;
+}
+
+.nifi-ai-default-info dd {
+  min-width: 0;
+  margin: 0;
+  color: #111827;
+  overflow-wrap: anywhere;
 }
 
 .nifi-ai-message {

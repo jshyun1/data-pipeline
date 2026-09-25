@@ -3,7 +3,15 @@ import { Button } from "antd";
 import { DEPLOYMENT_LABEL, type LlmTargetType } from "../../api/llm";
 import { useGptConversation } from "./useGptConversation";
 import { useLlmStatus } from "./useGptEnabled";
-import { GptAskBox, GptCompactedNote, GptFailure, GptPreviewModal, GptTurns } from "./GptConversationView";
+import {
+  GptAskBox,
+  GptCompactedNote,
+  GptFailure,
+  GptPreviewModal,
+  GptTurns,
+  type GptAnswerHeading,
+  type GptAnswerHeadingLabels,
+} from "./GptConversationView";
 
 export interface GptErrorAnalysisProps {
   targetType: LlmTargetType;
@@ -12,6 +20,8 @@ export interface GptErrorAnalysisProps {
   /** 화면에 보이는 오류 문구. 대상 정보는 서버가 모은다. */
   errorText: string;
   onClose: () => void;
+  headings?: GptAnswerHeading[];
+  headingLabels?: GptAnswerHeadingLabels;
 }
 
 /**
@@ -20,7 +30,7 @@ export interface GptErrorAnalysisProps {
  * <p>대화는 저장하지 않는다 - 창을 닫으면 사라진다. 추가 질문마다 오류 내용 · 첫 분석 · 앞 문답을 같이 보낸다.
  * 길어지면 서버가 오래된 추가 문답부터 빼고 안내한다(대상 정보와 첫 분석은 항상 남는다).
  */
-export function GptErrorAnalysis({ targetType, target, errorText, onClose }: GptErrorAnalysisProps) {
+export function GptErrorAnalysis({ targetType, target, errorText, onClose, headings, headingLabels }: GptErrorAnalysisProps) {
   const status = useLlmStatus().data;
   const chat = useGptConversation({ agentType: "ERROR_ANALYSIS", targetType, target, errorText });
 
@@ -58,7 +68,12 @@ export function GptErrorAnalysis({ targetType, target, errorText, onClose }: Gpt
       <GptCompactedNote compacted={chat.compacted} />
 
       <div className="gpt-analysis-body">
-        <GptTurns turns={chat.turns} waitingText="분석 중입니다. 내부 모델은 첫 응답까지 수십 초가 걸릴 수 있습니다." />
+        <GptTurns
+          turns={chat.turns}
+          waitingText="분석 중입니다. 내부 모델은 첫 응답까지 수십 초가 걸릴 수 있습니다."
+          headings={headings}
+          headingLabels={headingLabels}
+        />
         <GptFailure message={chat.failure} onRetry={!chat.answered && !chat.busy ? () => void chat.retryFirst() : undefined} />
       </div>
 

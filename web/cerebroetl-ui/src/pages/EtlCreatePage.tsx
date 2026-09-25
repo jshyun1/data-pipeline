@@ -427,7 +427,11 @@ function extractLoadSqlAliasColumns(loadSql: string) {
 
 function loadSqlProjectionAlias(item: string) {
   const aliasMatch = item.match(/\bas\s+("[^"]+"|`[^`]+`|\[[^\]]+\]|[a-zA-Z_][\w$]*)\s*$/i);
-  return aliasMatch ? unquoteSqlIdentifier(aliasMatch[1]) : "";
+  if (aliasMatch) {
+    return unquoteSqlIdentifier(aliasMatch[1]);
+  }
+  const columnMatch = item.trim().match(/^(?:[a-zA-Z_][\w$]*\s*\.\s*)?("[^"]+"|`[^`]+`|\[[^\]]+\]|[a-zA-Z_][\w$]*)$/);
+  return columnMatch ? unquoteSqlIdentifier(columnMatch[1]) : "";
 }
 
 function removeLoadSqlAliasColumn(loadSql: string, columnName: string) {
@@ -512,9 +516,9 @@ function buildMappedLoadSql(
   const projections = uniqueSourceColumns.map((sourceColumn, index) => {
     const alias = aliasByTable.get(sourceColumn.table);
     const expression = alias ? `${alias}.${sourceColumn.name}` : sourceColumn.name;
-    const targetColumn = targetColumnByName.get(normalizeComparableName(sourceColumn.name));
+    const targetColumn = targetColumnByName.get(normalizeComparableName(sourceColumn.name)) ?? sourceColumn.name;
     const prefix = index === 0 ? "" : ",";
-    return targetColumn ? `${prefix}${expression} as ${targetColumn}` : `${prefix}${expression}`;
+    return `${prefix}${expression} as ${targetColumn}`;
   });
   const schemaPrefix = connectionInfo.sourceSchema.trim() ? `${connectionInfo.sourceSchema.trim()}.` : "";
   const fromClause = selectedTables
@@ -601,6 +605,102 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function sourceColumnReferencePattern(columnName: string, flags = "i") {
+  return new RegExp(`(?:\\b[a-zA-Z_][\\w$]*\\s*\\.\\s*)?\\b${escapeRegExp(columnName)}\\b`, flags);
+}
+
+function findClosingParen(value: string, openIndex: number) {
+  let depth = 0;
+  let quote: "'" | "\"" | "`" | null = null;
+  for (let index = openIndex; index < value.length; index += 1) {
+    const char = value[index];
+    const nextChar = value[index + 1];
+    if (quote) {
+      if (char === quote) {
+        if (quote === "'" && nextChar === "'") {
+          index += 1;
+        } else {
+          quote = null;
+        }
+      }
+      continue;
+    }
+    if (char === "'" || char === "\"" || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "(") {
+      depth += 1;
+    } else if (char === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return -1;
+}
+
+function removeSourceColumnFromLogic(logic: string, columnName: string) {
+  const sourcePattern = sourceColumnReferencePattern(columnName);
+  const removalRanges: Array<[number, number]> = [];
+  const functionPattern = /\b[a-zA-Z_][\w$]*\s*\(/g;
+  let functionMatch: RegExpExecArray | null;
+  while ((functionMatch = functionPattern.exec(logic)) !== null) {
+    const openIndex = logic.indexOf("(", functionMatch.index);
+    const closeIndex = findClosingParen(logic, openIndex);
+    if (closeIndex < 0) {
+      break;
+    }
+    const callText = logic.slice(functionMatch.index, closeIndex + 1);
+    if (sourcePattern.test(callText)) {
+      removalRanges.push([functionMatch.index, closeIndex + 1]);
+    }
+    functionPattern.lastIndex = closeIndex + 1;
+  }
+
+  let nextLogic = logic;
+  for (const [start, end] of removalRanges.reverse()) {
+    nextLogic = `${nextLogic.slice(0, start)}${nextLogic.slice(end)}`;
+  }
+  nextLogic = nextLogic
+    .replace(sourceColumnReferencePattern(columnName, "gi"), "")
+    .replace(/\s*(\|\||[+\-*/])\s*(?=(\)|,|$))/g, "")
+    .replace(/(^|[(,])\s*(\|\||[+\-*/])\s*/g, "$1")
+    .replace(/\s*,\s*,\s*/g, ", ")
+    .replace(/\(\s*,\s*/g, "(")
+    .replace(/\s*,\s*\)/g, ")")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return nextLogic;
+}
+
+function appendSourceColumnToMapping(mapping: ColumnMapping, sourceColumn: SourceColumnMetadata) {
+  if (mappingReferencedSourceColumns(mapping, [sourceColumn], []).length > 0) {
+    return mapping;
+  }
+  const sourceExpression = sourceColumn.name;
+  const logic = mapping.logic.trim();
+  if (!logic && !mapping.sourceColumn) {
+    return {
+      ...mapping,
+      sourceTable: sourceColumn.table,
+      sourceColumn: sourceColumn.name,
+    };
+  }
+  if (!logic) {
+    return {
+      ...mapping,
+      logic: `${mapping.sourceColumn} || ${sourceExpression}`,
+    };
+  }
+  return {
+    ...mapping,
+    logic: `${logic} || ${sourceExpression}`,
+  };
+}
+
 function mappingReferencedSourceColumns(
   mapping: ColumnMapping,
   sourceColumns: SourceColumnMetadata[],
@@ -625,7 +725,7 @@ function mappingReferencedSourceColumns(
     if (qualifiedPattern?.test(logic)) {
       return true;
     }
-    const unqualifiedPattern = new RegExp(`\\b${escapeRegExp(sourceColumn.name)}\\b`, "i");
+    const unqualifiedPattern = sourceColumnReferencePattern(sourceColumn.name);
     return unqualifiedPattern.test(unqualifiedExpression);
   });
 }
@@ -1832,6 +1932,48 @@ function TargetStep({
     applyColumnMappings(nextMappings);
   };
 
+  const addSourceColumnToTarget = (sourceKey: string, mappingId: string) => {
+    const sourceColumn = sourceProjectionColumns.find((column) =>
+      sourceColumnKey(column.table, column.name) === sourceKey,
+    );
+    if (!sourceColumn) {
+      return;
+    }
+    const nextMappings = columnMappings.map((mapping) =>
+      mapping.id === mappingId ? appendSourceColumnToMapping(mapping, sourceColumn) : mapping,
+    );
+    applyColumnMappings(nextMappings);
+  };
+
+  const removeFlowConnection = (sourceKey: string, mappingId: string) => {
+    const sourceColumn = sourceProjectionColumns.find((column) =>
+      sourceColumnKey(column.table, column.name) === sourceKey,
+    );
+    if (!sourceColumn) {
+      return;
+    }
+    const nextMappings = columnMappings.map((mapping) => {
+      if (mapping.id !== mappingId) {
+        return mapping;
+      }
+      const directSourceRemoved = sourceColumnKey(mapping.sourceTable, mapping.sourceColumn) === sourceKey;
+      const nextLogic = mapping.logic.trim()
+        ? removeSourceColumnFromLogic(mapping.logic, sourceColumn.name)
+        : "";
+      return {
+        ...mapping,
+        sourceTable: directSourceRemoved ? "" : mapping.sourceTable,
+        sourceColumn: directSourceRemoved ? "" : mapping.sourceColumn,
+        logic: nextLogic,
+      };
+    });
+    if (editingMappingId === mappingId) {
+      const editingLogicNext = removeSourceColumnFromLogic(editingLogic, sourceColumn.name);
+      setEditingLogic(editingLogicNext);
+    }
+    applyColumnMappings(nextMappings);
+  };
+
   const moveSourceMapping = (sourceKey: string, direction: -1 | 1) => {
     const orderedIds = orderedSourceMappings.map((sourceColumn) =>
       sourceColumnKey(sourceColumn.table, sourceColumn.name),
@@ -1885,11 +2027,21 @@ function TargetStep({
     } else {
       onSourceColumnsChange(nextColumns);
     }
-    applyColumnMappings(columnMappings.map((mapping) =>
-      sourceColumnKey(mapping.sourceTable, mapping.sourceColumn) === removedKey
-        ? { ...mapping, sourceTable: "", sourceColumn: "", logic: "" }
-        : mapping,
-    ));
+    applyColumnMappings(columnMappings.map((mapping) => {
+      const directSourceRemoved = sourceColumnKey(mapping.sourceTable, mapping.sourceColumn) === removedKey;
+      const nextLogic = mapping.logic.trim()
+        ? removeSourceColumnFromLogic(mapping.logic, column.name)
+        : "";
+      return {
+        ...mapping,
+        sourceTable: directSourceRemoved ? "" : mapping.sourceTable,
+        sourceColumn: directSourceRemoved ? "" : mapping.sourceColumn,
+        logic: nextLogic,
+      };
+    }));
+    if (editingMapping) {
+      setEditingLogic(removeSourceColumnFromLogic(editingLogic, column.name));
+    }
   };
 
   const openLogicEditor = (mapping: ColumnMapping) => {
@@ -2073,7 +2225,10 @@ function TargetStep({
                       <path
                         key={`${connection.sourceKey}-${connection.targetMappingId}-${index}`}
                         d={`M 1 ${sourceY} C 34 ${sourceY}, 66 ${targetY}, 99 ${targetY}`}
-                      />
+                        onDoubleClick={() => removeFlowConnection(connection.sourceKey, connection.targetMappingId)}
+                      >
+                        <title>더블클릭하면 연결과 처리 로직 참조를 삭제합니다.</title>
+                      </path>
                     );
                   })}
                 </svg>
@@ -2093,16 +2248,19 @@ function TargetStep({
                   onDragStart={(event) => startMappingDrag(event, mapping.id)}
                   onDragEnd={() => setDraggingMappingId(null)}
                   onDragOver={(event) => {
-                    if (draggingMappingId && draggingMappingId !== mapping.id) {
+                    if (draggingSourceKey || (draggingMappingId && draggingMappingId !== mapping.id)) {
                       event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
+                      event.dataTransfer.dropEffect = draggingSourceKey ? "link" : "move";
                     }
                   }}
                   onDrop={(event) => {
                     event.preventDefault();
-                    if (draggingMappingId) {
+                    if (draggingSourceKey) {
+                      addSourceColumnToTarget(draggingSourceKey, mapping.id);
+                    } else if (draggingMappingId) {
                       reorderMapping(draggingMappingId, mapping.id);
                     }
+                    setDraggingSourceKey(null);
                     setDraggingMappingId(null);
                   }}
                 >

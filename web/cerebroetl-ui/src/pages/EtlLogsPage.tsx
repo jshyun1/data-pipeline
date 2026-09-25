@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, DatePicker, Input, Select, Space, Table, Tag, Tooltip } from "antd";
+import { Button, DatePicker, Input, Modal, Select, Space, Table, Tag, Tooltip } from "antd";
 import {
   CheckCircleFilled,
   CloseCircleFilled,
@@ -34,6 +34,13 @@ const EVENT_STATUS_COLOR: Record<string, string> = {
   RUNNING: "processing",
   SUCCESS: "success",
   FAILED: "error",
+};
+
+const ETL_LOG_GPT_HEADINGS = ["원인 추정", "조치 방법", "확인할 것"] as const;
+const ETL_LOG_GPT_HEADING_LABELS = {
+  "원인 추정": "원인",
+  "조치 방법": "조치방법",
+  "확인할 것": "확인할것",
 };
 
 type UnifiedEtlLogKind = "run" | "event";
@@ -136,6 +143,7 @@ export function EtlLogsPage() {
   const [groupFilter, setGroupFilter] = useState<string[]>([]);
   const [dashboardOpen, setDashboardOpen] = useState(true);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [detailRow, setDetailRow] = useState<UnifiedEtlLogRow | null>(null);
 
   const from = appliedRange[0].format("YYYY-MM-DD");
   const to = appliedRange[1].format("YYYY-MM-DD");
@@ -289,32 +297,42 @@ export function EtlLogsPage() {
     row.message ? `오류 내용:\n${row.message}` : "오류 내용: -",
   ].join("\n");
 
-  function DetailRow({ row }: { row: UnifiedEtlLogRow }) {
+  function LogDetailModal({ row, onClose }: { row: UnifiedEtlLogRow | null; onClose: () => void }) {
     const gptEnabled = useGptEnabled();
-    const [analyzing, setAnalyzing] = useState(false);
     const target: Record<string, string> = {};
-    if (row.jobId != null) target.jobId = String(row.jobId);
-    if (row.groupId) target.groupId = row.groupId;
-    const canAnalyze = gptEnabled && row.status === "FAILED" && (row.jobId != null || Boolean(row.groupId));
+    if (row?.jobId != null) target.jobId = String(row.jobId);
+    if (row?.groupId) target.groupId = row.groupId;
+    const canAnalyze = row != null && gptEnabled && row.status === "FAILED" && (row.jobId != null || Boolean(row.groupId));
     return (
-      <div style={{ fontSize: 12 }}>
-        <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: 12 }}>
-          {row.message ?? "상세 정보 없음"}
-        </pre>
-        {canAnalyze && !analyzing && (
-          <Button size="small" className="gpt-analysis-open" style={{ marginTop: 8 }} onClick={() => setAnalyzing(true)}>
-            GPT 분석
-          </Button>
-        )}
-        {analyzing && (
-          <GptErrorAnalysis
-            targetType="ETL_JOB"
-            target={target}
-            errorText={detailText(row)}
-            onClose={() => setAnalyzing(false)}
-          />
-        )}
-      </div>
+      <Modal
+        open={Boolean(row)}
+        title={row ? `${row.jobName} 오류 상세` : undefined}
+        footer={null}
+        width={960}
+        rootClassName="cerebro-modal"
+        onCancel={onClose}
+      >
+        {row ? (
+          <div className="etl-log-detail-modal">
+            {canAnalyze ? (
+              <GptErrorAnalysis
+                targetType="ETL_JOB"
+                target={target}
+                errorText={detailText(row)}
+                onClose={onClose}
+                headings={[...ETL_LOG_GPT_HEADINGS]}
+                headingLabels={ETL_LOG_GPT_HEADING_LABELS}
+              />
+            ) : (
+              <div className="etl-log-detail-gpt-empty">GPT 분석을 사용할 수 없습니다.</div>
+            )}
+            <section className="etl-log-detail-raw">
+              <h3>오류 원본</h3>
+              <pre>{row.message ?? "상세 정보 없음"}</pre>
+            </section>
+          </div>
+        ) : null}
+      </Modal>
     );
   }
 
@@ -472,10 +490,26 @@ export function EtlLogsPage() {
           },
         ]}
         expandable={{
-          expandedRowRender: (row) => <DetailRow row={row} />,
           rowExpandable: (row) => row.status !== "SUCCESS" && Boolean(row.message),
+          expandedRowKeys: [],
+          expandIcon: ({ record, expandable }) =>
+            expandable ? (
+              <button
+                type="button"
+                className="etl-log-detail-open"
+                aria-label="오류 상세 보기"
+                title="오류 상세 보기"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setDetailRow(record);
+                }}
+              >
+                +
+              </button>
+            ) : null,
         }}
       />
+      <LogDetailModal row={detailRow} onClose={() => setDetailRow(null)} />
     </div>
   );
 }
