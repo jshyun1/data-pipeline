@@ -67,6 +67,18 @@ public class AlertQueueController {
     }
 
     /**
+     * 이력 표의 열 이름 → ORDER BY 문구. 화면이 보낸 값을 그대로 SQL 에 넣지 않으려고 여기서만 고른다.
+     * 심각도는 글자순(CRITICAL · INFO · WARNING)이 아니라 위험한 순으로 센다.
+     */
+    private static final Map<String, String> ORDER_COLUMNS = Map.of(
+            "occurred", "COALESCE(started_at, condition_since, created_at)",
+            "severity", "CASE severity WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END",
+            "target", "target_label",
+            "summary", "summary",
+            "status", "(ack_at IS NOT NULL), (closed_at IS NOT NULL)",
+            "ack", "ack_at");
+
+    /**
      * 알림 이력 (원본 5-7 / PDF 8쪽). 대기열은 "지금 열려 있는 것"만 보여주므로 종료된 알림과
      * 누가 언제 확인했는지가 화면 어디에도 남지 않았다.
      *
@@ -82,7 +94,9 @@ public class AlertQueueController {
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int pageSize) {
+            @RequestParam(defaultValue = "20") int pageSize,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String dir) {
         int window = Math.max(1, Math.min(days, 90));
         int size = Math.max(1, Math.min(pageSize, 100));
         int offset = Math.max(0, page) * size;
@@ -125,6 +139,12 @@ public class AlertQueueController {
         Long total = jdbc.queryForObject(
                 "SELECT count(*) FROM alert_instance " + where, Long.class, args.toArray());
 
+        // 정렬(2026-09-28 요청). 화면이 보내는 것은 아래 표의 키뿐이고, ORDER BY 문구는 여기 있는 것만 쓴다
+        // - 화면 값이 SQL 에 그대로 들어가지 않게. 기본은 예전과 같은 «최근 상태 변화 순».
+        String orderBy = ORDER_COLUMNS.getOrDefault(sort == null ? "" : sort,
+                "COALESCE(last_transition_at, condition_since)");
+        String orderDir = "asc".equalsIgnoreCase(dir) ? "ASC" : "DESC";
+
         List<Object> itemArgs = new ArrayList<>(args);
         itemArgs.add(size);
         itemArgs.add(offset);
@@ -138,7 +158,8 @@ public class AlertQueueController {
                        started_at, condition_since, last_transition_at, resolved_at
                 FROM alert_instance
                 """ + where + "\n" + """
-                ORDER BY COALESCE(last_transition_at, condition_since) DESC
+                ORDER BY """ + orderBy + " " + orderDir + """
+                 , id DESC
                 LIMIT ? OFFSET ?
                 """, itemArgs.toArray());
 
@@ -158,6 +179,8 @@ public class AlertQueueController {
         body.put("page", Math.max(0, page));
         body.put("pageSize", size);
         body.put("total", total == null ? 0 : total);
+        body.put("sort", sort == null ? "" : sort);
+        body.put("dir", orderDir.toLowerCase(java.util.Locale.ROOT));
         body.put("counts", counts);
         body.put("items", items);
         return ApiResponse.success(body);

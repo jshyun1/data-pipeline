@@ -87,6 +87,10 @@ export interface HistoryQuery {
   to?: string;
   page: number;
   pageSize: number;
+  /** 정렬 열(occurred · severity · target · summary · status · ack). 서버가 아는 이름만 받는다. */
+  sort?: string;
+  /** asc · desc. 없으면 서버 기본(최근 상태 변화 순). */
+  dir?: "asc" | "desc";
 }
 
 export interface HistoryResponse {
@@ -110,6 +114,7 @@ export async function getAlertHistory(query: HistoryQuery): Promise<HistoryRespo
       ...(query.from && query.to ? { from: query.from, to: query.to } : { days: query.days ?? 7 }),
       page: query.page,
       pageSize: query.pageSize,
+      ...(query.sort ? { sort: query.sort, dir: query.dir ?? "desc" } : {}),
     },
   });
   return unwrap(res.data);

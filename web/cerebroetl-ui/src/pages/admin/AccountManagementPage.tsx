@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Tooltip, message } from "antd";
 import { StdPage } from "../../components/StdPage";
-import { WfIcon } from "../../components/WorkflowPageHeader";
 import { byBool, byDate, byNumber, byText, matchesText } from "../../utils/listSort";
 import type { ColumnsType } from "antd/es/table";
 import {
@@ -254,14 +253,6 @@ export function AccountManagementPage() {
 
   return (
     <StdPage menu="settings" title="계정 관리" icon="user" fill>
-      {/* 디자인 작업물 account-setting.html: 안내문구는 표 위에, 조작은 필터 띠 오른쪽 끝에 둔다. */}
-      <div className="std-toolbar">
-        <span className="std-notice">
-          <WfIcon name="info" size={14} />
-          관리자도 기존 비밀번호를 볼 수 없습니다. 초기화하면 사용자는 다음 로그인 때 변경을 요구받습니다.
-          삭제 대신 비활성화를 권장합니다(실행 이력·감사 로그가 계정을 참조).
-        </span>
-      </div>
       <div className="std-card std-table-card">
         <div className="std-filter-card">
           <Space wrap>
@@ -389,7 +380,7 @@ export function AccountManagementPage() {
 
       {/* 비밀번호 초기화 */}
       <Modal
-        title={`비밀번호 초기화 — ${pwTarget?.userId ?? ""}`}
+        title="비밀번호 초기화"
         open={pwTarget !== null}
         onCancel={() => { setPwTarget(null); pwForm.resetFields(); }}
         onOk={() => pwForm.submit()}
@@ -398,7 +389,9 @@ export function AccountManagementPage() {
         cancelText="취소"
       >
         <Form form={pwForm} layout="vertical" onFinish={(v) => pwTarget && pwMut.mutate({ userId: pwTarget.userId, password: v.password })}>
-          <Form.Item name="password" label="새 비밀번호" rules={[{ required: true, message: "비밀번호는 필수입니다." }]}>
+          {/* 표 위에 있던 안내를 여기로 옮겼다(2026-09-28 요청) - 초기화를 누른 사람에게만 필요한 말이다. */}
+          <Form.Item name="password" label="새 비밀번호" rules={[{ required: true, message: "비밀번호는 필수입니다." }]}
+                     extra="초기화하면 사용자는 다음 로그인 때 변경을 요구받습니다.">
             <Input.Password autoComplete="new-password" />
           </Form.Item>
         </Form>

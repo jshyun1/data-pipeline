@@ -10268,3 +10268,30 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   visibility: visible;
   transform: translateX(0);
 }
+
+/* 탭 줄을 걷고 화면 하나만 그리는 설정 화면(알림/발송): 본문이 남은 높이를 갖고 표 카드가 바닥까지 내려온다. */
+.std-page--fill > .std-tab-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 안내를 담은 물음표 표시(수신자 «추가» 옆). */
+.std-hint-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: #f1f5f9;
+  color: #64748b;
+  cursor: help;
+}
+
+.std-hint-mark:hover,
+.std-hint-mark:focus-visible {
+  outline: none;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}

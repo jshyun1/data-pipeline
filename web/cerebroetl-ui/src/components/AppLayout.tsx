@@ -186,7 +186,19 @@ const NAV_ITEMS: NavItem[] = [
       // 알림/발송 관리의 API(AlertAdminController·NotificationAdminController)는 ADMIN 이다.
       // 여기가 COMMON 이면 모든 역할이 COMMON=1 을 갖고 있어 «설정» 그룹이 절대 안 숨겨지고,
       // 조회자가 눌러도 API 가 403 을 주는 불일치가 생긴다.
-      { path: "/settings", label: "알림/발송", system: "ADMIN", action: "READ" },
+      {
+        // 화면 안에 있던 탭 줄을 소메뉴로 올렸다(2026-09-28 요청). 화면은 ?tab= 으로 고른다.
+        path: "/settings",
+        label: "알림/발송",
+        system: "ADMIN",
+        action: "READ",
+        children: [
+          { path: "/settings?tab=history", label: "알림 이력", system: "ADMIN", action: "READ" },
+          { path: "/settings?tab=rules", label: "알림 규칙", system: "ADMIN", action: "READ" },
+          { path: "/settings?tab=channels", label: "발송 채널", system: "ADMIN", action: "READ" },
+          { path: "/settings?tab=recipients", label: "수신자", system: "ADMIN", action: "READ" },
+        ],
+      },
       // 연결정보는 CDC(KAFKA)와 ETL(NIFI)이 함께 쓰는 공용 정보라 한쪽 권한만 있어도 필요하다.
       { path: "/settings/connections", label: "연결정보", anySystems: ["KAFKA", "NIFI"], action: "READ" },
       // 속성창 GPT 탭·오류 분석이 쓸 LLM 을 등록·선택한다(docs/2026-09-13-gpt-settings-design.md).
@@ -348,9 +360,22 @@ export function AppLayout() {
                       {children.map((child) => {
                         const subs = (child.children ?? []).filter(leafVisible);
                         if (subs.length) {
+                          /** 소메뉴 활성 판정. «/settings?tab=rules» 처럼 물음표가 붙은 주소는 그 값까지 맞춰 본다. */
+                          const subIsActive = (path: string) => {
+                            const [base, query] = path.split("?");
+                            if (location.pathname !== base) {
+                              return location.pathname.startsWith(`${base}/`) && !query;
+                            }
+                            if (!query) {
+                              return true;
+                            }
+                            const [name, value] = query.split("=");
+                            const current = new URLSearchParams(location.search).get(name);
+                            // 값이 없으면 첫 소메뉴(기본 화면)를 고른 것으로 본다.
+                            return current === value || (current === null && subs[0]?.path === path);
+                          };
                           // 소메뉴가 있는 줄: 이동하지 않고, 올리면 오른쪽에 목록이 펼쳐진다(대메뉴 그룹과 같은 규칙).
-                          const subActive = subs.some((sub) => location.pathname === sub.path
-                            || location.pathname.startsWith(`${sub.path}/`));
+                          const subActive = subs.some((sub) => subIsActive(sub.path));
                           return (
                             <li key={child.path} className="dropdown-item dropdown-item--sub">
                               <button type="button" className={subActive ? "dropdown-sub-toggle active" : "dropdown-sub-toggle"}
@@ -365,7 +390,9 @@ export function AppLayout() {
                                   <li key={sub.path} className="dropdown-item">
                                     <NavLink
                                       to={sub.path}
-                                      end
+                                      // 활성 표시는 직접 판정한다 - react-router 는 ?tab= 을 보지 않아
+                                      // 소메뉴 넷이 한꺼번에 켜진다.
+                                      className={subIsActive(sub.path) ? "active" : undefined}
                                       onClick={(event) => {
                                         setOpenMenu(null);
                                         guardedNavigate(event, sub.path);

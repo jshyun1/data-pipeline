@@ -17,7 +17,6 @@ import {
 import { getHostResources, getProcessHealth } from "../api/infra";
 import {
   getAirflowTaskLog,
-  getKafkaConnectorTrace,
   getNifiBulletins,
   getNifiRootStatus,
   listAirflowDags,
@@ -29,10 +28,11 @@ import {
 import type { AirflowDagRun } from "../api/platform";
 import { listPipelines } from "../api/pipelines";
 import type { PipelineResponse } from "../types/pipeline";
+import { listCdcEventLogs, listCdcProcessingLogs } from "../api/cdcLogs";
+import { listWorkflows } from "../api/workflows";
 import { collectNifiJobs, extractErrorGroupMessages } from "../utils/nifiJobs";
 import { summarizeKafkaConnectors } from "../utils/kafkaConnectors";
 import { FailureDetailModal, type FailureDetailItem } from "../components/FailureDetailModal";
-import { sourceLabel, targetLabel } from "../utils/cdcPresentation";
 import { TaskFailureLogModal, type FailureLogTarget } from "../components/TaskFailureLogModal";
 import { categorizeDag, NIFI_METRICS_COLLECTOR_DAG_ID, resolveDagDisplayName, type DagCategory } from "../utils/dagHistory";
 import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
@@ -102,7 +102,7 @@ async function fetchRunLogText(dagId: string, runId: string): Promise<string> {
 // 자체가 잘 처리됐는지"를 보여줄 뿐, 그 뒤 NiFi/Kafka가 실제로 데이터를 잘 처리했는지는
 // 반영하지 않는다(그건 통계 구역의 적재 건수와 인프라 구역의 프로세스 현황이 담당).
 async function buildAirflowHistory(range: [Dayjs, Dayjs]): Promise<AirflowHistoryData> {
-  const [dags, allRuns, nifiStatusResult, kafkaPipelines] = await Promise.all([
+  const [dags, allRuns, nifiStatusResult, kafkaPipelines, workflows] = await Promise.all([
     listAirflowDags(),
     // 전체 DAG의 기간 내 실행을 한 번에 받는다. 예전에는 DAG마다 따로 물어봐서
     // 파이프라인 수에 비례해 요청이 늘었다(DAG 12개 기준 30초마다 48회 -> 2회).
@@ -112,7 +112,13 @@ async function buildAirflowHistory(range: [Dayjs, Dayjs]): Promise<AirflowHistor
     }).catch(() => [] as AirflowDagRun[]),
     getNifiRootStatus().catch(() => undefined),
     listPipelines().catch(() => [] as PipelineResponse[]),
+    // 워크플로우 DAG(etl_wf_*)는 dag_id 를 그대로 보여 주면 «etl_wf_etl_root_total» 이 된다 -
+    // 워크플로우 로그 화면과 같은 이름(«total»)으로 적으려고 목록을 같이 받는다(2026-09-28).
+    listWorkflows().catch(() => []),
   ]);
+  const workflowNameByDag = new Map(
+    workflows.filter((workflow) => workflow.dagId).map((workflow) => [workflow.dagId as string, workflow.name]),
+  );
 
   const nifiJobs = collectNifiJobs(nifiStatusResult?.processGroupStatus?.aggregateSnapshot?.processGroupStatusSnapshots);
 
@@ -121,7 +127,8 @@ async function buildAirflowHistory(range: [Dayjs, Dayjs]): Promise<AirflowHistor
     return {
       dagId: dag.dag_id,
       category,
-      displayName: resolveDagDisplayName(dag.dag_id, category, nifiJobs, kafkaPipelines),
+      displayName: workflowNameByDag.get(dag.dag_id)
+        ?? resolveDagDisplayName(dag.dag_id, category, nifiJobs, kafkaPipelines),
       isActive: dag.is_active !== false && dag.is_paused !== true,
     };
   });
@@ -166,6 +173,11 @@ async function buildAirflowHistory(range: [Dayjs, Dayjs]): Promise<AirflowHistor
     }
     const info = displayNameByDag.get(dagId);
     if (!info) {
+      return;
+    }
+    // CDC 제어 DAG(kafka_pipeline_*_control) 실행은 이 카드에서 빼고 CDC 카드가 CDC 로그 기준으로 보여 준다
+    // (2026-09-28). 예전에는 같은 실패가 두 카드에 겹쳐 잡혔고, «실행 중»에는 CDC 감시 Run 이 계속 쌓였다.
+    if (info.category === "CDC") {
       return;
     }
     const entry: HistoryEntry = {
@@ -423,6 +435,21 @@ export function DashboardPage() {
     placeholderData: (previousData) => previousData,
   });
 
+  // CDC 로그 화면과 같은 재료를 같은 기간으로 받는다 - 두 화면이 같은 실패를 세게 하려고(2026-09-28).
+  const cdcEventLogsQuery = useQuery({
+    queryKey: ["dashboard-cdc-events", appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD")],
+    queryFn: () => listCdcEventLogs(appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD")),
+    refetchInterval: 30000,
+    placeholderData: (previousData) => previousData,
+  });
+
+  const cdcProcessingLogsQuery = useQuery({
+    queryKey: ["dashboard-cdc-processing", appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD")],
+    queryFn: () => listCdcProcessingLogs(appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD")),
+    refetchInterval: 30000,
+    placeholderData: (previousData) => previousData,
+  });
+
   const nifiExecutionLogsQuery = useQuery({
     queryKey: [
       "dashboard-operations-nifi-logs",
@@ -460,10 +487,13 @@ export function DashboardPage() {
   const showAirflowInitialLoading = airflowHistoryQuery.isLoading && !airflowHistoryQuery.data;
 
   const nifiRunning = nifiJobs.filter((job) => job.status === "RUNNING").length;
-  const nifiFailed = nifiJobs.filter((job) => job.status === "FAILED").length;
+  // «지금 Invalid 인 그룹» - 실행 실패가 아니라 설정 미완성이다. 오류 건수와 섞지 않고 카드 안쪽 지표로만 쓴다.
+  const nifiInvalidNow = nifiJobs.filter((job) => job.status === "FAILED").length;
   const nifiStopped = nifiJobs.filter((job) => job.status === "STOPPED").length;
 
-  const kafkaFailed = kafkaConnectors.filter((job) => job.status === "FAILED").length;
+  // 카드에 쓰는 «장애 N건»은 조회 기간의 실패 건수다(아래 cdcFailedItems 와 같은 것).
+  // 커넥터의 현재 FAILED 개수(kafkaConnectorsFailedNow)는 카드 안쪽 지표로만 쓴다.
+  const kafkaConnectorsFailedNow = kafkaConnectors.filter((job) => job.status === "FAILED").length;
   const kafkaPaused = kafkaConnectors.filter((job) => job.status === "PAUSED").length;
 
   const nifiLoadDaily = useMemo(
@@ -491,7 +521,8 @@ export function DashboardPage() {
         .filter((entry) => entry.status === "FAILED")
         .map((entry) => ({
           id: `log-${entry.id}`,
-          title: `${entry.jobName ?? entry.groupName ?? "ETL"} · ${entry.processorName}`,
+          // 대상은 job 명으로 적는다 - ETL 로그 화면의 «job» 칸과 같은 값이어야 한다(2026-09-28).
+          title: entry.jobName ?? entry.groupName ?? "ETL",
           datetime: entry.occurredAt,
           lines: [
             ["그룹", entry.rootGroupName ? `${entry.rootGroupName} > ${entry.groupName ?? "-"}` : entry.groupName ?? "-"],
@@ -503,62 +534,60 @@ export function DashboardPage() {
             ? { targetType: "ETL_JOB" as const, target: { jobId: String(entry.jobId) } }
             : undefined,
         })),
-      ...nifiJobs
-        .filter((job) => job.status === "FAILED")
-        .map((job) => ({
-          id: `current-${job.id}`,
-          title: `${job.name} (현재 오류)`,
-          lines: [["대상", job.name], ["프로세스 그룹", job.id]] as Array<[string, string]>,
-          loadError: async () => job.errorMessage ?? "오류 메시지를 찾을 수 없습니다.",
-          // 수집기가 받는 열쇠는 jobId 아니면 groupId(= NiFi 프로세스 그룹 id)다. 여기는 job id 가 없어 그룹 id 로 찾는다.
-          gpt: { targetType: "ETL_JOB" as const, target: { groupId: job.id } },
-        })),
     ],
-    [nifiExecutionLogsQuery.data, nifiJobs],
+    // 여기에 «지금 Invalid 인 프로세스 그룹»을 같이 넣었었는데 뺐다(2026-09-28) - 그것은 실행 실패가 아니라
+    // «설정이 덜 됐다»는 현재 상태라, 오늘 아무것도 돌리지 않아도 계속 잡혔다. 대시보드의 오류는 조회 기간 안의
+    // 실행 실패만 센다(ETL 로그 화면과 같은 기준).
+    [nifiExecutionLogsQuery.data],
   );
 
   /**
-   * CDC 실패 커넥터. CDC 로그 화면의 펼친 줄과 같은 차례로 보여 준다 - 파이프라인 · 커넥터 항목 → 오류 원문 → GPT 해석.
-   * 커넥터 이름(source-12-… / sink-12-…) 두 번째 조각이 파이프라인 id 라, 그것으로 이름과 GPT 대상을 잇는다.
+   * CDC 실패. **CDC 로그 화면과 같은 것을 센다**(2026-09-28 요청) - 조회 기간 안에서 실패로 남은 줄이다.
+   *
+   * <p>예전에는 «지금 커넥터가 FAILED 인가»를 셌다. 그러면 기간과 무관했고(오늘 아무것도 안 돌려도 계속 잡힘),
+   * 반대로 기간 안에 났다가 복구된 실패는 보이지 않았다. 화면 위쪽에서 대충 보고 [CDC 로그]로 들어가 자세히 보는
+   * 흐름이라 두 화면이 같은 것을 세어야 한다.
    */
-  const kafkaFailedItems: FailureDetailItem[] = useMemo(
-    () =>
-      kafkaConnectors
-        .filter((job) => job.status === "FAILED")
-        .map((job) => {
-          const pipelineId = job.name.match(/^(?:source|sink)-(\d+)-/)?.[1];
-          const pipeline = pipelineId
-            ? (pipelinesQuery.data ?? []).find((item) => String(item.id) === pipelineId)
-            : undefined;
-          const lines: Array<[string, string]> = [
-            ["파이프라인", pipeline ? pipeline.name : pipelineId ? `id ${pipelineId}` : "-"],
-            ["커넥터", `${job.name} (${job.role})`],
-            ["상태", `${job.status} · 실패 태스크 ${job.failedTaskCount}/${job.totalTaskCount}`],
-          ];
-          if (pipeline) {
-            lines.push(["소스 → 타깃", `${sourceLabel(pipeline)} → ${targetLabel(pipeline)}`]);
-            lines.push(["Topic", pipeline.topicName ?? "-"]);
-          }
-          return {
-            id: job.name,
-            title: `${pipeline?.name ?? job.name} · ${job.role}`,
-            lines,
-            loadError: async () => {
-              const trace = await getKafkaConnectorTrace(job.name).catch(() => undefined);
-              const connectorTrace = trace?.connector?.trace;
-              const taskTraces = (trace?.tasks ?? [])
-                .filter((task) => task.trace)
-                .map((task) => `[task ${task.id}]\n${task.trace}`)
-                .join("\n\n");
-              return connectorTrace || taskTraces || "오류 트레이스를 찾을 수 없습니다.";
-            },
-            gpt: pipelineId
-              ? { targetType: "CDC_PIPELINE" as const, target: { pipelineId } }
-              : undefined,
-          };
-        }),
-    [kafkaConnectors, pipelinesQuery.data],
-  );
+  const cdcFailedItems: FailureDetailItem[] = useMemo(() => {
+    const pipelines = pipelinesQuery.data ?? [];
+    const gptTarget = (pipelineId: number) =>
+      pipelines.some((item) => item.id === pipelineId)
+        ? { targetType: "CDC_PIPELINE" as const, target: { pipelineId: String(pipelineId) } }
+        : undefined;   // 지워진 파이프라인은 수집기가 대상을 못 찾는다
+
+    const events: FailureDetailItem[] = (cdcEventLogsQuery.data ?? [])
+      .filter((row) => row.result === "FAILED")
+      .map((row) => ({
+        id: `cdc-event-${row.id}`,
+        title: row.pipelineName,
+        datetime: row.occurredAt,
+        lines: [
+          ["파이프라인", row.pipelineName],
+          ["구분", `${row.command} · 실패`],
+        ] as Array<[string, string]>,
+        loadError: async () => row.message ?? "오류 메시지를 찾을 수 없습니다.",
+        gpt: gptTarget(row.pipelineId),
+      }));
+
+    const processing: FailureDetailItem[] = (cdcProcessingLogsQuery.data ?? [])
+      .filter((row) => row.status === "FAILED")
+      .map((row) => ({
+        id: `cdc-proc-${row.pipelineId}-${row.occurredAt}`,
+        title: row.pipelineName,
+        datetime: row.occurredAt,
+        lines: [
+          ["파이프라인", row.pipelineName],
+          ["구분", "처리 · 실패"],
+          ["소스 → 타깃", `${row.source} → ${row.target}`],
+          ["Topic", row.topicName || "-"],
+        ] as Array<[string, string]>,
+        loadError: async () => row.message ?? "오류 메시지를 찾을 수 없습니다.",
+        gpt: gptTarget(row.pipelineId),
+      }));
+
+    return [...events, ...processing].sort((a, b) => (b.datetime ?? "").localeCompare(a.datetime ?? ""));
+  }, [cdcEventLogsQuery.data, cdcProcessingLogsQuery.data, pipelinesQuery.data]);
+
 
   /**
    * 실패한 실행의 «로그» - 워크플로우 로그 화면과 같은 창(TaskFailureLogModal)을 띄운다.
@@ -768,6 +797,11 @@ export function DashboardPage() {
               <MetricRow label="해소 예상" value={cdcRecovery.text} warn={cdcRecovery.warn} />
               <MetricRow label="처리율" value={`${kafkaThroughput.toFixed(1)} rows/s`} />
               <MetricRow label="일시정지" value={String(kafkaPaused)} warn={kafkaPaused > 0} />
+              {/* 지금 커넥터가 FAILED 인 수. 조회 기간의 «실패 건수»와 다른 값이라 따로 둔다(2026-09-28). */}
+              {kafkaConnectorsFailedNow > 0 ? (
+                <MetricRow label="커넥터 실패(현재)" value={String(kafkaConnectorsFailedNow)} warn
+                           hint="지금 이 순간 FAILED 인 커넥터 수 - 조회 기간의 실패 건수와는 다르다" />
+              ) : null}
               {connectorDriftCount > 0 ? (
                 <MetricRow label="커넥터 불일치" value={String(connectorDriftCount)} warn />
               ) : null}
@@ -777,9 +811,9 @@ export function DashboardPage() {
           <div className="summary-card-footer">
             <FlowStateNote tone={cdcFlow.tone} text={cdcFlow.text} />
             <div className="summary-card-links">
-              {kafkaFailed > 0 ? (
+              {cdcFailedItems.length > 0 ? (
                 <button type="button" className="btn-kpi-danger-chip" onClick={() => setKafkaFailedOpen(true)}>
-                  장애 {kafkaFailed}건
+                  실패 {cdcFailedItems.length}건
                 </button>
               ) : null}
               <button type="button" className="btn-kpi-action" onClick={() => navigate("/cdc/logs")}>
@@ -825,15 +859,20 @@ export function DashboardPage() {
               />
               <MetricRow label="실행" value={String(nifiRunning)} />
               <MetricRow label="중지" value={String(nifiStopped)} warn={nifiStopped > 0} />
+              {/* 설정이 덜 된 그룹. 실행 실패가 아니라 «지금 돌 수 없는 상태»라 오류 건수와 따로 둔다(2026-09-28). */}
+              {nifiInvalidNow > 0 ? (
+                <MetricRow label="설정 확인 필요" value={String(nifiInvalidNow)} warn
+                           hint="프로세서가 Invalid 인 그룹 수 - 실행 실패가 아니라 설정이 덜 된 상태" />
+              ) : null}
             </div>
           </div>
 
           <div className="summary-card-footer">
             <FlowStateNote tone={nifiFlowTone} text={nifiFlowText} />
             <div className="summary-card-links">
-              {nifiFailed > 0 ? (
+              {nifiFailedItems.length > 0 ? (
                 <button type="button" className="btn-kpi-danger-chip" onClick={() => setNifiFailedOpen(true)}>
-                  오류 그룹 {nifiFailed}건
+                  실패 {nifiFailedItems.length}건
                 </button>
               ) : null}
               <button type="button" className="btn-kpi-action" onClick={() => navigate("/etl/logs")}>
@@ -995,16 +1034,16 @@ export function DashboardPage() {
       <FailureDetailModal
         open={nifiFailedOpen}
         onClose={() => setNifiFailedOpen(false)}
-        title={`ETL 오류 상세 · ${selectedPeriodLabel}`}
+        title={`ETL 실패 상세 · ${selectedPeriodLabel}`}
         loading={nifiJobsQuery.isLoading && !nifiJobsQuery.data}
         items={nifiFailedItems}
       />
       <FailureDetailModal
         open={kafkaFailedOpen}
         onClose={() => setKafkaFailedOpen(false)}
-        title="CDC 실패 상세"
+        title={`CDC 실패 상세 · ${selectedPeriodLabel}`}
         loading={kafkaConnectorsQuery.isLoading && !kafkaConnectorsQuery.data}
-        items={kafkaFailedItems}
+        items={cdcFailedItems}
       />
       {/* 워크플로우(Airflow) 실패는 로그 화면과 같은 창을 그대로 띄운다 - 시도별 로그 · 하위 워크플로우 · GPT 해석이 한 자리에 있다. */}
       <TaskFailureLogModal target={workflowFailure} onClose={() => setWorkflowFailure(undefined)} />

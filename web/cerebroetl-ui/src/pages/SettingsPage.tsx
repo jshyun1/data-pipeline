@@ -18,7 +18,6 @@ import {
   Spin,
   Switch,
   Table,
-  Tabs,
   Tag,
   TimePicker,
   TreeSelect,
@@ -1041,11 +1040,6 @@ function ChannelsTab() {
   const onButUnconfigured = external.filter((c) => c.enabled && !c.relay_configured);
   return (
     <div className="std-tab-body">
-      <span className="std-notice">
-        <WfIcon name="info" size={14} />
-        화면알림은 별도 설정이 없습니다 — 알림 규칙을 «사용»으로 켜면 조치 대기열·헤더 알림에 자동으로 표시됩니다.
-        외부 발송(이메일 · 문자 · 카카오톡)은 여기서 «설정»으로 서버 정보를 넣고 켭니다.
-      </span>
       {onButUnconfigured.length > 0 && (
         <Alert
           type="warning"
@@ -1171,11 +1165,6 @@ function RecipientsTab() {
 
   return (
     <div className="std-tab-body">
-      <span className="std-notice">
-        <WfIcon name="info" size={14} />
-        «이메일 수신»·«문자 수신»을 켜야 실제로 발송됩니다. 등록만 해두면 화면 알림에만 남습니다.
-        추가할 때 적은 연락처는 자동으로 켜집니다. (메일 · 문자 · 카카오톡은 «위험» 등급만 발송됩니다)
-      </span>
       <div className="std-card std-filter-card">
       <Form form={form} layout="inline" onFinish={add}>
         <Form.Item name="displayName" rules={[{ required: true, message: "이름" }]}>
@@ -1190,6 +1179,15 @@ function RecipientsTab() {
         <Button type="primary" htmlType="submit">
           추가
         </Button>
+        {/* 표 위에 길게 깔려 있던 안내 - 물음표에 넣어 필요할 때만 본다(2026-09-28 요청). */}
+        <Tooltip title={<span>
+          «이메일 수신»·«문자 수신»을 켜야 실제로 발송됩니다. 등록만 해두면 화면 알림에만 남습니다.<br />
+          추가할 때 적은 연락처는 자동으로 켜집니다. (메일 · 문자 · 카카오톡은 «위험» 등급만 발송됩니다)
+        </span>}>
+          <span className="std-hint-mark" role="img" aria-label="수신자 등록 안내" tabIndex={0}>
+            <WfIcon name="info" size={15} />
+          </span>
+        </Tooltip>
       </Form>
       </div>
       <div className="std-card std-table-card">
@@ -1538,22 +1536,22 @@ function RecipientEditModal({
   );
 }
 
+/** ?tab= 으로 고르는 화면들. 상단 메뉴(설정 > 알림/발송)의 소메뉴와 같은 목록이다. */
+const SETTING_TABS = {
+  history: { title: "알림 이력", body: <AlertHistoryTab /> },
+  rules: { title: "알림 규칙", body: <RulesTab /> },
+  channels: { title: "발송 채널", body: <ChannelsTab /> },
+  recipients: { title: "수신자", body: <RecipientsTab /> },
+} as const;
+
 export function SettingsPage() {
-  const [params, setParams] = useSearchParams();
-  const active = params.get("tab") ?? "history";
-  // 디자인 작업물 alarm-setting.html: 제목 + 설정 하위 탭, 그 아래 화면 안 탭 → 필터 띠 → 표 카드.
+  const [params] = useSearchParams();
+  const key = params.get("tab") ?? "history";
+  // 예전에는 화면 안에 탭 줄이 한 겹 더 있었다. 상단 메뉴 소메뉴로 고르게 바꾸면서 걷었다(2026-09-28 요청).
+  const tab = SETTING_TABS[key as keyof typeof SETTING_TABS] ?? SETTING_TABS.history;
   return (
-    <StdPage menu="settings" title="알림/발송 설정" icon="bell" fill>
-      <Tabs
-        activeKey={active}
-        onChange={(k) => setParams({ tab: k })}
-        items={[
-          { key: "history", label: "알림 이력", children: <AlertHistoryTab /> },
-          { key: "rules", label: "알림 규칙", children: <RulesTab /> },
-          { key: "channels", label: "발송 채널", children: <ChannelsTab /> },
-          { key: "recipients", label: "수신자", children: <RecipientsTab /> },
-        ]}
-      />
+    <StdPage menu="settings" title={tab.title} icon="bell" fill>
+      {tab.body}
     </StdPage>
   );
 }

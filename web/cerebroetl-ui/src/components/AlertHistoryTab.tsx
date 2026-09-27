@@ -108,13 +108,16 @@ export function AlertHistoryTab() {
   ]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(10);
+  // 정렬은 서버가 한다 - 한 페이지(10건)만 줄 세우면 «전체에서 제일 위험한 것»이 아니라
+  // «이 페이지에서 제일 위험한 것»이 올라와 잘못 읽힌다.
+  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" }>();
 
   const from = appliedRange[0].toISOString();
   const to = appliedRange[1].toISOString();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["alert-history", filter, severity, q, from, to, page, pageSize],
-    queryFn: () => getAlertHistory({ filter, severity, q, from, to, page, pageSize }),
+    queryKey: ["alert-history", filter, severity, q, from, to, page, pageSize, sort?.key, sort?.dir],
+    queryFn: () => getAlertHistory({ filter, severity, q, from, to, page, pageSize, sort: sort?.key, dir: sort?.dir }),
     placeholderData: (prev) => prev,
   });
 
@@ -137,26 +140,36 @@ export function AlertHistoryTab() {
     };
   }
 
+  /** 열 하나의 정렬 설정. 서버에 보낼 이름과 지금 방향(화살표)을 붙인다. */
+  const sortable = (key: string) => ({
+    key,
+    sorter: true as const,
+    sortOrder: sort?.key === key ? (sort.dir === "asc" ? ("ascend" as const) : ("descend" as const)) : null,
+  });
+
   const columns: ColumnsType<HistoryItem> = [
     {
       title: "발생시각",
       width: 140,
+      ...sortable("occurred"),
       render: (_: unknown, r) => formatWhen(r.started_at ?? r.condition_since),
     },
     {
       title: "심각도",
       dataIndex: "severity",
       width: 96,
+      ...sortable("severity"),
       render: (v: string) => {
         const m = SEVERITY_META[v] ?? SEVERITY_META.INFO;
         return <Tag color={m.color}>{m.label}</Tag>;
       },
     },
-    { title: "대상", dataIndex: "target_label", width: 150, render: (v: string | null) => v ?? "-" },
-    { title: "내용", dataIndex: "summary", ellipsis: true },
+    { title: "대상", dataIndex: "target_label", width: 150, ...sortable("target"), render: (v: string | null) => v ?? "-" },
+    { title: "내용", dataIndex: "summary", ellipsis: true, ...sortable("summary") },
     {
       title: "상태",
       width: 150,
+      ...sortable("status"),
       render: (_: unknown, r) => (
         <Space size={4}>
           {r.acked ? <Tag color="processing">확인됨</Tag> : <Tag>미확인</Tag>}
@@ -167,6 +180,7 @@ export function AlertHistoryTab() {
     {
       title: "확인자",
       width: 130,
+      ...sortable("ack"),
       render: (_: unknown, r) =>
         r.acked ? (
           <span>
@@ -237,6 +251,13 @@ export function AlertHistoryTab() {
         loading={isLoading && !data}
         dataSource={items}
         columns={columns}
+        // 정렬을 바꾸면 1페이지부터 다시 본다. 해제(세 번째 클릭)하면 서버 기본 순서로 돌아간다.
+        onChange={(_pagination, _filters, sorter) => {
+          const next = Array.isArray(sorter) ? sorter[0] : sorter;
+          const key = typeof next?.columnKey === "string" ? next.columnKey : undefined;
+          setSort(next?.order && key ? { key, dir: next.order === "ascend" ? "asc" : "desc" } : undefined);
+          setPage(0);
+        }}
         pagination={{
           current: page + 1,
           pageSize,
