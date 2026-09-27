@@ -7,6 +7,8 @@ import com.company.pipeline.connector.PipelineConnector;
 import com.company.pipeline.connector.PipelineConnectorRepository;
 import com.company.pipeline.connector.dto.ConnectorStatusResponse;
 import com.company.pipeline.connector.dto.ConnectorTaskStatus;
+import com.company.pipeline.monitoring.RealtimePipelineMetricService;
+import com.company.pipeline.monitoring.dto.RealtimePipelineMetricResponse;
 import com.company.pipeline.pipeline.PipelineCommandHistory;
 import com.company.pipeline.pipeline.PipelineCommandHistoryRepository;
 import com.company.pipeline.pipeline.PipelineDefinition;
@@ -52,18 +54,21 @@ public class CdcPipelineContextCollector implements LlmContextCollector {
     private final PipelineCommandHistoryRepository commandHistoryRepository;
     private final PipelineRuntimeStatusService runtimeStatusService;
     private final KafkaConnectClient kafkaConnectClient;
+    private final RealtimePipelineMetricService metricService;
 
     public CdcPipelineContextCollector(PipelineDefinitionRepository pipelineRepository, PipelineGroupRepository groupRepository,
                                        PipelineConnectorRepository connectorRepository,
                                        PipelineCommandHistoryRepository commandHistoryRepository,
                                        PipelineRuntimeStatusService runtimeStatusService,
-                                       KafkaConnectClient kafkaConnectClient) {
+                                       KafkaConnectClient kafkaConnectClient,
+                                       RealtimePipelineMetricService metricService) {
         this.pipelineRepository = pipelineRepository;
         this.groupRepository = groupRepository;
         this.connectorRepository = connectorRepository;
         this.commandHistoryRepository = commandHistoryRepository;
         this.runtimeStatusService = runtimeStatusService;
         this.kafkaConnectClient = kafkaConnectClient;
+        this.metricService = metricService;
     }
 
     @Override
@@ -89,6 +94,8 @@ public class CdcPipelineContextCollector implements LlmContextCollector {
         context.add("화면에 표시된 오류 내용", ContextText.errorText(errorText), LlmContext.PRIORITY_ERROR);
         context.add("CDC 파이프라인", identity(pipeline), LlmContext.PRIORITY_IDENTITY);
         context.add("실행 상태", runtime(pipelineId), LlmContext.PRIORITY_IDENTITY);
+        context.add("배포된 커넥터", connectorList(connectors), LlmContext.PRIORITY_IDENTITY);
+        context.add("오프셋 · 지연", offsets(pipelineId), LlmContext.PRIORITY_IDENTITY);
         context.add("커넥터 태스크 오류 추적", connectorTraces(connectors), LlmContext.PRIORITY_DETAIL);
         context.add("최근 제어 명령 (최신순)", recentCommands(pipelineId), LlmContext.PRIORITY_HISTORY);
         return new CollectedTarget(String.valueOf(pipelineId), pipeline.getName(), context);
@@ -117,6 +124,10 @@ public class CdcPipelineContextCollector implements LlmContextCollector {
             lines.add("마스킹 컬럼: " + p.getMaskedColumns());
         }
         lines.add("저장된 상태: " + ContextText.orDash(p.getStatus()));
+        // 탭을 열자마자 나가는 요약이 «누가 · 언제 만들었고 언제 고쳤는지»까지 말할 수 있게 한다(2026-09-27).
+        lines.add("등록자: " + ContextText.orDash(p.getCreatedBy())
+                + " · 등록 시각: " + ContextText.time(p.getCreatedAt())
+                + " · 최종 수정: " + ContextText.time(p.getUpdatedAt()));
         return String.join("\n", lines);
     }
 
@@ -136,6 +147,49 @@ public class CdcPipelineContextCollector implements LlmContextCollector {
         } catch (RuntimeException ex) {
             log.debug("CDC 실행 상태 조회 실패 pipelineId={}: {}", pipelineId, ex.getMessage());
             return "(Kafka Connect 에서 실행 상태를 읽지 못했다: " + ContextText.cut(ex.getMessage(), 200) + ")";
+        }
+    }
+
+    /**
+     * 배포된 커넥터 목록. 이름 규칙이 {@code source-{id}-…} · {@code sink-{id}-…} 라 이름만 봐도 어느 쪽인지 알 수 있고,
+     * 운영자가 Kafka Connect 에서 직접 찾을 때 쓰는 열쇠이기도 하다.
+     */
+    private String connectorList(List<PipelineConnector> connectors) {
+        if (connectors.isEmpty()) {
+            return "(배포된 커넥터 없음 - 아직 배포하지 않았거나 삭제됐다)";
+        }
+        List<String> lines = new ArrayList<>();
+        for (PipelineConnector c : connectors) {
+            lines.add(ContextText.orDash(c.getConnectorRole()) + ": " + ContextText.orDash(c.getConnectorName())
+                    + " · 저장된 상태 " + ContextText.orDash(c.getStatus())
+                    + " · 배포 " + ContextText.time(c.getDeployedAt()));
+        }
+        return String.join("\n", lines);
+    }
+
+    /**
+     * Topic 오프셋과 지연. «지금 얼마나 밀렸는지»는 커넥터 상태(RUNNING)만으로는 알 수 없다 -
+     * 커넥터가 돌아도 소비가 못 따라가면 타깃은 계속 뒤처진다.
+     */
+    private String offsets(long pipelineId) {
+        try {
+            RealtimePipelineMetricResponse m = metricService.getMetric(pipelineId);
+            if (m == null || "NO_DATA".equals(m.collectionStatus())) {
+                return "(수집된 지표 없음 - 아직 한 번도 수집되지 않았거나 파이프라인이 멈춰 있다)";
+            }
+            List<String> lines = new ArrayList<>();
+            lines.add("파티션 수: " + ContextText.orDash(String.valueOf(m.partitionCount())));
+            lines.add("Topic 끝 오프셋: " + ContextText.orDash(String.valueOf(m.endOffset()))
+                    + " · 소비(커밋) 오프셋: " + ContextText.orDash(String.valueOf(m.committedOffset())));
+            lines.add("소비 지연(lag): " + ContextText.orDash(String.valueOf(m.consumerLag()))
+                    + (m.estimatedRecoverySeconds() != null ? " · 이 속도면 해소까지 약 " + m.estimatedRecoverySeconds() + "초" : ""));
+            lines.add("처리량: 초당 " + String.format("%.1f", m.throughputPerSecond()) + "건");
+            lines.add("마지막 처리 시각: " + ContextText.time(m.lastProgressAt()));
+            lines.add("지표 수집 시각: " + ContextText.time(m.collectedAt()));
+            return String.join("\n", lines);
+        } catch (RuntimeException ex) {
+            log.debug("CDC 지표 조회 실패 pipelineId={}: {}", pipelineId, ex.getMessage());
+            return "(지표를 읽지 못했다: " + ContextText.cut(ex.getMessage(), 200) + ")";
         }
     }
 

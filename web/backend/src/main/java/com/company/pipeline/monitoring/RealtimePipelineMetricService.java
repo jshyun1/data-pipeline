@@ -31,6 +31,11 @@ public class RealtimePipelineMetricService {
                 .toList();
     }
 
+    /** 파이프라인 한 건의 실시간 지표(오프셋 · 지연 · 처리량). GPT 요약이 «지금 얼마나 밀렸는지»를 말하려면 필요하다. */
+    public RealtimePipelineMetricResponse getMetric(Long pipelineId) {
+        return toResponse(pipelineId);
+    }
+
     private RealtimePipelineMetricResponse toResponse(Long pipelineId) {
         List<PipelineMetricSnapshot> snapshots =
                 snapshotRepository.findTop2ByPipelineIdOrderByCollectedAtDesc(pipelineId);

@@ -10134,3 +10134,20 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   background: #f8fafc;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
+
+/* 팝업 맨 위 강조선(2026-09-27 요청). 밋밋한 창 머리에 브랜드 색 띠 한 줄을 얹는다.
+   지금은 워크플로우 로그의 «로그» 창(TaskFailureLogModal)에만 붙인다 - 다른 창은 이 클래스를 붙이면 같이 적용된다(ETL 메뉴 제외). */
+.accent-modal .ant-modal-container {
+  position: relative;
+}
+
+.accent-modal .ant-modal-container::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 1;
+  height: 3px;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-primary-hover));
+}

@@ -90,10 +90,16 @@ public class LlmChatService {
                            String question, int maxInputChars) {
     }
 
-    /** 실제 호출 준비. 속성창 질문은 질문이 있어야 한다. */
+    /**
+     * 실제 호출 준비.
+     *
+     * <p>속성창 질문은 질문이 있어야 한다 - <b>단 대화가 비어 있는 첫 요청은 예외</b>다. 그때는 «탭을 연 것»이라
+     * 서버가 가진 요약 요청({@link JobAnalysisAgent#SUMMARY_REQUEST})으로 대상 요약을 먼저 내어 준다(2026-09-27).
+     */
     public Prepared prepareChat(LlmChatRequest request, String userId) {
         boolean question = request.question() != null && !request.question().isBlank();
-        if (request.agentType() == LlmAgentType.JOB_ANALYSIS && !question) {
+        boolean firstOpen = request.history() == null || request.history().isEmpty();
+        if (request.agentType() == LlmAgentType.JOB_ANALYSIS && !question && !firstOpen) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "질문을 입력하십시오.");
         }
         return prepare(request, userId);
@@ -196,7 +202,10 @@ public class LlmChatService {
     private List<LlmMessage> jobMessages(Prepared prepared, String apiKey, LlmChatListener listener) {
         LlmTargetType type = prepared.request().targetType();
         ConversationFitter.Normalized normalized = ConversationFitter.normalize(prepared.history(), false);
-        int fixed = JobAnalysisAgent.systemPrompt(type).length() + prepared.contextText().length() + prepared.question().length()
+        // 질문이 없으면 요약 요청이 대신 들어간다 - 길이 계산도 그 길이로 한다.
+        int askChars = prepared.question() == null || prepared.question().isBlank()
+                ? JobAnalysisAgent.SUMMARY_REQUEST.length() : prepared.question().length();
+        int fixed = JobAnalysisAgent.systemPrompt(type).length() + prepared.contextText().length() + askChars
                 + PROMPT_WRAPPER_CHARS;
         String summary = prepared.summary();
         int summaryChars = summary == null ? 0 : summary.length();

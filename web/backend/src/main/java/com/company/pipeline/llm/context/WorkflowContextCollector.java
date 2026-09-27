@@ -1,5 +1,6 @@
 package com.company.pipeline.llm.context;
 
+import com.company.pipeline.airflowdashboard.AirflowDagRunClient;
 import com.company.pipeline.common.BusinessException;
 import com.company.pipeline.common.ErrorCode;
 import com.company.pipeline.jobcatalog.EtlJob;
@@ -16,6 +17,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,22 +35,29 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class WorkflowContextCollector implements LlmContextCollector {
 
+    private static final Logger log = LoggerFactory.getLogger(WorkflowContextCollector.class);
+
     private final EtlWorkflowRepository workflowRepository;
     private final EtlWorkflowNodeRepository nodeRepository;
     private final EtlJobRepository jobRepository;
     private final PipelineDefinitionRepository pipelineRepository;
     private final EtlJobContextText jobText;
     private final WorkflowGraphText graphText;
+    private final AirflowDagRunClient dagRunClient;
+    /** 요약에 붙이는 최근 실행 수. 더 보려면 화면 «실행 이력»이 있다. */
+    private static final int RECENT_RUNS = 5;
 
     public WorkflowContextCollector(EtlWorkflowRepository workflowRepository, EtlWorkflowNodeRepository nodeRepository,
                                     EtlJobRepository jobRepository, PipelineDefinitionRepository pipelineRepository,
-                                    EtlJobContextText jobText, WorkflowGraphText graphText) {
+                                    EtlJobContextText jobText, WorkflowGraphText graphText,
+                                    AirflowDagRunClient dagRunClient) {
         this.workflowRepository = workflowRepository;
         this.nodeRepository = nodeRepository;
         this.jobRepository = jobRepository;
         this.pipelineRepository = pipelineRepository;
         this.jobText = jobText;
         this.graphText = graphText;
+        this.dagRunClient = dagRunClient;
     }
 
     @Override
@@ -70,6 +80,7 @@ public class WorkflowContextCollector implements LlmContextCollector {
         context.add("화면에 표시된 오류 내용", ContextText.errorText(errorText), LlmContext.PRIORITY_ERROR);
         context.add("워크플로우", identity(workflow, nodes, workflowById), LlmContext.PRIORITY_IDENTITY);
         context.add("노드 구성", nodeLines(workflow, nodes, workflowById), LlmContext.PRIORITY_IDENTITY);
+        context.add("최근 실행 (최신순)", recentRuns(workflow), LlmContext.PRIORITY_HISTORY);
         nodes.stream()
                 .map(EtlWorkflowNode::getJobId)
                 .filter(java.util.Objects::nonNull)
@@ -78,6 +89,38 @@ public class WorkflowContextCollector implements LlmContextCollector {
                 .flatMap(Optional::stream)
                 .forEach(job -> context.add("job «" + job.getJobName() + "» 의 단계", jobText.steps(job), LlmContext.PRIORITY_DETAIL));
         return new CollectedTarget(workflow.getId() + "/*", workflow.getName(), context);
+    }
+
+    /**
+     * 최근 실행(Airflow). «지금 상태»를 말하려면 설계만으로는 부족하다 - 마지막에 성공했는지, 지금 도는 중인지가 필요하다.
+     *
+     * <p>게시하지 않은 워크플로우는 Airflow 에 DAG 자체가 없다. Airflow 가 응답하지 않아도 요약 전체가 실패하면 안 되므로
+     * 실패는 문구로 돌린다.
+     */
+    private String recentRuns(EtlWorkflow workflow) {
+        if (workflow.getPublishedAt() == null) {
+            return "(게시 전이라 Airflow 에서 실행된 적이 없다)";
+        }
+        try {
+            List<AirflowDagRunClient.DagRun> runs = dagRunClient.getDagRuns(workflow.dagId());
+            if (runs.isEmpty()) {
+                return "(실행 기록 없음)";
+            }
+            List<String> lines = new ArrayList<>();
+            runs.stream()
+                    .sorted(java.util.Comparator.comparing(
+                            (AirflowDagRunClient.DagRun r) -> r.startDate() == null ? java.time.OffsetDateTime.MIN : r.startDate())
+                            .reversed())
+                    .limit(RECENT_RUNS)
+                    .forEach(r -> lines.add(ContextText.orDash(r.dagRunId())
+                            + " | " + ContextText.orDash(r.state())
+                            + " | 시작 " + (r.startDate() == null ? "-" : r.startDate().toString())
+                            + " | 종료 " + (r.endDate() == null ? "-" : r.endDate().toString())));
+            return String.join("\n", lines);
+        } catch (RuntimeException ex) {
+            log.debug("워크플로우 실행 이력 조회 실패 dagId={}: {}", workflow.dagId(), ex.getMessage());
+            return "(Airflow 에서 실행 이력을 읽지 못했다: " + ContextText.cut(ex.getMessage(), 200) + ")";
+        }
     }
 
     private String identity(EtlWorkflow workflow, List<EtlWorkflowNode> nodes, Map<Long, EtlWorkflow> workflowById) {
@@ -107,6 +150,11 @@ public class WorkflowContextCollector implements LlmContextCollector {
         lines.add("실패 시 중단: " + (workflow.isSuspendOnError() ? "예" : "아니오")
                 + " · 동시 실행 수: " + workflow.getMaxActiveRuns() + " · 밀린 실행(catchup): " + (workflow.isCatchup() ? "예" : "아니오"));
         lines.add("메모: " + ContextText.orDash(workflow.getMemo()));
+        // 탭을 열자마자 나가는 요약이 «누가 · 언제»까지 말할 수 있게 한다(2026-09-27).
+        // 워크플로우에는 작성자 컬럼이 없다 - 게시자가 사람 정보의 전부다.
+        lines.add("등록 시각: " + ContextText.time(workflow.getCreatedAt())
+                + " · 최종 수정: " + ContextText.time(workflow.getUpdatedAt()));
+        lines.add("Airflow DAG: " + ContextText.orDash(workflow.dagId()));
         return String.join("\n", lines);
     }
 

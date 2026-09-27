@@ -44,6 +44,35 @@ public final class JobAnalysisAgent {
             - 노드 배치 · 연결 · 속성 입력은 운영자가 화면에서 한다. 이름이 비어 있으면 저장할 수 없다는 점을 알려 준다.
             """;
 
+    /**
+     * 탭을 열자마자 나가는 <b>첫 요약 요청</b>(2026-09-27). 운영자가 아무것도 묻기 전에, 고른 대상이 무엇이고
+     * 지금 어떤 상태인지를 한 번 정리해 준다 - 로그 화면의 [GPT 해석] 이 누르자마자 답을 주는 것과 같은 자리다.
+     *
+     * <p>질문 문구를 화면이 아니라 서버가 들고 있는 이유: 화면마다 달라지면 답의 모양도 달라진다.
+     * 형식은 고정하되, <b>정보에 없는 항목은 «확인되지 않음»</b> 으로 적게 해서 지어내지 않게 한다.
+     */
+    public static final String SUMMARY_REQUEST = """
+            위 대상을 처음 보는 운영자에게 설명하듯 요약해 줘. 제공된 정보에 있는 것만 쓰고, 없는 항목은 «확인되지 않음» 이라고 적는다.
+
+            [형식]
+            한 줄 요약
+            (무엇을 하는 대상인지 한 문장)
+
+            구성
+            - 대상마다 중요한 것부터: 워크플로우면 노드 구성 · 실행 순서 · 실행 방식 · 스케줄 · 상위 워크플로우,
+              CDC 파이프라인이면 소스 → 타깃 · 적재 방식 · Topic · 커넥터.
+
+            지금 상태
+            - 실행/커넥터 상태, 최근 실행이나 최근 제어, 오프셋 · 지연처럼 «지금 어떤지»를 말해 주는 값.
+            - 이상 징후가 보이면 그 근거와 함께 짚는다.
+
+            등록 · 변경
+            - 등록자 · 등록 시각 · 최종 수정 · 게시 정보 중 있는 것.
+
+            눈여겨볼 점
+            - 1~3가지. 없으면 «특이사항 없음».
+            """;
+
     private JobAnalysisAgent() {
     }
 
@@ -69,10 +98,12 @@ public final class JobAnalysisAgent {
         }
         head.append("\n\n[질문]\n");
 
+        // 질문이 없으면 «탭을 연 첫 요청»이다 - 서버가 가진 요약 요청으로 바꾼다.
+        String ask = question == null || question.isBlank() ? SUMMARY_REQUEST : question.strip();
         List<LlmMessage> out = new ArrayList<>();
         out.add(LlmMessage.system(systemPrompt(targetType)));
         List<LlmMessage> conversation = new ArrayList<>(keptTurns);
-        conversation.add(LlmMessage.user(question.strip()));
+        conversation.add(LlmMessage.user(ask));
         LlmMessage first = conversation.get(0);
         out.add(LlmMessage.user(head + first.content()));
         out.addAll(conversation.subList(1, conversation.size()));

@@ -262,7 +262,7 @@ export function TaskFailureLogModal({ target, onClose }: { target?: FailureLogTa
   });
   return (
     <Modal open={Boolean(target)} title={target ? `${target.title} 실패 로그` : undefined} onCancel={onClose}
-           footer={null} width={960} destroyOnHidden rootClassName="cerebro-modal">
+           footer={null} width={960} destroyOnHidden rootClassName="cerebro-modal accent-modal">
       {target?.runLabel && <div className="failure-log-run">{target.runLabel} 실행</div>}
       {query.isLoading ? (
         <div className="failure-log-empty"><Spin size="small" /> 로그를 불러오는 중입니다.</div>
