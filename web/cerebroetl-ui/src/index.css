@@ -2186,6 +2186,17 @@ body {
   font-size: 12px;
 }
 
+/* 실패 로그 창 머리 - 어느 실행(차수)의 로그인지(2026-09-21 요청). */
+.failure-log-run {
+  margin: -4px 0 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .failure-log-child {
   margin-top: 12px;
   padding-left: 14px;

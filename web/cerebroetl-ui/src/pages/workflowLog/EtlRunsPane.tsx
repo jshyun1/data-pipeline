@@ -1,29 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { DatePicker, Spin } from "antd";
+import { Button, DatePicker, Space, Spin } from "antd";
 import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
 import { listAllAirflowDagRuns, type AirflowDagRun } from "../../api/platform";
 import type { WorkflowSummary } from "../../api/workflows";
 import { TaskFailureLogModal, type FailureLogTarget } from "../../components/TaskFailureLogModal";
+import { activeDayPresetByDate, type DayPreset } from "../../components/dayPreset";
 import { WfIcon } from "../../components/WorkflowPageHeader";
 import {
   childRunIdOf,
   displayName,
   durationSeconds,
   parentOfRun,
-  periodRange,
   runAt,
   selectionKey,
   type DashboardDag,
-  type PeriodKey,
   type Selection,
 } from "../workflowLogV2/logV2Data";
 import { GridHead, RunBody, RunRow, type GridCtx } from "../workflowLogV2/LogV2Grid";
 
-const PERIODS: Array<[PeriodKey, string]> = [
-  ["today", "오늘"], ["yesterday", "어제"], ["7d", "최근 7일"], ["30d", "최근 30일"], ["custom", "📅 기간 지정"],
-];
 
 function toggleIn(set: Set<string>, key: string) {
   const next = new Set(set);
@@ -72,8 +68,9 @@ export function EtlRunsPane({
    */
   sync?: { busy: boolean; onSync: () => void };
 }) {
-  const [period, setPeriod] = useState<PeriodKey>("today");
-  const [customRange, setCustomRange] = useState<[Dayjs, Dayjs]>([dayjs().subtract(6, "day").startOf("day"), dayjs().endOf("day")]);
+  // 조회기간은 ETL 로그 화면과 같은 모양으로 맞췄다(2026-09-22 요청) - «당일 · 전일» 버튼 + 날짜 달력, 기본은 당일.
+  // 예전의 오늘/어제/7일/30일/기간지정 칩은 같은 일을 다른 모양으로 하고 있었다.
+  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs(), dayjs()]);
   const [selection, setSelection] = useState<Selection>();
   const [historyExpanded, setHistoryExpanded] = useState<Set<string>>(new Set());
   const [historySelectedKey, setHistorySelectedKey] = useState<string>();
@@ -84,7 +81,15 @@ export function EtlRunsPane({
   const splitRef = useRef<HTMLDivElement>(null);
   const scopeKey = scopeDagIds.join(",");
 
-  const [rangeFrom, rangeTo] = periodRange(period, customRange);
+  const rangeFrom = dateRange[0].startOf("day");
+  const rangeTo = dateRange[1].endOf("day");
+  const rangeKey = `${rangeFrom.valueOf()}|${rangeTo.valueOf()}`;
+  // 달력은 날짜만 다루므로 판정도 날짜로 한다(ETL 로그와 같은 헬퍼).
+  const selectedPreset = activeDayPresetByDate(dateRange[0], dateRange[1]);
+  const applyDayPreset = (offset: DayPreset) => {
+    const day = dayjs().subtract(offset, "day");
+    setDateRange([day, day]);
+  };
   const rangeIncludesNow = !dayjs().isAfter(rangeTo);
   const periodRunsQuery = useQuery({
     // 로그2 화면과 같은 캐시 키 - 두 화면을 오가도 한 번만 받는다.
@@ -137,10 +142,38 @@ export function EtlRunsPane({
       .sort((a, b) => dayjs(runAt(b) ?? 0).valueOf() - dayjs(runAt(a) ?? 0).valueOf());
   }, [periodRunsQuery.data, scopeKey]);
 
+  /**
+   * 실행 차수 - 그날 이 워크플로우의 몇 번째 실행인지다(2026-09-21 요청).
+   * 목록에 워크플로우 이름 대신 «09-18 10:54:59 · 2차»로 적는다. 고른 기간 안의 실행만 세므로,
+   * 기간을 하루 중간부터 잡으면 그 앞의 실행은 세지 않는다.
+   */
+  const ordinalByRun = useMemo(() => {
+    const byDay = new Map<string, AirflowDagRun[]>();
+    topRuns.forEach((run) => {
+      const day = `${run.dag_id}|${dayjs(runAt(run) ?? 0).format("YYYY-MM-DD")}`;
+      byDay.set(day, [...(byDay.get(day) ?? []), run]);
+    });
+    const map = new Map<string, number>();
+    byDay.forEach((runs) => {
+      [...runs]
+        .sort((a, b) => dayjs(runAt(a) ?? 0).valueOf() - dayjs(runAt(b) ?? 0).valueOf())
+        .forEach((run, index) => map.set(`${run.dag_id}|${run.dag_run_id}`, index + 1));
+    });
+    return map;
+  }, [topRuns]);
+  /** 한 워크플로우만 보는 범위면 목록에서 이름을 뺀다 - 머리줄에 이미 그 이름이 있다. */
+  const singleWorkflow = scopeDagIds.length <= 1;
+  const runStamp = (run?: AirflowDagRun) => {
+    if (!run) return "-";
+    const at = runAt(run);
+    const ordinal = ordinalByRun.get(`${run.dag_id}|${run.dag_run_id}`);
+    return `${at ? dayjs(at).format("MM-DD HH:mm:ss") : "-"}${ordinal ? ` · ${ordinal}차` : ""}`;
+  };
+
   // 범위 · 기간이 바뀌면 맨 위 실행을 골라 펼친다. 갱신 주기마다 다시 고르지는 않는다.
   useEffect(() => {
     autoSelect.current = true;
-  }, [scopeKey, period, customRange]);
+  }, [scopeKey, rangeKey]);
   useEffect(() => {
     if (!autoSelect.current || !periodRunsQuery.isFetched) return;
     autoSelect.current = false;
@@ -176,6 +209,12 @@ export function EtlRunsPane({
     openLog: setFailureLog,
     // 행의 «실행 이력» · «로그» 버튼: 그 실행을 고르고 아래 실행 이력을 연다(로그는 실패 로그 창으로 연다).
     openTab: (sel) => select(sel),
+    runLabel: (dagId, runId) => {
+      const run = topRuns.find((row) => row.dag_id === dagId && row.dag_run_id === runId);
+      if (!run) return undefined;
+      const dag = dagsById.get(dagId);
+      return `${dag ? displayName(dag) : dagId} · ${runStamp(run)}`;
+    },
     refreshSeconds,
   };
 
@@ -183,7 +222,6 @@ export function EtlRunsPane({
   const selectedRun = selection
     ? topRuns.find((run) => run.dag_id === selection.dagId && run.dag_run_id === selection.runId)
     : undefined;
-  const historyDag = selection ? dagsById.get(selection.dagId) : undefined;
   const historyStarted = selectedRun ? runAt(selectedRun) : undefined;
   const historyCtx: GridCtx = {
     ...ctx,
@@ -236,9 +274,14 @@ export function EtlRunsPane({
     const scale = scaleOf(topRuns);
     grid = (
       <table className="lv2-grid">
-        <GridHead />
+        <GridHead nameLabel="실행 차수" />
         <tbody>
-          {topRuns.map((run) => <RunRow key={`${run.dag_id}|${run.dag_run_id}`} run={run} ctx={ctx} scale={scale} showDate={multiDay} expandable={false} />)}
+          {topRuns.map((run) => (
+            <RunRow key={`${run.dag_id}|${run.dag_run_id}`} run={run} ctx={ctx} scale={scale} showDate={multiDay}
+                    expandable={false}
+                    ordinal={ordinalByRun.get(`${run.dag_id}|${run.dag_run_id}`)}
+                    hideName={singleWorkflow} />
+          ))}
         </tbody>
       </table>
     );
@@ -268,17 +311,14 @@ export function EtlRunsPane({
             </button>
           )}
           <span className="lv2-ctx-label">기간</span>
-          <div className="lv2-seg">
-            {PERIODS.map(([key, label]) => (
-              <button key={key} type="button" className={period === key ? "on" : ""} onClick={() => setPeriod(key)}>{label}</button>
-            ))}
-          </div>
-          {period === "custom" && (
-            <DatePicker.RangePicker size="small" value={customRange} allowClear={false}
-                                    onChange={(value) => {
-                                      if (value?.[0] && value?.[1]) setCustomRange([value[0].startOf("day"), value[1].endOf("day")]);
-                                    }} />
-          )}
+          <Space.Compact>
+            <Button size="small" type={selectedPreset === 0 ? "primary" : "default"} onClick={() => applyDayPreset(0)}>당일</Button>
+            <Button size="small" type={selectedPreset === 1 ? "primary" : "default"} onClick={() => applyDayPreset(1)}>전일</Button>
+          </Space.Compact>
+          <DatePicker.RangePicker size="small" value={dateRange} allowClear={false}
+                                  onChange={(value) => {
+                                    if (value?.[0] && value?.[1]) setDateRange([value[0], value[1]]);
+                                  }} />
         </div>
       </div>
 
@@ -288,9 +328,10 @@ export function EtlRunsPane({
         <section className="lv2-detail" style={historyOpen ? { height: historyHeight } : undefined}>
           <div className="lv2-detail-head">
             <div className="lv2-detail-title">
-              <span className="lv2-kind run">실행 이력</span>
-              <b>{historyDag ? displayName(historyDag) : selection?.dagId ?? "-"}</b>
-              {historyStarted && <small>{dayjs(historyStarted).format("MM-DD HH:mm:ss")} 실행</small>}
+              {/* 워크플로우명은 위 머리줄에 이미 있다 - 여기는 «어느 차수의 실행인지»만 적는다(2026-09-21 요청). */}
+              <span className="lv2-kind run">상세 실행이력</span>
+              <b>{selectedRun ? runStamp(selectedRun) : "-"}</b>
+              {selectedRun && <small>실행</small>}
             </div>
             <div className="lv2-detail-acts">
               <button type="button" className="lv2-btn ghost sm" onClick={() => setHistoryOpen((open) => !open)}>

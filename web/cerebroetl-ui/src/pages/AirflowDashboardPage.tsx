@@ -303,6 +303,10 @@ type ListScope =
   | { kind: "cdc"; scope: "logfile" }
   | { kind: "cdc"; scope: "pipeline"; pipelineId: number }
   | { kind: "dag"; dagId: string }
+  // 트리 최상단 폴더(CDC · ETL)를 누른 것. 그 가지 «안에 있는 전부»를 가운데에 편다 -
+  // CDC 는 파이프라인 전체, ETL 은 워크플로우 실행 전체다(2026-09-21 요청).
+  // 예전에는 최상단만 접기/펼치기라, 전체를 보려면 «전체 파이프라인»을 따로 눌러야 했고 ETL 은 방법이 아예 없었다.
+  | { kind: "category"; category: BusinessCategory }
   | { kind: "metric"; category: BusinessCategory; metric: StatusMetric };
 
 /**
@@ -870,10 +874,18 @@ function BusinessTree({
           return (
             <section key={category} className={`tree-node airflow-tree-category airflow-tree-category--${category.toLowerCase()}`}>
               {treeRow({
+                active: scope?.kind === "category" && scope.category === category,
                 icon: "folder",
                 label: category,
                 arrow: { kind: "row", open: !categoryCollapsed },
-                onClick: () => toggleNode(categoryNode),
+                trailing: <span className="tree-node-badge">{category === "CDC" ? pipelines.length : categoryDags.length}</span>,
+                // 누르면 «그 가지 전부»를 가운데에 편다. 접혀 있으면 함께 펼치고, 이미 보고 있는 가지를
+                // 다시 누를 때만 접는다 - 목록을 보려다 하위가 사라지지 않게 한다.
+                onClick: () => {
+                  const showing = scope?.kind === "category" && scope.category === category;
+                  if (categoryCollapsed || showing) toggleNode(categoryNode);
+                  onScope({ kind: "category", category });
+                },
               })}
               {!categoryCollapsed && (
                 <div className="tree-sub-group" role="group">
@@ -1309,6 +1321,8 @@ function ScopeList({
       }
       return pipeline.id === scope.pipelineId;
     });
+  } else if (scope.kind === "category" && scope.category === "CDC") {
+    cdcRows = pipelines;   // CDC 가지 전체 = 파이프라인 전부(«전체 파이프라인»과 같은 표)
   } else if (scope.kind === "metric" && scope.category === "CDC") {
     // 지표는 DAG 기준으로 세므로 걸러내기도 DAG로 하고, 그 뒤에 파이프라인으로 되돌린다.
     // 이렇게 해야 카드 숫자와 목록 건수가 어긋나지 않는다.
@@ -1962,6 +1976,11 @@ export function AirflowDashboardPage() {
     if (next?.kind !== "dag") {
       setExpandedDagId(undefined);
     }
+    if (next?.kind === "category") {
+      // 가지 전체를 보는 동안은 앞서 고른 파이프라인을 놓는다. 고른 DAG 는 비워도 위의 효과가
+      // 곧바로 첫 DAG 를 다시 고르므로 두지 않는다 - 목록에서 한 줄을 누르면 그때 따라온다.
+      setSelectedPipelineId(undefined);
+    }
     if (next?.kind === "cdc" && next.scope === "pipeline") {
       setSelectedPipelineId(next.pipelineId);
       setSelectedDagId(undefined);
@@ -1980,6 +1999,7 @@ export function AirflowDashboardPage() {
         : scope.scope === "logfile" ? "로그파일 파이프라인"
         : selectedPipeline?.name ?? "파이프라인"
       : scope.kind === "dag" ? (selectedDag ? displayName(selectedDag) : scope.dagId)
+      : scope.kind === "category" ? (scope.category === "CDC" ? "CDC 전체 파이프라인" : "ETL 전체 워크플로우")
       : `${scope.category} · ${STATUS_METRIC_LABEL[scope.metric]}`;
 
   /** 선택한 ETL 워크플로우가 참조하는 job id들. 감시 중인 알림 규칙을 찾는 열쇠다. */
@@ -2047,6 +2067,13 @@ export function AirflowDashboardPage() {
       const workflow = (workflowsQuery.data ?? []).find((row) => row.dagId === scope.dagId);
       return { dagIds: [scope.dagId], includesChildren: Boolean(workflow?.childWorkflowIds.length) };
     }
+    if (scope?.kind === "category" && scope.category === "ETL") {
+      // ETL 가지 전체. 하위 워크플로우도 범위 안에 있으니 부른 job 아래로 접힌다(머리줄에 «하위 포함»을 적는다).
+      return {
+        dagIds: businessDags.filter((dag) => categoryOf(dag) === "ETL").map((dag) => dag.dag_id),
+        includesChildren: true,
+      };
+    }
     if (scope?.kind === "metric" && scope.category === "ETL") {
       return {
         dagIds: businessDags
@@ -2082,6 +2109,7 @@ export function AirflowDashboardPage() {
         : undefined;
 
   const listDomain = scope?.kind === "cdc" ? "cdc"
+    : scope?.kind === "category" ? (scope.category === "CDC" ? "cdc" : "etl")
     : scope?.kind === "metric" ? (scope.category === "CDC" ? "cdc" : "etl")
     : selectedDag && categoryOf(selectedDag) === "CDC" ? "cdc" : "etl";
 

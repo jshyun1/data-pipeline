@@ -24,6 +24,8 @@ export interface FailureLogTarget {
   title: string;
   dagId: string;
   runId: string;
+  /** 어느 실행(차수)의 로그인지. 창을 열고 나면 목록이 안 보이므로 머리에 적어 둔다(예: «total · 09-18 10:54:59 · 2차»). */
+  runLabel?: string;
   tasks: AirflowTaskInstance[];
 }
 
@@ -202,7 +204,7 @@ function TaskLogView({ item, dagId, runId, nameOf }: {
         <strong>{taskLabel(item.taskId)}</strong>
         {!single && <Tag>{item.attempts.length}회 시도</Tag>}
         {gptEnabled && hasReason && !analyzing && (
-          <Button size="small" className="gpt-analysis-open" onClick={() => setAnalyzing(true)}>GPT 분석</Button>
+          <Button size="small" className="gpt-analysis-open" onClick={() => setAnalyzing(true)}>GPT 해석</Button>
         )}
       </div>
       {analyzing && (
@@ -261,6 +263,7 @@ export function TaskFailureLogModal({ target, onClose }: { target?: FailureLogTa
   return (
     <Modal open={Boolean(target)} title={target ? `${target.title} 실패 로그` : undefined} onCancel={onClose}
            footer={null} width={960} destroyOnHidden rootClassName="cerebro-modal">
+      {target?.runLabel && <div className="failure-log-run">{target.runLabel} 실행</div>}
       {query.isLoading ? (
         <div className="failure-log-empty"><Spin size="small" /> 로그를 불러오는 중입니다.</div>
       ) : query.error ? (

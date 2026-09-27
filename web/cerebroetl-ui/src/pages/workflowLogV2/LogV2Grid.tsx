@@ -35,16 +35,18 @@ export interface GridCtx {
   select: (sel: Selection) => void;
   openLog: (target: FailureLogTarget) => void;
   openTab: (sel: Selection, tab: DetailTab) => void;
+  /** 실행 한 건을 한 줄로 부르는 이름(예: «total · 09-18 10:54:59 · 2차»). 실패 로그 창 머리에 적는다. */
+  runLabel?: (dagId: string, runId: string) => string | undefined;
   refreshSeconds: number;
 }
 
 const COLS = 10;
 
-export function GridHead() {
+export function GridHead({ nameLabel = "이름" }: { nameLabel?: string } = {}) {
   return (
     <thead>
       <tr>
-        <th style={{ width: "30%" }}>이름</th><th>유형</th><th>상태</th><th>시작</th><th>종료</th><th>소요</th>
+        <th style={{ width: "30%" }}>{nameLabel}</th><th>유형</th><th>상태</th><th>시작</th><th>종료</th><th>소요</th>
         <th>적재 / 결과</th><th>재시도</th><th>실행 유형</th><th style={{ width: "1%" }}>동작</th>
       </tr>
     </thead>
@@ -95,13 +97,17 @@ function runTotals(jobs?: JobGroup[], logs?: Record<string, string>) {
  * 워크플로우 실행 한 줄(+ 펼치면 그 아래 job 들). 목록의 맨 위 단위다.
  * 펼치거나 고른 실행만 task 를 받는다 - 기간을 30일로 넓혀도 줄마다 요청이 나가지 않게.
  */
-export function RunRow({ run, ctx, scale, showDate, expandable = true }: {
+export function RunRow({ run, ctx, scale, showDate, expandable = true, ordinal, hideName = false }: {
   run: AirflowDagRun;
   ctx: GridCtx;
   scale: number;
   showDate: boolean;
   /** false 면 펼치지 않는 한 줄(워크플로우 «로그» 화면 가운데 - job 은 아래 실행 이력에서 본다). */
   expandable?: boolean;
+  /** 그날 이 워크플로우의 몇 번째 실행인지. 주면 «실행 차수»로 적는다(2026-09-21 요청). */
+  ordinal?: number;
+  /** 한 워크플로우만 보는 목록이면 이름을 뺀다 - 머리줄에 이미 그 이름이 있다. */
+  hideName?: boolean;
 }) {
   const dagId = run.dag_id ?? "";
   const dag = ctx.dagsById.get(dagId);
@@ -115,6 +121,8 @@ export function RunRow({ run, ctx, scale, showDate, expandable = true }: {
   const name = dag ? displayName(dag) : dagId;
   const started = runAt(run);
   const end = run.end_date ?? (run.state === "running" ? dayjs().toISOString() : undefined);
+  // 실행 차수를 적는 목록은 날짜까지 항상 보여 준다(«몇일 몇시 몇분 몇초» 요청).
+  const stamp = started ? dayjs(started).format(showDate || ordinal ? "MM-DD HH:mm:ss" : "HH:mm:ss") : "-";
   return (
     <>
       <tr className={`lv2-r k-run f-${run.state ?? "none"}${selected ? " sel" : ""}`} onClick={() => ctx.select(sel)}>
@@ -123,8 +131,10 @@ export function RunRow({ run, ctx, scale, showDate, expandable = true }: {
             {expandable && <Toggle open={expanded} onToggle={() => ctx.toggle(key)} />}
             <span className="lv2-kind run">실행</span>
             <span className="lv2-nm-text" title={`${name} (${dagId})`}>
-              {name}
-              <span className="lv2-muted lv2-nm-sub"> · {started ? dayjs(started).format(showDate ? "MM-DD HH:mm:ss" : "HH:mm:ss") : "-"}</span>
+              {hideName ? stamp : name}
+              <span className="lv2-muted lv2-nm-sub">
+                {hideName ? "" : ` · ${stamp}`}{ordinal ? ` · ${ordinal}차` : ""}
+              </span>
             </span>
           </div>
         </td>
@@ -210,6 +220,7 @@ function JobRow({
     title: `${no} ${job.key}`,
     dagId,
     runId,
+    runLabel: ctx.runLabel?.(dagId, runId),
     tasks: job.steps.filter((step) => step.state === "failed"),
   };
   const busy = Boolean(busyKey);
@@ -276,7 +287,8 @@ function JobRow({
                 <button type="button" className="lv2-btn sm danger"
                         onClick={(event) => {
                           event.stopPropagation();
-                          ctx.openLog({ title: `${job.key} · ${stepName(step.task_id)}`, dagId, runId, tasks: [step] });
+                          ctx.openLog({ title: `${job.key} · ${stepName(step.task_id)}`, dagId, runId,
+                                        runLabel: ctx.runLabel?.(dagId, runId), tasks: [step] });
                         }}>로그</button>
               ) : <span className={step.state === "upstream_failed" ? "lv2-muted" : "lv2-num"}>{stepOutcome}</span>}
             </td>
