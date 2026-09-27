@@ -19,6 +19,7 @@ from datetime import timedelta
 
 import etl_job_runtime as runtime
 import _pipeline_svc_auth  # noqa: F401  # import 만으로 pipeline-api 서비스 토큰 자동주입
+import logging
 from airflow import DAG
 from airflow.models import Variable
 from airflow.providers.standard.operators.python import PythonOperator
@@ -37,6 +38,15 @@ _CONDITION_RULE = {
 }
 
 
+# 파싱(모듈 수준) 메시지는 print 하지 않는다.
+#
+# 워커가 태스크 하나를 돌리려고 DagBag 을 채우면 이 파일 전체가 다시 파싱되고, 그때 찍힌 print 가
+# «그 태스크의 로그»에 섞인다 - 2026-09-27 에 CDC 태스크 로그에 남의 워크플로우(dz_com_daily) 스케줄
+# 안내가 나온 것이 그 때문이다. 정상 동작 안내는 debug 로 낮춰 평소에는 보이지 않게 하고,
+# 오류는 warning 으로 남겨 파싱 로그(dag-processor)에서 그대로 보이게 한다.
+log = logging.getLogger("cerebro.etl_workflows")
+
+
 def _load_spec(workflow_key: str):
     raw = Variable.get(f"{SPEC_PREFIX}{workflow_key}", default_var=None)
     if not raw:
@@ -44,7 +54,7 @@ def _load_spec(workflow_key: str):
     try:
         return json.loads(raw) if isinstance(raw, str) else raw
     except json.JSONDecodeError as exc:
-        print(f"[{workflow_key}] spec 파싱 실패 - 이 워크플로우는 건너뜁니다: {exc}")
+        log.warning("[%s] spec 파싱 실패 - 이 워크플로우는 건너뜁니다: %s", workflow_key, exc)
         return None
 
 
@@ -340,7 +350,7 @@ _index_raw = Variable.get(INDEX_VARIABLE, default_var="[]")
 try:
     _keys = json.loads(_index_raw) if isinstance(_index_raw, str) else (_index_raw or [])
 except json.JSONDecodeError:
-    print(f"{INDEX_VARIABLE} 파싱 실패 - 워크플로우 DAG를 만들지 않습니다: {_index_raw!r}")
+    log.warning("%s 파싱 실패 - 워크플로우 DAG를 만들지 않습니다: %r", INDEX_VARIABLE, _index_raw)
     _keys = []
 
 # 먼저 모든 spec을 읽어 «누가 누구의 자식인지»를 모은다.
@@ -362,11 +372,11 @@ for _loaded in _specs.values():
 
 for _key, _spec in _specs.items():
     if _spec["dag_id"] in _child_dag_ids and _spec.get("schedule"):
-        print(f"[{_key}] 상위 워크플로우가 있어 자체 스케줄({_spec['schedule']})은 끕니다 "
-              f"- 상위가 지시할 때만 돕니다")
+        log.debug("[%s] 상위 워크플로우가 있어 자체 스케줄(%s)은 끕니다 - 상위가 지시할 때만 돕니다",
+                  _key, _spec["schedule"])
         _spec = {**_spec, "schedule": None, "schedule_suppressed_by_parent": True}
     # 파싱은 워크플로우 단위로 격리한다 - 하나가 깨져도 나머지는 살아야 한다.
     try:
         globals()[_spec["dag_id"]] = build_workflow_dag(_spec)
     except Exception as exc:  # noqa: BLE001
-        print(f"[{_key}] DAG 생성 실패 - 건너뜁니다: {exc}")
+        log.warning("[%s] DAG 생성 실패 - 건너뜁니다: %s", _key, exc)

@@ -44,6 +44,7 @@ from datetime import datetime
 import requests
 
 import _pipeline_svc_auth  # noqa: F401  # import 만으로 pipeline-api 서비스 토큰 자동주입(P4 §7.6)
+import logging
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.sensors.python import PythonSensor
@@ -68,6 +69,10 @@ CDC_SPEC_PREFIX = "cdc_pipeline_spec__"
 VERIFY_ATTEMPTS = 6
 VERIFY_INTERVAL_SECONDS = 5
 RUNTIME_MONITOR_INTERVAL_SECONDS = 30
+
+
+# 파싱(모듈 수준) 메시지는 print 하지 않는다 - 태스크 로그에 섞인다(etl_workflows_dynamic 의 같은 주석 참고).
+log = logging.getLogger("cerebro.kafka_pipelines")
 
 
 def skip_reason(action: str, status: str) -> str | None:
@@ -375,12 +380,12 @@ def build_dag(
 try:
     _index_raw = Variable.get(CDC_INDEX_VARIABLE, default_var="[]")
 except Exception as _exc:
-    print(f"{CDC_INDEX_VARIABLE} 접근 불가 - CDC DAG를 만들지 않습니다: {_exc}")
+    log.warning("%s 접근 불가 - CDC DAG를 만들지 않습니다: %s", CDC_INDEX_VARIABLE, _exc)
     _index_raw = "[]"
 try:
     _ids = json.loads(_index_raw) if isinstance(_index_raw, str) else (_index_raw or [])
 except json.JSONDecodeError:
-    print(f"{CDC_INDEX_VARIABLE} 파싱 실패 - CDC DAG를 만들지 않습니다: {_index_raw!r}")
+    log.warning("%s 파싱 실패 - CDC DAG를 만들지 않습니다: %r", CDC_INDEX_VARIABLE, _index_raw)
     _ids = []
 
 # LOG_FILE도 포함한다. 예전에는 TABLE_CDC만 DAG를 만들어서 로그 파이프라인은
