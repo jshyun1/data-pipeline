@@ -56,6 +56,8 @@ class NotificationGatewayTest {
                     next_attempt_at TIMESTAMP,
                     failure_reason VARCHAR(40),
                     failure_detail VARCHAR(1000),
+                    claimed_by VARCHAR(40),
+                    claim_expires_at TIMESTAMP,
                     updated_at TIMESTAMP)
                 """);
         jdbc.execute("""
@@ -144,6 +146,66 @@ class NotificationGatewayTest {
         assertThat(jdbc.queryForObject(
                 "SELECT failure_reason FROM notification_delivery WHERE id=?", String.class, id))
                 .isEqualTo("NO_RELAY");
+    }
+
+    /**
+     * 집기(claim) - 보낸 건에는 «누가 집었는지»가 남아야 한다.
+     *
+     * <p>집기 SQL 이 깨지면(컬럼 누락 · 문법) 집기가 0행이 되어 <b>발송이 통째로 멈춘다.</b>
+     * 그 조용한 정지를 이 테스트가 잡는다.
+     */
+    @Test
+    void 집은_인스턴스가_남고_발송된다() throws Exception {
+        gateway.enqueue(new MockResponse().setResponseCode(200).setBody("{\"header\":{\"resultCode\":0}}"));
+        long id = insertDelivery("KAKAO", "01012345678", "[관제] CRITICAL 알림", "적재 지연");
+        service(kakaoSettings()).dispatch();
+
+        assertThat(gateway.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)).isNotNull();
+        assertThat(status(id)).isEqualTo("SENT");
+        assertThat(jdbc.queryForObject("SELECT claimed_by FROM notification_delivery WHERE id=?", String.class, id))
+                .as("집은 인스턴스가 남아야 한다").isNotBlank();
+    }
+
+    /**
+     * 다른 인스턴스가 집어 둔 건(SENDING, 아직 유효)은 건드리지 않는다 - 이중 발송 방지의 핵심.
+     * 두 대를 띄웠을 때 한쪽이 보내는 중인 건을 다른 쪽이 또 보내면 알림톡 요금이 두 번 나간다.
+     */
+    @Test
+    void 남이_집어둔_건은_보내지_않는다() throws Exception {
+        long id = insertDelivery("KAKAO", "01012345678", "[관제] CRITICAL 알림", "적재 지연");
+        jdbc.update("UPDATE notification_delivery SET status='SENDING', claimed_by='other-app', "
+                + "claim_expires_at=CURRENT_TIMESTAMP + INTERVAL '5' MINUTE WHERE id=?", id);
+
+        service(kakaoSettings()).dispatch();
+
+        assertThat(gateway.getRequestCount()).as("남이 집은 건은 보내지 않는다").isZero();
+        assertThat(status(id)).isEqualTo("SENDING");
+    }
+
+    /**
+     * 집어 놓고 끝내지 못한 건(인스턴스가 죽은 경우)은 만료 뒤 회수돼 다시 나간다.
+     * 회수가 없으면 그 건은 SENDING 인 채로 영영 남아 아무도 보내지 않는다.
+     */
+    @Test
+    void 끊긴_집기는_만료되면_회수돼_다시_나간다() throws Exception {
+        gateway.enqueue(new MockResponse().setResponseCode(200).setBody("{\"header\":{\"resultCode\":0}}"));
+        long id = insertDelivery("KAKAO", "01012345678", "[관제] CRITICAL 알림", "적재 지연");
+        jdbc.update("UPDATE notification_delivery SET status='SENDING', claimed_by='dead-app', "
+                + "claim_expires_at=CURRENT_TIMESTAMP - INTERVAL '1' MINUTE WHERE id=?", id);
+
+        service(kakaoSettings()).dispatch();
+
+        assertThat(gateway.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS))
+                .as("만료된 집기는 회수돼 다시 나가야 한다").isNotNull();
+        assertThat(status(id)).isEqualTo("SENT");
+    }
+
+    /** 카카오 게이트웨이 설정 한 벌(집기 테스트들이 같이 쓴다). */
+    private ChannelSettingsService kakaoSettings() {
+        return settings(Map.of(
+                "url", gateway.url("/alimtalk").toString(),
+                "bodyTemplate", "{\"to\":\"{to}\",\"text\":\"{text}\"}",
+                "successPath", "header.resultCode", "successValue", "0"), "API-KEY-XYZ");
     }
 
     private long insertDelivery(String channel, String to, String subject, String body) {

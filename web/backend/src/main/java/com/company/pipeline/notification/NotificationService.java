@@ -48,6 +48,19 @@ public class NotificationService {
             .connectTimeout(java.time.Duration.ofSeconds(5)).build();
     /** 화면 설정으로 만든 메일 발송기 캐시. 설정이 바뀌면 키가 달라져 새로 만든다. */
     private final Map<String, JavaMailSender> mailSenders = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * 이 인스턴스 이름. 아웃박스 한 건을 «누가 집었는지»({@code claimed_by})로 남긴다.
+     * 컨테이너면 HOSTNAME(컨테이너 id)이라 두 대를 띄워도 서로 다르다.
+     */
+    private final String instanceId = instanceId();
+
+    private static String instanceId() {
+        String host = System.getenv("HOSTNAME");
+        String id = host == null || host.isBlank()
+                ? "local-" + java.util.UUID.randomUUID().toString().substring(0, 8)
+                : host;
+        return id.length() > 40 ? id.substring(0, 40) : id;
+    }
 
     public NotificationService(DataSource dataSource,
                                ObjectProvider<JavaMailSender> mailSenderProvider,
@@ -234,8 +247,24 @@ public class NotificationService {
         }
     }
 
+    /**
+     * 아웃박스를 한 바퀴 돈다(5초).
+     *
+     * <p><b>여러 대가 같이 떠도 한 건은 한 번만 나간다.</b> 후보를 읽은 뒤 곧바로 보내지 않고,
+     * {@code status='SENDING'} 으로 <b>집고(claim)</b> 성공한 인스턴스만 발송한다 - 집기는
+     * {@code WHERE status IN ('PENDING','RETRY')} 를 달아 한 행에 한 번만 성사된다(먼저 집은 쪽이 이긴다).
+     * 알림톡 · 문자는 건당 과금이라 이중 발송이 곧 비용이고, MSA 는 앱을 두 대로 띄운다.
+     *
+     * <p>집어 놓고 죽으면({@code SENDING} 인 채로 남으면) {@code claim_expires_at} 이 지난 뒤
+     * 다시 재시도로 돌린다 - 그 경우 «보냈는데 SENT 를 못 찍은» 건이 한 번 더 갈 수 있다(at-least-once).
+     * 영영 안 나가는 것보다 낫다고 본다.
+     *
+     * <p>{@code claimed_by} · {@code claim_expires_at} 컬럼과 {@code idx_delivery_sending} 인덱스는
+     * V36 이 만들어 두고 아무도 쓰지 않던 자리다.
+     */
     @Scheduled(fixedRate = 5_000, initialDelay = 50_000, scheduler = "controlPlaneScheduler")
     public void dispatch() {
+        releaseExpiredClaims();
         List<Map<String, Object>> batch;
         try {
             batch = jdbc.queryForList("""
@@ -252,6 +281,9 @@ public class NotificationService {
         for (Map<String, Object> d : batch) {
             long id = ((Number) d.get("id")).longValue();
             String channel = (String) d.get("channel_type");
+            if (!claim(id)) {
+                continue;   // 다른 인스턴스가 먼저 집었다(또는 그새 상태가 바뀌었다)
+            }
             try {
                 if (!"IN_APP".equals(channel) && enabledChannels != null && !enabledChannels.contains(channel)) {
                     // 운영자가 일부러 끈 채널이다. 재시도해 봐야 같은 결과라 바로 종료 처리한다
@@ -275,6 +307,46 @@ public class NotificationService {
             } catch (Exception ex) {
                 log.warn("발송 처리 실패(id={}): {}", id, ex.getMessage());
             }
+        }
+    }
+
+    /**
+     * 한 건을 이 인스턴스 것으로 집는다. 성사되면 true.
+     *
+     * <p>조건절의 {@code status IN ('PENDING','RETRY')} 가 자물쇠다 - 두 인스턴스가 같은 행을 동시에
+     * 집으려 하면 한쪽의 UPDATE 가 먼저 커밋되고, 다른 쪽은 조건에 걸려 0행이 된다.
+     * DB 종류를 가리지 않는다(잠금 힌트를 쓰지 않는다).
+     */
+    private boolean claim(long id) {
+        try {
+            return jdbc.update("""
+                    UPDATE notification_delivery
+                       SET status='SENDING', claimed_by=?, claim_expires_at=now() + INTERVAL '5' MINUTE,
+                           updated_at=now()
+                     WHERE id=? AND status IN ('PENDING','RETRY')
+                    """, instanceId, id) == 1;
+        } catch (Exception ex) {
+            log.warn("발송 건 집기 실패(id={}): {}", id, ex.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 집어 놓고 끝내지 못한 건을 되돌린다(인스턴스 종료 · 크래시 · 배포 중 교체).
+     * 이게 없으면 그 건은 {@code SENDING} 인 채로 영영 남아 아무도 보내지 않는다.
+     */
+    private void releaseExpiredClaims() {
+        try {
+            int released = jdbc.update("""
+                    UPDATE notification_delivery
+                       SET status='RETRY', next_attempt_at=now(), updated_at=now()
+                     WHERE status='SENDING' AND claim_expires_at < now()
+                    """);
+            if (released > 0) {
+                log.warn("발송 중 끊긴 알림 {}건을 재시도로 되돌렸다(집은 인스턴스가 끝내지 못함).", released);
+            }
+        } catch (Exception ex) {
+            log.warn("끊긴 발송 건 회수 실패: {}", ex.getMessage());
         }
     }
 
