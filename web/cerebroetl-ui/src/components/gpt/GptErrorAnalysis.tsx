@@ -37,7 +37,7 @@ export function GptErrorAnalysis({ targetType, target, errorText, onClose }: Gpt
   return (
     <div className="gpt-analysis">
       <div className="gpt-analysis-head">
-        <span className="gpt-analysis-title">GPT 분석</span>
+        <span className="gpt-analysis-title">GPT 해석</span>
         <span className="gpt-analysis-meta">
           {providerName ?? "-"}{deployment ? ` (${DEPLOYMENT_LABEL[deployment]})` : ""}
           {" · "}개인정보 마스킹 {masked ? "켜짐" : "꺼짐"}

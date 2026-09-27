@@ -31,6 +31,9 @@ import { listPipelines } from "../api/pipelines";
 import type { PipelineResponse } from "../types/pipeline";
 import { collectNifiJobs, extractErrorGroupMessages } from "../utils/nifiJobs";
 import { summarizeKafkaConnectors } from "../utils/kafkaConnectors";
+import { FailureDetailModal, type FailureDetailItem } from "../components/FailureDetailModal";
+import { sourceLabel, targetLabel } from "../utils/cdcPresentation";
+import { TaskFailureLogModal, type FailureLogTarget } from "../components/TaskFailureLogModal";
 import { categorizeDag, NIFI_METRICS_COLLECTOR_DAG_ID, resolveDagDisplayName, type DagCategory } from "../utils/dagHistory";
 import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
 import { InfraRegion } from "../components/InfraRegion";
@@ -327,6 +330,9 @@ export function DashboardPage() {
   const [airflowActiveTile, setAirflowActiveTile] = useState<AirflowTileKind | null>(null);
   const [nifiFailedOpen, setNifiFailedOpen] = useState(false);
   const [kafkaFailedOpen, setKafkaFailedOpen] = useState(false);
+  /** Airflow 실패 줄에서 연 실패 로그 창. 워크플로우 로그 화면과 <b>같은 창</b>을 쓴다(2026-09-21 요청). */
+  const [workflowFailure, setWorkflowFailure] = useState<FailureLogTarget | undefined>();
+  const [workflowFailureLoading, setWorkflowFailureLoading] = useState<string | null>(null);
 
   // NiFi/Kafka는 Airflow DAG 실행 이력을 거치지 않고 각자의 API를 직접 조회한다 -
   // 이게 실제 처리 상태(대기열, 오류)를 그대로 반영하는 값이라 짧은 주기로 새로고침한다.
@@ -342,6 +348,13 @@ export function DashboardPage() {
     },
     refetchInterval: 15000,
     placeholderData: (previousData) => previousData,
+  });
+
+  // CDC 실패 상세에 «어느 파이프라인인지»를 적으려면 커넥터 이름만으로는 부족하다(이름에 id 만 들어 있다).
+  const pipelinesQuery = useQuery({
+    queryKey: ["dashboard-pipelines"],
+    queryFn: listPipelines,
+    staleTime: 60_000,
   });
 
   const kafkaConnectorsQuery = useQuery({
@@ -468,49 +481,114 @@ export function DashboardPage() {
   const nifiHourly = useMemo(() => toDailyHourBuckets(nifiHourlyQuery.data?.hourly ?? []), [nifiHourlyQuery.data]);
   const kafkaHourly = useMemo(() => toDailyHourBuckets(kafkaHourlyQuery.data?.hourly ?? []), [kafkaHourlyQuery.data]);
 
-  const nifiFailedRows: HistoryEntry[] = useMemo(
+  /**
+   * ETL 실패. ETL 로그 화면의 실패 줄과 같은 항목(그룹 · job · 프로세서 · 시각)을 먼저 적고 원문을 보여 준다.
+   * GPT 해석은 job 이 특정되는 줄에만 붙인다 - 어느 job 인지 모르면 서버가 모을 정보가 없다.
+   */
+  const nifiFailedItems: FailureDetailItem[] = useMemo(
     () => [
       ...(nifiExecutionLogsQuery.data ?? [])
         .filter((entry) => entry.status === "FAILED")
         .map((entry) => ({
           id: `log-${entry.id}`,
-          basicContent: `${entry.processorName}: ${entry.message ?? "ETL 처리 오류"}`,
-          category: "ETL" as DagCategory,
+          title: `${entry.jobName ?? entry.groupName ?? "ETL"} · ${entry.processorName}`,
           datetime: entry.occurredAt,
-          fetchLog: async () => entry.message ?? "오류 메시지를 찾을 수 없습니다.",
+          lines: [
+            ["그룹", entry.rootGroupName ? `${entry.rootGroupName} > ${entry.groupName ?? "-"}` : entry.groupName ?? "-"],
+            ["job", entry.jobName ?? "-"],
+            ["프로세서", entry.processorName],
+          ] as Array<[string, string]>,
+          loadError: async () => entry.message ?? "오류 메시지를 찾을 수 없습니다.",
+          gpt: entry.jobId
+            ? { targetType: "ETL_JOB" as const, target: { jobId: String(entry.jobId) } }
+            : undefined,
         })),
       ...nifiJobs
         .filter((job) => job.status === "FAILED")
         .map((job) => ({
           id: `current-${job.id}`,
-          basicContent: `${job.name} (현재 오류)`,
-          category: "ETL" as DagCategory,
-          fetchLog: async () => job.errorMessage ?? "오류 메시지를 찾을 수 없습니다.",
+          title: `${job.name} (현재 오류)`,
+          lines: [["대상", job.name], ["프로세스 그룹", job.id]] as Array<[string, string]>,
+          loadError: async () => job.errorMessage ?? "오류 메시지를 찾을 수 없습니다.",
+          // 수집기가 받는 열쇠는 jobId 아니면 groupId(= NiFi 프로세스 그룹 id)다. 여기는 job id 가 없어 그룹 id 로 찾는다.
+          gpt: { targetType: "ETL_JOB" as const, target: { groupId: job.id } },
         })),
     ],
     [nifiExecutionLogsQuery.data, nifiJobs],
   );
 
-  const kafkaFailedRows: HistoryEntry[] = useMemo(
+  /**
+   * CDC 실패 커넥터. CDC 로그 화면의 펼친 줄과 같은 차례로 보여 준다 - 파이프라인 · 커넥터 항목 → 오류 원문 → GPT 해석.
+   * 커넥터 이름(source-12-… / sink-12-…) 두 번째 조각이 파이프라인 id 라, 그것으로 이름과 GPT 대상을 잇는다.
+   */
+  const kafkaFailedItems: FailureDetailItem[] = useMemo(
     () =>
       kafkaConnectors
         .filter((job) => job.status === "FAILED")
-        .map((job) => ({
-          id: job.name,
-          basicContent: `${job.name} (${job.role})`,
-          category: "CDC" as DagCategory,
-          fetchLog: async () => {
-            const trace = await getKafkaConnectorTrace(job.name).catch(() => undefined);
-            const connectorTrace = trace?.connector?.trace;
-            const taskTraces = (trace?.tasks ?? [])
-              .filter((task) => task.trace)
-              .map((task) => `[task ${task.id}]\n${task.trace}`)
-              .join("\n\n");
-            return connectorTrace || taskTraces || "오류 트레이스를 찾을 수 없습니다.";
-          },
-        })),
-    [kafkaConnectors],
+        .map((job) => {
+          const pipelineId = job.name.match(/^(?:source|sink)-(\d+)-/)?.[1];
+          const pipeline = pipelineId
+            ? (pipelinesQuery.data ?? []).find((item) => String(item.id) === pipelineId)
+            : undefined;
+          const lines: Array<[string, string]> = [
+            ["파이프라인", pipeline ? pipeline.name : pipelineId ? `id ${pipelineId}` : "-"],
+            ["커넥터", `${job.name} (${job.role})`],
+            ["상태", `${job.status} · 실패 태스크 ${job.failedTaskCount}/${job.totalTaskCount}`],
+          ];
+          if (pipeline) {
+            lines.push(["소스 → 타깃", `${sourceLabel(pipeline)} → ${targetLabel(pipeline)}`]);
+            lines.push(["Topic", pipeline.topicName ?? "-"]);
+          }
+          return {
+            id: job.name,
+            title: `${pipeline?.name ?? job.name} · ${job.role}`,
+            lines,
+            loadError: async () => {
+              const trace = await getKafkaConnectorTrace(job.name).catch(() => undefined);
+              const connectorTrace = trace?.connector?.trace;
+              const taskTraces = (trace?.tasks ?? [])
+                .filter((task) => task.trace)
+                .map((task) => `[task ${task.id}]\n${task.trace}`)
+                .join("\n\n");
+              return connectorTrace || taskTraces || "오류 트레이스를 찾을 수 없습니다.";
+            },
+            gpt: pipelineId
+              ? { targetType: "CDC_PIPELINE" as const, target: { pipelineId } }
+              : undefined,
+          };
+        }),
+    [kafkaConnectors, pipelinesQuery.data],
   );
+
+  /**
+   * 실패한 실행의 «로그» - 워크플로우 로그 화면과 같은 창(TaskFailureLogModal)을 띄운다.
+   * 그 창이 시도별 로그 · Airflow 기록 · 하위 워크플로우까지 따라가고 GPT 해석도 그 안에 있다.
+   */
+  const openWorkflowFailureLog = async (entry: HistoryEntry) => {
+    // id 는 `${dagId}:${runId}` 인데 run_id 안에도 콜론이 있다(manual__2026-09-21T06:35:27…) - 첫 콜론만 구분자다.
+    const splitAt = entry.id.indexOf(":");
+    const dagId = splitAt > 0 ? entry.id.slice(0, splitAt) : "";
+    const runId = splitAt > 0 ? entry.id.slice(splitAt + 1) : "";
+    if (!dagId || !runId) {
+      return;
+    }
+    setWorkflowFailureLoading(entry.id);
+    try {
+      const tasks = await listAirflowTaskInstances(dagId, runId);
+      const failed = tasks.filter((task) => task.state === "failed" || task.state === "upstream_failed");
+      setWorkflowFailure({
+        title: entry.basicContent,
+        dagId,
+        runId,
+        tasks: failed.length > 0 ? failed : tasks,
+      });
+    } catch {
+      // 창을 못 열면 기존처럼 줄을 펼쳐 원문을 볼 수 있다 - 여기서 더 막지 않는다.
+      setWorkflowFailure(undefined);
+    } finally {
+      setWorkflowFailureLoading(null);
+    }
+  };
 
   const airflowModalRows = useMemo(() => {
     switch (airflowActiveTile) {
@@ -910,21 +988,26 @@ export function DashboardPage() {
         title={airflowActiveTile ? AIRFLOW_TILE_TITLE[airflowActiveTile] : ""}
         loading={showAirflowInitialLoading}
         rows={airflowModalRows}
+        rowAction={airflowActiveTile === "failed"
+          ? { label: "로그", busyId: workflowFailureLoading, onClick: openWorkflowFailureLog }
+          : undefined}
       />
-      <HistoryModal
+      <FailureDetailModal
         open={nifiFailedOpen}
         onClose={() => setNifiFailedOpen(false)}
         title={`ETL 오류 상세 · ${selectedPeriodLabel}`}
         loading={nifiJobsQuery.isLoading && !nifiJobsQuery.data}
-        rows={nifiFailedRows}
+        items={nifiFailedItems}
       />
-      <HistoryModal
+      <FailureDetailModal
         open={kafkaFailedOpen}
         onClose={() => setKafkaFailedOpen(false)}
-        title="CDC 실패 Connector 상세"
+        title="CDC 실패 상세"
         loading={kafkaConnectorsQuery.isLoading && !kafkaConnectorsQuery.data}
-        rows={kafkaFailedRows}
+        items={kafkaFailedItems}
       />
+      {/* 워크플로우(Airflow) 실패는 로그 화면과 같은 창을 그대로 띄운다 - 시도별 로그 · 하위 워크플로우 · GPT 해석이 한 자리에 있다. */}
+      <TaskFailureLogModal target={workflowFailure} onClose={() => setWorkflowFailure(undefined)} />
     </div>
     </ConfigProvider>
   );

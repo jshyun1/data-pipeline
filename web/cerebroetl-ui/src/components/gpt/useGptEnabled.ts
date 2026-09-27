@@ -7,7 +7,7 @@ export function useLlmStatus() {
 }
 
 /**
- * GPT 기능이 켜져 있는지(선택된 LLM 이 있는지). 꺼져 있으면 [GPT 분석] 버튼을 <b>그리지 않는다</b> -
+ * GPT 기능이 켜져 있는지(선택된 LLM 이 있는지). 꺼져 있으면 [GPT 해석] 버튼을 <b>그리지 않는다</b> -
  * 회색 비활성이 아니라 원래 없던 화면이 된다(설계 5-1).
  */
 export function useGptEnabled(): boolean {

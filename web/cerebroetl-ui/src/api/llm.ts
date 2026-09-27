@@ -136,7 +136,7 @@ export async function getLlmStatus(): Promise<LlmStatus> {
   return unwrap(res.data);
 }
 
-// ---------------------------------------------------------------- GPT 분석(2단계)
+// ---------------------------------------------------------------- GPT 해석(2단계)
 
 /** 분석 대상 종류. 서버가 요청마다 이 값으로 조회 권한을 다시 확인한다(설계 7절). */
 export type LlmTargetType =
@@ -212,7 +212,7 @@ export interface LlmStreamHandlers {
 }
 
 /**
- * GPT 분석을 SSE 로 받는다. axios 는 응답을 흘려 읽지 못해 fetch 를 쓴다 - 그래서 인증 헤더·401 처리를 여기서 직접 한다
+ * GPT 해석을 SSE 로 받는다. axios 는 응답을 흘려 읽지 못해 fetch 를 쓴다 - 그래서 인증 헤더·401 처리를 여기서 직접 한다
  * (api/client.ts 의 인터셉터와 같은 규칙). {@code signal} 로 [중지]·창 닫기 때 끊는다.
  */
 export async function streamLlmChat(request: LlmChatRequest, handlers: LlmStreamHandlers, signal?: AbortSignal): Promise<void> {
@@ -236,7 +236,7 @@ export async function streamLlmChat(request: LlmChatRequest, handlers: LlmStream
   }
   const contentType = response.headers.get("content-type") ?? "";
   if (!response.ok || !contentType.includes("text/event-stream") || !response.body) {
-    let message = `GPT 분석 요청이 실패했습니다(HTTP ${response.status}).`;
+    let message = `GPT 해석 요청이 실패했습니다(HTTP ${response.status}).`;
     try {
       const body = (await response.json()) as ApiResponse<unknown>;
       message = body.error?.message ?? message;

@@ -170,7 +170,7 @@ function DetailRow({ row }: { row: UnifiedCdcLogRow }) {
       ) : null}
       {gptEnabled && row.status === "FAILED" && !analyzing && (
         <Button size="small" className="gpt-analysis-open" style={{ marginTop: 8 }} onClick={() => setAnalyzing(true)}>
-          GPT 분석
+          GPT 해석
         </Button>
       )}
       {analyzing && (
