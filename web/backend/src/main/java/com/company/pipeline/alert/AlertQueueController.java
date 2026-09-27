@@ -144,6 +144,8 @@ public class AlertQueueController {
         String orderBy = ORDER_COLUMNS.getOrDefault(sort == null ? "" : sort,
                 "COALESCE(last_transition_at, condition_since)");
         String orderDir = "asc".equalsIgnoreCase(dir) ? "ASC" : "DESC";
+        // 텍스트 블록은 줄 끝 공백을 지운다 - «ORDER BY» 뒤에 붙여 쓰면 BYCOALESCE 가 된다. 한 줄로 만들어 넣는다.
+        String orderClause = "ORDER BY " + orderBy + " " + orderDir + ", id DESC";
 
         List<Object> itemArgs = new ArrayList<>(args);
         itemArgs.add(size);
@@ -157,11 +159,7 @@ public class AlertQueueController {
                        resolve_reason,
                        started_at, condition_since, last_transition_at, resolved_at
                 FROM alert_instance
-                """ + where + "\n" + """
-                ORDER BY """ + orderBy + " " + orderDir + """
-                 , id DESC
-                LIMIT ? OFFSET ?
-                """, itemArgs.toArray());
+                """ + where + "\n" + orderClause + "\nLIMIT ? OFFSET ?", itemArgs.toArray());
 
         // 필터 배지용 집계는 기간 전체 기준(심각도·검색어와 무관하게 개수를 보여준다).
         Map<String, Object> counts = jdbc.queryForMap(

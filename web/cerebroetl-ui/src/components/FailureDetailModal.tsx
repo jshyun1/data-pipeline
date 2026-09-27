@@ -33,10 +33,15 @@ interface Props {
   title: string;
   loading?: boolean;
   items: FailureDetailItem[];
+  /**
+   * 줄마다 붙는 버튼(워크플로우 실패의 [로그]). 워크플로우는 한 실행 안에 실패 task 가 여럿이고 시도별 로그 ·
+   * 하위 워크플로우까지 따라가야 해서, 펼친 줄 대신 전용 창으로 보낸다(2026-09-28).
+   */
+  rowAction?: { label: string; busyId?: string; onClick: (item: FailureDetailItem) => void };
   onClose: () => void;
 }
 
-export function FailureDetailModal({ open, title, loading, items, onClose }: Props) {
+export function FailureDetailModal({ open, title, loading, items, rowAction, onClose }: Props) {
   const [expanded, setExpanded] = useState<string[]>([]);
 
   return (
@@ -67,6 +72,19 @@ export function FailureDetailModal({ open, title, loading, items, onClose }: Pro
         columns={[
           { title: "대상", dataIndex: "title", ellipsis: true },
           { title: "시각", dataIndex: "datetime", width: 170, render: (v?: string) => formatTime(v) },
+          ...(rowAction
+            ? [{
+                title: "",
+                key: "action",
+                width: 72,
+                render: (_: unknown, record: FailureDetailItem) => (
+                  <Button size="small" loading={rowAction.busyId === record.id}
+                          onClick={(event) => { event.stopPropagation(); rowAction.onClick(record); }}>
+                    {rowAction.label}
+                  </Button>
+                ),
+              }]
+            : []),
         ]}
       />
     </Modal>

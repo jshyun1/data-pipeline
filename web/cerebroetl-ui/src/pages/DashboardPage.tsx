@@ -590,6 +590,30 @@ export function DashboardPage() {
 
 
   /**
+   * 워크플로우 실패. ETL · CDC 와 같은 창(FailureDetailModal)에 같은 차례로 담는다(2026-09-28 요청).
+   * 줄을 펼치면 실행 로그가 보이고, [로그] 를 누르면 시도별 로그 · 하위 워크플로우까지 따라가는 전용 창이 열린다.
+   */
+  const workflowFailedItems: FailureDetailItem[] = useMemo(
+    () => airflowHistory.failedEntries.map((entry) => {
+      const splitAt = entry.id.indexOf(":");
+      const dagId = splitAt > 0 ? entry.id.slice(0, splitAt) : entry.id;
+      return {
+        id: entry.id,
+        title: entry.basicContent,
+        datetime: entry.datetime,
+        lines: [
+          ["워크플로우", entry.basicContent],
+          ["구분", entry.category],
+          ["DAG", dagId],
+        ] as Array<[string, string]>,
+        loadError: async () =>
+          (entry.fetchLog ? await entry.fetchLog() : undefined) ?? "로그를 불러올 수 없습니다.",
+      };
+    }),
+    [airflowHistory.failedEntries],
+  );
+
+  /**
    * 실패한 실행의 «로그» - 워크플로우 로그 화면과 같은 창(TaskFailureLogModal)을 띄운다.
    * 그 창이 시도별 로그 · Airflow 기록 · 하위 워크플로우까지 따라가고 GPT 해석도 그 안에 있다.
    */
@@ -1021,15 +1045,30 @@ export function DashboardPage() {
       />
       </div>
 
+      {/* 실패만 ETL · CDC 와 같은 창으로 보여 준다(2026-09-28). 나머지 타일(실행 중 · 성공 · DAG)은 목록이라 예전 창 그대로다. */}
       <HistoryModal
-        open={airflowActiveTile !== null}
+        open={airflowActiveTile !== null && airflowActiveTile !== "failed"}
         onClose={() => setAirflowActiveTile(null)}
         title={airflowActiveTile ? AIRFLOW_TILE_TITLE[airflowActiveTile] : ""}
         loading={showAirflowInitialLoading}
         rows={airflowModalRows}
-        rowAction={airflowActiveTile === "failed"
-          ? { label: "로그", busyId: workflowFailureLoading, onClick: openWorkflowFailureLog }
-          : undefined}
+      />
+      <FailureDetailModal
+        open={airflowActiveTile === "failed"}
+        onClose={() => setAirflowActiveTile(null)}
+        title={`워크플로우 실패 상세 · ${selectedPeriodLabel}`}
+        loading={showAirflowInitialLoading}
+        items={workflowFailedItems}
+        rowAction={{
+          label: "로그",
+          busyId: workflowFailureLoading ?? undefined,
+          onClick: (item) => {
+            const entry = airflowHistory.failedEntries.find((row) => row.id === item.id);
+            if (entry) {
+              void openWorkflowFailureLog(entry);
+            }
+          },
+        }}
       />
       <FailureDetailModal
         open={nifiFailedOpen}
