@@ -56,6 +56,24 @@ notification:
       headers: ${NOTIFICATION_SMS_GATEWAY_HEADERS:}
       content-type: ${NOTIFICATION_SMS_GATEWAY_CONTENT_TYPE:application/json}
       body-template: ${NOTIFICATION_SMS_GATEWAY_BODY_TEMPLATE:}
+  # 카카오 알림톡. 대행사(비즈메시지 파트너) API 를 통해서만 보낼 수 있고 규격이 제각각이라,
+  # SMS 와 같이 «설정으로 규격을 흡수»한다. 값은 화면(설정 → 발송 채널 → 설정)에서 넣는 것이 기본이고
+  # 아래 환경변수는 화면을 쓰지 않는 현장을 위한 폴백이다(2026-09-20).
+  #   body-template 치환자: {to} {text} {title} {sender} {senderKey} {templateCode} {secret}
+  #   success-path/value: 대행사가 HTTP 200 에 실패를 실어 보낼 때 성공 판정 기준(예: header.resultCode = 0)
+  kakao:
+    enabled: ${NOTIFICATION_KAKAO_ENABLED:false}
+    sender: ${NOTIFICATION_KAKAO_SENDER:}
+    sender-key: ${NOTIFICATION_KAKAO_SENDER_KEY:}
+    template-code: ${NOTIFICATION_KAKAO_TEMPLATE_CODE:}
+    api-key: ${NOTIFICATION_KAKAO_API_KEY:}
+    success-path: ${NOTIFICATION_KAKAO_SUCCESS_PATH:}
+    success-value: ${NOTIFICATION_KAKAO_SUCCESS_VALUE:}
+    gateway:
+      url: ${NOTIFICATION_KAKAO_GATEWAY_URL:}
+      headers: ${NOTIFICATION_KAKAO_GATEWAY_HEADERS:}
+      content-type: ${NOTIFICATION_KAKAO_GATEWAY_CONTENT_TYPE:application/json}
+      body-template: ${NOTIFICATION_KAKAO_GATEWAY_BODY_TEMPLATE:}
 
 server:
   port: ${SERVER_PORT:8081}

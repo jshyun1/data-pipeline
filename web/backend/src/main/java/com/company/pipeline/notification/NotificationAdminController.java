@@ -27,11 +27,14 @@ public class NotificationAdminController {
 
     private final JdbcTemplate jdbc;
     private final NotificationService notificationService;
+    private final ChannelSettingsService channelSettings;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public NotificationAdminController(DataSource dataSource, NotificationService notificationService) {
+    public NotificationAdminController(DataSource dataSource, NotificationService notificationService,
+                                       ChannelSettingsService channelSettings) {
         this.jdbc = new JdbcTemplate(dataSource);
         this.notificationService = notificationService;
+        this.channelSettings = channelSettings;
     }
 
     // ---------------------------------------------------------------- 채널
@@ -81,6 +84,49 @@ public class NotificationAdminController {
     }
 
     /**
+     * 채널 설정 조회(화면의 «설정» 창). 비밀값은 내려보내지 않고 저장 여부 · 끝자리 힌트만 준다.
+     *
+     * <p>{@code fromEnvOnly} 는 «화면에서 저장한 적이 없어 .env 값으로 돌고 있다»는 뜻이다 -
+     * 화면이 지금 무엇으로 나가는지 알려 줄 수 있어야 한다(2026-09-20 설계).
+     */
+    @GetMapping("/api/admin/notification/channels/{type}/settings")
+    public ApiResponse<Map<String, Object>> channelSettings(@PathVariable String type) {
+        requireConfigurable(type);
+        return ApiResponse.success(channelSettings.view(type));
+    }
+
+    /** 채널 설정 저장. 비밀값을 비워 보내면 기존 값을 유지한다(GPT 제공자 등록과 같은 규칙). */
+    @PutMapping("/api/admin/notification/channels/{type}/settings")
+    public ApiResponse<Map<String, Object>> saveChannelSettings(
+            @PathVariable String type, @RequestBody ChannelSettingsRequest req,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+            com.company.pipeline.user.AppUser actor) {
+        requireConfigurable(type);
+        channelSettings.save(type, req.values(), req.secret(), actor == null ? "system" : actor.getUserId());
+        return ApiResponse.success(channelSettings.view(type));
+    }
+
+    /** 저장된 비밀값 삭제. 지우면 환경변수 값으로 되돌아간다. */
+    @DeleteMapping("/api/admin/notification/channels/{type}/settings/secret")
+    public ApiResponse<Map<String, Object>> clearChannelSecret(
+            @PathVariable String type,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+            com.company.pipeline.user.AppUser actor) {
+        requireConfigurable(type);
+        channelSettings.clearSecret(type, actor == null ? "system" : actor.getUserId());
+        return ApiResponse.success(channelSettings.view(type));
+    }
+
+    /** 화면에서 설정할 수 있는 채널인지. IN_APP(화면 알림)은 외부 의존이 없어 설정할 것이 없다. */
+    private void requireConfigurable(String type) {
+        if (!ChannelSettingsService.KEYS.containsKey(type)) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "설정할 수 없는 채널입니다: " + type);
+        }
+    }
+
+    public record ChannelSettingsRequest(Map<String, String> values, String secret) {}
+
+    /**
      * 연결 테스트 — CHANNEL_TEST 발송 건을 아웃박스에 넣어 디스패처가 실제 발송을 시도한다.
      * EMAIL/SMS 는 «등록된 수신자의 실제 이메일/전화»로 보낸다(예전엔 주소가 비어 아무데도 안 갔다).
      * IN_APP(화면알림)은 주소가 필요 없어 브로드캐스트 1건.
@@ -94,6 +140,9 @@ public class NotificationAdminController {
             enqueued = enqueueTestToRecipients("EMAIL", eventKey, "email");
         } else if ("SMS".equals(type)) {
             enqueued = enqueueTestToRecipients("SMS", eventKey, "phone");
+        } else if ("KAKAO".equals(type)) {
+            // 알림톡도 휴대폰 번호로 보낸다 - 문자와 같은 연락처를 쓴다.
+            enqueued = enqueueTestToRecipients("KAKAO", eventKey, "phone");
         } else {
             jdbc.update("""
                     INSERT INTO notification_delivery
@@ -189,6 +238,8 @@ public class NotificationAdminController {
         }
         if (!isBlank(req.phone())) {
             insertSubscription(id, "SMS");
+            // 카카오톡도 같은 번호로 간다. 채널 자체가 꺼져 있으면 발송되지 않으므로 기본 구독으로 둔다.
+            insertSubscription(id, "KAKAO");
         }
         return ApiResponse.success(Map.of("id", id));
     }
@@ -273,6 +324,10 @@ public class NotificationAdminController {
             }
             if ("SMS".equals(channel) && isBlank(contact.get("phone"))) {
                 throw new BusinessException(ErrorCode.VALIDATION_ERROR, "전화번호가 등록되지 않아 문자 수신을 켤 수 없습니다.");
+            }
+            // 알림톡도 휴대폰 번호로 보낸다(카카오 전용 식별자를 따로 받지 않는다).
+            if ("KAKAO".equals(channel) && isBlank(contact.get("phone"))) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR, "전화번호가 등록되지 않아 카카오톡 수신을 켤 수 없습니다.");
             }
         }
         jdbc.update("""

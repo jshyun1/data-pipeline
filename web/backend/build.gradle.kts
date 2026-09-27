@@ -56,6 +56,9 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // 알림 발송(아웃박스) 테스트용 인메모리 DB. 이 환경에서는 Testcontainers 가 자주 실패해
+    // 순수 단위 테스트는 H2 로 돌린다(Postgres 전용 문법을 쓰지 않는 표만 만든다).
+    testImplementation("com.h2database:h2")
 }
 
 tasks.withType<Test> {

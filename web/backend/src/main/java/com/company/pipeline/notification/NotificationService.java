@@ -34,43 +34,43 @@ public class NotificationService {
 
     private final JdbcTemplate jdbc;
     // JavaMailSender 는 spring.mail.host 가 있을 때만 존재한다(ObjectProvider 로 부재 허용).
+    // 화면에서 메일 서버를 넣으면 그 값으로 발송기를 직접 만든다(아래 mailSenderFor).
     private final ObjectProvider<JavaMailSender> mailSenderProvider;
+    /**
+     * 채널 설정(메일 · 문자 · 카카오). 화면에서 넣은 값(DB)이 먼저, 없으면 환경변수다 -
+     * 들어갈 망이 정해지지 않아 «현장에서 화면으로 설정»이 가능해야 한다(2026-09-20).
+     */
+    private final ChannelSettingsService channelSettings;
     private final boolean emailEnabled;
-    private final String emailFrom;
-    // SMS 는 EMAIL 의 SMTP 처럼 외부 게이트웨이가 필요하다. gateway.url 이 있을 때만 실제 발송.
     private final boolean smsEnabled;
-    private final String smsGatewayUrl;
-    // 게이트웨이 규격 흡수용(폐쇄망 대비). 사내 문자 서버·사업자 API 는 인증 헤더를 요구하고
-    // 필드명도 제각각인데(to/text, receiver/msg, phone/message …), 그때마다 코드를 고치면
-    // 폐쇄망에서는 이미지 재반입이 필요하다. 아래 4개를 설정으로 열어 두면 .env 만으로 붙는다.
-    private final String smsHeaders;
-    private final String smsContentType;
-    private final String smsBodyTemplate;
-    private final String smsSender;
+    private final boolean kakaoEnabled;
     private final java.net.http.HttpClient httpClient = java.net.http.HttpClient.newBuilder()
             .connectTimeout(java.time.Duration.ofSeconds(5)).build();
+    /** 화면 설정으로 만든 메일 발송기 캐시. 설정이 바뀌면 키가 달라져 새로 만든다. */
+    private final Map<String, JavaMailSender> mailSenders = new java.util.concurrent.ConcurrentHashMap<>();
 
     public NotificationService(DataSource dataSource,
                                ObjectProvider<JavaMailSender> mailSenderProvider,
+                               ChannelSettingsService channelSettings,
                                @Value("${notification.email.enabled:false}") boolean emailEnabled,
-                               @Value("${notification.email.from:alerts@pipeline.local}") String emailFrom,
                                @Value("${notification.sms.enabled:false}") boolean smsEnabled,
-                               @Value("${notification.sms.gateway.url:}") String smsGatewayUrl,
-                               @Value("${notification.sms.gateway.headers:}") String smsHeaders,
-                               @Value("${notification.sms.gateway.content-type:application/json}") String smsContentType,
-                               @Value("${notification.sms.gateway.body-template:}") String smsBodyTemplate,
-                               @Value("${notification.sms.sender:}") String smsSender) {
+                               @Value("${notification.kakao.enabled:false}") boolean kakaoEnabled) {
         this.jdbc = new JdbcTemplate(dataSource);
         this.mailSenderProvider = mailSenderProvider;
+        this.channelSettings = channelSettings;
         this.emailEnabled = emailEnabled;
-        this.emailFrom = emailFrom;
         this.smsEnabled = smsEnabled;
-        this.smsGatewayUrl = smsGatewayUrl;
-        this.smsHeaders = smsHeaders;
-        this.smsContentType = smsContentType == null || smsContentType.isBlank()
-                ? "application/json" : smsContentType.trim();
-        this.smsBodyTemplate = smsBodyTemplate;
-        this.smsSender = smsSender;
+        this.kakaoEnabled = kakaoEnabled;
+    }
+
+    /**
+     * 채널을 실제로 쓸 수 있는가. 예전에는 «환경변수 enabled» 만 봤는데, 이제는 화면에서 채널을 켜고
+     * 설정을 넣는 경로가 있어서 <b>DB 의 on/off 도 함께</b> 본다 - 화면에서 켠 채널이 .env 때문에
+     * 조용히 안 나가면 «켰는데 왜 안 오지»가 된다.
+     */
+    private boolean channelOn(String channelType, boolean envEnabled) {
+        Set<String> on = enabledChannels();
+        return envEnabled || (on != null && on.contains(channelType));
     }
 
     /**
@@ -80,8 +80,10 @@ public class NotificationService {
     public boolean relayConfigured(String channelType) {
         return switch (channelType) {
             case "IN_APP" -> true;   // 외부 의존이 없다.
-            case "EMAIL" -> emailEnabled && mailSenderProvider.getIfAvailable() != null;
-            case "SMS" -> smsEnabled && smsGatewayUrl != null && !smsGatewayUrl.isBlank();
+            case "EMAIL" -> channelSettings.effective("EMAIL").hasText("host")
+                    || mailSenderProvider.getIfAvailable() != null;
+            case "SMS" -> channelSettings.effective("SMS").hasText("url");
+            case "KAKAO" -> channelSettings.effective("KAKAO").hasText("url");
             default -> false;
         };
     }
@@ -154,6 +156,18 @@ public class NotificationService {
                 """, rank);
         for (Map<String, Object> r : routing.filter(smsRecips)) {
             insertDelivery(eventKey, "SMS", severity, rank, category,
+                    ((Number) r.get("rid")).longValue(), (String) r.get("phone"), summary, deepLink, emailDelaySec);
+        }
+        // KAKAO(알림톡): 문자와 같은 휴대폰 번호로 보낸다 - 카카오 전용 식별자를 따로 받지 않는다.
+        // 등급 정책도 메일 · 문자와 같다(위험만). 여기까지 온 것은 이미 rank==0 이라는 뜻이다.
+        List<Map<String, Object>> kakaoRecips = jdbc.queryForList("""
+                SELECT r.id AS rid, r.phone FROM notification_recipient r
+                JOIN notification_subscription s ON s.recipient_id = r.id AND s.channel_type = 'KAKAO' AND s.enabled
+                WHERE r.deleted_at IS NULL AND r.enabled AND r.phone IS NOT NULL AND r.phone <> ''
+                  AND ? <= CASE s.min_severity WHEN 'CRITICAL' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END
+                """, rank);
+        for (Map<String, Object> r : routing.filter(kakaoRecips)) {
+            insertDelivery(eventKey, "KAKAO", severity, rank, category,
                     ((Number) r.get("rid")).longValue(), (String) r.get("phone"), summary, deepLink, emailDelaySec);
         }
     }
@@ -248,10 +262,12 @@ public class NotificationService {
                     jdbc.update("UPDATE notification_delivery SET status='SENT', sent_at=now(), "
                             + "attempt_count=attempt_count+1, first_attempt_at=COALESCE(first_attempt_at, now()), "
                             + "updated_at=now() WHERE id=?", id);
-                } else if ("EMAIL".equals(channel) && emailEnabled) {
+                } else if ("EMAIL".equals(channel) && channelOn("EMAIL", emailEnabled)) {
                     relayEmail(id);
-                } else if ("SMS".equals(channel) && smsEnabled) {
+                } else if ("SMS".equals(channel) && channelOn("SMS", smsEnabled)) {
                     relaySms(id);
+                } else if ("KAKAO".equals(channel) && channelOn("KAKAO", kakaoEnabled)) {
+                    relayKakao(id);
                 } else {
                     // 미지원 채널 또는 릴레이 비활성(EMAIL SMTP·SMS 게이트웨이 미설정): 재시도 후 DEAD.
                     markNoRelay(id);
@@ -286,9 +302,46 @@ public class NotificationService {
                 + "attempt_count=attempt_count+1, updated_at=now() WHERE id=?", reason, id);
     }
 
+    /**
+     * 화면에서 넣은 메일 서버로 발송기를 만든다. 화면 설정이 없으면 기동 때 만들어진 Spring 빈(=.env) 을 쓴다.
+     *
+     * <p>Spring 의 JavaMailSender 빈은 기동 시점 설정으로 고정된다 - 화면에서 서버를 바꿔도 반영되지 않는다.
+     * 그래서 설정 값으로 직접 만들고, 같은 설정이면 다시 만들지 않도록 캐시한다(키가 설정 자체다).
+     */
+    private JavaMailSender mailSenderFor(ChannelSettingsService.Settings settings) {
+        if (!settings.hasText("host")) {
+            return mailSenderProvider.getIfAvailable();
+        }
+        String key = settings.get("host", "") + "|" + settings.get("port", "25") + "|"
+                + settings.get("username", "") + "|" + settings.bool("auth", false) + "|"
+                + settings.bool("starttls", false) + "|" + sha256(settings.secret() == null ? "" : settings.secret());
+        return mailSenders.computeIfAbsent(key, k -> {
+            org.springframework.mail.javamail.JavaMailSenderImpl impl =
+                    new org.springframework.mail.javamail.JavaMailSenderImpl();
+            impl.setHost(settings.get("host", ""));
+            impl.setPort(settings.number("port", 25));
+            impl.setDefaultEncoding("UTF-8");
+            String username = settings.get("username", "");
+            if (!username.isBlank()) {
+                impl.setUsername(username);
+            }
+            if (settings.secret() != null && !settings.secret().isBlank()) {
+                impl.setPassword(settings.secret());
+            }
+            java.util.Properties props = impl.getJavaMailProperties();
+            props.put("mail.smtp.auth", String.valueOf(settings.bool("auth", false)));
+            props.put("mail.smtp.starttls.enable", String.valueOf(settings.bool("starttls", false)));
+            props.put("mail.smtp.connectiontimeout", "5000");
+            props.put("mail.smtp.timeout", "5000");
+            props.put("mail.smtp.writetimeout", "5000");
+            return impl;
+        });
+    }
+
     /** EMAIL 실 릴레이. JavaMailSender 로 발송하고 결과를 아웃박스에 반영한다. */
     private void relayEmail(long id) {
-        JavaMailSender sender = mailSenderProvider.getIfAvailable();
+        ChannelSettingsService.Settings settings = channelSettings.effective("EMAIL");
+        JavaMailSender sender = mailSenderFor(settings);
         if (sender == null) {
             // enabled=true 인데 spring.mail.host 미설정 → 빈 없음. NO_RELAY 로 폴백.
             markNoRelay(id);
@@ -304,7 +357,7 @@ public class NotificationService {
         }
         try {
             SimpleMailMessage msg = new SimpleMailMessage();
-            msg.setFrom(emailFrom);
+            msg.setFrom(settings.get("from", "alerts@pipeline.local"));
             msg.setTo(to);
             Object subject = row.get("subject");
             msg.setSubject(subject == null ? "[관제] 알림" : subject.toString());
@@ -322,7 +375,7 @@ public class NotificationService {
             }
             jdbc.update("UPDATE notification_delivery SET status='RETRY', attempt_count=attempt_count+1, "
                     + "failure_reason='SMTP_ERROR', failure_detail=?, "
-                    + "next_attempt_at=now() + interval '2 minutes', updated_at=now() "
+                    + "next_attempt_at=now() + INTERVAL '2' MINUTE, updated_at=now() "
                     + "WHERE id=? AND attempt_count+1 < max_attempts", detail, id);
             jdbc.update("UPDATE notification_delivery SET status='DEAD', updated_at=now() "
                     + "WHERE id=? AND attempt_count >= max_attempts", id);
@@ -331,17 +384,37 @@ public class NotificationService {
     }
 
     /**
-     * SMS 실 릴레이. 설정된 게이트웨이(notification.sms.gateway.url)로 POST 한다. 본문 형식·
-     * 인증 헤더·Content-Type 은 설정으로 바꿀 수 있다({@link #renderSmsBody}, {@link #applyGatewayHeaders}).
-     * EMAIL 의 SMTP 처럼 외부 게이트웨이가 필요하며, 미설정이면 NO_RELAY 로 폴백한다(실제 문자 안 감).
+     * SMS 실 릴레이. 설정된 게이트웨이로 POST 한다. 주소 · 본문 형식 · 인증 헤더 · Content-Type 은
+     * 화면(발송 채널 설정)이나 환경변수로 바꾼다({@link #renderBody}, {@link #applyGatewayHeaders}).
+     * 미설정이면 NO_RELAY 로 폴백한다(실제 문자 안 감).
      */
     private void relaySms(long id) {
-        if (smsGatewayUrl == null || smsGatewayUrl.isBlank()) {
+        relayGateway(id, "SMS", channelSettings.effective("SMS"), "SMS_ERROR");
+    }
+
+    /**
+     * KAKAO(알림톡) 실 릴레이. 문자와 같은 HTTP POST 인데 두 가지가 다르다.
+     *
+     * <p>① 알림톡은 <b>미리 승인받은 템플릿</b>에 변수만 채워 보낸다 - 본문 템플릿에 {@code {templateCode}}
+     * {@code {senderKey}} 치환자를 둔다. ② 대행사는 HTTP 200 에 실패를 실어 보내는 일이 흔하다 -
+     * {@code successPath}/{@code successValue} 가 설정돼 있으면 응답 값까지 맞아야 성공으로 본다.
+     *
+     * <p>대행사를 코드로 고정하지 않는 이유: 들어갈 망과 계약할 대행사가 정해져 있지 않다.
+     * 규격은 화면에서 넣는 설정(주소 · 헤더 · 본문 템플릿 · 성공 판정)으로 흡수한다.
+     */
+    private void relayKakao(long id) {
+        relayGateway(id, "KAKAO", channelSettings.effective("KAKAO"), "KAKAO_ERROR");
+    }
+
+    /** 문자 · 카카오 공통 게이트웨이 발송. 규격 차이는 전부 설정(url · headers · body · 성공 판정)으로 받는다. */
+    private void relayGateway(long id, String channel, ChannelSettingsService.Settings settings, String failureReason) {
+        String url = settings.get("url", "");
+        if (url.isBlank()) {
             markNoRelay(id);
             return;
         }
         Map<String, Object> row = jdbc.queryForMap(
-                "SELECT target_address, body FROM notification_delivery WHERE id=?", id);
+                "SELECT target_address, subject, body FROM notification_delivery WHERE id=?", id);
         String to = (String) row.get("target_address");
         if (to == null || to.isBlank()) {
             jdbc.update("UPDATE notification_delivery SET status='DEAD', failure_reason='NO_ADDRESS', "
@@ -349,70 +422,127 @@ public class NotificationService {
             return;
         }
         String text = row.get("body") == null ? "" : row.get("body").toString();
+        String title = row.get("subject") == null ? "" : row.get("subject").toString();
+        String contentType = settings.get("contentType", "application/json");
         try {
             java.net.http.HttpRequest.Builder builder =
-                    java.net.http.HttpRequest.newBuilder(java.net.URI.create(smsGatewayUrl))
+                    java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
                             .timeout(java.time.Duration.ofSeconds(5))
-                            .header("Content-Type", smsContentType);
-            applyGatewayHeaders(builder);
+                            .header("Content-Type", contentType);
+            applyGatewayHeaders(builder, renderTemplate(settings.get("headers", ""), to, text, title, settings, false));
             java.net.http.HttpRequest req = builder
                     .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
-                            renderSmsBody(to, text), StandardCharsets.UTF_8))
+                            renderBody(settings, to, text, title, contentType), StandardCharsets.UTF_8))
                     .build();
             java.net.http.HttpResponse<String> resp = httpClient.send(
                     req, java.net.http.HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() / 100 == 2) {
+            String mismatch = successMismatch(settings, resp);
+            if (resp.statusCode() / 100 == 2 && mismatch == null) {
                 jdbc.update("UPDATE notification_delivery SET status='SENT', sent_at=now(), "
                         + "attempt_count=attempt_count+1, first_attempt_at=COALESCE(first_attempt_at, now()), "
                         + "updated_at=now() WHERE id=?", id);
-                log.info("SMS 발송 완료 id={} to={}", id, maskPhone(to));
+                log.info("{} 발송 완료 id={} to={}", channel, id, maskPhone(to));
+            } else if (resp.statusCode() / 100 == 2) {
+                gatewayFail(id, channel, failureReason, mismatch);
             } else {
-                smsFail(id, "HTTP " + resp.statusCode());
+                gatewayFail(id, channel, failureReason, "HTTP " + resp.statusCode()
+                        + (resp.body() == null || resp.body().isBlank() ? "" : " " + resp.body()));
             }
         } catch (Exception ex) {
-            smsFail(id, ex.getMessage());
+            gatewayFail(id, channel, failureReason, ex.getMessage());
         }
     }
 
-    private void smsFail(long id, String reason) {
+    /**
+     * 대행사가 2xx 로 주면서 본문에 실패를 담는 경우를 가려낸다. successPath 가 비어 있으면 검사하지 않는다
+     * (지금까지의 문자 동작과 같다). 경로는 점 표기 - 예: {@code header.resultCode}.
+     *
+     * @return 어긋난 이유(=실패), 문제없으면 null
+     */
+    private String successMismatch(ChannelSettingsService.Settings settings, java.net.http.HttpResponse<String> resp) {
+        String path = settings.get("successPath", "");
+        String expected = settings.get("successValue", "");
+        if (path.isBlank() || expected.isBlank()) {
+            return null;
+        }
+        String body = resp.body() == null ? "" : resp.body();
+        try {
+            com.fasterxml.jackson.databind.JsonNode node =
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(body);
+            for (String segment : path.split("\\.")) {
+                if (node == null) {
+                    break;
+                }
+                node = node.get(segment.trim());
+            }
+            String actual = node == null ? null : node.asText();
+            if (expected.equals(actual)) {
+                return null;
+            }
+            return "성공 판정 불일치(" + path + "=" + actual + ", 기대 " + expected + "): "
+                    + (body.length() > 200 ? body.substring(0, 200) : body);
+        } catch (Exception ex) {
+            return "응답을 읽지 못했습니다(" + ex.getMessage() + "): "
+                    + (body.length() > 200 ? body.substring(0, 200) : body);
+        }
+    }
+
+    private void gatewayFail(long id, String channel, String failureReason, String reason) {
         String detail = reason == null ? null : (reason.length() > 480 ? reason.substring(0, 480) : reason);
         jdbc.update("UPDATE notification_delivery SET status='RETRY', attempt_count=attempt_count+1, "
-                + "failure_reason='SMS_ERROR', failure_detail=?, "
-                + "next_attempt_at=now() + interval '2 minutes', updated_at=now() "
-                + "WHERE id=? AND attempt_count+1 < max_attempts", detail, id);
+                + "failure_reason=?, failure_detail=?, "
+                + "next_attempt_at=now() + INTERVAL '2' MINUTE, updated_at=now() "
+                + "WHERE id=? AND attempt_count+1 < max_attempts", failureReason, detail, id);
         jdbc.update("UPDATE notification_delivery SET status='DEAD', updated_at=now() "
                 + "WHERE id=? AND attempt_count >= max_attempts", id);
-        log.warn("SMS 발송 실패 id={}: {}", id, reason);
+        log.warn("{} 발송 실패 id={}: {}", channel, id, reason);
     }
 
     /**
-     * 게이트웨이로 보낼 본문. 기본은 예전과 같은 {@code {"to","text"}} JSON 이고,
-     * {@code notification.sms.gateway.body-template} 로 필드명·구조를 바꿀 수 있다.
-     * 치환자는 {@code {to} {text} {sender}} 세 개.
+     * 게이트웨이로 보낼 본문. 기본은 예전과 같은 {@code {"to","text"}} JSON 이고, 설정의 본문 템플릿으로
+     * 필드명 · 구조를 바꾼다. 치환자는 {@code {to} {text} {title} {sender} {senderKey} {templateCode} {secret}}.
      *
      * <pre>
-     * {"receiver":"{to}","msg":"{text}","sender":"{sender}"}   ← JSON 게이트웨이
-     * to={to}&amp;text={text}&amp;from={sender}                        ← form 게이트웨이
+     * {"receiver":"{to}","msg":"{text}","sender":"{sender}"}                     ← 문자 게이트웨이
+     * {"senderKey":"{senderKey}","templateCode":"{templateCode}",
+     *  "to":"{to}","text":"{text}"}                                             ← 알림톡 대행사
+     * to={to}&amp;text={text}&amp;from={sender}                                          ← form 게이트웨이
      * </pre>
      *
      * <p>{@code ${to}} 형태도 받지만 <b>권장하지 않는다</b> - docker compose 가 자기 변수로 먼저
      * 치환해 버려서 빈 문자열이 들어온다(실측). 그래서 {@code $} 없는 형태를 기본으로 안내한다.
      *
      * <p>이스케이프는 Content-Type 을 따른다 - form 이면 URL 인코딩, 아니면 JSON 이스케이프.
-     * 알림 본문에는 따옴표·개행·한글이 그대로 들어오므로 이걸 빠뜨리면 게이트웨이가 400 을 준다.
+     * 알림 본문에는 따옴표 · 개행 · 한글이 그대로 들어오므로 이걸 빠뜨리면 게이트웨이가 400 을 준다.
      */
-    private String renderSmsBody(String to, String text) {
-        boolean form = smsContentType.toLowerCase().startsWith("application/x-www-form-urlencoded");
-        String template = smsBodyTemplate == null || smsBodyTemplate.isBlank()
-                ? (form ? "to={to}&text={text}" : "{\"to\":\"{to}\",\"text\":\"{text}\"}")
-                : smsBodyTemplate;
-        String encodedTo = escapeFor(to, form);
-        String encodedText = escapeFor(text, form);
-        String encodedSender = escapeFor(smsSender == null ? "" : smsSender, form);
-        return template
-                .replace("${to}", encodedTo).replace("{to}", encodedTo)
-                .replace("${text}", encodedText).replace("{text}", encodedText)
-                .replace("${sender}", encodedSender).replace("{sender}", encodedSender);
+    private String renderBody(ChannelSettingsService.Settings settings, String to, String text, String title,
+                              String contentType) {
+        boolean form = contentType.toLowerCase().startsWith("application/x-www-form-urlencoded");
+        String template = settings.get("bodyTemplate",
+                form ? "to={to}&text={text}" : "{\"to\":\"{to}\",\"text\":\"{text}\"}");
+        return renderTemplate(template, to, text, title, settings, form);
+    }
+
+    /** 치환자 채우기. 헤더(이스케이프 없음)와 본문(Content-Type 에 맞춘 이스케이프) 양쪽이 쓴다. */
+    private String renderTemplate(String template, String to, String text, String title,
+                                  ChannelSettingsService.Settings settings, boolean form) {
+        if (template == null || template.isBlank()) {
+            return "";
+        }
+        Map<String, String> vars = new java.util.LinkedHashMap<>();
+        vars.put("to", to);
+        vars.put("text", text);
+        vars.put("title", title);
+        vars.put("sender", settings.get("sender", ""));
+        vars.put("senderKey", settings.get("senderKey", ""));
+        vars.put("templateCode", settings.get("templateCode", ""));
+        vars.put("secret", settings.secret() == null ? "" : settings.secret());
+        String out = template;
+        for (Map.Entry<String, String> e : vars.entrySet()) {
+            String value = escapeFor(e.getValue(), form);
+            out = out.replace("${" + e.getKey() + "}", value).replace("{" + e.getKey() + "}", value);
+        }
+        return out;
     }
 
     private String escapeFor(String value, boolean form) {
@@ -423,11 +553,11 @@ public class NotificationService {
      * 게이트웨이 인증 헤더. {@code "Authorization: Bearer x; X-API-KEY: y"} 처럼 세미콜론으로 나눈다.
      * 값에 콜론이 들어갈 수 있으므로(Bearer 토큰) 첫 콜론만 구분자로 쓴다.
      */
-    private void applyGatewayHeaders(java.net.http.HttpRequest.Builder builder) {
-        if (smsHeaders == null || smsHeaders.isBlank()) {
+    private void applyGatewayHeaders(java.net.http.HttpRequest.Builder builder, String headers) {
+        if (headers == null || headers.isBlank()) {
             return;
         }
-        for (String entry : smsHeaders.split(";")) {
+        for (String entry : headers.split(";")) {
             String pair = entry.trim();
             int colon = pair.indexOf(':');
             if (pair.isEmpty() || colon <= 0) {
@@ -443,7 +573,7 @@ public class NotificationService {
                 builder.header(name, value);
             } catch (IllegalArgumentException ex) {
                 // Host·Connection 등 JDK 가 막는 헤더. 설정 실수를 조용히 넘기지 않고 남긴다.
-                log.warn("SMS 게이트웨이 헤더 무시({}): {}", name, ex.getMessage());
+                log.warn("게이트웨이 헤더 무시({}): {}", name, ex.getMessage());
             }
         }
     }
@@ -459,11 +589,17 @@ public class NotificationService {
         return "***" + phone.substring(phone.length() - 4);
     }
 
-    /** 릴레이 불가(미지원 채널/미설정): 재시도 백오프 후 최대치 도달 시 DEAD. */
+    /**
+     * 릴레이 불가(미지원 채널/미설정): 재시도 백오프 후 최대치 도달 시 DEAD.
+     *
+     * <p>간격은 표준 문법 {@code INTERVAL '5' MINUTE} 으로 쓴다 - Postgres 전용
+     * {@code interval '5 minutes'} 는 단위 테스트의 H2 에서 조용히 실패해 «재시도로 안 바뀐다»는
+     * 가짜 실패를 만든다(2026-09-20). 두 표기의 결과는 Postgres 에서 동일함을 확인했다.
+     */
     private void markNoRelay(long id) {
         jdbc.update("UPDATE notification_delivery SET status='RETRY', "
                 + "attempt_count=attempt_count+1, failure_reason='NO_RELAY', "
-                + "next_attempt_at=now() + interval '5 minutes', updated_at=now() "
+                + "next_attempt_at=now() + INTERVAL '5' MINUTE, updated_at=now() "
                 + "WHERE id=? AND attempt_count+1 < max_attempts", id);
         jdbc.update("UPDATE notification_delivery SET status='DEAD', updated_at=now() "
                 + "WHERE id=? AND attempt_count >= max_attempts", id);

@@ -15,6 +15,7 @@ import {
   Modal,
   Select,
   Space,
+  Spin,
   Switch,
   Table,
   Tabs,
@@ -32,6 +33,7 @@ import {
   getAlertRuleTypes,
   getAlertRules,
   getChannels,
+  getChannelSettings,
   getRecipients,
   getRuleRecipients,
   setSubscription,
@@ -39,6 +41,7 @@ import {
   getScopeTree,
   getRuleEvalLogs,
   replaceRuleRecipients,
+  saveChannelSettings,
   testChannel,
   updateAlertRule,
   updateChannel,
@@ -863,13 +866,163 @@ const CHANNEL_LABEL: Record<string, string> = {
   IN_APP: "화면알림",
   EMAIL: "이메일",
   SMS: "SMS(문자)",
+  KAKAO: "카카오톡(알림톡)",
+};
+
+/**
+ * 채널 설정 창의 입력 항목. 어느 망에 들어가든 «화면에서 넣으면 그곳 설비로 나간다»가 목표라,
+ * 항목을 코드에 박아 두지 않고 채널별로 여기서 정의한다(서버 ChannelSettingsService.KEYS 와 짝).
+ */
+const CHANNEL_FIELDS: Record<string, Array<{
+  key: string; label: string; placeholder?: string; hint?: string; type?: "text" | "switch" | "textarea";
+}>> = {
+  EMAIL: [
+    { key: "host", label: "메일 서버 주소", placeholder: "smtp.company.co.kr" },
+    { key: "port", label: "포트", placeholder: "587" },
+    { key: "username", label: "계정", placeholder: "alert@company.co.kr" },
+    { key: "from", label: "보내는 주소", placeholder: "alerts@company.co.kr" },
+    { key: "auth", label: "인증 사용", type: "switch" },
+    { key: "starttls", label: "STARTTLS 사용", type: "switch" },
+  ],
+  SMS: [
+    { key: "url", label: "게이트웨이 주소", placeholder: "https://sms.company.co.kr/send" },
+    { key: "sender", label: "발신번호", placeholder: "025551234" },
+    { key: "headers", label: "인증 헤더", placeholder: "Authorization: Bearer {secret}",
+      hint: "여러 개는 세미콜론(;)으로 구분합니다. {secret} 자리에 아래 비밀값이 들어갑니다." },
+    { key: "contentType", label: "Content-Type", placeholder: "application/json" },
+    { key: "bodyTemplate", label: "본문 형식", type: "textarea",
+      placeholder: '{"to":"{to}","text":"{text}"}',
+      hint: "치환자: {to} {text} {title} {sender} {secret}. 비우면 기본 형식으로 보냅니다." },
+  ],
+  KAKAO: [
+    { key: "url", label: "대행사 API 주소", placeholder: "https://api.example.com/alimtalk/v1/send" },
+    { key: "senderKey", label: "발신프로필키", placeholder: "카카오 채널 발신프로필키" },
+    { key: "templateCode", label: "템플릿 코드", placeholder: "승인받은 알림톡 템플릿 코드" },
+    { key: "sender", label: "발신번호", placeholder: "025551234" },
+    { key: "headers", label: "인증 헤더", placeholder: "Authorization: Bearer {secret}",
+      hint: "여러 개는 세미콜론(;)으로 구분합니다. {secret} 자리에 아래 API 키가 들어갑니다." },
+    { key: "contentType", label: "Content-Type", placeholder: "application/json" },
+    { key: "bodyTemplate", label: "본문 형식", type: "textarea",
+      placeholder: '{"senderKey":"{senderKey}","templateCode":"{templateCode}","to":"{to}","text":"{text}"}',
+      hint: "치환자: {to} {text} {title} {sender} {senderKey} {templateCode} {secret}" },
+    { key: "successPath", label: "성공 판정 위치", placeholder: "header.resultCode",
+      hint: "대행사가 HTTP 200 으로 주면서 본문에 실패를 담는 경우에만 씁니다. 비우면 HTTP 200 을 성공으로 봅니다." },
+    { key: "successValue", label: "성공 판정 값", placeholder: "0" },
+  ],
+};
+
+const CHANNEL_SECRET_LABEL: Record<string, string> = {
+  EMAIL: "메일 비밀번호",
+  SMS: "게이트웨이 토큰",
+  KAKAO: "대행사 API 키",
 };
 function channelLabel(type: string): string {
   return CHANNEL_LABEL[type] ?? type;
 }
 
+/**
+ * 채널 설정 창. 들어가는 망마다 메일 서버 · 문자 게이트웨이 · 카카오 대행사가 다르므로, 화면에서 넣고
+ * 저장하면 다음 발송부터 그 값으로 나간다(재기동 없음). 비밀값은 저장돼 있으면 끝 4자리만 보이고,
+ * 비워 두면 그대로 유지한다 - GPT 제공자 등록과 같은 규칙이다.
+ */
+function ChannelSettingsModal({ channelType, onClose }: { channelType: string | null; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [secret, setSecret] = useState("");
+  const [saving, setSaving] = useState(false);
+  const fields = channelType ? CHANNEL_FIELDS[channelType] ?? [] : [];
+  const { data, isLoading } = useQuery({
+    queryKey: ["channel-settings", channelType],
+    queryFn: () => getChannelSettings(channelType!),
+    enabled: Boolean(channelType),
+  });
+  useEffect(() => {
+    setValues(data?.values ?? {});
+    setSecret("");
+  }, [data, channelType]);
+
+  async function save() {
+    if (!channelType) return;
+    setSaving(true);
+    try {
+      await saveChannelSettings(channelType, { values, secret: secret.trim() || undefined });
+      message.success("저장했습니다. 다음 발송부터 이 설정으로 나갑니다.");
+      qc.invalidateQueries({ queryKey: ["channel-settings", channelType] });
+      qc.invalidateQueries({ queryKey: ["channels"] });
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "저장하지 못했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function sendTest() {
+    if (!channelType) return;
+    try {
+      await testChannel(channelType);
+      message.success("테스트 발송을 요청했습니다. 수신자에게 도착하는지 확인하세요.");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "테스트 발송에 실패했습니다.");
+    }
+  }
+
+  return (
+    <Modal
+      open={Boolean(channelType)}
+      title={`${channelLabel(channelType ?? "")} 설정`}
+      onCancel={onClose}
+      width={640}
+      footer={[
+        <Button key="test" onClick={sendTest}>테스트 발송</Button>,
+        <Button key="close" onClick={onClose}>닫기</Button>,
+        <Button key="save" type="primary" loading={saving} onClick={save}>저장</Button>,
+      ]}
+    >
+      {isLoading ? <Spin /> : (
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          {data?.fromEnvOnly && (
+            <Alert type="info" showIcon
+              message="지금은 서버 설정(.env) 값으로 발송하고 있습니다"
+              description="여기서 저장하면 저장한 값이 우선합니다. 비워 두는 항목은 서버 설정 값을 그대로 씁니다." />
+          )}
+          {fields.map((field) => (
+            <div key={field.key}>
+              <div className="std-form-label">{field.label}</div>
+              {field.type === "switch" ? (
+                <Switch
+                  checked={values[field.key] === "true"}
+                  onChange={(on) => setValues((prev) => ({ ...prev, [field.key]: on ? "true" : "false" }))}
+                />
+              ) : field.type === "textarea" ? (
+                <Input.TextArea rows={3} value={values[field.key] ?? ""} placeholder={field.placeholder}
+                  onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))} />
+              ) : (
+                <Input value={values[field.key] ?? ""} placeholder={field.placeholder}
+                  onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))} />
+              )}
+              {field.hint && <div className="std-form-hint">{field.hint}</div>}
+            </div>
+          ))}
+          <div>
+            <div className="std-form-label">{CHANNEL_SECRET_LABEL[channelType ?? ""] ?? "비밀값"}</div>
+            <Input.Password
+              value={secret}
+              placeholder={data?.secretSet ? `저장됨 ${data.secretHint ?? ""} — 바꿀 때만 입력` : "입력하면 암호화해 저장합니다"}
+              onChange={(e) => setSecret(e.target.value)}
+            />
+            <div className="std-form-hint">
+              비워 두면 저장된 값을 그대로 씁니다. 저장된 값은 화면에 다시 보여 주지 않습니다.
+            </div>
+          </div>
+        </Space>
+      )}
+    </Modal>
+  );
+}
+
 function ChannelsTab() {
   const qc = useQueryClient();
+  const [settingsFor, setSettingsFor] = useState<string | null>(null);
   const { data: channels = [], isLoading } = useQuery({ queryKey: ["channels"], queryFn: getChannels });
 
   async function toggle(ch: ChannelConfig, enabled: boolean) {
@@ -891,14 +1044,14 @@ function ChannelsTab() {
       <span className="std-notice">
         <WfIcon name="info" size={14} />
         화면알림은 별도 설정이 없습니다 — 알림 규칙을 «사용»으로 켜면 조치 대기열·헤더 알림에 자동으로 표시됩니다.
-        외부 발송(이메일·SMS)만 여기서 켜고 끕니다.
+        외부 발송(이메일 · 문자 · 카카오톡)은 여기서 «설정»으로 서버 정보를 넣고 켭니다.
       </span>
       {onButUnconfigured.length > 0 && (
         <Alert
           type="warning"
           showIcon
           message={`${onButUnconfigured.map((c) => channelLabel(c.channel_type)).join("·")} — 사용은 켜져 있으나 서버에 발송 경로가 없습니다`}
-          description="실제 발송에는 서버 설정(.env)의 SMTP 릴레이 / SMS 게이트웨이 주소가 필요합니다. 지금 상태로는 발송 건이 모두 실패 처리됩니다."
+          description="«설정»에서 메일 서버 · 문자 게이트웨이 · 카카오 대행사 주소를 넣어 주세요. 지금 상태로는 발송 건이 모두 실패 처리됩니다."
         />
       )}
       <div className="std-card std-table-card">
@@ -929,7 +1082,7 @@ function ChannelsTab() {
             ch.relay_configured ? (
               <Tag color="success">설정됨</Tag>
             ) : (
-              <Tooltip title="서버 .env 에 SMTP 릴레이 주소 또는 SMS 게이트웨이 주소를 넣고 재기동하면 설정됩니다.">
+              <Tooltip title="«설정» 버튼에서 메일 서버 · 문자 게이트웨이 · 카카오 대행사 주소를 넣으면 바로 설정됩니다(재기동 불필요).">
                 <Tag color="warning">미설정</Tag>
               </Tooltip>
             ),
@@ -940,6 +1093,15 @@ function ChannelsTab() {
           key: "enabled-toggle",
           width: 90,
           render: (enabled: boolean, ch) => <Switch checked={enabled} onChange={(v) => toggle(ch, v)} />,
+        },
+        {
+          title: "설정",
+          width: 90,
+          render: (_: unknown, ch) => (
+            <Button size="small" onClick={() => setSettingsFor(ch.channel_type)}>
+              설정
+            </Button>
+          ),
         },
         {
           title: "테스트",
@@ -953,6 +1115,7 @@ function ChannelsTab() {
         ]}
       />
       </div>
+      <ChannelSettingsModal channelType={settingsFor} onClose={() => setSettingsFor(null)} />
     </div>
   );
 }
@@ -991,10 +1154,10 @@ function RecipientsTab() {
     qc.invalidateQueries({ queryKey: ["recipients"] });
   }
   // 채널 구독. 이게 없으면 이메일·전화를 등록해 두어도 실제 알림은 화면에만 남는다.
-  async function toggleChannel(r: Recipient, channel: "EMAIL" | "SMS", on: boolean) {
+  async function toggleChannel(r: Recipient, channel: "EMAIL" | "SMS" | "KAKAO", on: boolean) {
     try {
       await setSubscription(r.id, channel, on);
-      message.success(`${r.display_name} ${channel === "EMAIL" ? "이메일" : "문자"} 수신 ${on ? "켜짐" : "꺼짐"}`);
+      message.success(`${r.display_name} ${channelLabel(channel)} 수신 ${on ? "켜짐" : "꺼짐"}`);
       qc.invalidateQueries({ queryKey: ["recipients"] });
     } catch (err) {
       // 연락처가 없는 채널을 켜면 서버가 이유를 준다 - 그대로 보여 준다.
@@ -1011,7 +1174,7 @@ function RecipientsTab() {
       <span className="std-notice">
         <WfIcon name="info" size={14} />
         «이메일 수신»·«문자 수신»을 켜야 실제로 발송됩니다. 등록만 해두면 화면 알림에만 남습니다.
-        추가할 때 적은 연락처는 자동으로 켜집니다. (메일·문자는 «위험» 등급만 발송됩니다)
+        추가할 때 적은 연락처는 자동으로 켜집니다. (메일 · 문자 · 카카오톡은 «위험» 등급만 발송됩니다)
       </span>
       <div className="std-card std-filter-card">
       <Form form={form} layout="inline" onFinish={add}>
@@ -1093,6 +1256,26 @@ function RecipientsTab() {
                   disabled={!r.phone}
                   checked={subscribed(r, "SMS")}
                   onChange={(v) => toggleChannel(r, "SMS", v)}
+                />
+              </Tooltip>
+            ),
+          },
+          {
+            // 알림톡도 같은 휴대폰 번호로 간다 - 카카오 전용 식별자를 따로 받지 않는다.
+            title: (
+              <Tooltip title="켜야 실제로 발송됩니다. 카카오톡은 등록된 전화번호로 보냅니다.">
+                <span>카카오톡 수신 ⓘ</span>
+              </Tooltip>
+            ),
+            key: "sub-kakao",
+            width: 120,
+            render: (_: unknown, r) => (
+              <Tooltip title={r.phone ? "" : "전화번호가 등록되지 않아 켤 수 없습니다"}>
+                <Switch
+                  size="small"
+                  disabled={!r.phone}
+                  checked={subscribed(r, "KAKAO")}
+                  onChange={(v) => toggleChannel(r, "KAKAO", v)}
                 />
               </Tooltip>
             ),

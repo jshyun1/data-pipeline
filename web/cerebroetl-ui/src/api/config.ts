@@ -75,8 +75,10 @@ export async function getScopeTargets(category: string): Promise<ScopeTarget[]> 
   return unwrap(res.data);
 }
 
+export type NotificationChannel = "IN_APP" | "EMAIL" | "SMS" | "KAKAO";
+
 export interface ChannelConfig {
-  channel_type: "IN_APP" | "EMAIL" | "SMS";
+  channel_type: NotificationChannel;
   enabled: boolean;
   /**
    * 서버에 릴레이(SMTP 호스트 / SMS 게이트웨이)가 설정돼 있는지. enabled 는 화면 토글이고
@@ -107,7 +109,7 @@ export interface Recipient {
 /** 수신자의 채널 구독을 켜고 끈다. 연락처가 없는 채널을 켜면 서버가 이유를 담아 거절한다. */
 export async function setSubscription(
   recipientId: number,
-  channelType: "EMAIL" | "SMS",
+  channelType: Exclude<NotificationChannel, "IN_APP">,
   enabled: boolean,
 ): Promise<void> {
   await apiClient.put(`/admin/notification/recipients/${recipientId}/subscriptions`, {
@@ -221,6 +223,41 @@ export async function updateChannel(
 
 export async function testChannel(type: string): Promise<void> {
   await apiClient.post(`/notifications/channels/${type}/test`);
+}
+
+/**
+ * 채널 설정(메일 서버 · 문자 게이트웨이 · 카카오 대행사 API). 어느 망에 들어가든 화면에서 넣으면
+ * 다음 발송부터 그 값으로 나간다. 비밀값은 내려오지 않고 저장 여부 · 끝자리 힌트만 온다.
+ */
+export interface ChannelSettings {
+  channelType: string;
+  /** 채널마다 항목이 다르다(메일: host·port…, 문자·카카오: url·headers…). */
+  values: Record<string, string>;
+  secretSet: boolean;
+  secretHint: string | null;
+  /** 화면에서 저장한 적이 없어 서버 환경변수 값으로 돌고 있다는 뜻. */
+  fromEnvOnly: boolean;
+}
+
+export async function getChannelSettings(type: string): Promise<ChannelSettings> {
+  const res = await apiClient.get<ApiResponse<ChannelSettings>>(`/admin/notification/channels/${type}/settings`);
+  return unwrap(res.data);
+}
+
+/** 비밀값(secret)을 비워 보내면 저장된 값을 그대로 둔다 - GPT 제공자 등록과 같은 규칙이다. */
+export async function saveChannelSettings(
+  type: string,
+  body: { values: Record<string, string>; secret?: string },
+): Promise<ChannelSettings> {
+  const res = await apiClient.put<ApiResponse<ChannelSettings>>(
+    `/admin/notification/channels/${type}/settings`, body);
+  return unwrap(res.data);
+}
+
+export async function clearChannelSecret(type: string): Promise<ChannelSettings> {
+  const res = await apiClient.delete<ApiResponse<ChannelSettings>>(
+    `/admin/notification/channels/${type}/settings/secret`);
+  return unwrap(res.data);
 }
 
 export async function getRecipients(): Promise<Recipient[]> {
