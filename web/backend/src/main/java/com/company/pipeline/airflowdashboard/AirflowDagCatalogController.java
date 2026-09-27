@@ -81,6 +81,24 @@ public class AirflowDagCatalogController {
     }
 
     /**
+     * DAG 일시 중지 해제 · 설정(화면 속성창의 «해제» 버튼, 2026-09-27 요청).
+     *
+     * <p><b>해제하면 밀린 회차가 곧바로 한 번 돈다.</b> catchup 을 꺼 두어도 Airflow 가 «빠진 가장 최근 회차»를
+     * 재개 직후 만든다(2026-09-11 · 09-16 실측). 화면이 그 점을 알리고 확인을 받은 뒤 부른다.
+     *
+     * <p>쓰기 권한(AIRFLOW WRITE)이 있어야 한다 - 클래스에 붙은 {@code @RequirePermission} 이
+     * HTTP 동사로 판정하므로 POST 인 이 메서드는 쓰기로 다뤄진다.
+     */
+    @PostMapping("/{dagId}/paused")
+    public ApiResponse<Void> setPaused(@PathVariable String dagId, @RequestBody PausedRequest request) {
+        dagRunClient.setPaused(dagId, request.paused());
+        return ApiResponse.success(null);
+    }
+
+    public record PausedRequest(boolean paused) {
+    }
+
+    /**
      * CDC 제어 DAG의 «감시 재개(monitor)» 중복 실행을 막는다.
      *
      * <p>monitor/start Run은 마지막 태스크가 reschedule 센서(monitor_cdc_runtime)라 DagRun이

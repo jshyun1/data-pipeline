@@ -2134,3 +2134,28 @@ Testcontainers 가 Docker 를 못 찾아 나는 환경 문제로, 코드와 무�
 `requested_at` 은 naive 컬럼이라 DB 기본값 `now()` 로 들어가면 UTC 가 된다. 다만 앱은
 `PipelineCommandHistoryRecorder` 가 `LocalDateTime.now()`(JVM=KST)로 **직접 넣으므로** 저장값은 KST 이고,
 화면에 그대로 보여 주는 것이 맞다. psql 로 직접 넣은 시험 행만 9시간 어긋나 보였던 것이다.
+
+## 59. 워크플로우 로그 속성창에서 일시 중지 해제 (2026-09-27)
+
+**요청**: 속성창 «상태»가 일시 중지면 그 오른쪽에 [해제] 버튼을 두고, 누르면 풀리게 할 것.
+
+**왜 필요했나**: 화면은 일시 중지 상태를 **보여 주기만** 했다. 푸는 방법은 Airflow 웹(`/airflow`)이나
+CLI 뿐이었고, 화면의 «실행 설정 → 시작»은 수동 Run 을 만드는 것이라 **일시 중지 상태에서는 queued 에 갇힌다**
+(실측: 일시 중지된 DAG 에 트리거 → `queued`, start_date 없음 → 해제하자 그 Run 이 곧바로 실행·성공).
+
+- 백엔드: `AirflowDagRunClient.setPaused(dagId, paused)`(Airflow `PATCH /dags/{id}`),
+  `POST /api/airflow/dag-catalog/{dagId}/paused`. Airflow 에 직접 쏘지 않고 pipeline-api 를 경유해 권한(AIRFLOW WRITE)을 태운다.
+- 화면: 상태가 «일시 중지»이고 쓰기 권한이 있을 때만 [해제]. 누르면 확인창에
+  «해제하면 **밀린 마지막 회차가 곧바로 한 번** 실행됩니다 (스케줄 …). 그 뒤로는 정상 스케줄로 돕니다.»
+  를 띄운다 - catchup 을 꺼 두어도 Airflow 가 빠진 회차를 재개 직후 만든다(2026-09-11 · 09-16 실측).
+  성공하면 대시보드를 다시 받아 상태 · 다음 실행이 바로 반영된다.
+
+**검증**: API 로 `test_hello` 를 해제(200 → is_paused=f). 화면에서 total(일시 중지)을 고르면
+«상태 | 일시 중지 | 해제» 가 보이고 확인창 문구까지 확인했다. **실제 해제는 누르지 않았다** -
+root_total 은 해제하면 실제 적재가 돌아 사용자 결정 사항이다. 프런트 tsc · 백엔드 컴파일 통과.
+
+**일시 중지 경위 조사(확증 실패)**: Airflow 감사 로그(`log`)에 root_total 의 pause 이벤트가 **없다**.
+`cli_dag_pause` 는 2건뿐이고 오늘 내 실험(test_hello)과 8/30 다른 DAG 다. Airflow 3 은 UI · REST 로 한
+일시 중지를 `log` 에 남기지 않아 누가 · 언제 했는지 확증할 수 없다. 정황은 마지막 성공 실행이 9/18 10:54 이고
+9/19 부터 실행 0건, 9/20~21 도커 복구 때 «배치는 돌리지 말고 서비스만 올려라»는 요청이 있었다는 점이다 -
+복구 시 밀린 회차가 도는 것을 막으려 누른 것으로 보이나 **WORK_LOG 에 기록이 없다**. 앞으로 같은 조치는 기록할 것.

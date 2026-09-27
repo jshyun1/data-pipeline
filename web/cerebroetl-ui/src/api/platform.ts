@@ -418,6 +418,18 @@ export async function triggerAirflowDag(
   );
 }
 
+/**
+ * DAG 일시 중지 해제 · 설정. Airflow 에 직접 쏘지 않고 pipeline-api 를 경유한다(권한 · 감사).
+ *
+ * <p>해제하면 밀린 회차가 곧바로 한 번 돈다 - 부르는 화면이 먼저 알리고 확인을 받는다.
+ */
+export async function setAirflowDagPaused(dagId: string, paused: boolean): Promise<void> {
+  await apiClient.post<ApiResponse<unknown>>(
+    `/airflow/dag-catalog/${encodeURIComponent(dagId)}/paused`,
+    { paused },
+  );
+}
+
 export async function listAirflowTaskInstances(dagId: string, dagRunId: string): Promise<AirflowTaskInstance[]> {
   const res = await axios.get<{ task_instances?: AirflowTaskInstance[] }>(
     `${AIRFLOW_API_BASE}/dags/${encodeURIComponent(dagId)}/dagRuns/${encodeURIComponent(dagRunId)}/taskInstances`,

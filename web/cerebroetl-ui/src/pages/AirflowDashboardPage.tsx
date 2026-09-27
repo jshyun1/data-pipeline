@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Button, ConfigProvider, DatePicker, Descriptions, Dropdown, Empty, Input, message, Modal, Radio, Select, Space, Spin, Table, Tag, Typography } from "antd";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, ConfigProvider, DatePicker, Descriptions, Dropdown, Empty, Input, message, Modal, Popconfirm, Radio, Select, Space, Spin, Table, Tag, Typography } from "antd";
 import type { Dayjs } from "dayjs";
 import {
   DeploymentUnitOutlined,
@@ -24,6 +24,7 @@ import {
   triggerAirflowDag,
   type AirflowDag,
   type AirflowDagRun,
+  setAirflowDagPaused,
 } from "../api/platform";
 import { getProcessHealth, type ProcessGroup } from "../api/infra";
 import { getWorkflow, listWorkflows, type WorkflowSummary } from "../api/workflows";
@@ -1639,6 +1640,17 @@ function PropertyPanel({
   // 실행 설정(트리거·스케줄 변경)은 Airflow 쓰기 권한이 있어야 한다.
   const { can, permissionsLoaded } = useAuth();
   const canRun = !permissionsLoaded || can("AIRFLOW", "WRITE");
+  // 일시 중지 해제. 성공하면 대시보드(카탈로그 · DAG 목록)를 다시 받아 상태 · 다음 실행이 바로 반영되게 한다.
+  const queryClient = useQueryClient();
+  const unpause = useMutation({
+    mutationFn: () => setAirflowDagPaused(dag!.dag_id, false),
+    onSuccess: async () => {
+      message.success("일시 중지를 해제했습니다. 밀린 회차가 곧 시작됩니다.");
+      await queryClient.invalidateQueries({ queryKey: ["airflow-dashboard"] });
+    },
+    onError: (error: unknown) =>
+      message.error(`해제하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`),
+  });
   // CDC 파이프라인을 골랐을 때. CDC 관리 화면의 «기본정보»와 같은 항목을 보여준다.
   if (!inline && pipeline) {
     return (
@@ -1693,7 +1705,33 @@ function PropertyPanel({
           <dt>업무 구분</dt><dd>{isCdcWorkflowDag(dag) ? "CDC 워크플로우" : category}</dd>
           <dt>업무 폴더</dt><dd>{folderName(dag)}</dd>
           <dt>스케줄</dt><dd title={dag.timetable_summary}>{scheduleDescription(dag.timetable_summary)}</dd>
-          <dt>상태</dt><dd>{dag.is_paused ? "일시 중지" : dag.is_active === false ? "비활성" : "활성"}</dd>
+          <dt>상태</dt>
+          <dd>
+            {dag.is_paused ? "일시 중지" : dag.is_active === false ? "비활성" : "활성"}
+            {/* 일시 중지된 스케줄은 화면에서 바로 풀 수 있게 한다(2026-09-27 요청).
+                푸는 순간 밀린 회차가 한 번 돌기 때문에, 무엇이 돌지 적어 두고 확인을 받는다. */}
+            {dag.is_paused && canRun && (
+              <Popconfirm
+                title="일시 중지를 해제할까요?"
+                description={
+                  <span style={{ display: "inline-block", maxWidth: 280 }}>
+                    해제하면 <b>밀린 마지막 회차가 곧바로 한 번</b> 실행됩니다
+                    {dag.timetable_summary && dag.timetable_summary !== "None"
+                      ? ` (스케줄 ${scheduleDescription(dag.timetable_summary)}).`
+                      : "."}
+                    {" "}그 뒤로는 정상 스케줄로 돕니다.
+                  </span>
+                }
+                okText="해제"
+                cancelText="취소"
+                onConfirm={() => unpause.mutate()}
+              >
+                <Button size="small" type="link" loading={unpause.isPending} style={{ paddingLeft: 8 }}>
+                  해제
+                </Button>
+              </Popconfirm>
+            )}
+          </dd>
           <dt>설명</dt><dd>{dag.description || "-"}</dd>
         </dl>
         <div className="airflow-schedule-actions">

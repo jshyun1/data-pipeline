@@ -202,6 +202,22 @@ public class AirflowDagRunClient {
                 .body(DagRun.class));
     }
 
+    /**
+     * DAG 의 일시 중지 상태를 바꾼다(화면 «해제» 버튼).
+     *
+     * <p>일시 중지를 <b>푸는 순간 밀린 회차가 곧바로 한 번 돈다</b> - catchup 을 꺼 두어도 Airflow 가
+     * «빠진 가장 최근 회차»를 재개 직후 만든다(2026-09-11 · 09-16 실측). 부르는 쪽에서 그 점을 알리고 받아야 한다.
+     */
+    public void setPaused(String dagId, boolean paused) {
+        withAuth(token -> restClient.patch()
+                .uri("/dags/{dagId}", dagId)
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("is_paused", paused))
+                .retrieve()
+                .toBodilessEntity());
+    }
+
     /** Airflow Variable upsert(없으면 POST, 있으면 409 → PATCH). 스케줄 저장에 쓴다. */
     public void upsertVariable(String key, String value) {
         try {
