@@ -4,8 +4,13 @@ import { ArrowUpOutlined } from "@ant-design/icons";
 import { DEPLOYMENT_LABEL, type LlmCompacted } from "../../api/llm";
 import type { GptPreviewState, GptTurn } from "./useGptConversation";
 
-/** 첫 답변 형식의 네 제목(서버 ErrorAnalysisAgent 와 같다). 모델이 «## 원인 추정» · «**원인 추정**» 처럼 꾸며도 제목으로 본다. */
-const HEADINGS = ["원인 추정", "확인할 것", "조치 방법", "확신도"];
+/**
+ * 첫 답변 형식의 세 제목(서버 ErrorAnalysisAgent 와 같다). 모델이 «## 원인» · «**원인**» 처럼 꾸며도 제목으로 본다.
+ *
+ * <p>옛 제목(원인 추정 · 확인할 것 · 확신도)도 남겨 둔다 - 모델이 예전 형식으로 답하거나 화면에 남아 있던
+ * 지난 답을 다시 그릴 때 제목이 본문으로 섞이지 않게 한다(2026-09-28 문구 변경).
+ */
+const HEADINGS = ["원인", "확인사항", "조치 방법", "원인 추정", "확인할 것", "확신도"];
 const HEADING_PATTERN = new RegExp(`^\\s*(?:#+\\s*)?(?:\\*\\*)?(${HEADINGS.join("|")})(?:\\*\\*)?\\s*:?\\s*$`);
 
 function AnswerText({ text }: { text: string }) {

@@ -84,7 +84,7 @@ public class EtlJobContextCollector implements LlmContextCollector {
             return null;
         }
         return "ETL 처리 중 발생한 오류 내용입니다.\n"
-                + "원인 추정, 확인할 것, 조치 방법 형식으로 분석할 때 이 오류 원문을 우선 근거로 삼으십시오.\n\n"
+                + "원인, 확인사항, 조치 방법 형식으로 분석할 때 이 오류 원문을 우선 근거로 삼으십시오.\n\n"
                 + base;
     }
 
