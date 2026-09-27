@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -97,9 +98,21 @@ public class PipelineController {
         return ApiResponse.success(pipelineService.get(id));
     }
 
+    /**
+     * 파이프라인 제어 이력(화면 «이력» 탭).
+     *
+     * <p>기본은 <b>사람이 한 제어만</b> 최근 200건이다. 30초 주기 자동 감시({@code RUNTIME_MONITOR})가
+     * 수천 건이라, 그대로 주면 시작 · 중지 · 배포 · <b>건너뛰기(SKIP_RECORD)</b> 같은 실제 조치가 묻힌다.
+     * 전부 보려면 {@code includeAuto=true}.
+     */
     @GetMapping("/{id}/history")
-    public ApiResponse<List<PipelineCommandHistoryResponse>> history(@PathVariable Long id) {
-        return ApiResponse.success(pipelineCommandHistoryRepository.findByPipelineIdOrderByRequestedAtDesc(id)
+    public ApiResponse<List<PipelineCommandHistoryResponse>> history(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "false") boolean includeAuto,
+            @RequestParam(defaultValue = "200") int limit) {
+        int size = Math.max(1, Math.min(limit, 1000));
+        return ApiResponse.success(pipelineCommandHistoryRepository
+                .findRecent(id, includeAuto, org.springframework.data.domain.PageRequest.of(0, size))
                 .stream().map(PipelineCommandHistoryResponse::from).toList());
     }
 

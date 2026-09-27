@@ -18,8 +18,17 @@ export async function listPipelineRuntimeStatuses(): Promise<PipelineRuntimeStat
   return unwrap(res.data);
 }
 
-export async function getPipelineHistory(id: number): Promise<PipelineCommandHistoryResponse[]> {
-  const res = await apiClient.get<ApiResponse<PipelineCommandHistoryResponse[]>>(`/pipelines/${id}/history`);
+/**
+ * 파이프라인 제어 이력. 기본은 «사람이 한 제어»만이다 - 30초 주기 자동 감시(RUNTIME_MONITOR)가
+ * 수천 건이라 그대로 받으면 시작 · 중지 · 배포 · 건너뛰기가 묻힌다.
+ */
+export async function getPipelineHistory(
+  id: number,
+  options?: { includeAuto?: boolean; limit?: number },
+): Promise<PipelineCommandHistoryResponse[]> {
+  const res = await apiClient.get<ApiResponse<PipelineCommandHistoryResponse[]>>(`/pipelines/${id}/history`, {
+    params: { includeAuto: options?.includeAuto ?? false, limit: options?.limit ?? 200 },
+  });
   return unwrap(res.data);
 }
 

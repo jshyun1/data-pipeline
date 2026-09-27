@@ -31,6 +31,8 @@ export interface PipelineCommandHistoryResponse {
   command: string;
   result: string | null;
   message: string | null;
+  /** 누가 했는지. 건너뛰기(SKIP_RECORD)처럼 데이터를 버리는 조치는 이 값이 감사의 핵심이다. */
+  requestedBy: string | null;
   requestedAt: string;
   completedAt: string | null;
 }

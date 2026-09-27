@@ -1,3 +1,4 @@
+import dayjs from "dayjs";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,6 +15,7 @@ import {
   Space,
   Spin,
   Table,
+  Checkbox,
   Tabs,
   Tag,
   Typography,
@@ -82,6 +84,21 @@ const STATUS_SEVERITY: Record<string, number> = {
   CREATED: 4,
   READY: 5,
   DEPLOYED: 6,
+};
+
+/**
+ * 제어 이력의 명령 이름. 코드 그대로 보여 주면 «PREPARE 가 뭔가»를 매번 물어야 한다.
+ * 모르는 코드는 그대로 둔다(새 명령이 생겨도 화면이 비지 않게).
+ */
+const COMMAND_LABEL: Record<string, string> = {
+  START: "시작",
+  STOP: "중지",
+  RESTART: "재시작",
+  PREPARE: "사전 점검",
+  DEPLOY: "배포",
+  SINK_CONFIG_REFRESH: "싱크 설정 갱신",
+  RUNTIME_MONITOR: "자동 감시",
+  SKIP_RECORD: "건너뛰기(손실)",
 };
 
 export function PipelinesPage() {
@@ -165,9 +182,11 @@ export function PipelinesPage() {
     [realtimeMetrics],
   );
 
+  // 자동 감시 기록(RUNTIME_MONITOR)은 기본으로 감춘다 - 30초 주기라 수천 건이다.
+  const [historyIncludeAuto, setHistoryIncludeAuto] = useState(false);
   const { data: history, isLoading: historyLoading } = useQuery({
-    queryKey: ["pipeline-history", detailPipelineId],
-    queryFn: () => getPipelineHistory(detailPipelineId!),
+    queryKey: ["pipeline-history", detailPipelineId, historyIncludeAuto],
+    queryFn: () => getPipelineHistory(detailPipelineId!, { includeAuto: historyIncludeAuto }),
     enabled: detailPipelineId !== null,
   });
   const detailPipeline = pipelines?.find((p) => p.id === detailPipelineId) ?? null;
@@ -788,26 +807,63 @@ export function PipelinesPage() {
               },
               {
                 key: "history",
-                label: "이력",
+                label: "제어 이력",
                 children: (
-                  <Table<PipelineCommandHistoryResponse>
-                    rowKey="id"
-                    size="small"
-                    loading={historyLoading}
-                    dataSource={history}
-                    pagination={false}
-                    columns={[
-                      { title: "명령", dataIndex: "command" },
-                      {
-                        title: "결과",
-                        dataIndex: "result",
-                        render: (value: string | null) =>
-                          value ? <Tag color={value === "SUCCESS" ? "success" : "error"}>{value}</Tag> : "-",
-                      },
-                      { title: "메시지", dataIndex: "message", ellipsis: true },
-                      { title: "요청 시각", dataIndex: "requestedAt" },
-                    ]}
-                  />
+                  <>
+                    {/* 이 탭은 «누가 이 파이프라인에 무엇을 했는지»를 보는 자리다. 30초 주기 자동 감시는
+                        기본으로 감춘다 - 수천 건이라 켜 두면 실제 조치(시작 · 중지 · 배포 · 건너뛰기)가 묻힌다. */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ color: "#888", fontSize: 12 }}>
+                        사람이 한 제어를 최근 것부터 보여 줍니다. «건너뛰기»는 그 건이 타깃에 <b>들어가지 않은</b> 기록입니다.
+                      </span>
+                      <Checkbox checked={historyIncludeAuto} onChange={(e) => setHistoryIncludeAuto(e.target.checked)}>
+                        자동 감시 기록 포함
+                      </Checkbox>
+                    </div>
+                    <Table<PipelineCommandHistoryResponse>
+                      rowKey="id"
+                      size="small"
+                      loading={historyLoading}
+                      dataSource={history}
+                      pagination={{ pageSize: 10, hideOnSinglePage: true, showTotal: (total) => `총 ${total}건` }}
+                      rowClassName={(row) => (row.command === "SKIP_RECORD" ? "cdc-history-skip" : "")}
+                      expandable={{
+                        rowExpandable: (row) => Boolean(row.message),
+                        expandedRowRender: (row) => (
+                          <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: 12 }}>{row.message}</pre>
+                        ),
+                      }}
+                      columns={[
+                        {
+                          title: "명령",
+                          dataIndex: "command",
+                          width: 120,
+                          render: (value: string) =>
+                            value === "SKIP_RECORD"
+                              ? <Tag color="error">건너뛰기(손실)</Tag>
+                              : <span>{COMMAND_LABEL[value] ?? value}</span>,
+                        },
+                        {
+                          title: "결과",
+                          dataIndex: "result",
+                          width: 80,
+                          render: (value: string | null) =>
+                            value ? <Tag color={value === "SUCCESS" ? "success" : "error"}>{value}</Tag> : "-",
+                        },
+                        { title: "요청자", dataIndex: "requestedBy", width: 90, render: (v: string | null) => v ?? "시스템" },
+                        // 메시지는 남은 폭을 다 쓴다(서랍이 좁아 열을 나눠 주면 «메.» 처럼 제목까지 잘린다).
+                        // 전체 내용은 줄을 펼치면 보인다.
+                        { title: "메시지", dataIndex: "message", ellipsis: true, render: (v: string | null) => v ?? "-" },
+                        {
+                          title: "요청 시각",
+                          dataIndex: "requestedAt",
+                          width: 140,
+                          // 저장된 값은 앱과 같은 시간대(KST)의 LocalDateTime 이다. 초까지만 보여 준다.
+                          render: (v: string) => (v ? dayjs(v).format("YYYY-MM-DD HH:mm:ss") : "-"),
+                        },
+                      ]}
+                    />
+                  </>
                 ),
               },
               // 속성창 GPT 탭(docs/2026-09-13-gpt-settings-design.md 5-2)은 위 «AI 어시스턴트» 탭으로 옮겼다.

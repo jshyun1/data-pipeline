@@ -2107,3 +2107,30 @@ Testcontainers 가 Docker 를 못 찾아 나는 환경 문제로, 코드와 무�
   볼륨은 손대지 않는다.
 - 검증: 정상 상태에서 «복구할 것이 없다» 확인 → `filebeat.yml` 을 잠시 옮겨 깨뜨린 뒤(컨테이너가 `created` 로 멈춤)
   스크립트가 탐지·재생성해 healthy 로 되돌리는 것까지 확인. 이때 도커가 만든 빈 디렉터리를 치우고 파일을 원복했다.
+
+## 58. CDC 상세의 «이력» 탭을 제어 이력으로 쓸 수 있게 (2026-09-27)
+
+**요청**: 건너뛴 레코드(제어) 이력을 CDC 관리 화면 상세에서 볼 수 있게 할 것.
+
+**확인**: 탭은 **이미 있었다**(상세 → 이력). 다만 이력을 보는 뜻을 못 살리고 있었다.
+- **요청자가 DTO 에서 빠져 있었다** - 컬럼(`requested_by`)은 있는데 화면까지 오지 않았다.
+  건너뛰기처럼 데이터를 버리는 조치는 «누가 했는가»가 감사의 핵심인데 그게 없었다.
+- 30초 주기 자동 감시(`RUNTIME_MONITOR`)가 2,778건이라 사람이 한 제어가 묻혔다. 게다가 **전부 내려받았다**(제한 없음).
+- 명령이 코드 그대로(`PREPARE`·`SINK_CONFIG_REFRESH`), 시각은 ISO 원문, 메시지 열은 폭에 눌려 «메.» 로 잘렸다.
+
+**고친 것**
+- `PipelineCommandHistoryResponse` 에 `requestedBy` 추가.
+- `GET /pipelines/{id}/history?includeAuto=&limit=` - 기본은 **사람이 한 제어만 최근 200건**.
+  자동 감시는 화면 체크박스로 켠다(`findRecent` 쿼리 신설, 상한 1000).
+- 탭 이름 «이력» → «제어 이력». 열: 명령(한글) · 결과 · 요청자 · 메시지 · 요청 시각(초까지).
+  줄을 펼치면 메시지 전문. 건너뛰기는 빨간 태그 «건너뛰기(손실)» + 행 배경 강조(`.cdc-history-skip`).
+
+**검증**: 화면에서 탭 5개(기본정보 · 운영 상태 · Connector · 정합성 · 제어 이력) 확인, 기본 4건 /
+`includeAuto=true` 23건(API 실측). 시험용 `SKIP_RECORD` 행을 넣어 빨간 태그 · 요청자(cktnqhd15) ·
+펼친 메시지 전문까지 확인하고 삭제했다. 프런트 tsc 통과, 백엔드 278건 중 277건 통과
+(`ConnectionRepositoryIT` 는 빌드 컨테이너에 Docker 가 없어 나는 환경 문제).
+
+**시간대 확인**(이번에 짚음): metadata-db 의 Postgres `timezone` 설정은 **UTC** 다(컨테이너 TZ 는 KST).
+`requested_at` 은 naive 컬럼이라 DB 기본값 `now()` 로 들어가면 UTC 가 된다. 다만 앱은
+`PipelineCommandHistoryRecorder` 가 `LocalDateTime.now()`(JVM=KST)로 **직접 넣으므로** 저장값은 KST 이고,
+화면에 그대로 보여 주는 것이 맞다. psql 로 직접 넣은 시험 행만 9시간 어긋나 보였던 것이다.

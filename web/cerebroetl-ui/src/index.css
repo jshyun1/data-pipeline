@@ -2186,6 +2186,11 @@ body {
   font-size: 12px;
 }
 
+/* 제어 이력의 «건너뛰기» 줄 - 그 건은 타깃에 들어가지 않았다(데이터 손실). 눈에 띄게 둔다. */
+.cdc-history-skip > td {
+  background: #fff1f0;
+}
+
 /* 실패 로그 창 머리 - 어느 실행(차수)의 로그인지(2026-09-21 요청). */
 .failure-log-run {
   margin: -4px 0 12px;
