@@ -140,10 +140,12 @@ function screenErrorText(row: UnifiedCdcLogRow) {
   return lines.join("\n");
 }
 
-/** 상세로 볼 것이 있는 줄인가. 없으면 [+] 를 그리지 않는다(눌러도 빈 창만 뜨므로). */
+/**
+ * 상세로 볼 것이 있는 줄인가. 없으면 [+] 를 그리지 않는다(눌러도 빈 창만 뜨므로).
+ * 요청자만 있던 줄은 빠졌다 - 요청자를 창에서 뺐으므로 더 보여 줄 것이 없다(2026-09-27).
+ */
 function hasDetail(row: UnifiedCdcLogRow) {
-  return row.kind === "processing" || row.status === "FAILED"
-      || Boolean(row.message) || Boolean(row.event?.requestedBy);
+  return row.kind === "processing" || row.status === "FAILED" || Boolean(row.message);
 }
 
 /** 펼친 줄에 보여 주던 항목들. 이제는 상세 창이 같은 것을 쓴다. */
@@ -159,9 +161,6 @@ function detailLines(row: UnifiedCdcLogRow): Array<[string, ReactNode]> {
     lines.push(["커넥터 상태", `Source ${p.sourceState ?? "-"} · Sink ${p.sinkState ?? "-"}`]);
     lines.push(["Lag", formatCount(p.consumerLag)]);
     lines.push(["일 누적 처리", formatCount(p.dailyProcessedCount)]);
-  }
-  if (row.event) {
-    lines.push(["요청자", row.event.requestedBy ?? "시스템"]);
   }
   return lines;
 }
@@ -194,7 +193,7 @@ function CdcLogDetailModal({ row, pipelineAlive, onClose }: {
       width={860}
       destroyOnHidden
       rootClassName="cerebro-modal"
-      title={row ? `${row.pipelineName || "로그"} · ${row.kindLabel}` : undefined}
+      title={row ? row.pipelineName || "로그" : undefined}
     >
       {row && (
         <div style={{ fontSize: 12 }}>

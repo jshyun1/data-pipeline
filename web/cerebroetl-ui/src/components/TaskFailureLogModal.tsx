@@ -264,7 +264,7 @@ export function TaskFailureLogModal({ target, onClose }: { target?: FailureLogTa
     // 머리줄은 «어느 실행의 로그인가»를 말한다(2026-09-27 요청) - 아래에 이미 «{task} · run» 이 있어
     // 제목에 task 이름을 또 쓰면 같은 말이 두 번이다. 차수 정보가 없으면(대시보드에서 연 경우) 예전처럼 task 이름을 쓴다.
     <Modal open={Boolean(target)}
-           title={target ? (target.runLabel ? `${target.runLabel} 실행 · 실패 로그` : `${target.title} 실패 로그`) : undefined}
+           title={target ? (target.runLabel ? `${target.runLabel} 실행` : `${target.title} 실패 로그`) : undefined}
            onCancel={onClose}
            footer={null} width={960} destroyOnHidden rootClassName="cerebro-modal accent-modal">
       {query.isLoading ? (
