@@ -609,16 +609,34 @@ public class NotificationService {
         vars.put("senderKey", settings.get("senderKey", ""));
         vars.put("templateCode", settings.get("templateCode", ""));
         vars.put("secret", settings.secret() == null ? "" : settings.secret());
+        // 폼 본문 «안에 JSON 이 들어 있는» 형식이 있다(카카오 «나에게 보내기»:
+        //   template_object={"object_type":"text","text":"{text}"} ).
+        // 이때 URL 인코딩만 하면, 게이트웨이가 디코딩한 뒤 JSON 문자열 안에 따옴표·줄바꿈이 날것으로
+        // 남아 JSON 이 깨진다(알림 본문에는 둘 다 흔하다). JSON 이스케이프를 먼저 하고 URL 인코딩한다.
+        boolean jsonInForm = form && looksLikeJson(template);
         String out = template;
         for (Map.Entry<String, String> e : vars.entrySet()) {
-            String value = escapeFor(e.getValue(), form);
+            String value = escapeFor(e.getValue(), form, jsonInForm);
             out = out.replace("${" + e.getKey() + "}", value).replace("{" + e.getKey() + "}", value);
         }
         return out;
     }
 
-    private String escapeFor(String value, boolean form) {
+    private String escapeFor(String value, boolean form, boolean jsonInForm) {
+        if (jsonInForm) {
+            return java.net.URLEncoder.encode(jsonEsc(value), StandardCharsets.UTF_8);
+        }
         return form ? java.net.URLEncoder.encode(value, StandardCharsets.UTF_8) : jsonEsc(value);
+    }
+
+    /**
+     * 본문 형식이 JSON 을 담고 있는가. {@code {"} 가 있으면 JSON 객체를 적은 것으로 본다.
+     *
+     * <p>일반 폼 형식({@code to={to}&text={text}} - 문자 대행사)과 갈라내려는 것이다. 거기까지
+     * JSON 이스케이프를 하면 문자 본문에 역슬래시가 섞여 나간다.
+     */
+    private boolean looksLikeJson(String template) {
+        return template.contains("{\"");
     }
 
     /**

@@ -104,6 +104,63 @@ class NotificationGatewayTest {
         assertThat(status(id)).isEqualTo("SENT");
     }
 
+    /**
+     * 카카오 «나에게 보내기»는 폼 본문 <b>안에</b> JSON 을 담는다
+     * ({@code template_object={"object_type":"text","text":"..."}}). 알림 본문에 흔한 따옴표·줄바꿈이
+     * 그대로 실리면 게이트웨이가 URL 디코딩한 뒤 JSON 이 깨져 400 이 난다 - 먼저 JSON 이스케이프해야 한다.
+     */
+    @Test
+    void 폼_안에_담긴_JSON_은_따옴표와_줄바꿈을_이스케이프한다() throws Exception {
+        gateway.enqueue(new MockResponse().setResponseCode(200).setBody("{\"result_code\":0}"));
+        long id = insertDelivery("KAKAO", "01012345678", "제목",
+                "적재 \"지연\" 발생\n대상: dz_order_daily");
+        NotificationService service = service(settings(Map.of(
+                "url", gateway.url("/v2/api/talk/memo/default/send").toString(),
+                "headers", "Authorization: Bearer {secret}",
+                "contentType", "application/x-www-form-urlencoded;charset=utf-8",
+                "bodyTemplate", "template_object={\"object_type\":\"text\",\"text\":\"{text}\","
+                        + "\"link\":{\"web_url\":\"https://developers.kakao.com\"}}"), "TOKEN-1"));
+
+        service.dispatch();
+
+        RecordedRequest sent = gateway.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(sent).isNotNull();
+        assertThat(sent.getHeader("Authorization")).isEqualTo("Bearer TOKEN-1");
+
+        // 게이트웨이가 하는 그대로: 폼 디코딩 → JSON 파싱. 여기서 깨지면 카카오도 400 을 준다.
+        String decoded = java.net.URLDecoder.decode(
+                sent.getBody().readUtf8().substring("template_object=".length()),
+                java.nio.charset.StandardCharsets.UTF_8);
+        com.fasterxml.jackson.databind.JsonNode json =
+                new com.fasterxml.jackson.databind.ObjectMapper().readTree(decoded);
+        assertThat(json.get("object_type").asText()).isEqualTo("text");
+        assertThat(json.get("text").asText()).isEqualTo("적재 \"지연\" 발생\n대상: dz_order_daily");
+        assertThat(status(id)).isEqualTo("SENT");
+    }
+
+    /** 일반 폼(문자 대행사)은 JSON 이 아니다 - 여기에 JSON 이스케이프를 하면 본문에 역슬래시가 섞인다. */
+    @Test
+    void 일반_폼_본문은_URL_인코딩만_한다() throws Exception {
+        gateway.enqueue(new MockResponse().setResponseCode(200).setBody("{\"result_code\":\"1\"}"));
+        long id = insertDelivery("SMS", "01012345678", "제목", "적재 \"지연\" 발생");
+        NotificationService service = service(settingsFor("SMS", Map.of(
+                "url", gateway.url("/send/").toString(),
+                "contentType", "application/x-www-form-urlencoded",
+                "sender", "0212345678",
+                "bodyTemplate", "key={secret}&sender={sender}&receiver={to}&msg={text}"), "ALIGO-KEY"));
+
+        service.dispatch();
+
+        RecordedRequest sent = gateway.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(sent).isNotNull();
+        String body = sent.getBody().readUtf8();
+        String msg = java.net.URLDecoder.decode(
+                body.substring(body.indexOf("msg=") + 4), java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(msg).isEqualTo("적재 \"지연\" 발생");
+        assertThat(body).contains("key=ALIGO-KEY", "sender=0212345678", "receiver=01012345678");
+        assertThat(status(id)).isEqualTo("SENT");
+    }
+
     @Test
     void kakaoTreatsBusinessFailureAsFailure_evenOnHttp200() throws Exception {
         // 대행사는 HTTP 200 으로 주면서 본문에 실패를 담는 일이 흔하다. 성공 판정 규칙이 그걸 잡는다.
@@ -221,12 +278,17 @@ class NotificationGatewayTest {
 
     /** 화면에서 저장한 설정을 흉내 낸다(암호화는 그대로 통과시키는 가짜 구현). */
     private ChannelSettingsService settings(Map<String, String> values, String secret) {
+        return settingsFor("KAKAO", values, secret);
+    }
+
+    /** 채널 행을 골라 화면 설정을 심는다(문자·카카오가 같은 릴레이를 쓰므로 둘 다 필요하다). */
+    private ChannelSettingsService settingsFor(String channelType, Map<String, String> values, String secret) {
         StringBuilder json = new StringBuilder("{");
         values.forEach((k, v) -> json.append(json.length() > 1 ? "," : "")
                 .append('"').append(k).append("\":\"").append(v.replace("\\", "\\\\").replace("\"", "\\\"")).append('"'));
         json.append("}");
-        jdbc.update("UPDATE notification_channel_config SET config_json=?, encrypted_secret=? WHERE channel_type='KAKAO'",
-                json.toString(), secret == null || secret.isBlank() ? null : secret);
+        jdbc.update("UPDATE notification_channel_config SET config_json=?, encrypted_secret=? WHERE channel_type=?",
+                json.toString(), secret == null || secret.isBlank() ? null : secret, channelType);
         return new ChannelSettingsService(dataSource, new PlainCrypto(),
                 "", "", "", "", "false", "false", "",
                 "", "", "application/json", "", "",

@@ -2224,3 +2224,38 @@ root_total 은 해제하면 실제 적재가 돌아 사용자 결정 사항이�
 - CDC 상세 창 제목에서 구분을 뺐다 → «AAA-tb_imp060l». 본문 «구분» 줄에 «런타임 감시 · FAILED» 가 이미 있다.
 - CDC 상세 창에서 «요청자» 줄을 뺐다. 그에 맞춰 [+] 를 그리는 조건에서도 «요청자만 있는 줄»을 뺐다 -
   창에서 뺐으니 그 줄은 더 보여 줄 것이 없다.
+
+## 62. CDC 제어 DAG 정리 검토 + 워크플로우 실행이 «성공»인데 CDC 가 안 돈 건 (2026-09-27)
+
+**요청**: ① CDC 를 워크플로우로 관리하니 파이프라인별 제어 DAG 는 이제 필요 없지 않나 ② 그러면 현황도
+CDC/ETL 로 나누지 말고 워크플로우 단위로만 두면 되지 않나 ③ 방금 `cdc_imp` 를 돌렸는데 태스크는 성공인데
+CDC 가 실행 중이 아니다 ④ 태스크 로그에 무관한 `dz_com_daily` 문구가 섞여 나온다.
+
+검토 결과는 [docs/2026-09-27-cdc-control-dag-retirement.md](docs/2026-09-27-cdc-control-dag-retirement.md) 로 남겼다. 요지만:
+
+- **2026-09-10 설계서에서 이 물음은 다뤄지지 않았다.** 제어 DAG 는 검토 대상이 아니라 출발점이었고
+  (§2 «있는 것을 활용»), §5 는 «파이프라인 개별 제어는 그대로», §6 은 «지금 구조를 그대로 살린다»였다.
+  사용자의 애초 의도(정리)와 어긋난 채 구현이 진행된 지점이다.
+- **걷어낼 수 있다.** 감시(`monitor_cdc_runtime`)의 실체는 이미 백엔드(`KafkaPipelineStateSynchronizer`)에 있고,
+  센서가 하는 일은 «start Run 을 살려 둬 화면에 실행 중으로 보이게」 하는 표시 기능이다. 나머지(호출 · skip ·
+  verify · 스냅샷)는 백엔드/노드로 옮길 자리가 분명하다. 3~3.5일.
+- **현황 카드는 제어 DAG 를 걷으면 자연히 하나가 된다.** 다만 «CDC 가 지금 도는가»는 워크플로우 실행 상태로는
+  알 수 없다(지시만 보내고 끝나 항상 성공) - 그 표시를 어디에 둘지는 결정 사항.
+
+**③ 실측 원인**(2026-09-27 23:37): 워크플로우 태스크는 «제어 DAG 를 불렀다»까지만 책임진다(방안 B).
+그 아래 `kafka_pipeline_2/3_control` 은 **둘 다 실패**했다 - `apply_action` 이 `POST /api/pipelines/{id}/start`
+에서 502(`KAFKA_CONNECT_ERROR`). 백엔드가 시작을 거부하고 이전 상태로 되돌린 것이고, 거부 사유는 소스 커넥터
+태스크 FAILED 였다. 커넥터를 잠깐 깨워 trace 를 보니:
+
+```
+io.debezium.DebeziumException: … starting at OracleOffsetContext [scn=31626389, …],
+but this is no longer available on the server. Reconfigure the connector to use a snapshot mode when needed.
+```
+
+마지막 처리가 8-24 인데 그 뒤 한 달 넘게 멈춰 있는 사이 **원천 Oracle 의 redo/archive 가 그 SCN 을 지나갔다.**
+이어 읽기가 불가능해 스냅샷 재수행이나 오프셋 리셋이 필요하다(전환 작업과 별개). 확인 뒤 커넥터 · 파이프라인
+상태는 원래대로(STOPPED · READY) 되돌렸다.
+
+**④ 로그 잡음**: 그 문구는 `etl_workflows_dynamic.py:365` 의 **모듈 수준 print** 다. 워커가 태스크를 돌리려
+DagBag 을 채우면 파일 전체가 파싱되어 **모든 워크플로우의 파싱 메시지가 그 태스크 로그에 섞인다.**
+기능 문제가 아니라 잡음이고, `logging.…debug` 로 낮추면 된다(10분). 아직 손대지 않았다.
