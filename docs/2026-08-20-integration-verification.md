@@ -7,6 +7,54 @@
 
 ---
 
+## 0-1. 현행화 (2026-09-27 재대조)
+
+> 이 절만 2026-09-27 기준이다. 아래 §1~§5 본문과 근거(file:line)는 **2026-08-20 작성 당시 그대로** 둔다 -
+> 검증 기록은 고치지 않고, 그 뒤에 무엇이 바뀌었는지를 여기에 덧붙인다.
+> 방법은 같다(코드·DDL·compose·DAG 정적 대조). 실기동 E2E 로만 확정되는 항목은 «확인 필요»로 남겼다.
+
+**42건 중 해소 10 · 부분(성격 변경) 3 · 남음 29.**
+
+### 해소 10건
+
+| # | 무엇이 바뀌었나 | 확인 |
+|---|---|---|
+| S-1 | `/api/admin/users` 에 인가 부착 | `AdminUserController:26` `@RequirePermission(ADMIN)` |
+| S-2 | DLQ 재처리 기능 자체를 없앰 | `V75__drop_dlq_replay_request.sql`, 재처리 엔드포인트 0건 |
+| S-3 | Airflow 컨트롤러 인가 부착 | `AirflowDagCatalogController` · `AirflowDagAlertController` |
+| M2-10 | CDC 조회 로그 인가 부착 | `CdcLogController:23` `@RequirePermission(KAFKA)` |
+| H2-4 | 삭제 시 슬롯 정리 - 해제 대기 → `pg_terminate_backend` → drop, 실패 시 WARN + 수동 SQL | `PostgresReplicationCleanupService:79-89` (커밋 `55d3b42`) |
+| M2-1 | 채널 토글(DB) 과 발송 게이트를 합침 | `NotificationService.channelOn()` (WORK_LOG 51) |
+| M2-5 | 적재 검증 대상을 Airflow Variable 이 아니라 **spec** 에서 읽음 - 부분설정으로 조용히 skip 되던 경로가 사라짐 | `etl_job_runtime.verify_landing:240-260` |
+| M2-7 | 제어 DAG `max_active_runs=2` 명시 | `kafka_pipelines_dynamic.py:324` |
+| M1-6 | 현 HEAD 에 해당 없음(작성 당시 이미 정정 기재) | `flyway_schema_history` 정상 |
+| H2-9 | DLQ 화면이 없어져 대상 소멸 | 프론트에 `DlqRecord*` 0건 |
+
+### 부분 해소 · 성격 변경 3건
+
+| # | 지금 상태 | 남은 위험 |
+|---|---|---|
+| H1-1 | 2026-09-17 실패 정책 전환으로 **DLQ 자체를 없앴다.** CDC 싱크는 `errors.tolerance=none` - 한 건 거부되면 태스크가 멈추고 `AlertEngine` 이 잡는다(조용한 유실 → 시끄러운 정지) | **로그 파이프라인 싱크는 `all`(건너뛰고 계속)** - 거부된 줄은 Connect 로그에만 남고 DLQ 가 없어 복구 수단이 없다(`JdbcSinkTemplate:169-178`). 의도된 선택이지만 «몇 줄이 버려졌는지» 관측이 없다 |
+| M2-4 | 재시도를 노드 설정(`retries`)으로 줄 수 있게 됨 | **기본값이 0** 이라, 설정을 안 준 노드는 여전히 일시 HTTP 오류에 즉시 하드 실패 |
+| M2-6 | 백엔드가 `{dag}__auto_stop_after_run` 을 자동 upsert(`AirflowDagCatalogController:163`), ETL 워크플로우는 spec 기반 `stop_pg` 로 정리 | 손으로 만든 옛 DAG 에 남은 오타 Variable 은 그대로일 수 있음 - **실기동 확인 필요** |
+
+### 남음 29건
+
+- **PII/오염 (우선)**: H2-1 마스킹 대소문자 불일치, H2-2 마스킹 컬럼 rename - 두 건 모두 **템플릿이 입력 컬럼명을 그대로 이어붙이는 구조 그대로**다(`DebeziumOracleTemplate:81-86`). 카탈로그 대조·정규화 없음. (추정 표기 유지, E2E 확인 필요)
+- **중복**: M1-1 분산락 전무 - `@Scheduled` 는 **25개로 늘었고** ShedLock 의존성은 없다. 2대 운영 시 이중 발송·이중 제어. **알림톡 건당 과금이라 시연 전 우선순위가 올라갔다**
+- **유실(설계 전제)**: H1-2 RF=1(단일 브로커 전제, compose 그대로), H1-3 `log.retention.*` 미지정
+- **관측/정지**: M2-2 스케줄러 미지정이 **12개 → 20개로 늘어남**(`collect-` 4스레드), M2-3 Hikari `maximum-pool-size` 여전히 미지정, M2-8 죽은 DDL, M2-9 포털 401(미결), M2-11 프론트 라우트 가드
+- **그 밖**: H2-3 Filebeat 봉투 암묵 계약(+ L-1 `log_timestamp` 가 수집 시각 - `FilebeatConfigRenderer:58` 그대로), H2-5 동시 start+delete 무가드(`@Version` 없음), H2-6 `pipeline_daily_load_metric` 고아, H2-7 유령 잡, H2-8 NiFi skip=성공(추정), H2-10 `rootGroupName`, M1-2~M1-5, L-2~L-9
+
+### 그래서 지금 할 것
+
+1. **H2-1 · H2-2 (PII 평문 적재)** - 유일하게 «조용히 잘못된 데이터가 쌓이는» 축. 착수 전 회차 A E2E 로 확증.
+2. **M1-1 분산락** - 진행 중인 아웃박스 중복 발송 방지와 같은 뿌리다. 하나로 묶어 처리.
+3. **H1-1 잔여(로그 싱크 건너뜀 관측)** - 버린 줄 수라도 세어 알림.
+4. 나머지 25건은 급하지 않다. L 9건과 M2-8 · M2-11 은 사실상 «알고 두는» 항목이다.
+
+---
+
 ## 0. 요약
 
 정적 대조에서 **42건**을 확인했다. 데이터 관점 심각도 기준(H1 유실 / H2 오염 / M1 중복 / M2 정지 / L 지연) + 보안 우회.
