@@ -7631,9 +7631,13 @@ button.alert-compact-trigger.is-clear:hover {
   transform: rotate(90deg);
 }
 
+/*
+ * 펼칠 것이 없는 줄(job · 파이프라인)에는 화살표 자리를 아예 두지 않는다(2026-09-28 요청).
+ * 예전에는 visibility:hidden 이라 자리(14px + 줄 간격 6px = 20px)를 그대로 차지해, 연결선과 아이콘 사이가
+ * 넓게 비어 보였다. 한 묶음이 모두 job 이면 그 빈칸이 통째로 남는다.
+ */
 :is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-toggle-arrow.empty {
-  visibility: hidden;
-  pointer-events: none;
+  display: none;
 }
 
 :is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-node-icon {
