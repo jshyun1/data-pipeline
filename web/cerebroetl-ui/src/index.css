@@ -2186,20 +2186,36 @@ body {
   font-size: 12px;
 }
 
+/* CDC 로그 표의 [+] - 줄을 펴는 대신 상세 창을 연다(2026-09-27). antd 기본 확장 아이콘 자리에 그린다. */
+.cdc-log-open {
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  line-height: 15px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  background: #fff;
+  color: #595959;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.cdc-log-open:hover {
+  border-color: #ff4d4f;
+  color: #ff4d4f;
+}
+
+/* 볼 것이 없는 줄은 자리만 비워 둔다 - 아이콘이 없다고 열이 흔들리면 표가 들쭉날쭉해 보인다. */
+.cdc-log-open.is-empty {
+  display: inline-block;
+  border: 0;
+  background: none;
+  cursor: default;
+}
+
 /* 제어 이력의 «건너뛰기» 줄 - 그 건은 타깃에 들어가지 않았다(데이터 손실). 눈에 띄게 둔다. */
 .cdc-history-skip > td {
   background: #fff1f0;
-}
-
-/* 실패 로그 창 머리 - 어느 실행(차수)의 로그인지(2026-09-21 요청). */
-.failure-log-run {
-  margin: -4px 0 12px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: #f1f5f9;
-  color: #475569;
-  font-size: 12px;
-  font-weight: 600;
 }
 
 .failure-log-child {
@@ -10137,8 +10153,10 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
 
 /* 팝업 맨 위 강조선(2026-09-27 요청). 밋밋한 창 머리에 브랜드 색 띠 한 줄을 얹는다.
    지금은 워크플로우 로그의 «로그» 창(TaskFailureLogModal)에만 붙인다 - 다른 창은 이 클래스를 붙이면 같이 적용된다(ETL 메뉴 제외). */
+/* 창의 윗 테두리까지 띠 색으로 - overflow:hidden 이 창 밖으로 나간 띠를 잘라내서, 테두리를 남겨 두면 띠 위에 흰 줄이 한 줄 보인다. */
 .accent-modal .ant-modal-container {
   position: relative;
+  border-top-color: var(--color-primary);
 }
 
 .accent-modal .ant-modal-container::before {
@@ -10148,6 +10166,67 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   right: 0;
   left: 0;
   z-index: 1;
+  /* 테두리 1px 과 합쳐 4px 로 보인다. */
   height: 3px;
+  border-radius: 13px 13px 0 0;
   background: linear-gradient(90deg, var(--color-primary), var(--color-primary-hover));
+}
+
+/* ===== 중메뉴 안의 소메뉴(설정 > GPT > 등록 · 관리, 2026-09-27 요청) =====
+ * 줄 모양·색은 다른 중메뉴 줄과 같게 하고, 마우스를 올리면 오른쪽에 같은 모양의 목록을 펼친다. */
+.dropdown-item--sub {
+  position: relative;
+}
+
+.dropdown-sub-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 18px;
+  border: 0;
+  background: none;
+  color: #334155;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.dropdown-item--sub:hover > .dropdown-sub-toggle,
+.dropdown-sub-toggle:focus-visible {
+  padding-left: 22px;
+  outline: none;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.dropdown-sub-toggle.active {
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+.dropdown-sub-chevron {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+/* 오른쪽으로 펼친다. 화면 오른쪽 끝에서 잘리면 CSS 만으로는 못 피하는데, 설정은 메뉴 줄 왼쪽 편이라 여유가 있다. */
+.dropdown-submenu {
+  top: -6px;
+  left: 100%;
+  transform: translateX(6px);
+}
+
+.dropdown-item--sub:hover > .dropdown-submenu,
+.dropdown-item--sub:focus-within > .dropdown-submenu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
 }

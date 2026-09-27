@@ -180,7 +180,7 @@ function GptRegisterForm({ editId }: { editId?: number }) {
       >
         <Form.Item label="배치 위치" name="deployment">
           <Radio.Group onChange={(e) => onDeploymentChange(e.target.value as LlmDeployment)}>
-            <Radio value="EXTERNAL">{DEPLOYMENT_LABEL.EXTERNAL} (Claude · ChatGPT · Gemini)</Radio>
+            <Radio value="EXTERNAL">{DEPLOYMENT_LABEL.EXTERNAL}</Radio>
             <Radio value="INTERNAL">{DEPLOYMENT_LABEL.INTERNAL}</Radio>
           </Radio.Group>
         </Form.Item>

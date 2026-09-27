@@ -20,6 +20,11 @@ interface NavLeaf {
    * system 과 함께 쓰지 않는다(anySystems 가 있으면 그쪽이 우선).
    */
   anySystems?: SystemCode[];
+  /**
+   * 중메뉴 안의 소메뉴. 이 줄에 마우스를 올리면 오른쪽에 펼쳐진다(예: 설정 > GPT > 등록 · 관리).
+   * 줄 자체는 이동하지 않고 목록만 연다 - 대메뉴 그룹 이름과 같은 규칙이다.
+   */
+  children?: NavLeaf[];
 }
 
 interface NavItem {
@@ -169,25 +174,6 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
-    // 속성창 GPT 탭·오류 분석이 쓸 LLM 을 등록·선택한다(docs/2026-09-13-gpt-settings-design.md).
-    // 설정은 ADMIN 만. 사용(GPT 탭·분석 버튼)은 각 화면 권한을 따르므로 여기와 무관하다.
-    path: "/gpt/manage",
-    label: "GPT 설정",
-    icon: (
-      <LineIcon className="menu-icon">
-        <rect x="4" y="7" width="16" height="12" rx="2" />
-        <path d="M12 3v4" />
-        <circle cx="9" cy="13" r="1" />
-        <circle cx="15" cy="13" r="1" />
-        <path d="M9 16.5h6" />
-      </LineIcon>
-    ),
-    children: [
-      { path: "/gpt/register", label: "등록", system: "ADMIN", action: "WRITE" },
-      { path: "/gpt/manage", label: "관리", system: "ADMIN", action: "READ" },
-    ],
-  },
-  {
     path: "/settings",
     label: "설정",
     icon: (
@@ -203,6 +189,19 @@ const NAV_ITEMS: NavItem[] = [
       { path: "/settings", label: "알림/발송", system: "ADMIN", action: "READ" },
       // 연결정보는 CDC(KAFKA)와 ETL(NIFI)이 함께 쓰는 공용 정보라 한쪽 권한만 있어도 필요하다.
       { path: "/settings/connections", label: "연결정보", anySystems: ["KAFKA", "NIFI"], action: "READ" },
+      // 속성창 GPT 탭·오류 분석이 쓸 LLM 을 등록·선택한다(docs/2026-09-13-gpt-settings-design.md).
+      // 대메뉴였던 «GPT 설정»을 설정 안으로 옮겼다(2026-09-27 요청). 설정은 ADMIN 만 -
+      // 사용(AI 어시스턴트·분석 버튼)은 각 화면 권한을 따르므로 여기와 무관하다.
+      {
+        path: "/gpt/manage",
+        label: "GPT",
+        system: "ADMIN",
+        action: "READ",
+        children: [
+          { path: "/gpt/register", label: "등록", system: "ADMIN", action: "WRITE" },
+          { path: "/gpt/manage", label: "관리", system: "ADMIN", action: "READ" },
+        ],
+      },
       { path: "/admin/users", label: "계정", system: "ADMIN", action: "READ" },
       { path: "/admin/roles", label: "역할 및 권한", system: "ADMIN", action: "READ" },
       { path: "/admin/audit", label: "감사", system: "ADMIN", action: "READ" },
@@ -245,9 +244,13 @@ export function AppLayout() {
   };
 
   // 권한이 아직 안 실렸으면(fail-open) 전부 보여준다. 실린 뒤엔 시스템 권한으로 게이팅.
-  const leafVisible = (leaf: NavLeaf) => {
+  const leafVisible = (leaf: NavLeaf): boolean => {
     if (!permissionsLoaded) {
       return true;
+    }
+    // 소메뉴를 가진 줄(예: GPT)은 보여 줄 소메뉴가 하나도 없으면 같이 감춘다.
+    if (leaf.children?.length && !leaf.children.some(leafVisible)) {
+      return false;
     }
     const action = leaf.action ?? "READ";
     if (leaf.anySystems?.length) {
@@ -287,11 +290,13 @@ export function AppLayout() {
               {visibleItems.map((item) => {
                 const groupPrefix = `/${item.path.split("/")[1]}`;
                 const children = itemChildren(item);
+                // 소메뉴(GPT > 등록 · 관리)의 경로도 그룹 활성 판정에 넣는다 - 설정 밖 경로(/gpt/…)라서.
+                const leafPaths = children.flatMap((c) => [c.path, ...(c.children ?? []).map((sub) => sub.path)]);
                 const active =
                   location.pathname === item.path ||
                   location.pathname.startsWith(`${groupPrefix}/`) ||
-                  children.some(
-                    (c) => location.pathname === c.path || location.pathname.startsWith(`${c.path}/`),
+                  leafPaths.some(
+                    (path) => location.pathname === path || location.pathname.startsWith(`${path}/`),
                   );
 
                 if (!item.children) {
@@ -340,7 +345,41 @@ export function AppLayout() {
                       </LineIcon>
                     </button>
                     <ul className="dropdown-menu">
-                      {children.map((child) => (
+                      {children.map((child) => {
+                        const subs = (child.children ?? []).filter(leafVisible);
+                        if (subs.length) {
+                          // 소메뉴가 있는 줄: 이동하지 않고, 올리면 오른쪽에 목록이 펼쳐진다(대메뉴 그룹과 같은 규칙).
+                          const subActive = subs.some((sub) => location.pathname === sub.path
+                            || location.pathname.startsWith(`${sub.path}/`));
+                          return (
+                            <li key={child.path} className="dropdown-item dropdown-item--sub">
+                              <button type="button" className={subActive ? "dropdown-sub-toggle active" : "dropdown-sub-toggle"}
+                                      aria-haspopup="true">
+                                {child.label}
+                                <LineIcon className="dropdown-sub-chevron" size={14} strokeWidth={2.5}>
+                                  <polyline points="9 6 15 12 9 18" />
+                                </LineIcon>
+                              </button>
+                              <ul className="dropdown-menu dropdown-submenu">
+                                {subs.map((sub) => (
+                                  <li key={sub.path} className="dropdown-item">
+                                    <NavLink
+                                      to={sub.path}
+                                      end
+                                      onClick={(event) => {
+                                        setOpenMenu(null);
+                                        guardedNavigate(event, sub.path);
+                                      }}
+                                    >
+                                      {sub.label}
+                                    </NavLink>
+                                  </li>
+                                ))}
+                              </ul>
+                            </li>
+                          );
+                        }
+                        return (
                         <li key={child.path} className="dropdown-item">
                           <NavLink
                             to={child.path}
@@ -357,7 +396,8 @@ export function AppLayout() {
                             {child.label}
                           </NavLink>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   </li>
                 );

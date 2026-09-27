@@ -24,7 +24,7 @@ export interface FailureLogTarget {
   title: string;
   dagId: string;
   runId: string;
-  /** 어느 실행(차수)의 로그인지. 창을 열고 나면 목록이 안 보이므로 머리에 적어 둔다(예: «total · 09-18 10:54:59 · 2차»). */
+  /** 어느 실행(차수)의 로그인지. 창 제목에 쓴다(예: «total · 09-18 10:54:59 · 2차»). 없으면 제목은 task 이름이다. */
   runLabel?: string;
   tasks: AirflowTaskInstance[];
 }
@@ -261,9 +261,12 @@ export function TaskFailureLogModal({ target, onClose }: { target?: FailureLogTa
     staleTime: 60_000,
   });
   return (
-    <Modal open={Boolean(target)} title={target ? `${target.title} 실패 로그` : undefined} onCancel={onClose}
+    // 머리줄은 «어느 실행의 로그인가»를 말한다(2026-09-27 요청) - 아래에 이미 «{task} · run» 이 있어
+    // 제목에 task 이름을 또 쓰면 같은 말이 두 번이다. 차수 정보가 없으면(대시보드에서 연 경우) 예전처럼 task 이름을 쓴다.
+    <Modal open={Boolean(target)}
+           title={target ? (target.runLabel ? `${target.runLabel} 실행 · 실패 로그` : `${target.title} 실패 로그`) : undefined}
+           onCancel={onClose}
            footer={null} width={960} destroyOnHidden rootClassName="cerebro-modal accent-modal">
-      {target?.runLabel && <div className="failure-log-run">{target.runLabel} 실행</div>}
       {query.isLoading ? (
         <div className="failure-log-empty"><Spin size="small" /> 로그를 불러오는 중입니다.</div>
       ) : query.error ? (

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, DatePicker, Input, Select, Space, Table, Tag, Tooltip } from "antd";
+import { Button, DatePicker, Input, Modal, Select, Space, Table, Tag, Tooltip } from "antd";
 import {
   CheckCircleFilled,
   CloseCircleFilled,
@@ -140,11 +140,17 @@ function screenErrorText(row: UnifiedCdcLogRow) {
   return lines.join("\n");
 }
 
-/** 펼친 줄. 표 열에서 뺀 처리 구간의 세부 값(소스·타깃·Topic·커넥터 상태·Lag)과 메시지를 보여준다. */
-function DetailRow({ row }: { row: UnifiedCdcLogRow }) {
-  const gptEnabled = useGptEnabled();
-  const [analyzing, setAnalyzing] = useState(false);
+/** 상세로 볼 것이 있는 줄인가. 없으면 [+] 를 그리지 않는다(눌러도 빈 창만 뜨므로). */
+function hasDetail(row: UnifiedCdcLogRow) {
+  return row.kind === "processing" || row.status === "FAILED"
+      || Boolean(row.message) || Boolean(row.event?.requestedBy);
+}
+
+/** 펼친 줄에 보여 주던 항목들. 이제는 상세 창이 같은 것을 쓴다. */
+function detailLines(row: UnifiedCdcLogRow): Array<[string, ReactNode]> {
   const lines: Array<[string, ReactNode]> = [];
+  lines.push(["구분", `${row.kindLabel} · ${row.status}`]);
+  lines.push(["시각", `${formatDateTime(row.startedAt)}${row.endedAt ? ` ~ ${formatDateTime(row.endedAt)}` : ""}`]);
   if (row.processing) {
     const p = row.processing;
     lines.push(["소스 → 타깃", `${p.source} → ${p.target}`]);
@@ -157,31 +163,69 @@ function DetailRow({ row }: { row: UnifiedCdcLogRow }) {
   if (row.event) {
     lines.push(["요청자", row.event.requestedBy ?? "시스템"]);
   }
+  return lines;
+}
+
+/**
+ * 로그 한 줄의 상세 창(2026-09-27 요청).
+ *
+ * <p>예전에는 줄을 펼쳐 표 아래에 붙였다. 메시지가 길면 표가 밀려 앞뒤 줄을 같이 못 봤고, GPT 해석까지 열면
+ * 화면 대부분을 그 한 줄이 차지했다. 워크플로우 로그의 실패 로그 창과 같은 자리(팝업)로 옮긴다.
+ *
+ * <p>GPT 해석은 <b>창을 열 때 바로</b> 시작한다 - 실패 줄을 여는 이유가 «왜 실패했나»라서 한 번 더 누르게 할 까닭이 없다.
+ * GPT 를 설정하지 않았거나(설정 화면에서 제공자를 고르지 않았거나) 실패 줄이 아니면 로그 정보만 보여 준다.
+ */
+function CdcLogDetailModal({ row, pipelineAlive, onClose }: {
+  row: UnifiedCdcLogRow | null;
+  /** 그 파이프라인이 아직 살아 있는가. 지워진 파이프라인은 GPT 가 볼 대상이 없다(수집기가 «찾을 수 없음»). */
+  pipelineAlive: boolean;
+  onClose: () => void;
+}) {
+  const gptEnabled = useGptEnabled();
+  const [analysisOpen, setAnalysisOpen] = useState(true);
+  const analyzable = Boolean(row) && row?.status === "FAILED" && Boolean(row?.pipelineId) && pipelineAlive;
+  const lines = row ? detailLines(row) : [];
   return (
-    <div style={{ fontSize: 12 }}>
-      {lines.map(([label, value]) => (
-        <div key={label} style={{ display: "flex", gap: 12, lineHeight: 1.8 }}>
-          <span style={{ width: 90, color: "#888", flexShrink: 0 }}>{label}</span>
-          <span>{value}</span>
+    <Modal
+      open={Boolean(row)}
+      onCancel={onClose}
+      afterOpenChange={(open) => { if (open) setAnalysisOpen(true); }}
+      footer={null}
+      width={860}
+      destroyOnHidden
+      rootClassName="cerebro-modal"
+      title={row ? `${row.pipelineName || "로그"} · ${row.kindLabel}` : undefined}
+    >
+      {row && (
+        <div style={{ fontSize: 12 }}>
+          {lines.map(([label, value]) => (
+            <div key={label} style={{ display: "flex", gap: 12, lineHeight: 1.8 }}>
+              <span style={{ width: 96, color: "#888", flexShrink: 0 }}>{label}</span>
+              <span style={{ wordBreak: "break-all" }}>{value}</span>
+            </div>
+          ))}
+          {row.message ? (
+            <pre style={{ whiteSpace: "pre-wrap", margin: lines.length ? "8px 0 0" : 0, fontSize: 12 }}>{row.message}</pre>
+          ) : (
+            <div style={{ color: "#888", marginTop: 8 }}>메시지가 없습니다.</div>
+          )}
+          {gptEnabled && row.status === "FAILED" && !pipelineAlive && (
+            <div style={{ color: "#888", marginTop: 8 }}>
+              이 파이프라인은 삭제돼 GPT 해석을 할 수 없습니다(해석에 필요한 설정 · 상태를 더 읽을 수 없습니다).
+            </div>
+          )}
+          {gptEnabled && analyzable && analysisOpen && (
+            <GptErrorAnalysis
+              key={row.key}
+              targetType="CDC_PIPELINE"
+              target={{ pipelineId: String(row.pipelineId) }}
+              errorText={screenErrorText(row)}
+              onClose={() => setAnalysisOpen(false)}
+            />
+          )}
         </div>
-      ))}
-      {row.message ? (
-        <pre style={{ whiteSpace: "pre-wrap", margin: lines.length ? "6px 0 0" : 0, fontSize: 12 }}>{row.message}</pre>
-      ) : null}
-      {gptEnabled && row.status === "FAILED" && !analyzing && (
-        <Button size="small" className="gpt-analysis-open" style={{ marginTop: 8 }} onClick={() => setAnalyzing(true)}>
-          GPT 해석
-        </Button>
       )}
-      {analyzing && (
-        <GptErrorAnalysis
-          targetType="CDC_PIPELINE"
-          target={{ pipelineId: String(row.pipelineId) }}
-          errorText={screenErrorText(row)}
-          onClose={() => setAnalyzing(false)}
-        />
-      )}
-    </div>
+    </Modal>
   );
 }
 
@@ -209,6 +253,8 @@ export function CdcLogsPage() {
     initialFrom ? dayjs(initialFrom) : today,
     initialTo ? dayjs(initialTo) : today,
   ];
+  /** [+] 로 연 상세 창의 대상 줄. null 이면 닫힌 상태다. */
+  const [detailRow, setDetailRow] = useState<UnifiedCdcLogRow | null>(null);
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>(initialRange);
   const [appliedRange, setAppliedRange] = useState<[Dayjs, Dayjs]>(initialRange);
   const [keyword, setKeyword] = useState(searchParams.get("q") ?? "");
@@ -511,11 +557,25 @@ export function CdcLogsPage() {
           },
         ]}
         expandable={{
-          expandedRowRender: (row) => <DetailRow row={row} />,
-          rowExpandable: (row) => row.kind === "processing" || row.status === "FAILED" || Boolean(row.message) || Boolean(row.event?.requestedBy),
+          // 줄은 펼치지 않는다 - [+] 를 누르면 상세 «창»이 열린다(2026-09-27 요청).
+          // expandedRowKeys 를 늘 비워 두어 antd 가 줄을 펴지 않게 하고, 아이콘만 우리가 그린다.
+          expandedRowKeys: [],
+          expandedRowRender: () => null,
+          expandIcon: ({ record }) =>
+            hasDetail(record) ? (
+              <button type="button" className="cdc-log-open" aria-label="상세 보기"
+                      onClick={(event) => { event.stopPropagation(); setDetailRow(record); }}>
+                +
+              </button>
+            ) : <span className="cdc-log-open is-empty" />,
         }}
       />
       </div>
+      <CdcLogDetailModal
+        row={detailRow}
+        pipelineAlive={Boolean(detailRow) && (pipelinesQuery.data ?? []).some((p) => p.id === detailRow?.pipelineId)}
+        onClose={() => setDetailRow(null)}
+      />
     </StdPage>
   );
 }
