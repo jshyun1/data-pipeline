@@ -2291,3 +2291,20 @@ but this is no longer available on the server. Reconfigure the connector to use 
 **검증**: CDC 로그 실패 줄에서 실제 해석 - «원인 / 확인사항 / 조치 방법» 세 구역, 확신도 없음,
 항목 안의 제목 덧붙임도 사라짐. 백엔드 280건 중 279건 통과(`ConnectionRepositoryIT` 는 빌드 컨테이너에
 Docker 가 없어 나는 환경 문제), 프런트 tsc 통과.
+
+## 64. 트리 연결선을 ├─ · └─ 모양으로 (2026-09-28)
+
+**요청**: 하위 묶음 왼쪽에 점선 한 줄이 끝까지 내려오던 것을, 손그림처럼 **줄마다 가로선으로 잇고 마지막 줄에서
+꺾이는** 모양으로.
+
+- `.tree-sub-group` 의 `border-left` 를 걷고, 자식 `.tree-node` 마다 가상요소 둘로 그린다.
+  `::before` 가 세로(위 줄에서 내려오는 선), `::after` 가 가로(줄 가운데에서 왼쪽 끝까지).
+  **마지막 자식은 세로를 제 줄 가운데(17px)에서 끊어** └─ 가 된다.
+- 치수는 실측으로 맞췄다 - 줄 높이 30.8px 이라 가로선은 `top: 15px`, 세로선은 묶음 `gap: 2px` 를 덮도록
+  `top: -2px` 에서 시작한다. 가로선 길이는 11px 로 **줄 왼쪽 끝에 딱 붙인다** - 더 늘이면 고른 줄(빨간 배경)
+  위로 선이 지나가 지저분해진다.
+- 같은 CSS 를 쓰는 트리 셋에 모두 적용된다(`.wf-tree-scroll` 워크플로우 관리 · CDC 관리,
+  `.airflow-tree-body` 워크플로우 로그, `.wf-palette-tree` 캔버스 팔레트).
+
+**검증**: 워크플로우 관리(total → dz_com_daily ├─ · dz_pop_daily └─)와 워크플로우 로그
+(CDC → 전체 파이프라인 → oracle-source, ETL → cdc_imp · total) 둘 다 확대 캡처로 확인. 페이지 오류 0.

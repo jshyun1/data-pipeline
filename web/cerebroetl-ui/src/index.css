@@ -7667,6 +7667,11 @@ button.alert-compact-trigger.is-clear:hover {
   color: var(--color-primary);
 }
 
+/*
+ * 하위 묶음. 예전에는 왼쪽에 점선 한 줄이 끝까지 내려왔는데, 그러면 «어느 줄이 이 묶음에 속하는지»가
+ * 선과 줄의 높이로만 짐작된다. 파일 탐색기처럼 줄마다 ├─ · └─ 로 잇는다(2026-09-28 요청).
+ * 세로선은 각 자식이 제 몫만큼 그리고, 마지막 자식은 제 줄 가운데까지만 그려 └─ 가 된다.
+ */
 :is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-sub-group {
   margin-top: 2px;
   margin-left: 7px;
@@ -7674,7 +7679,36 @@ button.alert-compact-trigger.is-clear:hover {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  border-left: 1px dashed #e2e8f0;
+}
+
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-sub-group > .tree-node {
+  position: relative;
+}
+
+/* 세로 - 위 줄에서 내려오는 선. gap(2px) 만큼 위로 늘여 끊기지 않게 한다. */
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-sub-group > .tree-node::before {
+  content: "";
+  position: absolute;
+  left: -11px;
+  top: -2px;
+  bottom: 0;
+  border-left: 1px dashed #cbd5e1;
+}
+
+/* 마지막 자식은 제 줄 가운데서 끊는다 - 여기가 └─ 의 모서리다. */
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-sub-group > .tree-node:last-child::before {
+  bottom: auto;
+  height: 17px;
+}
+
+/* 가로 - 줄 가운데에서 아이콘 쪽으로 뻗는다. */
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-sub-group > .tree-node::after {
+  content: "";
+  position: absolute;
+  left: -11px;
+  top: 15px;          /* 줄 높이 30.8px 의 절반(실측) */
+  width: 11px;        /* 세로선에서 줄 왼쪽 끝까지 - 줄 배경 위를 지나가지 않게 딱 붙인다 */
+  border-top: 1px dashed #cbd5e1;
 }
 
 :is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row:focus-visible,
