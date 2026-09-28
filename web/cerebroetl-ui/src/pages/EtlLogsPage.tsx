@@ -40,7 +40,7 @@ const ETL_LOG_GPT_HEADINGS = ["원인 추정", "조치 방법", "확인할 것"]
 const ETL_LOG_GPT_HEADING_LABELS = {
   "원인 추정": "원인",
   "조치 방법": "조치방법",
-  "확인할 것": "확인할것",
+  "확인할 것": "확인할 것",
 };
 
 type UnifiedEtlLogKind = "run" | "event";
@@ -306,28 +306,31 @@ export function EtlLogsPage() {
     return (
       <Modal
         open={Boolean(row)}
-        title={row ? `${row.jobName} 오류 상세` : undefined}
+        title={row ? `${row.jobName} 실패 로그` : undefined}
         footer={null}
         width={960}
-        rootClassName="cerebro-modal"
+        rootClassName="cerebro-modal etl-log-detail-modal-root"
         onCancel={onClose}
       >
         {row ? (
           <div className="etl-log-detail-modal">
-            {canAnalyze ? (
-              <GptErrorAnalysis
-                targetType="ETL_JOB"
-                target={target}
-                errorText={detailText(row)}
-                onClose={onClose}
-                headings={[...ETL_LOG_GPT_HEADINGS]}
-                headingLabels={ETL_LOG_GPT_HEADING_LABELS}
-              />
-            ) : (
-              <div className="etl-log-detail-gpt-empty">GPT 분석을 사용할 수 없습니다.</div>
-            )}
+            <section className="etl-log-detail-section">
+              <h3>실패 원인</h3>
+              {canAnalyze ? (
+                <GptErrorAnalysis
+                  targetType="ETL_JOB"
+                  target={target}
+                  errorText={detailText(row)}
+                  onClose={onClose}
+                  headings={[...ETL_LOG_GPT_HEADINGS]}
+                  headingLabels={ETL_LOG_GPT_HEADING_LABELS}
+                />
+              ) : (
+                <div className="etl-log-detail-gpt-empty">GPT 분석을 사용할 수 없습니다.</div>
+              )}
+            </section>
             <section className="etl-log-detail-raw">
-              <h3>오류 원본</h3>
+              <h3>에러 로그</h3>
               <pre>{row.message ?? "상세 정보 없음"}</pre>
             </section>
           </div>
@@ -434,7 +437,18 @@ export function EtlLogsPage() {
             sorter: (a, b) => compareText(EVENT_STATUS_LABEL[a.status] ?? a.status, EVENT_STATUS_LABEL[b.status] ?? b.status),
             render: (value: string, row) => (
               <Tooltip title={row.message || undefined}>
-                <Tag color={EVENT_STATUS_COLOR[value] ?? "default"}>{EVENT_STATUS_LABEL[value] ?? value}</Tag>
+                <Tag
+                  className={row.status === "FAILED" && row.message ? "etl-log-status-detail-trigger" : undefined}
+                  color={EVENT_STATUS_COLOR[value] ?? "default"}
+                  onClick={(event) => {
+                    if (row.status === "FAILED" && row.message) {
+                      event.stopPropagation();
+                      setDetailRow(row);
+                    }
+                  }}
+                >
+                  {EVENT_STATUS_LABEL[value] ?? value}
+                </Tag>
               </Tooltip>
             ),
           },
@@ -483,7 +497,12 @@ export function EtlLogsPage() {
             ellipsis: true,
             render: (value: string, row) =>
               row.groupId ? (
-                <Link to={`/etl/manage?processGroupId=${encodeURIComponent(row.groupId)}`}>{value}</Link>
+                <Link
+                  to={`/etl/manage?processGroupId=${encodeURIComponent(row.groupId)}`}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  {value}
+                </Link>
               ) : (
                 value || "-"
               ),
@@ -508,6 +527,14 @@ export function EtlLogsPage() {
               </button>
             ) : null,
         }}
+        onRow={(row) => ({
+          className: row.status === "FAILED" && row.message ? "etl-log-clickable-row" : undefined,
+          onClick: () => {
+            if (row.status === "FAILED" && row.message) {
+              setDetailRow(row);
+            }
+          },
+        })}
       />
       <LogDetailModal row={detailRow} onClose={() => setDetailRow(null)} />
     </div>

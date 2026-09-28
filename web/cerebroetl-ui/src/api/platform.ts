@@ -524,6 +524,37 @@ export async function createFileLoadFlow(payload: {
   return unwrap(res.data);
 }
 
+export async function createHttpLoadFlow(payload: {
+  jobName: string;
+  parentGroupId: string;
+  comments?: string;
+  httpMethod: "GET" | "POST";
+  apiUrl: string;
+  apiKey?: string;
+  targetServiceId: string;
+  targetDatabaseType: string;
+  targetSchema: string;
+  targetTable: string;
+  loadMode: "INSERT" | "UPSERT";
+  queryRecordSql?: string;
+  primaryKeys?: string;
+}): Promise<NifiProcessGroupEntity> {
+  const res = await apiClient.post<ApiResponse<NifiProcessGroupEntity>>("/nifi/etl/http-load", payload);
+  return unwrap(res.data);
+}
+
+export async function testHttpApi(payload: {
+  httpMethod: "GET" | "POST";
+  apiUrl: string;
+  apiKey?: string;
+}): Promise<{ statusCode: number; responseBody: string }> {
+  const res = await apiClient.post<ApiResponse<{ statusCode: number; responseBody: string }>>(
+    "/nifi/etl/http-load/test-api",
+    payload,
+  );
+  return unwrap(res.data);
+}
+
 interface AirflowLogMessage {
   timestamp?: string;
   event?: string;

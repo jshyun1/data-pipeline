@@ -279,7 +279,7 @@ export function AppLayout() {
       <Header className="app-header">
         <div className="navbar-left">
           <Link to="/dashboard" className="navbar-logo"
-                onClick={(event) => guardedNavigate(event, "/dashboard")}>
+            onClick={(event) => guardedNavigate(event, "/dashboard")}>
             CEREBRO <span className="accent">ETL</span>
           </Link>
           <nav aria-label="주요 메뉴">
@@ -298,7 +298,7 @@ export function AppLayout() {
                   return (
                     <li key={item.path} className={active ? "menu-tab active" : "menu-tab"}>
                       <NavLink to={item.path} className="menu-link"
-                               onClick={(event) => guardedNavigate(event, item.path)}>
+                        onClick={(event) => guardedNavigate(event, item.path)}>
                         {item.icon}
                         {item.label}
                       </NavLink>
