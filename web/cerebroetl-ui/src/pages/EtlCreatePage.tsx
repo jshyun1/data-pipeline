@@ -2418,14 +2418,17 @@ function TargetStep({
                     }
                     const sourceY = sourceIndex * COLUMN_MAPPING_ROW_HEIGHT + COLUMN_MAPPING_ROW_HEIGHT / 2;
                     const targetY = targetIndex * COLUMN_MAPPING_ROW_HEIGHT + COLUMN_MAPPING_ROW_HEIGHT / 2;
+                    const pathKey = `${connection.sourceKey}-${connection.targetMappingId}-${index}`;
+                    const pathData = `M 1 ${sourceY} C 34 ${sourceY}, 66 ${targetY}, 99 ${targetY}`;
                     return (
-                      <path
-                        key={`${connection.sourceKey}-${connection.targetMappingId}-${index}`}
-                        d={`M 1 ${sourceY} C 34 ${sourceY}, 66 ${targetY}, 99 ${targetY}`}
+                      <g
+                        key={pathKey}
                         onDoubleClick={() => removeFlowConnection(connection.sourceKey, connection.targetMappingId)}
                       >
                         <title>더블클릭하면 연결과 처리 로직 참조를 삭제합니다.</title>
-                      </path>
+                        <path className="etl-column-flow-hit" d={pathData} />
+                        <path d={pathData} />
+                      </g>
                     );
                   })}
                 </svg>

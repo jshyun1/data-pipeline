@@ -2997,13 +2997,23 @@ button.airflow-task-name:hover {
   overflow: visible;
 }
 
-.etl-column-flow-canvas path {
+.etl-column-flow-canvas path:not(.etl-column-flow-hit) {
   cursor: pointer;
   fill: none;
   marker-end: url("#etl-column-flow-arrow");
   stroke: rgb(163, 204, 163);
   stroke-linecap: round;
   stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.etl-column-flow-canvas .etl-column-flow-hit {
+  cursor: pointer;
+  fill: none;
+  pointer-events: stroke;
+  stroke: transparent;
+  stroke-linecap: round;
+  stroke-width: 12;
   vector-effect: non-scaling-stroke;
 }
 
