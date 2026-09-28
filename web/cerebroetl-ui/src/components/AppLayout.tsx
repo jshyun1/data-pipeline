@@ -391,8 +391,9 @@ export function AppLayout() {
                                     <NavLink
                                       to={sub.path}
                                       // 활성 표시는 직접 판정한다 - react-router 는 ?tab= 을 보지 않아
-                                      // 소메뉴 넷이 한꺼번에 켜진다.
-                                      className={subIsActive(sub.path) ? "active" : undefined}
+                                      // «/settings» 소메뉴 넷이 한꺼번에 켜진다. 함수로 넘겨야 한다 -
+                                      // 문자열로 주면 react-router 가 자기 판정으로 active 를 덧붙인다.
+                                      className={() => (subIsActive(sub.path) ? "active" : "")}
                                       onClick={(event) => {
                                         setOpenMenu(null);
                                         guardedNavigate(event, sub.path);
