@@ -12,8 +12,21 @@ import type { GptPreviewState, GptTurn } from "./useGptConversation";
  */
 const HEADINGS = ["원인", "확인사항", "조치 방법", "원인 추정", "확인할 것", "확신도"];
 const HEADING_PATTERN = new RegExp(`^\\s*(?:#+\\s*)?(?:\\*\\*)?(${HEADINGS.join("|")})(?:\\*\\*)?\\s*:?\\s*$`);
+export type GptAnswerHeading = typeof HEADINGS[number];
+export type GptAnswerHeadingLabels = Partial<Record<GptAnswerHeading, string>>;
 
-function AnswerText({ text }: { text: string }) {
+export function renderAssistantText(text: string) {
+  return text
+    .replace(/\\\((?:\\rightarrow|\\to|->)\\\)/g, "→")
+    .replace(/\$(?:\\rightarrow|\\to|->)\$/g, "→")
+    .replace(/\\(?:rightarrow|to)\b/g, "→");
+}
+
+function AnswerText({ text, headings, headingLabels }: {
+  text: string;
+  headings?: GptAnswerHeading[];
+  headingLabels?: GptAnswerHeadingLabels;
+}) {
   // 모델이 제목 앞뒤에 빈 줄을 넣으면 제목 여백과 겹쳐 간격이 벌어진다 - 연속 빈 줄은 하나로, 제목 앞뒤 빈 줄은 뺀다.
   const lines = text.split("\n").filter((line, index, all) => {
     if (line.trim()) return true;
@@ -22,6 +35,45 @@ function AnswerText({ text }: { text: string }) {
     return prev !== undefined && prev.trim() !== "" && !HEADING_PATTERN.test(prev)
       && next !== undefined && next.trim() !== "" && !HEADING_PATTERN.test(next);
   });
+  if (headings) {
+    const sectionLines = new Map<GptAnswerHeading, string[]>();
+    let currentHeading: GptAnswerHeading | null = null;
+    for (const line of lines) {
+      const heading = HEADING_PATTERN.exec(line)?.[1] as GptAnswerHeading | undefined;
+      if (heading) {
+        currentHeading = heading;
+        if (!sectionLines.has(heading)) {
+          sectionLines.set(heading, []);
+        }
+        continue;
+      }
+      if (currentHeading && sectionLines.has(currentHeading)) {
+        sectionLines.get(currentHeading)?.push(line);
+      }
+    }
+    return (
+      <div className="gpt-analysis-answer">
+        {headings.map((heading) => {
+          const body = sectionLines.get(heading);
+          if (!body) {
+            return null;
+          }
+          return (
+            <div key={heading}>
+              <div className="gpt-analysis-heading">{headingLabels?.[heading] ?? heading}</div>
+              {body.length > 0
+                ? body.map((line, index) => (
+                  <div key={`${heading}-${index}`} className="gpt-analysis-line">
+                    {renderAssistantText(line.replace(/\*\*/g, "").replace(/^#+\s*/, "")) || " "}
+                  </div>
+                ))
+                : <div className="gpt-analysis-line"> </div>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div className="gpt-analysis-answer">
       {lines.map((line, index) => {
@@ -30,17 +82,19 @@ function AnswerText({ text }: { text: string }) {
           return <div key={index} className="gpt-analysis-heading">{heading[1]}</div>;
         }
         // 마크다운 강조·제목 기호는 글자로 보이면 거슬려 걷어 낸다. 목록 번호는 그대로 둔다.
-        return <div key={index} className="gpt-analysis-line">{line.replace(/\*\*/g, "").replace(/^#+\s*/, "") || " "}</div>;
+        return <div key={index} className="gpt-analysis-line">{renderAssistantText(line.replace(/\*\*/g, "").replace(/^#+\s*/, "")) || " "}</div>;
       })}
     </div>
   );
 }
 
 /** 대화 목록. 요약에 들어간 앞부분은 흐리게 두고 경계에 안내 줄을 긋는다. */
-export function GptTurns({ turns, summarizedUpto = 0, waitingText }: {
+export function GptTurns({ turns, summarizedUpto = 0, waitingText, headings, headingLabels }: {
   turns: GptTurn[];
   summarizedUpto?: number;
   waitingText: string;
+  headings?: GptAnswerHeading[];
+  headingLabels?: GptAnswerHeadingLabels;
 }) {
   return (
     <>
@@ -50,7 +104,7 @@ export function GptTurns({ turns, summarizedUpto = 0, waitingText }: {
             <div className="gpt-analysis-question">{turn.content}</div>
           ) : (
             <div className="gpt-analysis-reply">
-              {turn.content ? <AnswerText text={turn.content} /> : null}
+              {turn.content ? <AnswerText text={turn.content} headings={headings} headingLabels={headingLabels} /> : null}
               {turn.streaming && (
                 <div className="gpt-analysis-waiting">
                   <Spin size="small" /> {turn.content ? "답변 중" : waitingText}

@@ -4,8 +4,21 @@ import type { AppUser } from "../api/auth";
 // sessionManager.js와 동일한 패턴(JWT를 localStorage에 저장, Authorization 헤더로 첨부).
 const TOKEN_KEY = "cerebro_token";
 const USER_KEY = "cerebro_user";
+const SESSION_SCOPED_PREFIXES = ["etl-ai-assistant-cache:"];
+
+function clearSessionScopedData(): void {
+  for (const prefix of SESSION_SCOPED_PREFIXES) {
+    for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = sessionStorage.key(index);
+      if (key?.startsWith(prefix)) {
+        sessionStorage.removeItem(key);
+      }
+    }
+  }
+}
 
 export function saveSession(token: string, user: AppUser): void {
+  clearSessionScopedData();
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
@@ -27,4 +40,5 @@ export function getStoredUser(): AppUser | null {
 export function clearSession(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  clearSessionScopedData();
 }

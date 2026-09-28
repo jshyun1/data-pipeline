@@ -13,6 +13,9 @@ import com.company.pipeline.monitoring.NifiProcessorRunRepository;
 import com.company.pipeline.nifi.dto.NifiExecutionLogResponse;
 import com.company.pipeline.nifi.dto.NifiFileLoadCreateRequest;
 import com.company.pipeline.nifi.dto.NifiFileUploadResponse;
+import com.company.pipeline.nifi.dto.NifiHttpApiTestRequest;
+import com.company.pipeline.nifi.dto.NifiHttpApiTestResponse;
+import com.company.pipeline.nifi.dto.NifiHttpLoadCreateRequest;
 import com.company.pipeline.nifi.dto.NifiInitialDbToDbCreateRequest;
 import com.company.pipeline.nifi.dto.NifiParameterContextResponse;
 import com.company.pipeline.nifi.dto.NifiParameterContextSaveRequest;
@@ -36,6 +39,11 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.UserPrincipalLookupService;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -144,6 +152,60 @@ public class NifiController {
                 request.comments(), user);
         processGroupTreeService.refreshAfterMutation();
         return ApiResponse.success(response);
+    }
+
+    @PostMapping("/etl/http-load")
+    public ApiResponse<NifiProcessGroupResponse> createHttpLoadFlow(
+            @Valid @RequestBody NifiHttpLoadCreateRequest request,
+            @AuthenticationPrincipal AppUser user
+    ) {
+        NifiProcessGroupResponse response = nifiClient.createHttpLoadFlow(request);
+        processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
+                request.comments(), user);
+        processGroupTreeService.refreshAfterMutation();
+        return ApiResponse.success(response);
+    }
+
+    @PostMapping("/etl/http-load/test-api")
+    public ApiResponse<NifiHttpApiTestResponse> testHttpApi(
+            @Valid @RequestBody NifiHttpApiTestRequest request
+    ) {
+        URI uri;
+        try {
+            uri = URI.create(request.apiUrl().trim());
+        } catch (IllegalArgumentException ex) {
+            throw new NifiClientException("API URL 형식이 올바르지 않습니다.", ex);
+        }
+        String scheme = uri.getScheme();
+        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+            throw new NifiClientException("API URL은 http 또는 https만 지원합니다.", null);
+        }
+
+        HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
+                .timeout(Duration.ofSeconds(10))
+                .header("Accept", "application/json");
+        if (request.apiKey() != null && !request.apiKey().isBlank()) {
+            builder.header("Authorization", "BEARER " + request.apiKey().trim());
+        }
+        HttpRequest httpRequest = "POST".equals(request.httpMethod())
+                ? builder.POST(HttpRequest.BodyPublishers.noBody()).build()
+                : builder.GET().build();
+        try {
+            HttpResponse<String> response = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(5))
+                    .build()
+                    .send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            String body = response.body() == null ? "" : response.body();
+            if (body.length() > 20000) {
+                body = body.substring(0, 20000);
+            }
+            return ApiResponse.success(new NifiHttpApiTestResponse(response.statusCode(), body));
+        } catch (IOException ex) {
+            throw new NifiClientException("API 연결 테스트 실패: " + ex.getMessage(), ex);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new NifiClientException("API 연결 테스트가 중단되었습니다.", ex);
+        }
     }
 
     @PostMapping(path = "/etl/file-load/files", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

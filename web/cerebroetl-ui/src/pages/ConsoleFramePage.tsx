@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ChangeEvent,
   type MouseEvent as ReactMouseEvent,
   type SyntheticEvent,
@@ -53,7 +54,9 @@ import {
   type LlmChatTurn,
   type LlmContextPreview,
 } from "../api/llm";
+import { renderAssistantText } from "../components/gpt/GptConversationView";
 import { getWorkflow, listWorkflows, type WorkflowDetail } from "../api/workflows";
+import { cronToKoreanText } from "../utils/schedulePreset";
 
 const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
 const CANVAS_SELECTION_SYNC_ATTRIBUTE = "data-cerebro-canvas-selection-sync";
@@ -124,17 +127,19 @@ const HIDE_TOOL_CHROME_CSS = `
   [${NIFI_TOOL_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
   #${NIFI_MINI_TOOLBAR_ID} {
     position: fixed !important;
-    top: 12px !important;
-    bottom: auto !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
+    left: 14px !important;
+    bottom: 14px !important;
+    transform: none !important;
     z-index: 9100 !important;
     display: flex !important;
+    flex-direction: column !important;
     align-items: center !important;
     justify-content: center !important;
     gap: 6px !important;
-    min-height: 40px !important;
-    padding: 4px 9px !important;
+    width: 42px !important;
+    min-width: 42px !important;
+    min-height: 0 !important;
+    padding: 6px 5px !important;
     border: 1px solid #dbe3ee !important;
     border-radius: 9px !important;
     background: #ffffff !important;
@@ -157,11 +162,11 @@ const HIDE_TOOL_CHROME_CSS = `
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    border: 1px solid transparent !important;
+    border: 1px solid #dbe3ee !important;
     border-radius: 6px !important;
-    background: transparent !important;
+    background: #ffffff !important;
     color: #475569 !important;
-    box-shadow: none !important;
+    box-shadow: 0 1px 2px rgb(15 23 42 / 8%) !important;
     overflow: hidden !important;
     cursor: grab !important;
     user-select: none !important;
@@ -180,9 +185,9 @@ const HIDE_TOOL_CHROME_CSS = `
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][${NIFI_TOOL_LABEL_ATTRIBUTE}]:hover::after {
     content: attr(${NIFI_TOOL_LABEL_ATTRIBUTE}) !important;
     position: absolute !important;
-    left: 50% !important;
-    top: calc(100% + 8px) !important;
-    transform: translateX(-50%) !important;
+    left: calc(100% + 8px) !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
     z-index: 9200 !important;
     min-width: max-content !important;
     max-width: 180px !important;
@@ -201,9 +206,9 @@ const HIDE_TOOL_CHROME_CSS = `
   #${NIFI_MINI_TOOLBAR_ID} [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][${NIFI_TOOL_LABEL_ATTRIBUTE}]:hover::before {
     content: "" !important;
     position: absolute !important;
-    left: 50% !important;
-    top: calc(100% + 3px) !important;
-    transform: translateX(-50%) rotate(45deg) !important;
+    left: calc(100% + 3px) !important;
+    top: 50% !important;
+    transform: translateY(-50%) rotate(45deg) !important;
     z-index: 9199 !important;
     width: 8px !important;
     height: 8px !important;
@@ -213,9 +218,9 @@ const HIDE_TOOL_CHROME_CSS = `
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][${NIFI_TOOL_LABEL_ATTRIBUTE}]:hover::after {
     content: attr(${NIFI_TOOL_LABEL_ATTRIBUTE}) !important;
     position: absolute !important;
-    left: 50% !important;
-    top: calc(100% + 8px) !important;
-    transform: translateX(-50%) !important;
+    left: calc(100% + 8px) !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
     z-index: 9200 !important;
     min-width: max-content !important;
     max-width: 180px !important;
@@ -234,9 +239,9 @@ const HIDE_TOOL_CHROME_CSS = `
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"][${NIFI_TOOL_LABEL_ATTRIBUTE}]:hover::before {
     content: "" !important;
     position: absolute !important;
-    left: 50% !important;
-    top: calc(100% + 3px) !important;
-    transform: translateX(-50%) rotate(45deg) !important;
+    left: calc(100% + 3px) !important;
+    top: 50% !important;
+    transform: translateY(-50%) rotate(45deg) !important;
     z-index: 9199 !important;
     width: 8px !important;
     height: 8px !important;
@@ -299,19 +304,20 @@ const HIDE_TOOL_CHROME_CSS = `
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] {
     position: fixed !important;
-    top: 12px !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
+    left: 14px !important;
+    bottom: 14px !important;
+    transform: none !important;
     z-index: 9100 !important;
-    width: auto !important;
-    max-width: max-content !important;
-    min-height: 38px !important;
-    height: 38px !important;
+    width: 42px !important;
+    max-width: 42px !important;
+    min-height: 0 !important;
+    height: auto !important;
     display: flex !important;
-    padding: 4px 9px !important;
+    flex-direction: column !important;
+    padding: 6px 5px !important;
     justify-content: flex-start !important;
     align-items: center !important;
-    gap: 5px !important;
+    gap: 6px !important;
     background: #ffffff !important;
     background-color: #ffffff !important;
     border: 1px solid #dbe3ee !important;
@@ -323,10 +329,17 @@ const HIDE_TOOL_CHROME_CSS = `
     display: none !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] > :has([${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]) {
-    width: auto !important;
+    width: 30px !important;
+    max-width: 30px !important;
     height: auto !important;
     min-width: 0 !important;
     min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 6px !important;
+    flex-wrap: nowrap !important;
     margin: 0 !important;
     padding: 0 !important;
     background: transparent !important;
@@ -336,16 +349,22 @@ const HIDE_TOOL_CHROME_CSS = `
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] [${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"] {
     position: relative !important;
-    width: 28px !important;
-    height: 28px !important;
-    min-width: 28px !important;
-    min-height: 28px !important;
-    margin: 0 1px !important;
-    padding: 2px !important;
+    width: 30px !important;
+    height: 30px !important;
+    min-width: 30px !important;
+    min-height: 30px !important;
+    max-width: 30px !important;
+    max-height: 30px !important;
+    margin: 0 !important;
+    padding: 0 !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    border-radius: 5px !important;
+    border: 1px solid #dbe3ee !important;
+    border-radius: 6px !important;
+    background: #ffffff !important;
+    color: #475569 !important;
+    box-shadow: 0 1px 2px rgb(15 23 42 / 8%) !important;
     cursor: grab !important;
     user-select: none !important;
     touch-action: none !important;
@@ -431,23 +450,7 @@ const HIDE_TOOL_CHROME_CSS = `
     transform-origin: center !important;
   }
   [${NIFI_BREADCRUMB_ATTRIBUTE}="true"] {
-    position: fixed !important;
-    left: 16px !important;
-    bottom: 14px !important;
-    z-index: 9100 !important;
-    min-height: 30px !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 7px !important;
-    padding: 0 13px !important;
-    border: 1px solid #cbd5e1 !important;
-    border-radius: 999px !important;
-    background: rgba(255, 255, 255, 0.98) !important;
-    color: #334155 !important;
-    font-size: 13px !important;
-    font-weight: 700 !important;
-    box-shadow: 0 2px 8px rgb(15 23 42 / 8%) !important;
-    backdrop-filter: blur(8px) !important;
+    display: none !important;
   }
   [${NIFI_BREADCRUMB_ATTRIBUTE}="true"] svg,
   [${NIFI_BREADCRUMB_ATTRIBUTE}="true"] i {
@@ -462,6 +465,9 @@ const HIDE_TOOL_CHROME_CSS = `
     font: inherit !important;
   }
   [${NIFI_BREADCRUMB_CONTAINER_ATTRIBUTE}="true"] > :not([${NIFI_BREADCRUMB_ATTRIBUTE}="true"]) {
+    display: none !important;
+  }
+  [${NIFI_BREADCRUMB_CONTAINER_ATTRIBUTE}="true"] {
     display: none !important;
   }
   #${NIFI_READ_ONLY_NOTICE_ID} {
@@ -490,6 +496,141 @@ const HIDE_TOOL_CHROME_CSS = `
   .flow-canvas {
     background: #ffffff !important;
     background-image: none !important;
+  }
+  svg g.process-group rect,
+  svg g.component.process-group rect {
+    shape-rendering: crispEdges !important;
+  }
+  svg g.process-group .body,
+  svg g.process-group .border,
+  svg g.process-group .process-group-background,
+  svg g.process-group .process-group-body,
+  svg g.process-group .component-background,
+  svg g.process-group rect.body,
+  svg g.process-group rect.border,
+  svg g.process-group rect.process-group-background,
+  svg g.process-group rect.process-group-body,
+  svg g.process-group rect.component-background,
+  svg g.component.process-group .body,
+  svg g.component.process-group .border,
+  svg g.component.process-group .process-group-body,
+  svg g.component.process-group .component-background,
+  svg g.component.process-group rect.body,
+  svg g.component.process-group rect.border,
+  svg g.component.process-group rect.process-group-body,
+  svg g.component.process-group rect.component-background {
+    fill: #ffffff !important;
+    stroke: #d8e0ea !important;
+    stroke-width: 1px !important;
+  }
+  svg g.process-group .component-header,
+  svg g.process-group .header,
+  svg g.process-group .process-group-header,
+  svg g.process-group .process-group-header-background,
+  svg g.process-group .component-header-background,
+  svg g.process-group rect.component-header,
+  svg g.process-group rect.header,
+  svg g.process-group rect.process-group-header,
+  svg g.process-group rect.process-group-header-background,
+  svg g.process-group rect.component-header-background,
+  svg g.component.process-group .component-header,
+  svg g.component.process-group .header,
+  svg g.component.process-group .process-group-header,
+  svg g.component.process-group .process-group-header-background,
+  svg g.component.process-group .component-header-background,
+  svg g.component.process-group rect.component-header,
+  svg g.component.process-group rect.header,
+  svg g.component.process-group rect.process-group-header,
+  svg g.component.process-group rect.process-group-header-background,
+  svg g.component.process-group rect.component-header-background {
+    fill: #34445a !important;
+    stroke: #34445a !important;
+  }
+  svg g.process-group .name,
+  svg g.process-group .process-group-name,
+  svg g.process-group .component-name,
+  svg g.component.process-group .name,
+  svg g.component.process-group .process-group-name,
+  svg g.component.process-group .component-name {
+    fill: #ffffff !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+  }
+  svg g.process-group .component-type,
+  svg g.process-group .process-group-type,
+  svg g.component.process-group .component-type,
+  svg g.component.process-group .process-group-type {
+    fill: #cbd5e1 !important;
+    color: #cbd5e1 !important;
+    font-size: 10px !important;
+  }
+  svg g.process-group .stats-label,
+  svg g.process-group .status-label,
+  svg g.process-group .queued-label,
+  svg g.component.process-group .stats-label,
+  svg g.component.process-group .status-label,
+  svg g.component.process-group .queued-label {
+    fill: #3b5270 !important;
+    color: #3b5270 !important;
+    font-weight: 600 !important;
+  }
+  svg g.process-group .stats-value,
+  svg g.process-group .status-value,
+  svg g.process-group .queued-value,
+  svg g.component.process-group .stats-value,
+  svg g.component.process-group .status-value,
+  svg g.component.process-group .queued-value {
+    fill: #020617 !important;
+    color: #020617 !important;
+    font-weight: 700 !important;
+  }
+  svg g.process-group .process-group-stats rect,
+  svg g.process-group .component-stats rect,
+  svg g.process-group .status-container rect,
+  svg g.component.process-group .process-group-stats rect,
+  svg g.component.process-group .component-stats rect,
+  svg g.component.process-group .status-container rect {
+    fill: #ffffff !important;
+    stroke: #e8edf4 !important;
+    stroke-width: 1px !important;
+  }
+  svg g.process-group .bulletin-background,
+  svg g.component.process-group .bulletin-background {
+    fill: #ffffff !important;
+    stroke: #e8edf4 !important;
+  }
+  svg g.process-group .fa-play,
+  svg g.process-group .icon-play,
+  svg g.component.process-group .fa-play,
+  svg g.component.process-group .icon-play {
+    fill: #64748b !important;
+    color: #64748b !important;
+  }
+  svg g.process-group .fa-stop,
+  svg g.process-group .icon-stop,
+  svg g.component.process-group .fa-stop,
+  svg g.component.process-group .icon-stop {
+    fill: #ef4444 !important;
+    color: #ef4444 !important;
+  }
+  svg g.process-group .fa-warning,
+  svg g.process-group .fa-exclamation-triangle,
+  svg g.component.process-group .fa-warning,
+  svg g.component.process-group .fa-exclamation-triangle {
+    fill: #64748b !important;
+    color: #64748b !important;
+  }
+  svg g.process-group .fa-star,
+  svg g.component.process-group .fa-star {
+    fill: #64748b !important;
+    color: #64748b !important;
+  }
+  svg g.process-group .refresh-interval,
+  svg g.process-group .status-history,
+  svg g.component.process-group .refresh-interval,
+  svg g.component.process-group .status-history {
+    fill: #f1f5f9 !important;
+    stroke: #dbe4ee !important;
   }
   mat-toolbar,
   .mat-toolbar,
@@ -793,24 +934,12 @@ const HIDDEN_NIFI_STATUS_ICON_CLASSES = [
   "fa-question",
 ];
 const ALLOWED_NIFI_CANVAS_TOOLS = new Set([
-  "Refresh",
-  "새로고침",
   "Processor",
   "프로세서",
   "Process Group",
   "프로세스 그룹",
-  "Remote Process Group",
-  "원격 프로세스 그룹",
-  "Input Port",
-  "입력 포트",
-  "Output Port",
-  "출력 포트",
-  "Funnel",
-  "퍼널",
   "Label",
   "라벨",
-  "Template",
-  "템플릿",
 ]);
 const HIDDEN_NIFI_CANVAS_TOOLS = new Set(["Import from Registry", "레지스트리에서 가져오기"]);
 const NIFI_MENU_ICON_CLASSES = ["fa-bars", "fa-navicon", "fa-reorder"];
@@ -923,7 +1052,7 @@ function hasOpenNifiDialog(doc: Document) {
 function hideToolChrome(frame: HTMLIFrameElement) {
   const doc = iframeDocument(frame);
   if (!doc) {
-    return;
+    return false;
   }
 
   try {
@@ -936,8 +1065,10 @@ function hideToolChrome(frame: HTMLIFrameElement) {
     if (style.textContent !== HIDE_TOOL_CHROME_CSS) {
       style.textContent = HIDE_TOOL_CHROME_CSS;
     }
+    return true;
   } catch {
     // 문서가 아직 교체 중이면 다음 iframe load에서 다시 시도한다.
+    return false;
   }
 }
 
@@ -1269,7 +1400,10 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
 
     const toolItem = closestCanvasToolItem(element);
     const itemRect = toolItem.getBoundingClientRect();
-    if (itemRect.top < -4 || itemRect.top > 96) {
+    const alreadyManagedTool = toolItem.getAttribute(NIFI_TOOL_ALLOWED_ATTRIBUTE) === "true"
+      || toolItem.getAttribute(NIFI_TOOL_HIDDEN_ATTRIBUTE) === "true"
+      || toolItem.getAttribute(NIFI_MENU_BUTTON_ATTRIBUTE) === "true";
+    if (!alreadyManagedTool && (itemRect.top < -4 || itemRect.top > 96)) {
       return;
     }
 
@@ -2217,16 +2351,19 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
     return null;
   };
 
-  const renderNode = (node: NifiProcessGroupTreeNode, depth = 0) => {
+  const renderNode = (node: NifiProcessGroupTreeNode, depth = 0, isLast = true) => {
     const hasChildren = node.children.length > 0;
     const searching = searchQuery.trim().length > 0;
     const expanded = searching || expandedIds.has(node.id);
     const active = activeGroupId === node.id || (!activeGroupId && node.id === "root");
     return (
-      <div key={node.id} className="nifi-tree-node">
+      <div
+        key={node.id}
+        className={`nifi-tree-node${isLast ? " last" : ""}${expanded ? " expanded" : ""}`}
+        style={{ "--tree-depth": depth } as CSSProperties}
+      >
         <div
           className={active ? "nifi-tree-row active" : "nifi-tree-row"}
-          style={{ paddingLeft: 8 + depth * 13 }}
         >
           <button
             type="button"
@@ -2234,14 +2371,16 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
             aria-label={expanded ? `${node.name} 접기` : `${node.name} 펼치기`}
             onClick={() => hasChildren && toggle(node.id)}
           >
-            {hasChildren ? (expanded ? "▼" : "▶") : ""}
+            {hasChildren ? (expanded ? "-" : "+") : ""}
           </button>
           <button type="button" className="nifi-tree-label" title={node.name} onClick={() => openGroup(node.id)}>
             {treeIcon(node)}
             <span className="nifi-tree-name">{node.name}</span>
           </button>
         </div>
-        {hasChildren && expanded ? node.children.map((child) => renderNode(child, depth + 1)) : null}
+        {hasChildren && expanded
+          ? node.children.map((child, index) => renderNode(child, depth + 1, index === node.children.length - 1))
+          : null}
       </div>
     );
   };
@@ -2382,6 +2521,20 @@ function formatDateOnly(value?: string | null) {
   return `${year}.${month}.${day}`;
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value.replace("T", " ").slice(0, 16);
+  }
+  const date = formatDateOnly(value);
+  const hour = String(parsed.getHours()).padStart(2, "0");
+  const minute = String(parsed.getMinutes()).padStart(2, "0");
+  return `${date} ${hour}:${minute}`;
+}
+
 function statusText(job: EtlJobResponse | null, node: NifiProcessGroupTreeNode | null) {
   if (node?.jobStatus) {
     return jobStatusText(node.jobStatus);
@@ -2445,10 +2598,61 @@ function localDateString(date: Date) {
 }
 
 const ADDED_FILE_STORAGE_PREFIX = "nifi-added-files";
+const ETL_AI_ASSISTANT_CACHE_PREFIX = "etl-ai-assistant-cache";
 
 interface StoredAddedFiles {
   date: string;
   files: string[];
+}
+
+interface StoredEtlAiAssistantCache {
+  messages: LlmChatTurn[];
+  question: string;
+}
+
+function etlAiAssistantCacheKey(selectedGroupId: string) {
+  return `${ETL_AI_ASSISTANT_CACHE_PREFIX}:${selectedGroupId}`;
+}
+
+function loadEtlAiAssistantCache(storageKey: string): StoredEtlAiAssistantCache {
+  if (typeof window === "undefined") {
+    return { messages: [], question: "" };
+  }
+  try {
+    const rawValue = window.sessionStorage.getItem(storageKey);
+    if (!rawValue) {
+      return { messages: [], question: "" };
+    }
+    const parsed = JSON.parse(rawValue) as Partial<StoredEtlAiAssistantCache>;
+    const messages = Array.isArray(parsed.messages)
+      ? parsed.messages.filter((turn): turn is LlmChatTurn =>
+        (turn?.role === "user" || turn?.role === "assistant") && typeof turn.content === "string",
+      )
+      : [];
+    return {
+      messages,
+      question: typeof parsed.question === "string" ? parsed.question : "",
+    };
+  } catch {
+    return { messages: [], question: "" };
+  }
+}
+
+function saveEtlAiAssistantCache(storageKey: string, cache: StoredEtlAiAssistantCache) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    const messages = cache.messages.filter((entry) => entry.content.trim().length > 0).slice(-40);
+    const question = cache.question.trim();
+    if (messages.length === 0 && !question) {
+      window.sessionStorage.removeItem(storageKey);
+      return;
+    }
+    window.sessionStorage.setItem(storageKey, JSON.stringify({ messages, question } satisfies StoredEtlAiAssistantCache));
+  } catch {
+    // 대화 캐시는 보조 기능이라 저장 실패가 질문 흐름을 막지 않는다.
+  }
 }
 
 function addedFileStorageKey(jobId: string | number | null | undefined, inputDirectory: string | null | undefined) {
@@ -2703,13 +2907,20 @@ function fullGroupPath(path?: NifiProcessGroupTreeNode[]) {
   return names.join(" / ");
 }
 
-type RelatedWorkflow = Pick<WorkflowDetail, "id" | "name" | "dagId" | "workflowKey" | "published">;
+type RelatedWorkflow = Pick<WorkflowDetail, "id" | "name" | "dagId" | "workflowKey" | "published" | "scheduleCron">;
 
 function workflowUsesJob(workflow: WorkflowDetail, job: EtlJobResponse) {
   return workflow.nodes.some((node) =>
     node.nodeType === "JOB"
     && (node.jobId === job.id || (!!node.nifiPgId && node.nifiPgId === job.nifiPgId)),
   );
+}
+
+function workflowScheduleText(workflows: RelatedWorkflow[]) {
+  const schedules = uniqueValues(workflows
+    .filter((workflow) => workflow.published && !!workflow.scheduleCron?.trim())
+    .map((workflow) => cronToKoreanText(workflow.scheduleCron)));
+  return schedules.length > 0 ? schedules.join(", ") : "없음";
 }
 
 function sortProcessorsByPosition(steps: EtlJobStepView[]) {
@@ -3465,9 +3676,11 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const [addedFiles, setAddedFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const addFileInputRef = useRef<HTMLInputElement | null>(null);
+  const aiCacheRestoringRef = useRef(false);
 
   const selected = useMemo(() => findTreeNode(tree, activeGroupId), [activeGroupId, tree]);
   const selectedGroupId = activeGroupId ?? "root";
+  const aiCacheKey = etlAiAssistantCacheKey(selectedGroupId);
   const job = jobs.find((entry) => entry.nifiPgId === selectedGroupId) ?? null;
   const selectedGroupIds = useMemo(() => {
     const ids = collectTreeIds(selected?.node ?? null);
@@ -3505,17 +3718,22 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   }, []);
 
   useEffect(() => {
-    if (!aiAssistantEnabled && activeTab === "ai") {
-      setActiveTab("detail");
-    }
-  }, [activeTab, aiAssistantEnabled]);
-
-  useEffect(() => {
-    setAiMessages([]);
-    setAiQuestion("");
+    const cached = loadEtlAiAssistantCache(aiCacheKey);
+    aiCacheRestoringRef.current = true;
+    setAiMessages(cached.messages);
+    setAiQuestion(cached.question);
     setAiError(null);
     setAiPreview(null);
-  }, [selectedGroupId]);
+    setAiLoading(false);
+  }, [aiCacheKey]);
+
+  useEffect(() => {
+    if (aiCacheRestoringRef.current) {
+      aiCacheRestoringRef.current = false;
+      return;
+    }
+    saveEtlAiAssistantCache(aiCacheKey, { messages: aiMessages, question: aiQuestion });
+  }, [aiCacheKey, aiMessages, aiQuestion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3616,12 +3834,42 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const lastRunDate = formatDateOnly(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
   const logKeyword = detailLogKeyword(displayJob, displayNode);
   const addedFilesStorageKey = addedFileStorageKey(displayJob?.id, inputDirectory);
+  const dagSchedule = useMemo(() => workflowScheduleText(relatedWorkflows), [relatedWorkflows]);
   const titleName = displayJob?.jobName ?? displayNode?.name ?? "선택 없음";
   const headerTitle = isJobGroup
     ? `Job : ${titleName}`
     : isGroupingGroup
       ? `Group : ${titleName}`
       : titleName;
+  const aiAssistantAvailable = aiAssistantEnabled && !!selectedGroupId;
+  const defaultAiFacts = useMemo(() => {
+    if (!displayJob) {
+      return [];
+    }
+    const loadKinds = uniqueValues(jobSteps.map((step) => {
+      const text = `${step.stepName} ${step.stepType ?? ""} ${step.statementType ?? ""}`.toLowerCase();
+      if (text.includes("truncate") || text.includes("initial")) {
+        return "초기적재";
+      }
+      if (text.includes("update") || text.includes("upsert") || text.includes("merge") || text.includes("increment")) {
+        return "증분적재";
+      }
+      if (text.includes("insert")) {
+        return "일반적재";
+      }
+      return "";
+    })).filter(Boolean);
+
+    return [
+      ["JOB", displayJob.jobName],
+      ["적재 유형", loadKinds.length > 0 ? loadKinds.join(", ") : "-"],
+      ["스케줄", dagSchedule],
+      ["생성일자", formatDateTime(displayJob.firstSeenAt)],
+      ["작성자", displayNode?.createdBy ?? "-"],
+      ["수정/동기화", formatDateTime(displayJob.lastSyncedAt)],
+      ["Processor", `${displayJob.stepCount}개`],
+    ];
+  }, [dagSchedule, displayJob, displayNode?.createdBy, jobSteps]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3736,18 +3984,20 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     }
   };
 
-  const aiSelectedType = isJobGroup ? "JOB" : activeGroupId ? "GROUP" : "ROOT";
-  const aiSelectedId = activeGroupId ?? "root";
-
   const buildAiRequest = (question: string) => ({
     agentType: "JOB_ANALYSIS" as const,
     targetType: "ETL_ASSISTANT" as const,
     target: {
-      selectedType: aiSelectedType,
-      selectedId: aiSelectedId,
+      selectedType: isJobGroup && displayJob ? "JOB" : "PROCESS_GROUP",
+      selectedId: displayJob?.nifiPgId ?? selectedGroupId,
       selectedName: titleName,
       currentPath: displayPath,
-      ...(displayJob ? { jobId: String(displayJob.id), jobGroupId: displayJob.nifiPgId } : {}),
+      ...(displayJob ? {
+        jobId: String(displayJob.id),
+        jobGroupId: displayJob.nifiPgId,
+        dagSchedule,
+        createdBy: displayNode?.createdBy ?? "",
+      } : {}),
       question,
     } as Record<string, string>,
     question,
@@ -3758,6 +4008,10 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     const question = aiQuestion.trim();
     if (!question) {
       setAiError("질문을 입력하세요.");
+      return;
+    }
+    if (!aiAssistantAvailable) {
+      setAiError("AI 어시스턴트를 사용할 수 없습니다.");
       return;
     }
     setAiLoading(true);
@@ -3831,7 +4085,13 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
               className={`nifi-detail-tab${activeTab === "ai" ? " active" : ""}`}
               role="tab"
               aria-selected={activeTab === "ai"}
-              onClick={() => setActiveTab("ai")}
+              disabled={!aiAssistantAvailable}
+              title={aiAssistantAvailable ? "AI 어시스턴트" : "AI 어시스턴트를 사용할 수 없습니다."}
+              onClick={() => {
+                if (aiAssistantAvailable) {
+                  setActiveTab("ai");
+                }
+              }}
             >
               AI 어시스턴트
             </button>
@@ -3971,9 +4231,9 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
             <div className="nifi-ai-summary">
               <strong>{aiProviderName ?? "선택된 GPT"}</strong>
               <span>
-                {displayJob
-                  ? `${displayJob.jobName} 정보와 함께 질문을 보냅니다.`
-                  : "선택 그룹과 ETL 지식 컨텍스트를 기반으로 탐색합니다."}
+                {isJobGroup && displayJob
+                  ? "현재 조회 중인 JOB 정보만 기준으로 답변합니다."
+                  : "현재 선택한 프로세스 그룹 정보 기준으로 답변합니다."}
               </span>
               <Button size="small" loading={aiPreviewLoading} onClick={handleAiPreview}>
                 전송될 정보 보기
@@ -3983,13 +4243,28 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
               <Alert className="nifi-ai-alert" type="error" showIcon message={aiError} />
             ) : null}
             <div className="nifi-ai-conversation">
-              {aiMessages.length === 0 ? (
-                <div className="nifi-ai-empty">질문을 보내면 이 영역에 대화가 표시됩니다.</div>
+              {aiMessages.length === 0 && isJobGroup && displayJob ? (
+                <div className="nifi-ai-empty">
+                  <strong>현재 JOB 기본 정보</strong>
+                  <dl className="nifi-ai-default-info">
+                    {defaultAiFacts.map(([label, value]) => (
+                      <div key={label}>
+                        <dt>{label}</dt>
+                        <dd>{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              ) : aiMessages.length === 0 ? (
+                <div className="nifi-ai-empty">
+                  <strong>현재 프로세스 그룹</strong>
+                  <span>{displayPath}</span>
+                </div>
               ) : (
                 aiMessages.map((entry, index) => (
                   <div key={`${entry.role}-${index}`} className={`nifi-ai-message ${entry.role}`}>
                     <span>{entry.role === "user" ? "나" : "AI"}</span>
-                    <p>{entry.content}</p>
+                    <p>{entry.role === "assistant" ? renderAssistantText(entry.content) : entry.content}</p>
                   </div>
                 ))
               )}
@@ -4098,6 +4373,7 @@ export function ConsoleFramePage({
   );
   const [isTreePanelCollapsed, setIsTreePanelCollapsed] = useState(false);
   const [isDetailPanelCollapsed, setIsDetailPanelCollapsed] = useState(false);
+  const [frameChromeReady, setFrameChromeReady] = useState(!showProcessGroupTree);
   const [detailPanelWidth, setDetailPanelWidth] = useState(NIFI_DETAIL_PANEL_DEFAULT_WIDTH);
   const [jobCatalogReloadKey, setJobCatalogReloadKey] = useState(0);
   const processGroupTreeRef = useRef<NifiProcessGroupTreeNode | null>(null);
@@ -4115,6 +4391,10 @@ export function ConsoleFramePage({
     setSelectedProcessGroupId(processGroupId);
     setSelectedCanvasItem(processGroupId ? { type: "processGroup", id: processGroupId } : null);
   }, [processGroupId]);
+
+  useEffect(() => {
+    setFrameChromeReady(!showProcessGroupTree);
+  }, [frameKey, frameSrc, showProcessGroupTree]);
 
   useEffect(() => {
     if (!healthcheckSrc) {
@@ -4190,7 +4470,7 @@ export function ConsoleFramePage({
     const frame = event.currentTarget;
     frameRef.current = frame;
     cleanupLegacyNifiMiniCreateToolbars(frame);
-    hideToolChrome(frame);
+    const chromeHidden = hideToolChrome(frame);
     patchKoreanTooltips(frame);
     installNifiPanelLayout(frame);
     installProcessorEditReadonlyGuard(frame, processorEditLockFrameState);
@@ -4202,6 +4482,18 @@ export function ConsoleFramePage({
         selectCanvasItem,
         (target) => resolveProcessGroupIdByCanvasText(target, processGroupIdRef.current, processGroupTreeRef.current),
       );
+    }
+    if (!showProcessGroupTree) {
+      window.requestAnimationFrame(() => setFrameChromeReady(true));
+    } else {
+      window.setTimeout(() => {
+        if (frameRef.current === frame) {
+          hideToolChrome(frame);
+          patchKoreanTooltips(frame);
+          installNifiPanelLayout(frame);
+          setFrameChromeReady(true);
+        }
+      }, chromeHidden ? 450 : 650);
     }
   };
 
@@ -4255,7 +4547,7 @@ export function ConsoleFramePage({
           <iframe
             key={frameKey}
             ref={frameRef}
-            className="console-frame"
+            className={`console-frame${frameChromeReady ? "" : " console-frame--preparing"}`}
             title={title}
             src={frameSrc}
             onLoad={handleFrameLoad}

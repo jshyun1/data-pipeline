@@ -6,6 +6,7 @@ import com.company.pipeline.nifi.dto.NifiControllerServiceEntity;
 import com.company.pipeline.nifi.dto.NifiFileLoadCreateRequest;
 import com.company.pipeline.nifi.dto.NifiFlowResponse;
 import com.company.pipeline.nifi.dto.NifiFlowStatusResponse;
+import com.company.pipeline.nifi.dto.NifiHttpLoadCreateRequest;
 import com.company.pipeline.nifi.dto.NifiInitialDbToDbCreateRequest;
 import com.company.pipeline.nifi.dto.NifiParameterContextListResponse;
 import com.company.pipeline.nifi.dto.NifiParameterContextResponse;
@@ -59,6 +60,25 @@ public class NifiClient {
     private static final String TEMPLATE_GROUP_NAME = "Template";
     private static final String INCREMENTAL_TEMPLATE_GROUP_NAME = "Incremental";
     private static final String FILE_TEMPLATE_GROUP_NAME = "File";
+    private static final String HTTP_TEMPLATE_GROUP_NAME = "HTTP";
+    private static final String HTTP_JOLT_SPEC = """
+            [
+              {
+                "operation": "shift",
+                "spec": {
+                  "latitude": "latitude",
+                  "longitude": "longitude",
+                  "timezone": "timezone",
+                  "current": {
+                    "time": "time",
+                    "temperature_2m": "temperature_2m",
+                    "relative_humidity_2m": "relative_humidity_2m",
+                    "wind_speed_10m": "wind_speed_10m"
+                  }
+                }
+              }
+            ]
+            """;
     private static final List<String> LIST_FILE_INPUT_DIRECTORY_KEYS = List.of(
             "Input Directory",
             "input-directory"
@@ -113,6 +133,21 @@ public class NifiClient {
     private static final List<String> REPLACE_TEXT_VALUE_KEYS = List.of(
             "Replacement Value",
             "replacement-value"
+    );
+    private static final List<String> JOLT_SPEC_KEYS = List.of(
+            "jolt-transform-json-spec",
+            "Jolt Specification"
+    );
+    private static final List<String> INVOKE_HTTP_METHOD_KEYS = List.of(
+            "HTTP Method",
+            "invokehttp-method"
+    );
+    private static final List<String> INVOKE_HTTP_URL_KEYS = List.of(
+            "Remote URL",
+            "invokehttp-url"
+    );
+    private static final List<String> INVOKE_HTTP_AUTHORIZATION_KEYS = List.of(
+            "Authorization"
     );
 
     private final RestClient restClient;
@@ -257,6 +292,49 @@ public class NifiClient {
                     findChildProcessGroupById(request.parentGroupId().trim(), createdGroupId);
             updateProcessGroup(token, createdGroup, request.jobName().trim(), nullToBlank(request.comments()));
             updateFileLoadProcessors(token, createdGroupId, request);
+            return new NifiProcessGroupResponse(
+                    createdGroupId,
+                    request.jobName().trim(),
+                    request.parentGroupId().trim(),
+                    directProcessorCount(createdGroupId)
+            );
+        } finally {
+            deleteSnippetQuietly(token, snippetId);
+        }
+    }
+
+    public NifiProcessGroupResponse createHttpLoadFlow(NifiHttpLoadCreateRequest request) {
+        String loadMode = nullToBlank(request.loadMode()).trim().toUpperCase();
+        if (!"INSERT".equals(loadMode) && !"UPSERT".equals(loadMode)) {
+            throw new NifiClientException("HTTP 수집 템플릿은 INSERT, UPSERT 적재 방식만 지원합니다.", null);
+        }
+        if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.primaryKeys())) {
+            throw new NifiClientException("타깃 테이블의 Primary Key를 찾지 못했습니다.", null);
+        }
+
+        String token = getToken();
+        TemplateSelection templateSelection = httpTemplateSelection();
+        String snippetId = createProcessGroupSnippet(
+                token,
+                templateSelection.parentGroupId(),
+                templateSelection.templateGroupId(),
+                templateSelection.templateGroupVersion()
+        );
+
+        try {
+            Set<String> existingChildGroupIds = childProcessGroupIds(request.parentGroupId().trim());
+            String createdGroupId = instantiateSnippet(token, request.parentGroupId().trim(), snippetId);
+            if (!StringUtils.hasText(createdGroupId)) {
+                createdGroupId = findNewChildProcessGroupId(request.parentGroupId().trim(), existingChildGroupIds);
+            }
+            if (!StringUtils.hasText(createdGroupId)) {
+                throw new NifiClientException("NiFi HTTP 그룹 복제 응답에서 새 그룹 ID를 찾지 못했습니다.", null);
+            }
+
+            NifiFlowResponse.ProcessGroupEntity createdGroup =
+                    findChildProcessGroupById(request.parentGroupId().trim(), createdGroupId);
+            updateProcessGroup(token, createdGroup, request.jobName().trim(), nullToBlank(request.comments()));
+            updateHttpLoadProcessors(token, createdGroupId, request, loadMode);
             return new NifiProcessGroupResponse(
                     createdGroupId,
                     request.jobName().trim(),
@@ -889,6 +967,63 @@ public class NifiClient {
                 componentId(fileGroup),
                 revisionVersion(fileGroup.revision())
         );
+    }
+
+    private TemplateSelection httpTemplateSelection() {
+        NifiFlowResponse.ProcessGroupEntity templateGroup = findChildProcessGroup(ROOT_GROUP_ID, TEMPLATE_GROUP_NAME);
+        NifiFlowResponse.ProcessGroupEntity httpGroup =
+                findChildProcessGroup(componentId(templateGroup), HTTP_TEMPLATE_GROUP_NAME);
+        return new TemplateSelection(
+                componentId(templateGroup),
+                componentId(httpGroup),
+                revisionVersion(httpGroup.revision())
+        );
+    }
+
+    private void updateHttpLoadProcessors(String token, String groupId,
+            NifiHttpLoadCreateRequest request, String statementType) {
+        NifiFlowResponse flow = getFlow(groupId);
+        List<NifiFlowResponse.ProcessorEntity> processors = flow == null
+                || flow.processGroupFlow() == null
+                || flow.processGroupFlow().flow() == null
+                || flow.processGroupFlow().flow().processors() == null
+                ? List.of()
+                : flow.processGroupFlow().flow().processors();
+
+        NifiFlowResponse.ProcessorEntity invokeHttp = findOptionalProcessor(processors, "InvokeHTTP");
+        if (invokeHttp != null) {
+            Map<String, String> invokeProperties = mergedProperties(invokeHttp);
+            putProperty(invokeProperties, INVOKE_HTTP_METHOD_KEYS, request.httpMethod().trim());
+            putProperty(invokeProperties, INVOKE_HTTP_URL_KEYS, request.apiUrl().trim());
+            if (StringUtils.hasText(request.apiKey())) {
+                putProperty(invokeProperties, INVOKE_HTTP_AUTHORIZATION_KEYS, "BEARER " + request.apiKey().trim());
+            }
+            updateProcessorProperties(token, invokeHttp, invokeProperties);
+        }
+
+        NifiFlowResponse.ProcessorEntity jolt = findProcessor(processors, "JoltTransformJSON");
+        Map<String, String> joltProperties = mergedProperties(jolt);
+        putProperty(joltProperties, JOLT_SPEC_KEYS, HTTP_JOLT_SPEC.trim());
+        updateProcessorProperties(token, jolt, joltProperties);
+
+        NifiFlowResponse.ProcessorEntity queryRecord = findOptionalProcessor(processors, "QueryRecord");
+        if (queryRecord != null && StringUtils.hasText(request.queryRecordSql())) {
+            Map<String, String> queryProperties = mergedProperties(queryRecord);
+            putProperty(queryProperties, DB_TO_DB_QUERY_RECORD_SQL_KEYS, request.queryRecordSql().trim());
+            updateProcessorProperties(token, queryRecord, queryProperties);
+        }
+
+        NifiFlowResponse.ProcessorEntity put = findProcessor(processors, "PutDatabaseRecord");
+        Map<String, String> putProperties = mergedProperties(put);
+        putProperty(putProperties, PUT_DBCP_KEYS, request.targetServiceId().trim());
+        putProperty(putProperties, PUT_DATABASE_TYPE_KEYS, request.targetDatabaseType().trim());
+        putProperty(putProperties, PUT_SCHEMA_KEYS, request.targetSchema().trim());
+        putProperty(putProperties, PUT_TABLE_KEYS, request.targetTable().trim());
+        putProperty(putProperties, PUT_STATEMENT_KEYS, statementType);
+        if (StringUtils.hasText(request.primaryKeys())) {
+            putProperty(putProperties, PUT_UPDATE_KEYS, request.primaryKeys().trim());
+        }
+        updateProcessorProperties(token, put, putProperties);
     }
 
     private void updateFileLoadProcessors(String token, String groupId, NifiFileLoadCreateRequest request) {
