@@ -10,7 +10,9 @@ ARG PYTHON_DOTENV_VERSION=1.0.1
 USER root
 
 # ExecuteStreamCommand에서 실행하는 온톨로지 Python 적재 스크립트 의존성
-RUN /usr/bin/python3 -m pip install --no-cache-dir \
+# apache/nifi 기반 이미지의 Python은 Debian의 externally-managed 환경이라
+# 컨테이너 이미지 빌드 안에서만 시스템 Python 설치 우회를 명시한다.
+RUN /usr/bin/python3 -m pip install --break-system-packages --no-cache-dir \
     "psycopg2-binary==${PSYCOPG2_BINARY_VERSION}" \
     "python-dotenv==${PYTHON_DOTENV_VERSION}"
 
