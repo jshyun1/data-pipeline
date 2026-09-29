@@ -4,8 +4,15 @@ FROM apache/nifi:${NIFI_IMAGE_TAG}
 ARG POSTGRES_JDBC_VERSION=42.7.4
 ARG OJDBC_VERSION=23.5.0.24.07
 ARG MYSQL_JDBC_VERSION=8.4.0
+ARG PSYCOPG2_BINARY_VERSION=2.9.10
+ARG PYTHON_DOTENV_VERSION=1.0.1
 
 USER root
+
+# ExecuteStreamCommand에서 실행하는 온톨로지 Python 적재 스크립트 의존성
+RUN /usr/bin/python3 -m pip install --no-cache-dir \
+    "psycopg2-binary==${PSYCOPG2_BINARY_VERSION}" \
+    "python-dotenv==${PYTHON_DOTENV_VERSION}"
 
 # PostgreSQL(타란툴라DB 스탠드인), Oracle(향후 역방향 적재용), MySQL JDBC 드라이버
 RUN mkdir -p /opt/nifi/nifi-current/drivers && \
