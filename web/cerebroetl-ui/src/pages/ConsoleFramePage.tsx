@@ -4384,6 +4384,7 @@ export function ConsoleFramePage({
     holderLabel: null,
   });
   const frameSrc = processGroupId ? withProcessGroupId(src, processGroupId) : src;
+  const frameInstanceKey = `${frameKey}:${frameSrc}`;
   processGroupTreeRef.current = processGroupTree;
   processGroupIdRef.current = processGroupId;
 
@@ -4395,6 +4396,24 @@ export function ConsoleFramePage({
   useEffect(() => {
     setFrameChromeReady(!showProcessGroupTree);
   }, [frameKey, frameSrc, showProcessGroupTree]);
+
+  useEffect(() => {
+    if (!showProcessGroupTree || frameChromeReady) {
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      const frame = frameRef.current;
+      if (frame) {
+        hideToolChrome(frame);
+        patchKoreanTooltips(frame);
+        installNifiPanelLayout(frame);
+      }
+      setFrameChromeReady(true);
+    }, 1500);
+
+    return () => window.clearTimeout(timerId);
+  }, [frameChromeReady, frameInstanceKey, showProcessGroupTree]);
 
   useEffect(() => {
     if (!healthcheckSrc) {
@@ -4545,7 +4564,7 @@ export function ConsoleFramePage({
       <div className="console-frame-shell">
         {isReady ? (
           <iframe
-            key={frameKey}
+            key={frameInstanceKey}
             ref={frameRef}
             className={`console-frame${frameChromeReady ? "" : " console-frame--preparing"}`}
             title={title}
