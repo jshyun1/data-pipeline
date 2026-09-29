@@ -2427,3 +2427,39 @@ ETL · CDC 가 쓰는 창과 같게.
 **확인한 것 하나**: 지금 저장돼 있는 카카오 설정 값은 **«나에게 보내기»(카카오 메모 API)** 다 -
 주소가 `/memo/default/send`, 본문이 `template_object=…`, Content-Type 이 `x-www-form-urlencoded`.
 테스트로 넣어 둔 값으로 보이며, 알림톡으로 보내려면 대행사 값으로 바꿔야 한다(시연 전 확인 필요).
+
+## 69. NiFi 템플릿에 완료 콜백 붙이기 - 1단계(로컬 Initial 템플릿) (2026-09-29)
+
+**왜**: 워크플로우의 job 완료 판정이 전부 **추측**이다. 최근 45일 `completion_source` 57건 모두 OBSERVED,
+CALLBACK 0건. await 태스크 51건 중 **24건이 186초**에 몰려 있는데, 이는 «활동을 한 번도 못 봤으니 180초는
+기다려 보자»(`WAIT_START_GRACE_SECONDS`)를 그대로 태운 값이다. 적재는 진작 끝났는데 버리는 시간이다.
+15초 폴링이 짧은 job 을 놓치면 **빠른 job 일수록 더 오래 기다리는** 역설이 생긴다.
+
+**확인한 것**
+- job 은 **템플릿 그룹을 통째로 복제**해서 만들어진다(`NifiClient.createProcessGroupSnippet` →
+  `instantiateSnippet`). 템플릿에 프로세서를 더하면 **그 뒤에 만드는 job 에 자동으로 따라간다.**
+- 코드가 이름으로 찾는 템플릿 5종: `Initial`(INSERT) · `Incremental`(UPSERT) · `truncate_initial`(TRUNCATE) ·
+  `File` · `HTTP`. 셋 다 **마지막이 PutDatabaseRecord/PutSQL 하나**이고 소스가 `ExecuteSQLRecord` 라
+  조회 1회 = FlowFile 1개다 - 끝에 InvokeHTTP 를 붙이면 **job 당 콜백 1회**가 된다.
+- 콜백 받는 자리는 이미 있다: `POST /api/etl/job-runs/by-pg/{pgId}/complete`(본문 `{"rows":n}` 선택,
+  재전송 안전, `X-Service-Token` 필요). **실제로 불러 확인** - 원장이 `completion_source=CALLBACK` 으로 닫혔다.
+- **MSA 확인(읽기만)**: 루트 `Template` 폴더에 19개가 있고 **같은 이름이 두 벌**이다
+  (`Initial` 프로세서 0개와 3개, `Incremental` 도 마찬가지). `findChildProcessGroup` 은 이름으로 첫 번째를
+  고르므로 순서가 바뀌면 빈 템플릿을 복제하게 된다 - 콜백과 별개로 정리가 필요하다(ETL 담당자 영역).
+
+**한 것(로컬 NiFi 캔버스 - git 에 안 남는 변경이라 여기 적는다)**
+- `Template > Initial`(id `02a1ab2b-…`)에 프로세서 **`99_완료알림`**(InvokeHTTP, id `ec3ee4e6-…`) 추가.
+  POST · `HTTP URL = http://pipeline-api:8081/api/etl/job-runs/by-pg/__PG_ID__/complete` ·
+  `Request Body Enabled=false`(본문 없이 호출) · 사용자 정의 속성 `X-Service-Token`(요청 헤더로 나간다) ·
+  관계 5종 자동 종료.
+- 연결선 `03_타깃테이블 --success--> 99_완료알림` 추가. 프로세서 검증 오류 0.
+
+**검증**: 백엔드가 job 생성에 쓰는 **바로 그 snippet API** 로 템플릿을 복제해 보니 복제본에 `99_완료알림` 과
+연결선이 그대로 들어 있었다(URL 자리표시자까지). 확인 뒤 복제본은 삭제했고, 콜백 시험으로 생긴 원장 행도 지웠다.
+
+**남은 것(2단계)**
+1. job 생성 때 백엔드가 URL 의 `__PG_ID__` 를 **실제 프로세스 그룹 id** 로 치환(이미 SQL · DBCP 를 채우는
+   자리가 있어 거기에 한 줄 는다). 지금 상태로는 복제만 되고 콜백은 안 간다.
+2. 나머지 템플릿 4종에도 같은 처리 + 실패 콜백(`/fail`)도 함께.
+3. **이미 만들어진 job 은 소급되지 않는다** - 보정(프로세서 추가) 또는 재생성이 필요하다.
+4. MSA 반영은 ETL 담당자와 협의(템플릿은 그쪽 소유, 중복 이름 정리도 같이).
