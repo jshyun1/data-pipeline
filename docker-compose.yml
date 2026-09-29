@@ -261,6 +261,7 @@ services:
       - nifi-provenance-repository:/opt/nifi/nifi-current/provenance_repository
       - /opt/etl_repo/file:/opt/nifi/file
       - /opt/nifi/ontology-test:/opt/nifi/ontology-test
+      
     healthcheck:
       test: ["CMD-SHELL", "curl -sfk https://localhost:${NIFI_HTTPS_PORT}/nifi/ || exit 1"]
       interval: 15s
