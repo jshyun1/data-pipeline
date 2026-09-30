@@ -178,6 +178,8 @@ interface EtlCreateDraft {
   sourceColumns: SourceColumnMetadata[];
   loadSqlColumns: SourceColumnMetadata[];
   httpSourceJson: string;
+  httpTestPassed: boolean;
+  httpTestType?: "JSON_API" | "FILE_DOWNLOAD";
   targetColumns: ColumnMetadataResponse[];
   columnMappings: ColumnMapping[];
 }
@@ -670,6 +672,251 @@ function escapeRegExp(value: string) {
 
 function sourceColumnReferencePattern(columnName: string, flags = "i") {
   return new RegExp(`(?:\\b[a-zA-Z_][\\w$]*\\s*\\.\\s*)?\\b${escapeRegExp(columnName)}\\b`, flags);
+}
+
+type ValidationSeverity = "error" | "warning";
+
+interface MappingValidationIssue {
+  severity: ValidationSeverity;
+  message: string;
+}
+
+interface MappingValidationDialog {
+  errorCount: number;
+  warningCount: number;
+  calciteMessage: string;
+  issues: MappingValidationIssue[];
+}
+
+const SQL_IDENTIFIER_IGNORE_WORDS = new Set([
+  "and",
+  "as",
+  "between",
+  "case",
+  "cast",
+  "coalesce",
+  "current_date",
+  "current_timestamp",
+  "date",
+  "else",
+  "end",
+  "false",
+  "from",
+  "in",
+  "is",
+  "like",
+  "not",
+  "null",
+  "nvl",
+  "or",
+  "select",
+  "then",
+  "to_char",
+  "to_date",
+  "true",
+  "when",
+]);
+
+function normalizeDataType(value: string) {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function dataTypeCategory(value: string) {
+  const type = normalizeDataType(value);
+  if (!type) {
+    return "unknown";
+  }
+  if (/(char|clob|text|string|varchar|uuid|json|xml)/.test(type)) {
+    return "text";
+  }
+  if (/(number|numeric|decimal|int|integer|bigint|smallint|float|double|real|serial)/.test(type)) {
+    return "number";
+  }
+  if (/(date|time|timestamp)/.test(type)) {
+    return "datetime";
+  }
+  if (/(bool|bit)/.test(type)) {
+    return "boolean";
+  }
+  if (/(blob|binary|bytea|raw)/.test(type)) {
+    return "binary";
+  }
+  return "unknown";
+}
+
+function isSimpleCompatibleType(sourceType: string, targetType: string) {
+  const sourceCategory = dataTypeCategory(sourceType);
+  const targetCategory = dataTypeCategory(targetType);
+  if (sourceCategory === "unknown" || targetCategory === "unknown") {
+    return true;
+  }
+  if (sourceCategory === targetCategory) {
+    return true;
+  }
+  return targetCategory === "text";
+}
+
+function stripSqlNoise(value: string) {
+  return value
+    .replace(/'([^']|'')*'/g, " ")
+    .replace(/"[^"]*"/g, " ")
+    .replace(/`[^`]*`/g, " ")
+    .replace(/#\{[^}\n]+\}/g, " ")
+    .replace(/\b\d+(?:\.\d+)?\b/g, " ");
+}
+
+function extractQualifiedReferences(expression: string) {
+  const cleanExpression = stripSqlNoise(expression);
+  const refs: Array<{ alias: string; column: string }> = [];
+  const pattern = /\b([a-zA-Z_][\w$]*)\s*\.\s*([a-zA-Z_][\w$]*)\b/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(cleanExpression)) !== null) {
+    refs.push({ alias: match[1], column: match[2] });
+  }
+  return refs;
+}
+
+function extractUnqualifiedReferences(expression: string) {
+  let cleanExpression = stripSqlNoise(expression);
+  cleanExpression = cleanExpression.replace(/\b[a-zA-Z_][\w$]*\s*\.\s*[a-zA-Z_][\w$]*\b/g, " ");
+  cleanExpression = cleanExpression.replace(/\b[a-zA-Z_][\w$]*\s*\(/g, " ");
+  const refs = new Set<string>();
+  const pattern = /\b[a-zA-Z_][\w$]*\b/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(cleanExpression)) !== null) {
+    const normalized = normalizeName(match[0]);
+    if (!SQL_IDENTIFIER_IGNORE_WORDS.has(normalized)) {
+      refs.add(match[0]);
+    }
+  }
+  return [...refs];
+}
+
+function sourceColumnLabel(sourceColumn: SourceColumnMetadata) {
+  return sourceColumn.table ? `${sourceColumn.table}.${sourceColumn.name}` : sourceColumn.name;
+}
+
+function buildMappingValidationInterpretation(result: MappingValidationDialog) {
+  const lines: string[] = [];
+  if (result.errorCount > 0) {
+    lines.push(`매핑을 저장하기 전에 오류 ${result.errorCount}건을 먼저 수정해야 합니다.`);
+  } else if (result.warningCount > 0) {
+    lines.push(`문법 오류는 없지만 적재 전에 확인할 경고 ${result.warningCount}건이 있습니다.`);
+  }
+  if (!result.calciteMessage.startsWith("Calcite 문법 검사: 성공")) {
+    lines.push("처리 로직 SQL이 Calcite 문법으로 해석되지 않습니다. 괄호, 함수명, AS 별칭, 쉼표 위치를 확인하세요.");
+  }
+  const missingMapping = result.issues.some((issue) => issue.message.includes("매핑이 없습니다") || issue.message.includes("비어 있습니다"));
+  if (missingMapping) {
+    lines.push("타깃 컬럼 중 소스 컬럼이나 처리 로직이 연결되지 않은 항목이 있습니다.");
+  }
+  const missingSource = result.issues.some((issue) => issue.message.includes("소스 컬럼") && issue.message.includes("찾을 수 없습니다"));
+  if (missingSource) {
+    lines.push("처리 로직이 현재 소스 목록에 없는 컬럼명을 참조하고 있습니다. 삭제된 컬럼이나 alias를 확인하세요.");
+  }
+  const duplicateTarget = result.issues.some((issue) => issue.message.includes("중복 매핑"));
+  if (duplicateTarget) {
+    lines.push("동일한 타깃 컬럼으로 여러 매핑이 잡혀 있습니다. 하나의 타깃 컬럼에는 하나의 처리 로직만 남겨 주세요.");
+  }
+  const typeWarning = result.issues.some((issue) => issue.message.includes("타입"));
+  if (typeWarning) {
+    lines.push("소스 타입과 타깃 타입이 다를 수 있습니다. 필요하면 CAST/TO_CHAR/TO_DATE 같은 명시 변환을 추가하세요.");
+  }
+  return lines.length > 0 ? lines : ["아래 에러 내용을 확인해 매핑 조건을 조정하세요."];
+}
+
+function validateMappingConsistency(
+  columnMappings: ColumnMapping[],
+  sourceColumns: SourceColumnMetadata[],
+  targetColumns: ColumnMetadataResponse[],
+  selectedSourceTables: string[],
+) {
+  const issues: MappingValidationIssue[] = [];
+  const sourceColumnsByName = new Map<string, SourceColumnMetadata[]>();
+  sourceColumns.forEach((sourceColumn) => {
+    const key = normalizeName(sourceColumn.name);
+    sourceColumnsByName.set(key, [...(sourceColumnsByName.get(key) ?? []), sourceColumn]);
+  });
+  const sourceColumnByTableAndName = new Map(sourceColumns.map((sourceColumn) => [
+    sourceColumnKey(normalizeName(sourceColumn.table), normalizeName(sourceColumn.name)),
+    sourceColumn,
+  ]));
+  const aliasToTable = new Map(selectedSourceTables.map((table, index) => [tableAlias(index), table]));
+  const targetColumnByName = new Map(targetColumns.map((targetColumn) => [
+    normalizeName(targetColumn.name),
+    targetColumn,
+  ]));
+  const mappingsByTarget = new Map<string, ColumnMapping[]>();
+  columnMappings.forEach((mapping) => {
+    const key = normalizeName(mapping.targetColumn);
+    mappingsByTarget.set(key, [...(mappingsByTarget.get(key) ?? []), mapping]);
+  });
+
+  targetColumns.forEach((targetColumn) => {
+    const mappings = mappingsByTarget.get(normalizeName(targetColumn.name)) ?? [];
+    if (mappings.length === 0) {
+      issues.push({ severity: "error", message: `타깃 컬럼 ${targetColumn.name}의 매핑이 없습니다.` });
+    }
+    if (mappings.length > 1) {
+      issues.push({ severity: "error", message: `타깃 컬럼 ${targetColumn.name}이 ${mappings.length}번 중복 매핑되었습니다.` });
+    }
+  });
+  columnMappings.forEach((mapping) => {
+    const targetColumn = targetColumnByName.get(normalizeName(mapping.targetColumn));
+    const expression = mapping.logic.trim() || mapping.sourceColumn.trim();
+    if (!targetColumn) {
+      issues.push({ severity: "error", message: `타깃 컬럼 ${mapping.targetColumn}은 현재 타깃 테이블에 없습니다.` });
+      return;
+    }
+    if (!expression) {
+      issues.push({ severity: "error", message: `타깃 컬럼 ${mapping.targetColumn}의 처리 로직이 비어 있습니다.` });
+      return;
+    }
+
+    extractQualifiedReferences(expression).forEach((ref) => {
+      const tableName = aliasToTable.get(ref.alias);
+      if (!tableName) {
+        issues.push({ severity: "error", message: `${mapping.targetColumn}: 소스 alias ${ref.alias}를 찾을 수 없습니다.` });
+        return;
+      }
+      const sourceColumn = sourceColumnByTableAndName.get(sourceColumnKey(normalizeName(tableName), normalizeName(ref.column)));
+      if (!sourceColumn) {
+        issues.push({ severity: "error", message: `${mapping.targetColumn}: 소스 컬럼 ${ref.alias}.${ref.column}을 찾을 수 없습니다.` });
+      }
+    });
+    extractUnqualifiedReferences(expression).forEach((columnName) => {
+      const matches = sourceColumnsByName.get(normalizeName(columnName)) ?? [];
+      if (matches.length === 0) {
+        issues.push({ severity: "error", message: `${mapping.targetColumn}: 소스 컬럼 ${columnName}을 찾을 수 없습니다.` });
+      } else if (matches.length > 1) {
+        issues.push({
+          severity: "warning",
+          message: `${mapping.targetColumn}: 소스 컬럼 ${columnName}이 여러 테이블에 있습니다. ${matches.map(sourceColumnLabel).join(", ")}`,
+        });
+      }
+    });
+
+    const referencedColumns = mappingReferencedSourceColumns(mapping, sourceColumns, selectedSourceTables);
+    if (referencedColumns.length === 0 && extractUnqualifiedReferences(expression).length > 0) {
+      issues.push({ severity: "warning", message: `${mapping.targetColumn}: 처리 로직에서 확인 가능한 소스 컬럼 참조가 없습니다.` });
+    }
+    if (referencedColumns.length === 1 && targetColumn.dataType) {
+      const sourceColumn = referencedColumns[0];
+      if (sourceColumn.dataType && !isSimpleCompatibleType(sourceColumn.dataType, targetColumn.dataType)) {
+        issues.push({
+          severity: "warning",
+          message: `${mapping.targetColumn}: ${sourceColumnLabel(sourceColumn)}(${sourceColumn.dataType}) -> ${targetColumn.name}(${targetColumn.dataType}) 타입 변환 확인이 필요합니다.`,
+        });
+      }
+    } else if (referencedColumns.length > 1 && targetColumn.dataType && dataTypeCategory(targetColumn.dataType) !== "text") {
+      issues.push({
+        severity: "warning",
+        message: `${mapping.targetColumn}: 여러 소스 컬럼/함수식 결과를 ${targetColumn.dataType}에 적재합니다. 타입 변환 확인이 필요합니다.`,
+      });
+    }
+  });
+
+  return issues;
 }
 
 function findClosingParen(value: string, openIndex: number) {
@@ -1184,16 +1431,20 @@ function ConnectionStep({
   value,
   etlType,
   httpSourceJson,
+  httpTestPassed,
+  httpTestType,
   onChange,
-  onHttpSourceJsonChange,
+  onHttpTestSuccess,
   onSourceColumnsChange,
   onTargetColumnsChange,
 }: {
   value: ConnectionInfo;
   etlType: EtlType;
   httpSourceJson: string;
+  httpTestPassed: boolean;
+  httpTestType?: "JSON_API" | "FILE_DOWNLOAD";
   onChange: (nextValue: Partial<ConnectionInfo>) => void;
-  onHttpSourceJsonChange: (json: string) => void;
+  onHttpTestSuccess: (testType: "JSON_API" | "FILE_DOWNLOAD", responseBody: string) => void;
   onSourceColumnsChange: (columns: SourceColumnMetadata[]) => void;
   onTargetColumnsChange: (columns: ColumnMetadataResponse[]) => void;
 }) {
@@ -1213,7 +1464,7 @@ function ConnectionStep({
   const [targetSchemaError, setTargetSchemaError] = useState<string | null>(null);
   const [targetTableError, setTargetTableError] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
-  const [testingApi, setTestingApi] = useState(false);
+  const [testingApi, setTestingApi] = useState<"JSON_API" | "FILE_DOWNLOAD" | null>(null);
   const sourceEnabled = etlType === "DB_TO_DB";
   const httpEnabled = etlType === "HTTP";
   useEffect(() => {
@@ -1510,29 +1761,30 @@ function ConnectionStep({
     onChange(nextValue);
   };
 
-  const handleHttpApiTest = async () => {
+  const handleHttpApiTest = async (testType: "JSON_API" | "FILE_DOWNLOAD") => {
     if (!value.apiUrl.trim()) {
       message.warning("API URL을 입력하세요.");
       return;
     }
-    setTestingApi(true);
+    setTestingApi(testType);
     try {
       const result = await testHttpApi({
         httpMethod: value.httpMethod,
+        testType,
         apiUrl: value.apiUrl.trim(),
         apiKey: value.apiKey.trim() || undefined,
       });
       if (result.statusCode < 200 || result.statusCode >= 300) {
-        message.error(`API 연결 테스트 실패 (HTTP ${result.statusCode})`);
+        message.error(`${testType === "JSON_API" ? "JSON API" : "파일 다운로드"} 테스트 실패 (HTTP ${result.statusCode})`);
         return;
       }
-      const preview = formatJsonPreview(result.responseBody);
-      onHttpSourceJsonChange(preview);
-      message.success(`API 연결 테스트 성공 (HTTP ${result.statusCode})`);
+      const preview = testType === "JSON_API" ? formatJsonPreview(result.responseBody) : "";
+      onHttpTestSuccess(testType, preview);
+      message.success(`${testType === "JSON_API" ? "JSON API" : "파일 다운로드"} 테스트 성공 (HTTP ${result.statusCode})`);
     } catch (ex) {
-      message.error(ex instanceof Error ? ex.message : "API 연결 테스트에 실패했습니다.");
+      message.error(ex instanceof Error ? ex.message : "HTTP 연결 테스트에 실패했습니다.");
     } finally {
-      setTestingApi(false);
+      setTestingApi(null);
     }
   };
 
@@ -1669,13 +1921,26 @@ function ConnectionStep({
                 <div className="etl-http-test-row">
                   <Button
                     size="small"
-                    loading={testingApi}
+                    loading={testingApi === "JSON_API"}
                     disabled={!value.apiUrl.trim()}
-                    onClick={handleHttpApiTest}
+                    onClick={() => handleHttpApiTest("JSON_API")}
                   >
-                    연결 테스트
+                    JSON API 테스트
                   </Button>
-                  <span>{httpSourceJson.trim() ? "성공한 API 응답을 4번 소스 JSON에 표시합니다." : "API URL 입력 후 테스트하세요."}</span>
+                  <Button
+                    size="small"
+                    loading={testingApi === "FILE_DOWNLOAD"}
+                    disabled={!value.apiUrl.trim()}
+                    onClick={() => handleHttpApiTest("FILE_DOWNLOAD")}
+                  >
+                    파일 다운로드 테스트
+                  </Button>
+                  <span>
+                    {httpTestPassed
+                      ? `${httpTestType === "FILE_DOWNLOAD" ? "파일 다운로드" : "JSON API"} 테스트 통과`
+                      : "둘 중 하나의 테스트를 통과하면 다음 단계로 이동할 수 있습니다."}
+                    {httpSourceJson.trim() ? " · 성공한 JSON 응답을 4번 소스 JSON에 표시합니다." : ""}
+                  </span>
                 </div>
               </td>
             </tr>
@@ -2022,6 +2287,7 @@ function TargetStep({
   etlType,
   connectionInfo,
   sourceColumns,
+  targetColumns,
   columnMappings,
   loadSql,
   onQueryRecordSqlChange,
@@ -2033,6 +2299,7 @@ function TargetStep({
   etlType: EtlType;
   connectionInfo: ConnectionInfo;
   sourceColumns: SourceColumnMetadata[];
+  targetColumns: ColumnMetadataResponse[];
   columnMappings: ColumnMapping[];
   loadSql: string;
   onQueryRecordSqlChange: (queryRecordSql: string) => void;
@@ -2046,7 +2313,9 @@ function TargetStep({
   const [sourceOrderIds, setSourceOrderIds] = useState<string[]>([]);
   const [draggingSourceKey, setDraggingSourceKey] = useState<string | null>(null);
   const [draggingMappingId, setDraggingMappingId] = useState<string | null>(null);
+  const [dragOverTargetMappingId, setDragOverTargetMappingId] = useState<string | null>(null);
   const [validatingCalcite, setValidatingCalcite] = useState(false);
+  const [mappingValidationDialog, setMappingValidationDialog] = useState<MappingValidationDialog | null>(null);
   const selectedSourceTables = etlType === "HTTP" ? HTTP_SELECTED_TABLES : commaSeparatedValues(connectionInfo.sourceTable);
   const editingMapping = columnMappings.find((mapping) => mapping.id === editingMappingId) ?? null;
   const mappingDisplayExpression = (mapping: ColumnMapping) => displayMappingExpression(mapping, selectedSourceTables);
@@ -2278,14 +2547,39 @@ function TargetStep({
   const validateAllMappings = async () => {
     setValidatingCalcite(true);
     try {
-      const result = await validateCalciteSql(buildQueryRecordSql(columnMappings, selectedSourceTables));
-      if (result.success) {
-        message.success(`타깃 컬럼 Calcite 문법 검증 성공 (${result.latencyMs}ms)`);
+      const querySql = buildQueryRecordSql(columnMappings, selectedSourceTables);
+      const calciteResult = await validateCalciteSql(querySql);
+      const consistencyIssues = validateMappingConsistency(
+        columnMappings,
+        sourceColumns,
+        targetColumns,
+        selectedSourceTables,
+      );
+      const issues: MappingValidationIssue[] = [
+        ...(calciteResult.success
+          ? []
+          : [{ severity: "error" as const, message: `Calcite 문법 검사 실패: ${calciteResult.message}` }]),
+        ...consistencyIssues,
+      ];
+      const errorCount = issues.filter((issue) => issue.severity === "error").length;
+      const warningCount = issues.filter((issue) => issue.severity === "warning").length;
+      if (issues.length === 0) {
+        Modal.success({
+          title: "Calcite/정합성 체크 성공",
+          content: `Calcite 문법 검사와 매핑 정합성 검사를 통과했습니다. (${calciteResult.latencyMs}ms)`,
+        });
       } else {
-        message.error(result.message || "Calcite 문법 검증에 실패했습니다.");
+        setMappingValidationDialog({
+          errorCount,
+          warningCount,
+          calciteMessage: calciteResult.success
+            ? `Calcite 문법 검사: 성공 (${calciteResult.latencyMs}ms)`
+            : `Calcite 문법 검사: 실패 - ${calciteResult.message}`,
+          issues,
+        });
       }
     } catch (ex) {
-      message.error(ex instanceof Error ? ex.message : "Calcite 문법 검증에 실패했습니다.");
+      message.error(ex instanceof Error ? ex.message : "Calcite/정합성 체크에 실패했습니다.");
     } finally {
       setValidatingCalcite(false);
     }
@@ -2343,7 +2637,10 @@ function TargetStep({
                   className={`etl-source-column-row${draggingSourceKey === sourceKey ? " dragging" : ""}`}
                   draggable
                   onDragStart={(event) => startSourceDrag(event, sourceKey)}
-                  onDragEnd={() => setDraggingSourceKey(null)}
+                  onDragEnd={() => {
+                    setDraggingSourceKey(null);
+                    setDragOverTargetMappingId(null);
+                  }}
                   onDragOver={(event) => {
                     if (draggingSourceKey && draggingSourceKey !== sourceKey) {
                       event.preventDefault();
@@ -2443,15 +2740,27 @@ function TargetStep({
               {columnMappings.length > 0 ? columnMappings.map((mapping, index) => (
                 <div
                   key={mapping.id}
-                  className={`etl-target-column-row${draggingMappingId === mapping.id ? " dragging" : ""}`}
+                  className={`etl-target-column-row${draggingMappingId === mapping.id ? " dragging" : ""}${dragOverTargetMappingId === mapping.id ? " drop-target" : ""}`}
                   draggable
                   onDragStart={(event) => startMappingDrag(event, mapping.id)}
-                  onDragEnd={() => setDraggingMappingId(null)}
+                  onDragEnd={() => {
+                    setDraggingMappingId(null);
+                    setDragOverTargetMappingId(null);
+                  }}
                   onDragOver={(event) => {
                     const sourceKey = draggingSourceKey || event.dataTransfer.types.includes(SOURCE_COLUMN_DRAG_TYPE);
                     if (sourceKey || (draggingMappingId && draggingMappingId !== mapping.id)) {
                       event.preventDefault();
                       event.dataTransfer.dropEffect = sourceKey ? "copy" : "move";
+                    }
+                    if (sourceKey) {
+                      setDragOverTargetMappingId(mapping.id);
+                    }
+                  }}
+                  onDragLeave={(event) => {
+                    const nextTarget = event.relatedTarget;
+                    if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+                      setDragOverTargetMappingId((current) => current === mapping.id ? null : current);
                     }
                   }}
                   onDrop={(event) => {
@@ -2464,6 +2773,7 @@ function TargetStep({
                     }
                     setDraggingSourceKey(null);
                     setDraggingMappingId(null);
+                    setDragOverTargetMappingId(null);
                   }}
                 >
                   <Button
@@ -2531,6 +2841,44 @@ function TargetStep({
             </button>
           </div>
         </div>
+      </Modal>
+      <Modal
+        title="매핑 오류 내용"
+        open={!!mappingValidationDialog}
+        width={940}
+        footer={null}
+        className="mapping-error-modal"
+        onCancel={() => setMappingValidationDialog(null)}
+      >
+        {mappingValidationDialog ? (
+          <div className="mapping-error-content">
+            <section className="mapping-error-section">
+              <div className="mapping-error-label">GPT 해석</div>
+              <div className="mapping-error-gpt">
+                <div className="mapping-error-gpt-head">
+                  <strong>GPT 해석</strong>
+                  <span>매핑 검사 결과 기반 자동 해석</span>
+                </div>
+                <div className="mapping-error-gpt-body">
+                  {buildMappingValidationInterpretation(mappingValidationDialog).map((line, index) => (
+                    <p key={index}>{index + 1}. {line}</p>
+                  ))}
+                </div>
+              </div>
+            </section>
+            <section className="mapping-error-section">
+              <div className="mapping-error-label">에러 내용</div>
+              <pre className="mapping-error-log">{[
+                mappingValidationDialog.calciteMessage,
+                `오류 ${mappingValidationDialog.errorCount}건 / 경고 ${mappingValidationDialog.warningCount}건`,
+                "",
+                ...mappingValidationDialog.issues.map((issue, index) =>
+                  `${index + 1}. [${issue.severity === "error" ? "오류" : "경고"}] ${issue.message}`,
+                ),
+              ].join("\n")}</pre>
+            </section>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );
@@ -2655,6 +3003,8 @@ export function EtlCreatePage() {
   const [sourceColumns, setSourceColumns] = useState<SourceColumnMetadata[]>(restoredDraft?.sourceColumns ?? []);
   const [loadSqlColumns, setLoadSqlColumns] = useState<SourceColumnMetadata[]>(restoredDraft?.loadSqlColumns ?? []);
   const [httpSourceJson, setHttpSourceJson] = useState(restoredDraft?.httpSourceJson ?? "");
+  const [httpTestPassed, setHttpTestPassed] = useState(restoredDraft?.httpTestPassed ?? false);
+  const [httpTestType, setHttpTestType] = useState<"JSON_API" | "FILE_DOWNLOAD" | undefined>(restoredDraft?.httpTestType);
   const [targetColumns, setTargetColumns] = useState<ColumnMetadataResponse[]>(restoredDraft?.targetColumns ?? []);
   const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>(restoredDraft?.columnMappings ?? []);
   const mappingSourceColumns = useMemo(
@@ -2694,7 +3044,7 @@ export function EtlCreatePage() {
     [connectionInfo.sourceTable, isHttpLoad],
   );
   const canCompleteConnection = (isFileLoad || isHttpLoad || !!connectionInfo.sourceServiceId) &&
-    (!isHttpLoad || (!!connectionInfo.apiUrl.trim() && !!httpSourceJson.trim())) &&
+    (!isHttpLoad || (!!connectionInfo.apiUrl.trim() && httpTestPassed)) &&
     !!connectionInfo.targetServiceId &&
     !!connectionInfo.targetSchema.trim() &&
     (isFileLoad || isHttpLoad || !!connectionInfo.sourceSchema.trim()) &&
@@ -2725,6 +3075,8 @@ export function EtlCreatePage() {
       sourceColumns,
       loadSqlColumns,
       httpSourceJson,
+      httpTestPassed,
+      httpTestType,
       targetColumns,
       columnMappings,
     });
@@ -2740,6 +3092,8 @@ export function EtlCreatePage() {
     loadSql,
     loadSqlColumns,
     httpSourceJson,
+    httpTestPassed,
+    httpTestType,
     queryRecordSql,
     showTruncateSql,
     sourceColumns,
@@ -2844,8 +3198,8 @@ export function EtlCreatePage() {
       moveStep("basic");
       return;
     }
-    if (isHttpLoad && (!connectionInfo.apiUrl.trim() || !httpSourceJson.trim())) {
-      message.warning("API URL 입력 후 연결 테스트를 완료하세요.");
+    if (isHttpLoad && (!connectionInfo.apiUrl.trim() || !httpTestPassed)) {
+      message.warning("API URL 입력 후 JSON API 테스트 또는 파일 다운로드 테스트를 완료하세요.");
       moveStep("connection");
       return;
     }
@@ -2988,6 +3342,8 @@ export function EtlCreatePage() {
         value={connectionInfo}
         etlType={etlType}
         httpSourceJson={httpSourceJson}
+        httpTestPassed={httpTestPassed}
+        httpTestType={httpTestType}
         onChange={(nextValue) => {
           preserveRestoredSqlRef.current = false;
           setConnectionInfo((current) => {
@@ -2999,6 +3355,8 @@ export function EtlCreatePage() {
             nextValue.apiKey !== undefined
           ) {
             setHttpSourceJson("");
+            setHttpTestPassed(false);
+            setHttpTestType(undefined);
           }
           if (
             nextValue.targetServiceId !== undefined ||
@@ -3010,7 +3368,11 @@ export function EtlCreatePage() {
           setLoadSqlColumns([]);
           invalidateFrom("connection");
         }}
-        onHttpSourceJsonChange={setHttpSourceJson}
+        onHttpTestSuccess={(nextTestType, responseBody) => {
+          setHttpTestPassed(true);
+          setHttpTestType(nextTestType);
+          setHttpSourceJson(responseBody);
+        }}
         onSourceColumnsChange={setSourceColumns}
         onTargetColumnsChange={setTargetColumns}
       />
@@ -3049,6 +3411,7 @@ export function EtlCreatePage() {
         etlType={etlType}
         connectionInfo={connectionInfo}
         sourceColumns={mappingSourceColumns}
+        targetColumns={targetColumns}
         columnMappings={columnMappings}
         loadSql={loadSql}
         onQueryRecordSqlChange={setQueryRecordSql}

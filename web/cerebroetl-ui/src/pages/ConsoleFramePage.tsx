@@ -4230,11 +4230,6 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
           <section className="nifi-ai-panel" role="tabpanel" aria-label="AI 어시스턴트">
             <div className="nifi-ai-summary">
               <strong>{aiProviderName ?? "선택된 GPT"}</strong>
-              <span>
-                {isJobGroup && displayJob
-                  ? "현재 조회 중인 JOB 정보만 기준으로 답변합니다."
-                  : "현재 선택한 프로세스 그룹 정보 기준으로 답변합니다."}
-              </span>
               <Button size="small" loading={aiPreviewLoading} onClick={handleAiPreview}>
                 전송될 정보 보기
               </Button>
@@ -4569,6 +4564,7 @@ export function ConsoleFramePage({
             className={`console-frame${frameChromeReady ? "" : " console-frame--preparing"}`}
             title={title}
             src={frameSrc}
+            allow="clipboard-read; clipboard-write"
             onLoad={handleFrameLoad}
           />
         ) : (

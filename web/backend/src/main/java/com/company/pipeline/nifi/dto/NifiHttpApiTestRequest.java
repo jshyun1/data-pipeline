@@ -9,6 +9,9 @@ public record NifiHttpApiTestRequest(
         @Pattern(regexp = "GET|POST")
         String httpMethod,
 
+        @Pattern(regexp = "JSON_API|FILE_DOWNLOAD")
+        String testType,
+
         @NotBlank
         @Size(max = 2000)
         String apiUrl,

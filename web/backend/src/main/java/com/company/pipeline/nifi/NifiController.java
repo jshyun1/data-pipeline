@@ -27,6 +27,7 @@ import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
 import com.company.pipeline.nifi.dto.NifiProcessorDetailResponse;
 import com.company.pipeline.nifi.dto.NifiProcessorRunResponse;
 import com.company.pipeline.user.AppUser;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -95,6 +96,7 @@ public class NifiController {
     private final EtlJobStepRepository etlJobStepRepository;
     private final NifiProcessorEditLockService processorEditLockService;
     private final NifiProcessGroupMetadataService processGroupMetadataService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public NifiController(NifiClient nifiClient,
             NifiProcessGroupTreeService processGroupTreeService,
@@ -181,9 +183,12 @@ public class NifiController {
             throw new NifiClientException("API URL은 http 또는 https만 지원합니다.", null);
         }
 
+        String testType = request.testType() == null || request.testType().isBlank()
+                ? "JSON_API"
+                : request.testType().trim();
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(10))
-                .header("Accept", "application/json");
+                .header("Accept", "FILE_DOWNLOAD".equals(testType) ? "*/*" : "application/json");
         if (request.apiKey() != null && !request.apiKey().isBlank()) {
             builder.header("Authorization", "BEARER " + request.apiKey().trim());
         }
@@ -193,13 +198,32 @@ public class NifiController {
         try {
             HttpResponse<String> response = HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(5))
+                    .followRedirects(HttpClient.Redirect.NORMAL)
                     .build()
                     .send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             String body = response.body() == null ? "" : response.body();
             if (body.length() > 20000) {
                 body = body.substring(0, 20000);
             }
-            return ApiResponse.success(new NifiHttpApiTestResponse(response.statusCode(), body));
+            String contentType = response.headers().firstValue("content-type").orElse("");
+            if ("JSON_API".equals(testType) && response.statusCode() >= 200 && response.statusCode() < 300) {
+                try {
+                    objectMapper.readTree(body);
+                } catch (Exception ex) {
+                    return ApiResponse.success(new NifiHttpApiTestResponse(
+                            422,
+                            "JSON API 테스트 실패: 응답 본문이 JSON 형식이 아닙니다. content-type=" + contentType,
+                            contentType,
+                            response.uri().toString()
+                    ));
+                }
+            }
+            return ApiResponse.success(new NifiHttpApiTestResponse(
+                    response.statusCode(),
+                    body,
+                    contentType,
+                    response.uri().toString()
+            ));
         } catch (IOException ex) {
             throw new NifiClientException("API 연결 테스트 실패: " + ex.getMessage(), ex);
         } catch (InterruptedException ex) {

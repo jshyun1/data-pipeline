@@ -557,10 +557,11 @@ export async function createHttpLoadFlow(payload: {
 
 export async function testHttpApi(payload: {
   httpMethod: "GET" | "POST";
+  testType: "JSON_API" | "FILE_DOWNLOAD";
   apiUrl: string;
   apiKey?: string;
-}): Promise<{ statusCode: number; responseBody: string }> {
-  const res = await apiClient.post<ApiResponse<{ statusCode: number; responseBody: string }>>(
+}): Promise<{ statusCode: number; responseBody: string; contentType?: string; finalUrl?: string }> {
+  const res = await apiClient.post<ApiResponse<{ statusCode: number; responseBody: string; contentType?: string; finalUrl?: string }>>(
     "/nifi/etl/http-load/test-api",
     payload,
   );
