@@ -215,12 +215,12 @@ export function GptFailure({ message, onRetry }: { message?: string; onRetry?: (
   );
 }
 
-/** [보내는 정보 보기] 창 - 마스킹·자르기가 적용된 대상 정보 그대로. */
+/** [프롬프트] 창 - 마스킹·자르기가 적용된 대상 정보 그대로. */
 export function GptPreviewModal({ preview, onClose }: { preview: GptPreviewState; onClose: () => void }) {
   return (
-    <Modal open={preview.open} title="GPT 에 보내는 정보" onCancel={onClose} footer={null} width={860} rootClassName="cerebro-modal">
+    <Modal open={preview.open} title="프롬프트" onCancel={onClose} footer={null} width={860} rootClassName="cerebro-modal">
       {preview.loading ? (
-        <div className="failure-log-empty"><Spin size="small" /> 정보를 모으는 중입니다.</div>
+        <div className="failure-log-empty"><Spin size="small" /> 프롬프트 정보를 모으는 중입니다.</div>
       ) : preview.error ? (
         <Alert type="error" showIcon message={preview.error} />
       ) : preview.data ? (
@@ -233,7 +233,7 @@ export function GptPreviewModal({ preview, onClose }: { preview: GptPreviewState
           </div>
           <pre className="failure-log-lines gpt-analysis-preview">{preview.data.text}</pre>
           <div className="failure-log-empty">
-            이 정보와 함께 역할 지시문과 이번 창의 대화가 전송됩니다. 연결 계정·비밀번호·API 키는 수집하지 않습니다.
+            이 프롬프트 정보와 함께 역할 지시문과 이번 창의 대화가 전송됩니다. 연결 계정·비밀번호·API 키는 수집하지 않습니다.
           </div>
         </>
       ) : null}

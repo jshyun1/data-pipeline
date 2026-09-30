@@ -211,6 +211,13 @@ export interface LlmStreamHandlers {
   onError?: (error: { code: string; message: string }) => void;
 }
 
+class LlmStreamError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "LlmStreamError";
+  }
+}
+
 /**
  * GPT 해석을 SSE 로 받는다. axios 는 응답을 흘려 읽지 못해 fetch 를 쓴다 - 그래서 인증 헤더·401 처리를 여기서 직접 한다
  * (api/client.ts 의 인터셉터와 같은 규칙). {@code signal} 로 [중지]·창 닫기 때 끊는다.
@@ -262,7 +269,14 @@ export async function streamLlmChat(request: LlmChatRequest, handlers: LlmStream
     else if (event === "meta") handlers.onMeta?.(payload as LlmContextPreview);
     else if (event === "compacted") handlers.onCompacted?.(payload as LlmCompacted);
     else if (event === "done") handlers.onDone?.(payload);
-    else if (event === "error") handlers.onError?.(payload);
+    else if (event === "error") {
+      const error = {
+        code: String(payload.code ?? "PROVIDER_ERROR"),
+        message: String(payload.message ?? "GPT 해석 요청이 실패했습니다."),
+      };
+      handlers.onError?.(error);
+      throw new LlmStreamError(error.code, error.message);
+    }
   };
   for (;;) {
     const { value, done } = await reader.read();

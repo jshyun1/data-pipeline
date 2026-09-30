@@ -6,6 +6,7 @@ import {
   useState,
   type CSSProperties,
   type ChangeEvent,
+  type ReactNode,
   type MouseEvent as ReactMouseEvent,
   type SyntheticEvent,
 } from "react";
@@ -2335,6 +2336,36 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
   const matchesSearch = (node: NifiProcessGroupTreeNode, normalizedQuery: string): boolean =>
     node.name.toLowerCase().includes(normalizedQuery);
 
+  const highlightedName = (name: string): ReactNode => {
+    const query = searchQuery.trim();
+    if (!query) {
+      return name;
+    }
+
+    const normalizedName = name.toLowerCase();
+    const normalizedQuery = query.toLowerCase();
+    const parts: ReactNode[] = [];
+    let cursor = 0;
+    let matchIndex = normalizedName.indexOf(normalizedQuery);
+    while (matchIndex >= 0) {
+      if (matchIndex > cursor) {
+        parts.push(name.slice(cursor, matchIndex));
+      }
+      const end = matchIndex + query.length;
+      parts.push(
+        <mark key={`${matchIndex}-${end}`} className="nifi-tree-highlight">
+          {name.slice(matchIndex, end)}
+        </mark>,
+      );
+      cursor = end;
+      matchIndex = normalizedName.indexOf(normalizedQuery, cursor);
+    }
+    if (cursor < name.length) {
+      parts.push(name.slice(cursor));
+    }
+    return parts.length > 0 ? parts : name;
+  };
+
   const filterTree = (
     node: NifiProcessGroupTreeNode,
     normalizedQuery: string,
@@ -2375,7 +2406,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
           </button>
           <button type="button" className="nifi-tree-label" title={node.name} onClick={() => openGroup(node.id)}>
             {treeIcon(node)}
-            <span className="nifi-tree-name">{node.name}</span>
+            <span className="nifi-tree-name">{highlightedName(node.name)}</span>
           </button>
         </div>
         {hasChildren && expanded

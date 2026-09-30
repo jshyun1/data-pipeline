@@ -6420,6 +6420,14 @@ button.alert-compact-trigger.is-clear:hover {
   text-overflow: ellipsis;
 }
 
+.nifi-tree-highlight {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: #fde68a;
+  color: inherit;
+  font-weight: 700;
+}
+
 .nifi-tree-count {
   color: #111827;
 }
