@@ -200,8 +200,8 @@ class WorkflowCdcNodeTest {
         assertThat(nodes).singleElement().satisfies(node -> {
             assertThat(node.get("type")).isEqualTo("CDC");
             assertThat(node.get("pipeline_id")).isEqualTo(3L);
-            // dag_id 규칙은 kafka_pipelines_dynamic.py 와 같아야 한다 - 어긋나면 없는 DAG 를 부른다.
-            assertThat(node.get("cdc_dag_id")).isEqualTo("kafka_pipeline_3_control");
+            // 파이프라인별 제어 DAG 는 폐지됐다(2026-10-01) - 노드가 pipeline_id 로 직접 지시한다.
+            assertThat(node).doesNotContainKey("cdc_dag_id");
             assertThat(node.get("name")).isEqualTo("orders-cdc");
         });
     }

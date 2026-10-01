@@ -208,6 +208,21 @@ function categoryOf(dag: DashboardDag): DagCategory {
   return dag.business_category ?? categorizeDag(dag.dag_id);
 }
 
+/**
+ * 이 파이프라인을 CDC 노드로 품은 게시된 워크플로우와 그 노드 키(첫 번째).
+ *
+ * CDC 는 워크플로우로만 제어한다(2026-10-01) - 파이프라인마다 있던 제어 DAG(kafka_pipeline_{id}_control)는 없다.
+ * 어느 워크플로우에도 없는 파이프라인은 실행할 수 없다(워크플로우에 노드로 넣고 게시해야 한다).
+ */
+function cdcHomeOf(workflows: WorkflowSummary[], pipelineId: number) {
+  for (const workflow of workflows) {
+    if (!workflow.published) continue;
+    const node = workflow.cdcNodes?.find((item) => item.pipelineId === pipelineId);
+    if (node) return { workflow, nodeKey: node.nodeKey };
+  }
+  return undefined;
+}
+
 function folderName(dag: DashboardDag) {
   if (dag.business_folder) return dag.business_folder;
   const tags = tagNames(dag);
@@ -679,35 +694,37 @@ function BusinessTree({
   /**
    * CDC 파이프라인 트리 항목. ETL DAG 항목과 같은 우클릭 메뉴(상세·실행 설정)를 준다.
    *
-   * 예전에는 ETL 항목에만 메뉴가 있어서, 같은 트리인데 CDC만 우클릭이 안 됐다.
-   * 대상은 그 파이프라인의 제어 DAG(kafka_pipeline_{id}_control)다.
+   * 실행 대상은 이 파이프라인을 품은 워크플로우다(2026-10-01 제어 DAG 폐지). «실행 설정»을 누르면 그 워크플로우의
+   * 실행 창이 이 파이프라인 노드만 골라 둔 채로 열린다. 어느 워크플로우에도 없으면 실행할 수 없다고 알린다.
    */
   const renderPipelineButton = (pipeline: PipelineResponse) => {
-    const controlDag = dags.find((d) => d.dag_id === `kafka_pipeline_${pipeline.id}_control`);
+    const home = cdcHomeOf(workflows, pipeline.id);
+    const homeDag = home ? dags.find((d) => d.dag_id === home.workflow.dagId) : undefined;
     const row = treeRow({
       active: revealPipelineId === pipeline.id,
       icon: "file",
       label: pipeline.name,
-      title: pipeline.name,
+      title: home ? `${pipeline.name} · 워크플로우 «${home.workflow.name}»` : `${pipeline.name} · 워크플로우에 없음(실행 불가)`,
       arrow: { kind: "none" },
       onClick: () => onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id }),
     });
-    if (!controlDag) {
-      return <div key={pipeline.id} className="tree-node">{row}</div>;   // 제어 DAG가 없으면 메뉴도 의미가 없다
-    }
     return (
       <div key={pipeline.id} className="tree-node">
         <Dropdown
           trigger={["contextMenu"]}
           menu={{
             items: [
-              { key: "detail", icon: <InfoCircleOutlined />, label: "상세" },
-              ...(canRun ? [{ key: "execution", icon: <PlayCircleOutlined />, label: "실행 설정" }] : []),
+              ...(homeDag ? [{ key: "detail", icon: <InfoCircleOutlined />, label: "워크플로우 상세" }] : []),
+              ...(canRun ? [{
+                key: "execution", icon: <PlayCircleOutlined />,
+                label: homeDag ? "실행 설정" : "실행 설정 (워크플로우에 없음)", disabled: !homeDag,
+              }] : []),
             ],
             onClick: ({ key }) => {
               onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id });
-              if (key === "detail") onDetail(controlDag);
-              else onExecution(controlDag);
+              if (!homeDag) return;
+              if (key === "detail") onDetail(homeDag);
+              else onExecution(homeDag);
             },
           }}
         >
@@ -1286,6 +1303,7 @@ function ScopeList({
   scope,
   dags,
   runsByDag,
+  workflows,
   pipelines,
   runtimeByPipeline,
   metricByPipeline,
@@ -1297,6 +1315,7 @@ function ScopeList({
   scope: ListScope;
   dags: DashboardDag[];
   runsByDag: Map<string, AirflowDagRun[]>;
+  workflows: WorkflowSummary[];
   pipelines: PipelineResponse[];
   runtimeByPipeline: Map<number, PipelineRuntimeStatusResponse>;
   metricByPipeline: Map<number, RealtimePipelineMetricResponse>;
@@ -1337,9 +1356,11 @@ function ScopeList({
   }
 
   if (cdcRows) {
-    // 파이프라인 -> 그 파이프라인 제어 DAG의 최근 실행. "워크플로우 상태" 열에 쓴다.
-    const latestRunOfPipeline = (pipelineId: number) =>
-      (runsByDag.get(`kafka_pipeline_${pipelineId}_control`) ?? [])[0];
+    // 파이프라인 -> 그 파이프라인을 품은 워크플로우의 최근 실행. "워크플로우 상태" 열에 쓴다(2026-10-01 제어 DAG 폐지).
+    const latestRunOfPipeline = (pipelineId: number) => {
+      const home = cdcHomeOf(workflows, pipelineId);
+      return home ? (runsByDag.get(home.workflow.dagId) ?? [])[0] : undefined;
+    };
     return (
       <Table<PipelineResponse>
         rowKey="id"
@@ -1770,74 +1791,81 @@ function PropertyPanel({
   );
 }
 
+type CdcNodeChoice = ExecutionAction | "none";
+
+/** CDC 노드 한 줄에 고를 수 있는 지시. «그대로»는 이번 실행에서 그 노드를 건너뛴다. */
+const CDC_NODE_CHOICES: Array<{ label: string; value: CdcNodeChoice }> = [
+  { label: "그대로", value: "none" },
+  { label: "시작", value: "start" },
+  { label: "중지", value: "stop" },
+  { label: "재시작", value: "restart" },
+  { label: "배포", value: "deploy" },
+];
+
 function ExecutionSettingsModal({
   open,
   dag,
   runs,
+  workflows,
+  pipelines,
+  runtimeByPipeline,
+  focusPipelineId,
   onClose,
   onExecuted,
 }: {
   open: boolean;
   dag?: DashboardDag;
   runs: AirflowDagRun[];
+  workflows: WorkflowSummary[];
+  pipelines: PipelineResponse[];
+  runtimeByPipeline: Map<number, PipelineRuntimeStatusResponse>;
+  /** 트리에서 고른 CDC 파이프라인. 있으면 그 노드에만 «시작»을 골라 둔 채로 연다. */
+  focusPipelineId?: number;
   onClose: () => void;
   onExecuted: () => void;
 }) {
   const [action, setAction] = useState<ExecutionAction | undefined>("start");
+  const [nodeChoices, setNodeChoices] = useState<Record<string, CdcNodeChoice>>({});
   const [triggering, setTriggering] = useState(false);
+  void runs;
 
-  // 감시 센서까지 도달하는 동작(start/monitor/restart)의 Run이 살아 있으면 이미 감시 중이다.
-  // deploy/stop은 센서가 즉시 통과하므로 감시 Run이 아니다. restart 도 끝에 감시가 붙는다 -
-  // 빠져 있어서 재시작 Run 이 감시하는 중에 감시 재개를 누를 수 있었다(백엔드 isWatchAction 과 같은 기준).
-  const watching = runs.some((run) => run.state === "running"
-    && (run.conf?.action === "monitor" || run.conf?.action === "start" || run.conf?.action === "restart"));
+  const cdcWorkflow = dag && isCdcWorkflowDag(dag) ? workflows.find((w) => w.dagId === dag.dag_id) : undefined;
+  const cdcNodes = cdcWorkflow?.cdcNodes ?? [];
+  const pipelineName = (id?: number | null) => pipelines.find((p) => p.id === id)?.name ?? (id ? `파이프라인 ${id}` : "(없음)");
 
   useEffect(() => {
-    if (open) setAction(watching ? undefined : "start");
-  }, [dag?.dag_id, open, watching]);
+    if (!open) return;
+    setAction("start");
+    // CDC 워크플로우: 파이프라인을 골라 들어왔으면 그 노드만 «시작», 아니면 전부 «시작»으로 연다.
+    const focusNode = focusPipelineId != null ? cdcNodes.find((n) => n.pipelineId === focusPipelineId)?.nodeKey : undefined;
+    setNodeChoices(Object.fromEntries(cdcNodes.map((n) =>
+      [n.nodeKey, focusNode ? (n.nodeKey === focusNode ? "start" : "none") : "start"] as const)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, dag?.dag_id, focusPipelineId]);
 
-  // CDC 워크플로우: 소속 CDC 노드 전부에 같은 지시가 간다. 워크플로우 Run 은 쏘고 바로 끝나므로
-  // «감시 중»이라는 상태가 없다 - 개별 파이프라인처럼 잠글 것이 없다. 감시 재개는 개별 파이프라인
-  // 전용 통로라 여기서는 뺀다.
-  const options = dag && isCdcWorkflowDag(dag)
-    ? [
-        { label: "시작 (Start)", value: "start" },
-        { label: "중지 (Stop)", value: "stop" },
-        { label: "재시작 (Restart)", value: "restart" },
-        { label: "배포 (Deploy)", value: "deploy" },
-      ]
-    : dag && categoryOf(dag) === "CDC"
-    ? [
-        { label: "배포 (Deploy)", value: "deploy" },
-        // 시작도 감시 센서까지 가는 동작이라 감시 재개와 똑같이 자리를 차지한다.
-        // 한쪽만 막으면 같은 중복이 시작 쪽으로 그대로 생긴다.
-        { label: "시작 (Start)", value: "start", disabled: watching },
-        { label: "중지 (Stop)", value: "stop" },
-        // 싱크가 멈췄을 때(실패) 원인을 고치고 다시 띄우는 복구 동작(2026-09-17). 멈춘 커넥터·태스크만 다시 띄우고
-        // 멈춘 건부터 이어서 적재된다. 감시 Run 이 살아 있으면 정상 운행 중이라 쓸 일이 없어 막는다.
-        { label: "재시작 (Restart)", value: "restart", disabled: watching },
-        // 이미 돌고 있는 CDC의 감시 Run만 잃었을 때. 커넥터에는 아무 지시도 하지 않는다.
-        // 예전에는 이걸 되살리려면 stop -> start 밖에 없어서 Sink를 한 번 멈춰야 했다.
-        // 감시 Run이 살아 있는데 또 누르면 같은 파이프라인을 감시하는 Run이 둘이 되고,
-        // 그 둘이 max_active_runs=2를 다 차지해 정작 중지 지시가 막힌다. 그래서 잠근다.
-        // 라벨에 "(Monitor)"를 붙이면 block 라디오의 한 칸 폭을 넘겨 줄바꿈된다.
-        { label: "감시 재개", value: "monitor", disabled: watching },
-      ]
-    : [
-        { label: "시작 (Start)", value: "start" },
-        { label: "중지 (Stop)", value: "stop" },
-      ];
+  const options = [
+    { label: "시작 (Start)", value: "start" },
+    { label: "중지 (Stop)", value: "stop" },
+  ];
+  const chosen = Object.entries(nodeChoices).filter(([, v]) => v !== "none");
 
   const execute = async () => {
-    if (!dag || !action) return;
-    if ((action === "monitor" || action === "start") && watching) {
-      message.warning("이미 감시 중인 실행이 있습니다. 중지 후 다시 시작해주세요.");
-      return;
-    }
+    if (!dag) return;
     setTriggering(true);
     try {
-      await triggerAirflowDag(dag.dag_id, { action });
-      message.success(`${displayName(dag)} ${options.find((option) => option.value === action)?.label} 요청을 전송했습니다.`);
+      if (cdcWorkflow) {
+        if (chosen.length === 0) {
+          message.warning("지시할 파이프라인을 하나 이상 고르세요.");
+          return;
+        }
+        // 노드별 지시. 여기에 없는 노드는 이번 실행에서 건너뛴다(airflow/dags/cdc_runtime.py).
+        await triggerAirflowDag(dag.dag_id, { node_actions: Object.fromEntries(chosen) });
+        message.success(`${displayName(dag)} - 파이프라인 ${chosen.length}개에 지시를 보냈습니다. 상태 확인까지 끝나야 성공으로 표시됩니다.`);
+      } else {
+        if (!action) return;
+        await triggerAirflowDag(dag.dag_id, { action });
+        message.success(`${displayName(dag)} ${options.find((option) => option.value === action)?.label} 요청을 전송했습니다.`);
+      }
       onClose();
       onExecuted();
     } catch (error) {
@@ -1853,29 +1881,61 @@ function ExecutionSettingsModal({
       open={open}
       onCancel={onClose}
       footer={<>
-        <Button type="primary" loading={triggering} disabled={!action}
+        <Button type="primary" loading={triggering} disabled={cdcWorkflow ? chosen.length === 0 : !action}
                 onClick={() => void execute()}>실행</Button>
         <Button disabled={triggering} onClick={onClose}>취소</Button>
       </>}
       destroyOnHidden
       rootClassName="cerebro-modal"
+      width={cdcWorkflow ? 640 : undefined}
     >
-      <p>Airflow DAG에 전달할 실행 동작을 선택하세요.</p>
-      {watching && (
-        <p style={{ color: "#888", fontSize: 12 }}>
-          이미 감시 중인 실행이 있어 «시작»과 «감시 재개»는 선택할 수 없습니다.
-          다시 켜려면 «중지» 후 «시작»을 해주세요.
-        </p>
+      {cdcWorkflow ? (
+        <>
+          <p>파이프라인마다 이번 실행에서 보낼 지시를 고르세요. «그대로»인 파이프라인은 건너뜁니다.
+            각 지시는 실제로 그 상태가 됐는지 확인까지 마쳐야 성공으로 끝납니다.</p>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: "#888" }}>전체 적용</span>
+            {CDC_NODE_CHOICES.map((choice) => (
+              <Button key={choice.value} size="small"
+                      onClick={() => setNodeChoices(Object.fromEntries(cdcNodes.map((n) => [n.nodeKey, choice.value] as const)))}>
+                {choice.label}
+              </Button>
+            ))}
+          </div>
+          <Table
+            rowKey="nodeKey"
+            size="small"
+            pagination={false}
+            dataSource={cdcNodes}
+            columns={[
+              { title: "파이프라인", render: (_, node) => pipelineName(node.pipelineId) },
+              { title: "현재 상태", width: 110, render: (_, node) => {
+                const runtime = node.pipelineId != null ? runtimeByPipeline.get(node.pipelineId) : undefined;
+                return runtime?.runtimeStatus ?? pipelines.find((p) => p.id === node.pipelineId)?.status ?? "-";
+              } },
+              { title: "지시", width: 300, render: (_, node) => (
+                <Radio.Group size="small" optionType="button" buttonStyle="solid"
+                             value={nodeChoices[node.nodeKey] ?? "none"} options={CDC_NODE_CHOICES}
+                             onChange={(event) => setNodeChoices((current) => ({ ...current, [node.nodeKey]: event.target.value }))} />
+              ) },
+            ]}
+          />
+          {cdcNodes.length === 0 && <p style={{ color: "#c0392b" }}>이 워크플로우에 CDC 노드가 없습니다.</p>}
+        </>
+      ) : (
+        <>
+          <p>Airflow DAG에 전달할 실행 동작을 선택하세요.</p>
+          <Radio.Group
+            block
+            className="airflow-execution-actions"
+            optionType="button"
+            buttonStyle="solid"
+            value={action}
+            options={options}
+            onChange={(event) => setAction(event.target.value as ExecutionAction)}
+          />
+        </>
       )}
-      <Radio.Group
-        block
-        className="airflow-execution-actions"
-        optionType="button"
-        buttonStyle="solid"
-        value={action}
-        options={options}
-        onChange={(event) => setAction(event.target.value as ExecutionAction)}
-      />
     </Modal>
   );
 }
@@ -1995,9 +2055,10 @@ export function AirflowDashboardPage() {
   const runtimeByPipeline = new Map((runtimeQuery.data ?? []).map((r) => [r.pipelineId, r] as const));
   const metricByPipeline = new Map((cdcMetricsQuery.data ?? []).map((m) => [m.pipelineId, m] as const));
   const selectedPipeline = pipelines.find((pipeline) => pipeline.id === selectedPipelineId);
-  // CDC 파이프라인 하나가 DAG 하나에 대응한다(kafka_pipeline_{id}_control).
-  const pipelineDag = selectedPipeline
-    ? businessDags.find((dag) => dag.dag_id === `kafka_pipeline_${selectedPipeline.id}_control`)
+  // CDC 파이프라인은 자기를 품은 워크플로우로 실행한다(2026-10-01 제어 DAG 폐지). 속성창·이력·실행 설정이 그 DAG 를 쓴다.
+  const selectedPipelineHome = selectedPipeline ? cdcHomeOf(workflowsQuery.data ?? [], selectedPipeline.id) : undefined;
+  const pipelineDag = selectedPipelineHome
+    ? businessDags.find((dag) => dag.dag_id === selectedPipelineHome.workflow.dagId)
     : undefined;
 
   // ETL 그룹 -> 그 그룹(하위 포함)에 속한 워크플로우 DAG id.
@@ -2255,7 +2316,7 @@ export function AirflowDashboardPage() {
                 </h3>
               </div>
               {scope
-                ? <ScopeList scope={scope} dags={businessDags} runsByDag={runsByDag} pipelines={pipelines}
+                ? <ScopeList scope={scope} dags={businessDags} runsByDag={runsByDag} workflows={workflowsQuery.data ?? []} pipelines={pipelines}
                              runtimeByPipeline={runtimeByPipeline} metricByPipeline={metricByPipeline}
                              selectedDagId={selectedDagId}
                              selectedPipelineId={selectedPipelineId}
@@ -2327,6 +2388,8 @@ export function AirflowDashboardPage() {
               뒤 «실행 설정»을 누르면 직전에 고른 다른 DAG가 열리고 그게 트리거됐다. */}
           <ExecutionSettingsModal open={executionOpen} dag={selectedPipeline ? pipelineDag : selectedDag}
                                   runs={selectedDag ? runsByDag.get(selectedDag.dag_id) ?? [] : []}
+                                  workflows={workflowsQuery.data ?? []} pipelines={pipelines}
+                                  runtimeByPipeline={runtimeByPipeline} focusPipelineId={selectedPipeline?.id}
                                   onClose={() => setExecutionOpen(false)} onExecuted={() => { setHistoryOpen(true); void dashboardQuery.refetch(); }} />
           <RunHistoryModal open={historyOpen} dag={selectedPipeline ? pipelineDag : selectedDag}
                            runs={historyRuns} refreshSeconds={refreshSeconds} onClose={() => setHistoryOpen(false)} />

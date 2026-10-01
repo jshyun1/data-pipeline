@@ -75,10 +75,11 @@ public class WorkflowService {
                             .filter(Objects::nonNull)
                             .distinct()
                             .toList();
-                    int cdcNodeCount = (int) nodes.stream()
+                    List<WorkflowResponses.CdcNodeRef> cdcNodes = nodes.stream()
                             .filter(n -> EtlWorkflowNode.TYPE_CDC.equals(n.getNodeType()))
-                            .count();
-                    return WorkflowSummary.from(w, nodes.size(), upstreamIds(w).size(), jobCount, childIds, cdcNodeCount);
+                            .map(n -> new WorkflowResponses.CdcNodeRef(n.getNodeKey(), n.getPipelineId()))
+                            .toList();
+                    return WorkflowSummary.from(w, nodes.size(), upstreamIds(w).size(), jobCount, childIds, cdcNodes);
                 })
                 .toList();
     }

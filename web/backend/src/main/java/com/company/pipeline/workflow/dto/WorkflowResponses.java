@@ -35,20 +35,29 @@ public final class WorkflowResponses {
              * 하위 노드로 놓지 못하게 막는 근거다 - 하위로 넣으면 상위가 돌 때마다 CDC 시작 지시가 나간다.
              */
             int cdcNodeCount,
+            /**
+             * CDC 노드(노드 키 · 파이프라인 id). CDC 는 워크플로우로만 제어한다(2026-10-01) - 화면이 «이 파이프라인이
+             * 어느 워크플로우의 어느 노드인가»를 찾아 그 노드에만 지시를 보낸다.
+             */
+            List<CdcNodeRef> cdcNodes,
             LocalDateTime updatedAt) {
 
         public static WorkflowSummary from(EtlWorkflow w, int nodeCount, int upstreamCount) {
-            return from(w, nodeCount, upstreamCount, 0, List.of(), 0);
+            return from(w, nodeCount, upstreamCount, 0, List.of(), List.of());
         }
 
         public static WorkflowSummary from(EtlWorkflow w, int nodeCount, int upstreamCount,
-                                           int jobCount, List<Long> childWorkflowIds, int cdcNodeCount) {
+                                           int jobCount, List<Long> childWorkflowIds, List<CdcNodeRef> cdcNodes) {
             return new WorkflowSummary(
                     w.getId(), w.getWorkflowKey(), w.dagId(), w.getName(), w.getDescription(),
                     w.getScheduleCron(), w.getTimezone(),
                     upstreamCount, w.isPublished(), w.getPublishedAt(), w.getPublishedBy(),
-                    nodeCount, jobCount, childWorkflowIds, cdcNodeCount, w.getUpdatedAt());
+                    nodeCount, jobCount, childWorkflowIds, cdcNodes.size(), cdcNodes, w.getUpdatedAt());
         }
+    }
+
+    /** 워크플로우 안의 CDC 노드 하나. */
+    public record CdcNodeRef(String nodeKey, Long pipelineId) {
     }
 
     /** 이 워크플로우를 품고 있는 상위 워크플로우 한 줄. */

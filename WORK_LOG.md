@@ -2502,3 +2502,42 @@ CALLBACK 0건. await 태스크 51건 중 **24건이 186초**에 몰려 있는데
 **남은 것**: ETL 담당자 협의(retry 관계 · 실패 의미 · 토큰 노출 · 행수 · bulletin 레벨 · Max Rows) → MSA 반영(중복 템플릿 이름 정리 포함) → 기존 job 보정.
 백엔드: `__PG_ID__` 치환 · `/fail?error=` 읽기 · 관측기 이중 행 방지. Airflow: deferrable await · bulletin 검사에서 `9x_` 제외.
 로컬 `Template` 폴더의 `DEMO_*` 5개(이전 실험 사본, 실제 DB 접속 보유)는 정리 대상 - 사용자 확인 뒤 삭제.
+
+## 71. CDC 파이프라인별 제어 DAG 폐지 - 워크플로우로만 제어 (2026-10-01)
+
+**요청**: 파이프라인을 만들면 생기던 제어 DAG(`kafka_pipeline_{id}_control`)를 없애고 CDC 는 워크플로우로만 제어(9/27 검토 문서 결정 1-A).
+«워크플로우는 성공인데 CDC 는 안 돈다»는 큰 오류라 반드시 막는다. 워크플로우 안에서 파이프라인마다 시작·중지·재시작을 따로 줄 수 있어야 한다.
+어느 워크플로우에도 없는 파이프라인은 실행할 수 없게 한다(결정 (a)).
+
+**원인 정리**: CDC 노드가 제어 DAG 를 `TriggerDagRunOperator(wait_for_completion=False)` 로 쏘기만 했다 - 제어 DAG 가 502 로 실패해도
+워크플로우는 성공. 제어 DAG 의 `monitor_cdc_runtime` 센서는 CDC 수명 내내 Run 을 «실행 중»으로 붙잡았지만, 실제 판정은 백엔드
+`KafkaPipelineStateSynchronizer` 가 하고 센서는 그 결과를 DAG 색으로 옮겨 적을 뿐이었다(감시 중복 차단 코드까지 따로 필요했다).
+
+**변경**
+- Airflow `cdc_runtime.py`(신규): 노드 = `apply`(이번 실행의 지시를 고름 → 이미 그 상태면 건너뜀 → 백엔드 지시, 거절 사유를 그대로 실패 메시지로)
+  → `verify`(Kafka Connect 라이브 상태가 기대값이 될 때까지 최대 60초, 아니면 실패). 성공 = «실제로 그 상태가 됐다». 이후 «계속 도는지»는
+  런타임 상태 + 알림(CONNECTOR_FAILED)이 맡는다.
+- 노드별 지시: 실행 conf `node_actions`({"노드키": "start" | "stop" | "restart" | "deploy"}), 없는 노드는 건너뜀. 비어 있으면 `action` 이 전체에(옛 일괄 지시 호환).
+  CDC 노드 진입 규칙은 `none_failed`(앞 노드가 건너뜀이어도 진행, 실패면 막음). CDC 워크플로우 `max_active_runs=2 → 1`.
+- 삭제: `airflow/dags/kafka_pipelines_dynamic.py`, 백엔드 `CdcDagSpecPublisher`, 카탈로그 컨트롤러의 감시 중복 차단 · `watch-runs` API,
+  카탈로그 동기화의 `kafka_pipeline_*_control` → CDC 분류, 컴파일러 spec 의 `cdc_dag_id`. Airflow Variable `cdc_pipeline_index` · `cdc_pipeline_spec__*` 13개 삭제.
+  옛 제어 DAG 는 Airflow 에서 지우지 않았다(파일이 없어 stale, 실행 이력은 남음).
+- 백엔드 워크플로우 목록에 `cdcNodes`(노드 키 · 파이프라인 id) 추가 - 화면이 «이 파이프라인이 어느 워크플로우의 어느 노드인가»를 찾는다.
+- 로그 화면(`AirflowDashboardPage`): CDC 워크플로우 «실행 설정» = 파이프라인별 지시 표(그대로/시작/중지/재시작/배포 + 전체 적용).
+  트리의 CDC 파이프라인 우클릭 «실행 설정» = 소속 워크플로우 창이 그 노드만 «시작»으로 골라진 채 열림. 워크플로우에 없으면 «실행 설정 (워크플로우에 없음)» 비활성.
+  CDC 목록의 «워크플로우 상태» 열은 소속 워크플로우의 최근 실행. CDC 관리 · 캔버스 안내 문구를 워크플로우 기준으로 고침.
+
+**검증(로컬, 워크플로우 `etl_wf_cdc_imp` = 파이프라인 2 · 3, UI 와 같은 백엔드 실행 API 로)**
+- `node_actions={018m: deploy}` → 018m `apply · verify` 성공(«전부 STOPPED» 1회차 확인), 060l 은 «이번 실행의 지시 대상이 아닙니다»로 건너뜀, 워크플로우 success.
+- `node_actions={018m: start}` → 018m 은 SCN 만료로 실제로 안 뜨는 파이프라인 → apply 실패
+  «start 실패(HTTP 502): Kafka Connect가 실패 상태입니다 … taskStates=[FAILED]» → **워크플로우 failed**(예전 같으면 success 였다). 파이프라인 상태는 READY 그대로.
+  처음엔 사유 추출이 `error` 객체를 문자열로 잘라 KeyError 를 냈다 - 고친 뒤 재시험.
+- `action=stop`(옛 일괄 방식) → 둘 다 «이미 멈춰 있습니다(READY)»로 건너뜀, success.
+- 백엔드 테스트(Workflow · AirflowDag · Pipeline) 통과(카탈로그 동기화 테스트를 새 규칙으로 고침). UI 타입체크 통과, 배포 번들에 새 창 포함 확인.
+
+**복구 지점**: git 태그 `before-cdc-workflow-only`(7a93fc1), 백업 `~/data-pipeline-backup/2026-10-01-before-cdc-workflow-only/`
+(워크플로우 · 파이프라인 · 카탈로그 테이블 덤프, Airflow Variable 전체, 커넥터 · 파이프라인 상태).
+
+**남은 것**: «시작 성공» 경로는 정상 파이프라인이 없어 실측 못 함(2 · 3 은 SCN 만료 - 재스냅샷 필요, 9/27 문서 결정 3). 로그2 화면(`/workflows/logs2`)은
+아직 옛 제어 DAG 기준이라 CDC 파이프라인 실행 버튼이 안 보인다. 상단 CDC 현황 카드는 제어 DAG 실행을 세던 것이라 0 으로 보인다(9/27 결정 2 - «가동 N/M» 한 칸).
+MSA 반영은 별도(push 요청 시).

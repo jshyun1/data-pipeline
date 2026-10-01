@@ -96,11 +96,9 @@ public class WorkflowCompiler {
                     governedRootOf(job.getNifiPgId()).ifPresent(governedRoots::add);
                 }
             } else if (EtlWorkflowNode.TYPE_CDC.equals(node.getNodeType())) {
-                // CDC 노드는 파이프라인 «제어 DAG» 를 부른다. 팩토리는 워크플로우 id 가 아니라
-                // 어느 DAG 를 띄울지 알아야 한다 - dag_id 규칙은 kafka_pipelines_dynamic.py 와 같다.
+                // CDC 노드는 파이프라인에 직접 지시하고 상태 도달까지 확인한다(airflow/dags/cdc_runtime.py).
+                // 예전의 파이프라인별 제어 DAG(cdc_dag_id)는 2026-10-01 폐지됐다.
                 spec.put("pipeline_id", node.getPipelineId());
-                spec.put("cdc_dag_id", node.getPipelineId() == null
-                        ? null : "kafka_pipeline_" + node.getPipelineId() + "_control");
                 spec.put("name", node.getPipelineId() == null ? node.getNodeKey()
                         : pipelineRepository.findById(node.getPipelineId())
                                 .map(PipelineDefinition::getName).orElse(node.getNodeKey()));

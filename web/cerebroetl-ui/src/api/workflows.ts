@@ -22,6 +22,8 @@ export interface WorkflowSummary {
   childWorkflowIds: number[];
   /** CDC 노드 수. 0 보다 크면 CDC 워크플로우 - 하위 워크플로우 노드로 놓을 수 없다. 상세 응답에는 없다. */
   cdcNodeCount?: number;
+  /** CDC 노드(노드 키 · 파이프라인). CDC 는 워크플로우로만 제어한다 - 파이프라인이 어느 노드인지 찾는 데 쓴다. */
+  cdcNodes?: Array<{ nodeKey: string; pipelineId?: number | null }>;
   updatedAt: string;
 }
 

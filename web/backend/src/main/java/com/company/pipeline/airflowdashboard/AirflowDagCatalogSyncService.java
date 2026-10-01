@@ -109,10 +109,9 @@ public class AirflowDagCatalogSyncService {
         } else if (dag.dagId().startsWith("nifi_pipeline_") && dag.dagId().endsWith("_control")) {
             group = "ETL";
             folder = folder(dag, "ETL");
-        } else if (dag.dagId().startsWith("kafka_pipeline_") && dag.dagId().endsWith("_control")) {
-            group = "CDC";
-            folder = folder(dag, "Kafka");
         } else {
+            // kafka_pipeline_{id}_control(CDC 제어 DAG)은 2026-10-01 폐지됐다 - CDC 는 워크플로우(etl_wf_*)로만 제어한다.
+            // 파일이 사라진 뒤에도 Airflow 에 stale 로 남은 옛 DAG 가 카탈로그에 다시 들어오지 않게 여기서 거른다.
             return null;
         }
         String displayName = dag.displayName() == null || dag.displayName().isBlank()

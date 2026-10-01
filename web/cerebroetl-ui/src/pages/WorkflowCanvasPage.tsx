@@ -1707,8 +1707,8 @@ function WorkflowSettings({ detail, disabled, onSave, saving, onDraftChange, cdc
           <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>스케줄</div>
           {/* CDC 는 한 번 켜면 계속 돈다 - «매일 다시 켜기»가 뜻을 갖지 않는다(2026-09-10 설계 방안 B). */}
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            CDC 워크플로우는 수동 실행만 됩니다. 실시간 모니터링의 «실행 설정»에서 시작·중지·재시작·배포 중
-            하나를 골라 모든 CDC 노드에 한 번에 보냅니다.
+            CDC 워크플로우는 수동 실행만 됩니다. 워크플로우 › 로그의 «실행 설정»에서 파이프라인마다 시작·중지·재시작·배포를
+            골라 보냅니다(«그대로»는 건너뜀). 각 노드는 실제로 그 상태가 됐는지 확인까지 해야 성공으로 끝납니다.
           </Typography.Text>
         </div>
       ) : (

@@ -203,8 +203,8 @@ public class PipelineController {
 
     /**
      * 파이프라인의 싱크 커넥터가 지금까지 커밋한 offset을 스냅샷으로 남긴다. 대시보드용
-     * "실제 적재 건수"를 위해 Airflow의 kafka_pipelines_dynamic.py가 두 시점에 각각
-     * 호출해서 그 차이(delta)를 계산한다.
+     * "실제 적재 건수"를 위해 두 시점에 각각 호출해서 그 차이(delta)를 계산한다
+     * (예전 CDC 제어 DAG 의 적재 검증이 쓰던 통로, 2026-10-01 제어 DAG 폐지 후에도 API 는 남겨 둔다).
      */
     @PostMapping("/{id}/metrics/snapshot")
     public ApiResponse<PipelineMetricSnapshotResponse> recordMetricSnapshot(@PathVariable Long id) {

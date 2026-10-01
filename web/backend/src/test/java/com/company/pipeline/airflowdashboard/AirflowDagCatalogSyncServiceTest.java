@@ -34,24 +34,26 @@ class AirflowDagCatalogSyncServiceTest {
                 new Dag("nifi_pipeline_abcd1234_control", "ETL 주문", "주문 적재", false,
                         List.of(new DagTag("folder:ETL_TEST_1"))),
                 new Dag("nifi_pipeline_abcd1234_control", "중복", null, false),
-                new Dag("kafka_pipeline_7_control", "CDC 고객", "고객 CDC", false,
+                new Dag("etl_wf_cdc_orders", "CDC 고객", "고객 CDC", false,
                         List.of(new DagTag("folder:CDC_TEST_1"))),
+                // CDC 제어 DAG 는 2026-10-01 폐지됐다 - Airflow 에 남아 있어도 카탈로그 대상이 아니다.
+                new Dag("kafka_pipeline_7_control", "CDC 옛 제어", null, false),
                 new Dag("test_hello", "테스트", null, false),
                 new Dag("nifi_pipeline_stale000_control", "오래된 DAG", null, true)));
         when(jdbcTemplate.queryForList(anyString(), eq(String.class)))
                 .thenReturn(
-                        List.of("kafka_pipeline_7_control"),
-                        List.of("kafka_pipeline_7_control", "kafka_pipeline_9_control"));
+                        List.of("etl_wf_cdc_orders"),
+                        List.of("etl_wf_cdc_orders", "kafka_pipeline_7_control"));
         when(jdbcTemplate.batchUpdate(anyString(), anyList())).thenReturn(new int[]{1, 1});
 
         var result = new AirflowDagCatalogSyncService(airflowClient, jdbcTemplate).synchronize();
 
-        assertThat(result.discoveredCount()).isEqualTo(3);
+        assertThat(result.discoveredCount()).isEqualTo(4);
         assertThat(result.eligibleCount()).isEqualTo(2);
         assertThat(result.createdCount()).isEqualTo(1);
         assertThat(result.createdDagIds()).containsExactly("nifi_pipeline_abcd1234_control");
         assertThat(result.disabledCount()).isEqualTo(1);
-        assertThat(result.disabledDagIds()).containsExactly("kafka_pipeline_9_control");
+        assertThat(result.disabledDagIds()).containsExactly("kafka_pipeline_7_control");
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<Object[]>> argsCaptor = ArgumentCaptor.forClass(List.class);
@@ -60,8 +62,8 @@ class AirflowDagCatalogSyncServiceTest {
         assertThat(argsCaptor.getAllValues().get(0).get(0)).containsExactly(
                 "nifi_pipeline_abcd1234_control", "ETL", "ETL_TEST_1", "ETL 주문", "주문 적재");
         assertThat(argsCaptor.getAllValues().get(0).get(1)).containsExactly(
-                "kafka_pipeline_7_control", "CDC", "CDC_TEST_1", "CDC 고객", "고객 CDC");
-        assertThat(argsCaptor.getAllValues().get(1).get(0)).containsExactly("kafka_pipeline_9_control");
+                "etl_wf_cdc_orders", "ETL", "CDC_TEST_1", "CDC 고객", "고객 CDC");
+        assertThat(argsCaptor.getAllValues().get(1).get(0)).containsExactly("kafka_pipeline_7_control");
     }
 
     @Test

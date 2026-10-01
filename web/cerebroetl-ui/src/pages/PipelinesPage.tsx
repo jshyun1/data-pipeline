@@ -466,12 +466,12 @@ export function PipelinesPage() {
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span>
                   <b>{info.pipelineName}</b> — {info.connectorNames.join(", ")} 없음
-                  {/* 여기서 바로 재배포하지 않는다 - 배포/시작/중지는 Airflow 제어 DAG가
-                      단독으로 지시한다(화면은 생성/삭제만 담당). 화면과 DAG 양쪽에서
-                      배포가 가능하면 "누가 언제 실행시켰는지"가 이력에서 흐려진다. */}
+                  {/* 여기서 바로 재배포하지 않는다 - 배포/시작/중지는 워크플로우가 단독으로 지시한다
+                      (2026-10-01 제어 DAG 폐지, 화면은 생성/삭제만 담당). 양쪽에서 가능하면
+                      "누가 언제 실행시켰는지"가 이력에서 흐려진다. */}
                   <br />
                   <Typography.Text type="secondary">
-                    복구하려면 Airflow에서 이 파이프라인의 제어 DAG를 action=deploy로 실행하세요.
+                    복구하려면 이 파이프라인이 든 워크플로우를 «실행 설정»에서 이 파이프라인만 «배포»로 실행하세요.
                   </Typography.Text>
                 </span>
               </div>
@@ -1064,7 +1064,7 @@ function SinkStuckRecord({ pipeline, canWrite }: { pipeline: PipelineResponse; c
         description={
           <>
             <div>
-              원인을 고칠 수 있으면 고친 뒤 <strong>워크플로우 › 로그 → 이 파이프라인 → «실행 설정» → «재시작 (Restart)»</strong> 을 하십시오.
+              원인을 고칠 수 있으면 고친 뒤 <strong>워크플로우 › 로그 → 이 파이프라인 우클릭 → «실행 설정» → 이 파이프라인 «재시작»</strong> 을 하십시오.
               멈춘 건부터 다시 들어옵니다. 원본을 고칠 수 없는 건(깨진 메시지 등)만 아래에서 건너뜁니다.
             </div>
             {stuck.failureTraces.length > 0 && (
