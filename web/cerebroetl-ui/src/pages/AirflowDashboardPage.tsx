@@ -339,6 +339,7 @@ function matchesMetric(
   dag: DashboardDag,
   runs: AirflowDagRun[],
   today: Dayjs,
+  waitingDagIds?: Set<string>,
 ): boolean {
   if (metric === "all") return true;
   if (metric === "new") return Boolean(dag.created_at && dayjs(dag.created_at).isAfter(today));
@@ -346,83 +347,100 @@ function matchesMetric(
   const latestToday = latestRunToday(runs, today);
   if (metric === "success") return latestToday?.state === "success";
   if (metric === "failed") return latestToday?.state === "failed";
-  return latestToday?.state === "queued" || latestToday?.state === "scheduled";
+  // 대기: 큐에 올라 시작을 기다리는 실행 + 지금 실행 중인 워크플로우의 후행(waitingDagIds, 2026-10-02 요청).
+  return latestToday?.state === "queued" || latestToday?.state === "scheduled"
+    || Boolean(waitingDagIds?.has(dag.dag_id));
 }
 
 /**
- * 업무별 상태 카드.
+ * «대기» 워크플로우 - 지금 실행 중인 워크플로우가 끝나면 이어서 돌 워크플로우(2026-10-02 요청).
  *
- * <p>모든 숫자가 <b>당일 · 작업(DAG) 기준</b>이다. «전체 작업»이 DAG 수인데 나머지만 실행
- * 건수면 단위가 섞여 읽히지 않는다. 그래서 각 DAG의 <b>오늘 마지막 실행</b>이 어떤 상태인지로
- * 한 번씩만 센다 - 한 작업이 오늘 세 번 실패해도 «실패 1»이다.
+ * <ul>
+ *   <li>선행 연결(Asset): 선행이 실행 중이고 자기는 아직 안 돌고 있는 워크플로우</li>
+ *   <li>하위 워크플로우: 상위가 실행 중인데 그 상위의 이번 실행에서 아직 시작하지 않은 하위</li>
+ * </ul>
+ * 이미 돌고 있는 것은 «실행 중»이라 대기가 아니다.
+ */
+function computeWaitingDagIds(workflows: WorkflowSummary[], runsByDag: Map<string, AirflowDagRun[]>) {
+  const byId = new Map(workflows.map((w) => [w.id, w] as const));
+  const runningRun = (dagId: string) => (runsByDag.get(dagId) ?? []).find((run) => run.state === "running");
+  const waiting = new Set<string>();
+  for (const workflow of workflows) {
+    if (!workflow.published || runningRun(workflow.dagId)) continue;
+    const upstreamRunning = (workflow.upstreamWorkflowIds ?? [])
+      .some((id) => { const up = byId.get(id); return Boolean(up && runningRun(up.dagId)); });
+    if (upstreamRunning) waiting.add(workflow.dagId);
+  }
+  for (const parent of workflows) {
+    const parentRun = runningRun(parent.dagId);
+    if (!parentRun) continue;
+    const parentStart = dayjs(runAt(parentRun) ?? 0);
+    for (const childId of parent.childWorkflowIds) {
+      const child = byId.get(childId);
+      if (!child || !child.published || runningRun(child.dagId)) continue;
+      const latest = (runsByDag.get(child.dagId) ?? [])[0];
+      // 상위의 이번 실행 뒤에 시작한 적이 없으면 아직 차례를 기다리는 중이다.
+      if (!latest || dayjs(runAt(latest) ?? 0).isBefore(parentStart)) waiting.add(child.dagId);
+    }
+  }
+  return waiting;
+}
+
+/**
+ * 워크플로우 현황 카드(2026-10-02 - CDC · ETL 두 장을 한 장으로 합쳤다).
  *
- * <p>«실행 중»만 날짜와 무관하게 지금 돌고 있는 작업을 센다(어제 시작해 아직 도는 것도 포함).
+ * <p>CDC 도 워크플로우로만 제어하므로(2026-10-01) 나눌 이유가 없다. 모든 숫자가 <b>당일 · 워크플로우(DAG) 기준</b>이고,
+ * 각 워크플로우의 <b>오늘 마지막 실행</b> 상태로 한 번씩만 센다 - 오늘 세 번 실패해도 «실패 1»이다.
+ * «실행 중»은 날짜와 무관하게 지금 돌고 있는 것, «대기»는 큐에 오른 실행 + 실행 중인 워크플로우의 후행이다.
  *
  * <p>숫자를 누르면 가운데 목록이 그 대상으로 좁혀진다.
  */
 function StatusCard({
-  category,
   dags,
   runsByDag,
+  waitingDagIds,
   activeMetric,
   onMetricClick,
 }: {
-  category: BusinessCategory;
   dags: DashboardDag[];
   runsByDag: Map<string, AirflowDagRun[]>;
+  waitingDagIds: Set<string>;
   activeMetric?: StatusMetric;
   onMetricClick: (metric: StatusMetric) => void;
 }) {
   const today = dayjs().startOf("day");
-  let active = 0;
-  let waiting = 0;
-  let success = 0;
-  let failed = 0;
-  let fresh = 0;
-  for (const dag of dags) {
-    const runs = runsByDag.get(dag.dag_id) ?? [];
-    if (matchesMetric("running", dag, runs, today)) active += 1;
-    if (matchesMetric("success", dag, runs, today)) success += 1;
-    if (matchesMetric("failed", dag, runs, today)) failed += 1;
-    if (matchesMetric("waiting", dag, runs, today)) waiting += 1;
-    if (matchesMetric("new", dag, runs, today)) fresh += 1;
-  }
+  const count = (key: StatusMetric) =>
+    dags.filter((dag) => matchesMetric(key, dag, runsByDag.get(dag.dag_id) ?? [], today, waitingDagIds)).length;
 
-  // 초안(workflow-monitoring.html)의 KPI 띠: 도메인 배지 + «아이콘·이름 / 숫자» 칸을 구분선으로 잇는다.
-  // 0 인 칸은 숫자를 흐리게 눌러 둬서 값이 있는 칸이 먼저 눈에 들어오게 한다(전체 작업은 예외).
-  const domain = category === "CDC" ? "cdc" : "etl";
-  const metric = (key: StatusMetric, icon: WfIconName, label: string, value: number, tone: string) => (
-    <button
-      type="button"
-      className={`airflow-business-metric${activeMetric === key ? " active" : ""}`}
-      aria-pressed={activeMetric === key}
-      onClick={() => onMetricClick(key)}
-    >
-      <span className="airflow-business-metric-label">
-        <WfIcon name={icon} size={12} strokeWidth={key === "all" ? 2.5 : 3}
-                className={key === "all" ? undefined : `wf-tone-${tone}`} />
-        {label}
-      </span>
-      <strong className={`airflow-business-metric-value wf-tone-${value === 0 && key !== "all" ? "muted" : tone}`}>
-        {value}
-      </strong>
-    </button>
-  );
+  // 0 인 칸은 숫자를 흐리게 눌러 둬서 값이 있는 칸이 먼저 눈에 들어오게 한다.
+  const metric = (key: StatusMetric, icon: WfIconName, label: string, tone: string) => {
+    const value = count(key);
+    return (
+      <button
+        type="button"
+        className={`airflow-business-metric${activeMetric === key ? " active" : ""}`}
+        aria-pressed={activeMetric === key}
+        onClick={() => onMetricClick(key)}
+      >
+        <span className="airflow-business-metric-label">
+          <WfIcon name={icon} size={12} strokeWidth={3} className={`wf-tone-${tone}`} />
+          {label}
+        </span>
+        <strong className={`airflow-business-metric-value wf-tone-${value === 0 ? "muted" : tone}`}>
+          {value}
+        </strong>
+      </button>
+    );
+  };
   const metrics = [
-    metric("all", "grid", "전체 작업", dags.length, domain === "cdc" ? "blue" : "red"),
-    metric("running", "play", "실행 중", active, "blue"),
-    ...(category === "ETL" ? [metric("success", "check", "성공", success, "green")] : []),
-    metric("failed", "x", "실패", failed, "red"),
-    ...(category === "CDC" ? [metric("waiting", "clock", "대기", waiting, "amber")] : []),
-    metric("new", "plus", "신규", fresh, "purple"),
+    metric("running", "play", "실행 중", "blue"),
+    metric("success", "check", "성공", "green"),
+    metric("failed", "x", "실패", "red"),
+    metric("waiting", "clock", "대기", "amber"),
   ];
 
   return (
-    <section className={`airflow-business-card airflow-business-card--${domain}`}>
-      <strong className={`airflow-business-name airflow-business-name--${domain}`}>
-        <span className="domain-dot" />
-        {category}
-      </strong>
+    <section className="airflow-business-card airflow-business-card--etl">
       <div className="airflow-business-metrics">
         {metrics.map((item, index) => (
           <Fragment key={index}>
@@ -1303,6 +1321,7 @@ function ScopeList({
   scope,
   dags,
   runsByDag,
+  waitingDagIds,
   workflows,
   pipelines,
   runtimeByPipeline,
@@ -1315,6 +1334,7 @@ function ScopeList({
   scope: ListScope;
   dags: DashboardDag[];
   runsByDag: Map<string, AirflowDagRun[]>;
+  waitingDagIds: Set<string>;
   workflows: WorkflowSummary[];
   pipelines: PipelineResponse[];
   runtimeByPipeline: Map<number, PipelineRuntimeStatusResponse>;
@@ -1392,7 +1412,7 @@ function ScopeList({
   if (scope.kind === "metric") {
     // CDC 지표는 위에서 파이프라인 표로 처리했으므로 여기 오는 건 ETL뿐이다.
     rows = dags.filter((dag) => categoryOf(dag) === scope.category
-      && matchesMetric(scope.metric, dag, runsByDag.get(dag.dag_id) ?? [], today));
+      && matchesMetric(scope.metric, dag, runsByDag.get(dag.dag_id) ?? [], today, waitingDagIds));
   } else if (scope.kind === "dag") {
     // 그 DAG 한 줄만.
     rows = dags.filter((dag) => dag.dag_id === scope.dagId);
@@ -1793,9 +1813,9 @@ function PropertyPanel({
 
 type CdcNodeChoice = ExecutionAction | "none";
 
-/** CDC 노드 한 줄에 고를 수 있는 지시. «그대로»는 이번 실행에서 그 노드를 건너뛴다. */
+/** CDC 노드 한 줄에 고를 수 있는 지시. «유지»는 이번 실행에서 그 노드를 건너뛴다(지금 상태 그대로). */
 const CDC_NODE_CHOICES: Array<{ label: string; value: CdcNodeChoice }> = [
-  { label: "그대로", value: "none" },
+  { label: "유지", value: "none" },
   { label: "시작", value: "start" },
   { label: "중지", value: "stop" },
   { label: "재시작", value: "restart" },
@@ -1827,15 +1847,28 @@ function ExecutionSettingsModal({
   const [action, setAction] = useState<ExecutionAction | undefined>("start");
   const [nodeChoices, setNodeChoices] = useState<Record<string, CdcNodeChoice>>({});
   const [triggering, setTriggering] = useState(false);
+  // 표 필터(2026-10-02 요청) - 파이프라인 이름 · 현재 상태. «전체 적용»은 걸러진(보이는) 줄에만 적용한다.
+  const [nameFilter, setNameFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string | undefined>();
   void runs;
 
   const cdcWorkflow = dag && isCdcWorkflowDag(dag) ? workflows.find((w) => w.dagId === dag.dag_id) : undefined;
   const cdcNodes = cdcWorkflow?.cdcNodes ?? [];
   const pipelineName = (id?: number | null) => pipelines.find((p) => p.id === id)?.name ?? (id ? `파이프라인 ${id}` : "(없음)");
+  const statusOf = (id?: number | null) =>
+    (id != null ? runtimeByPipeline.get(id)?.runtimeStatus : undefined)
+    ?? pipelines.find((p) => p.id === id)?.status ?? "-";
+  const statusOptions = [...new Set(cdcNodes.map((node) => statusOf(node.pipelineId)))].sort()
+    .map((status) => ({ label: status, value: status }));
+  const visibleNodes = cdcNodes.filter((node) =>
+    (!nameFilter.trim() || pipelineName(node.pipelineId).toLowerCase().includes(nameFilter.trim().toLowerCase()))
+    && (!statusFilter || statusOf(node.pipelineId) === statusFilter));
 
   useEffect(() => {
     if (!open) return;
     setAction("start");
+    setNameFilter("");
+    setStatusFilter(undefined);
     // CDC 워크플로우: 파이프라인을 골라 들어왔으면 그 노드만 «시작», 아니면 전부 «시작»으로 연다.
     const focusNode = focusPipelineId != null ? cdcNodes.find((n) => n.pipelineId === focusPipelineId)?.nodeKey : undefined;
     setNodeChoices(Object.fromEntries(cdcNodes.map((n) =>
@@ -1891,13 +1924,20 @@ function ExecutionSettingsModal({
     >
       {cdcWorkflow ? (
         <>
-          <p>파이프라인마다 이번 실행에서 보낼 지시를 고르세요. «그대로»인 파이프라인은 건너뜁니다.
-            각 지시는 실제로 그 상태가 됐는지 확인까지 마쳐야 성공으로 끝납니다.</p>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 12, color: "#888" }}>전체 적용</span>
+            <Input size="small" allowClear placeholder="파이프라인 이름" style={{ width: 200 }}
+                   value={nameFilter} onChange={(event) => setNameFilter(event.target.value)} />
+            <Select size="small" allowClear placeholder="현재 상태" style={{ width: 140 }}
+                    options={statusOptions} value={statusFilter} onChange={(value) => setStatusFilter(value)} />
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: "#888" }} title="필터로 보이는 파이프라인에만 적용합니다">전체 적용</span>
             {CDC_NODE_CHOICES.map((choice) => (
               <Button key={choice.value} size="small"
-                      onClick={() => setNodeChoices(Object.fromEntries(cdcNodes.map((n) => [n.nodeKey, choice.value] as const)))}>
+                      onClick={() => setNodeChoices((current) => ({
+                        ...current,
+                        ...Object.fromEntries(visibleNodes.map((n) => [n.nodeKey, choice.value] as const)),
+                      }))}>
                 {choice.label}
               </Button>
             ))}
@@ -1906,13 +1946,11 @@ function ExecutionSettingsModal({
             rowKey="nodeKey"
             size="small"
             pagination={false}
-            dataSource={cdcNodes}
+            dataSource={visibleNodes}
+            locale={{ emptyText: cdcNodes.length ? "조건에 맞는 파이프라인이 없습니다" : "이 워크플로우에 CDC 노드가 없습니다" }}
             columns={[
               { title: "파이프라인", render: (_, node) => pipelineName(node.pipelineId) },
-              { title: "현재 상태", width: 110, render: (_, node) => {
-                const runtime = node.pipelineId != null ? runtimeByPipeline.get(node.pipelineId) : undefined;
-                return runtime?.runtimeStatus ?? pipelines.find((p) => p.id === node.pipelineId)?.status ?? "-";
-              } },
+              { title: "현재 상태", width: 110, render: (_, node) => statusOf(node.pipelineId) },
               { title: "지시", width: 300, render: (_, node) => (
                 <Radio.Group size="small" optionType="button" buttonStyle="solid"
                              value={nodeChoices[node.nodeKey] ?? "none"} options={CDC_NODE_CHOICES}
@@ -1920,7 +1958,6 @@ function ExecutionSettingsModal({
               ) },
             ]}
           />
-          {cdcNodes.length === 0 && <p style={{ color: "#c0392b" }}>이 워크플로우에 CDC 노드가 없습니다.</p>}
         </>
       ) : (
         <>
@@ -2020,6 +2057,11 @@ export function AirflowDashboardPage() {
   const businessDags = useMemo(
     () => (dashboardQuery.data?.dags ?? []).filter((dag) => categoryOf(dag) !== "기타"),
     [dashboardQuery.data?.dags],
+  );
+  // 실행 중인 워크플로우의 후행(«대기» 카드 · 목록이 같이 쓴다).
+  const waitingDagIds = useMemo(
+    () => computeWaitingDagIds(workflowsQuery.data ?? [], runsByDag),
+    [workflowsQuery.data, runsByDag],
   );
   const filteredDags = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -2176,7 +2218,7 @@ export function AirflowDashboardPage() {
     if (scope?.kind === "metric" && scope.category === "ETL") {
       return {
         dagIds: businessDags
-          .filter((dag) => categoryOf(dag) === "ETL" && matchesMetric(scope.metric, dag, runsByDag.get(dag.dag_id) ?? [], today))
+          .filter((dag) => categoryOf(dag) === "ETL" && matchesMetric(scope.metric, dag, runsByDag.get(dag.dag_id) ?? [], today, waitingDagIds))
           .map((dag) => dag.dag_id),
         includesChildren: false,
       };
@@ -2193,7 +2235,7 @@ export function AirflowDashboardPage() {
       if (matchesMetric("running", dag, runs, today)) counts.running += 1;
       if (matchesMetric("success", dag, runs, today)) counts.success += 1;
       if (matchesMetric("failed", dag, runs, today)) counts.failed += 1;
-      if (matchesMetric("waiting", dag, runs, today)) counts.waiting += 1;
+      if (matchesMetric("waiting", dag, runs, today, waitingDagIds)) counts.waiting += 1;
     });
     return counts;
   };
@@ -2227,19 +2269,17 @@ export function AirflowDashboardPage() {
           <section className={`lv2-curtain airflow-status-curtain ${curtainOpen ? "open" : "closed"}`}>
           <div className="lv2-curtain-body" aria-hidden={!curtainOpen}>
           <div className="airflow-business-status">
-            {CATEGORY_ORDER.map((category) => (
-              <StatusCard
-                key={category}
-                category={category}
-                dags={businessDags.filter((dag) => categoryOf(dag) === category)}
-                runsByDag={runsByDag}
-                activeMetric={scope?.kind === "metric" && scope.category === category ? scope.metric : undefined}
-                onMetricClick={(metric) => changeScope(
-                  scope?.kind === "metric" && scope.category === category && scope.metric === metric
-                    ? { kind: "cdc", scope: "all" }
-                    : { kind: "metric", category, metric })}
-              />
-            ))}
+            {/* CDC · ETL 구분 없이 한 장(2026-10-02). 워크플로우 DAG 는 전부 ETL 분류에 있다(CDC 워크플로우 포함). */}
+            <StatusCard
+              dags={businessDags.filter((dag) => categoryOf(dag) === "ETL")}
+              runsByDag={runsByDag}
+              waitingDagIds={waitingDagIds}
+              activeMetric={scope?.kind === "metric" ? scope.metric : undefined}
+              onMetricClick={(metric) => changeScope(
+                scope?.kind === "metric" && scope.metric === metric
+                  ? { kind: "category", category: "ETL" }
+                  : { kind: "metric", category: "ETL", metric })}
+            />
           </div>
           </div>
           {/* 현황 줄: 왼쪽 손잡이(접힘일 때 요약) · 오른쪽 동기화·갱신 주기.
@@ -2248,19 +2288,17 @@ export function AirflowDashboardPage() {
           <button type="button" className="lv2-curtain-handle" aria-expanded={curtainOpen} onClick={() => setCurtainOpen((open) => !open)}>
             {!curtainOpen && (
               <span className="lv2-mini">
-                {CATEGORY_ORDER.map((category, index) => {
-                  const counts = metricCounts(category);
+                {(() => {
+                  const counts = metricCounts("ETL");
                   return (
-                    <Fragment key={category}>
-                      {index > 0 && <span className="dotsep">│</span>}
-                      <span className={`lv2-dom ${category === "CDC" ? "cdc" : "etl"}`}><i />{category}</span>
+                    <>
                       <span className="lv2-mini-item">실행 중 <em>{counts.running}</em></span><span className="dotsep">·</span>
-                      {category === "ETL" && <><span className="lv2-mini-item">성공 <em>{counts.success}</em></span><span className="dotsep">·</span></>}
-                      <span className="lv2-mini-item">실패 {counts.failed > 0 ? <b className="bad">{counts.failed}</b> : <em>0</em>}</span>
-                      {category === "CDC" && <><span className="dotsep">·</span><span className="lv2-mini-item">대기 <em>{counts.waiting}</em></span></>}
-                    </Fragment>
+                      <span className="lv2-mini-item">성공 <em>{counts.success}</em></span><span className="dotsep">·</span>
+                      <span className="lv2-mini-item">실패 {counts.failed > 0 ? <b className="bad">{counts.failed}</b> : <em>0</em>}</span><span className="dotsep">·</span>
+                      <span className="lv2-mini-item">대기 <em>{counts.waiting}</em></span>
+                    </>
                   );
-                })}
+                })()}
               </span>
             )}
             <span className="lv2-handle-label">{curtainOpen ? "접기 ▴" : "현황 펼치기 ▾"}</span>
@@ -2316,7 +2354,7 @@ export function AirflowDashboardPage() {
                 </h3>
               </div>
               {scope
-                ? <ScopeList scope={scope} dags={businessDags} runsByDag={runsByDag} workflows={workflowsQuery.data ?? []} pipelines={pipelines}
+                ? <ScopeList scope={scope} dags={businessDags} runsByDag={runsByDag} waitingDagIds={waitingDagIds} workflows={workflowsQuery.data ?? []} pipelines={pipelines}
                              runtimeByPipeline={runtimeByPipeline} metricByPipeline={metricByPipeline}
                              selectedDagId={selectedDagId}
                              selectedPipelineId={selectedPipelineId}

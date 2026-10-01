@@ -79,7 +79,7 @@ public class WorkflowService {
                             .filter(n -> EtlWorkflowNode.TYPE_CDC.equals(n.getNodeType()))
                             .map(n -> new WorkflowResponses.CdcNodeRef(n.getNodeKey(), n.getPipelineId()))
                             .toList();
-                    return WorkflowSummary.from(w, nodes.size(), upstreamIds(w).size(), jobCount, childIds, cdcNodes);
+                    return WorkflowSummary.from(w, nodes.size(), upstreamIds(w), jobCount, childIds, cdcNodes);
                 })
                 .toList();
     }
@@ -144,7 +144,7 @@ public class WorkflowService {
         workflow.updateSettings(request.name(), request.description(),
                 request.scheduleCron(), request.timezone(), request.catchup(),
                 request.maxActiveRuns(), request.suspendOnError());
-        return WorkflowSummary.from(workflowRepository.save(workflow), 0, 0);
+        return WorkflowSummary.from(workflowRepository.save(workflow), 0);
     }
 
     /**
@@ -216,7 +216,7 @@ public class WorkflowService {
         workflowRepository.save(workflow);
         return WorkflowSummary.from(workflow,
                 nodeRepository.findByWorkflowIdAndDeletedAtIsNull(id).size(),
-                upstreamIds(workflow).size());
+                upstreamIds(workflow), 0, List.of(), List.of());
     }
 
     /**

@@ -40,19 +40,22 @@ public final class WorkflowResponses {
              * 어느 워크플로우의 어느 노드인가»를 찾아 그 노드에만 지시를 보낸다.
              */
             List<CdcNodeRef> cdcNodes,
+            /** 선행 워크플로우(이게 끝나면 이 워크플로우가 돈다). 로그 화면 «대기» - 실행 중인 워크플로우의 후행 - 판정에 쓴다. */
+            List<Long> upstreamWorkflowIds,
             LocalDateTime updatedAt) {
 
-        public static WorkflowSummary from(EtlWorkflow w, int nodeCount, int upstreamCount) {
-            return from(w, nodeCount, upstreamCount, 0, List.of(), List.of());
+        /** 막 만든 워크플로우처럼 선행 · 노드 정보가 아직 없을 때. */
+        public static WorkflowSummary from(EtlWorkflow w, int nodeCount) {
+            return from(w, nodeCount, List.of(), 0, List.of(), List.of());
         }
 
-        public static WorkflowSummary from(EtlWorkflow w, int nodeCount, int upstreamCount,
+        public static WorkflowSummary from(EtlWorkflow w, int nodeCount, List<Long> upstreamWorkflowIds,
                                            int jobCount, List<Long> childWorkflowIds, List<CdcNodeRef> cdcNodes) {
             return new WorkflowSummary(
                     w.getId(), w.getWorkflowKey(), w.dagId(), w.getName(), w.getDescription(),
                     w.getScheduleCron(), w.getTimezone(),
-                    upstreamCount, w.isPublished(), w.getPublishedAt(), w.getPublishedBy(),
-                    nodeCount, jobCount, childWorkflowIds, cdcNodes.size(), cdcNodes, w.getUpdatedAt());
+                    upstreamWorkflowIds.size(), w.isPublished(), w.getPublishedAt(), w.getPublishedBy(),
+                    nodeCount, jobCount, childWorkflowIds, cdcNodes.size(), cdcNodes, upstreamWorkflowIds, w.getUpdatedAt());
         }
     }
 

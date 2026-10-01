@@ -24,6 +24,8 @@ export interface WorkflowSummary {
   cdcNodeCount?: number;
   /** CDC 노드(노드 키 · 파이프라인). CDC 는 워크플로우로만 제어한다 - 파이프라인이 어느 노드인지 찾는 데 쓴다. */
   cdcNodes?: Array<{ nodeKey: string; pipelineId?: number | null }>;
+  /** 선행 워크플로우 id(이게 끝나면 이 워크플로우가 돈다). */
+  upstreamWorkflowIds?: number[] | null;
   updatedAt: string;
 }
 
