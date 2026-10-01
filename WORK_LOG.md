@@ -2408,3 +2408,97 @@ ETL · CDC 가 쓰는 창과 같게.
   확인: /settings · ?tab=별로 한 줄씩만, /gpt/register · /gpt/manage 도 한 줄씩만, 설정 밖 화면(/admin/users)에서는 하나도 안 켜짐.
 - 중간에 낸 오류: ORDER BY 를 텍스트 블록 끝에 붙여 «BYCOALESCE» SQL 오류(텍스트 블록은 줄 끝 공백을 지운다). 정렬 구문을 한 줄로 만들어 고쳤고,
   고친 뒤 기본 조회 · 각 정렬 200 을 확인했다.
+
+## 68. 카카오 알림톡 설정 창에 «설정 방법» 안내 (2026-09-29)
+
+**요청**: 발송 채널 → 카카오톡 설정 창 제목 옆에 물음표를 두고, 올리면 **알림톡 사용 방법**을 보여줄 것
+(개인 «나에게 보내기»가 아니라 알림톡 설정 안내여야 한다).
+
+- `CHANNEL_SETUP_HINT` 를 새로 두고 제목 옆 `std-hint-mark`(다른 화면에서 쓰는 물음표와 같은 모양)에 얹었다.
+  채널마다 안내가 다를 수 있어 지도(map)로 두었고, 안내가 있는 채널에만 물음표를 그린다(지금은 KAKAO).
+- 안내 내용: ① 카카오 쪽 준비(채널 개설 → 비즈니스 인증 → 대행사 계약 → 발신프로필키 → **템플릿 등록·심사
+  승인**, 영업일 1~3일) ② 이 창에 넣는 값이 어디서 오는지 ③ 보내지는 조건(수신자 전화번호 · 카카오톡 수신 켬 ·
+  **위험 등급만**) ④ 주의(승인된 템플릿 문구만 나간다 - 템플릿에 없는 내용은 카카오가 거부).
+- 우리 화면만 채운다고 나가지 않는다는 점이 핵심이다. 그 순서를 모르면 «설정은 다 넣었는데 왜 안 가지»가 된다.
+
+**검증**: 설정 → 발송 채널 → 카카오톡 [설정] → 제목 옆 물음표에 마우스를 올려 안내가 뜨는 것 확인.
+프런트 tsc 통과, 페이지 오류 0.
+
+**확인한 것 하나**: 지금 저장돼 있는 카카오 설정 값은 **«나에게 보내기»(카카오 메모 API)** 다 -
+주소가 `/memo/default/send`, 본문이 `template_object=…`, Content-Type 이 `x-www-form-urlencoded`.
+테스트로 넣어 둔 값으로 보이며, 알림톡으로 보내려면 대행사 값으로 바꿔야 한다(시연 전 확인 필요).
+
+## 69. NiFi 템플릿에 완료 콜백 붙이기 - 1단계(로컬 Initial 템플릿) (2026-09-29)
+
+**왜**: 워크플로우의 job 완료 판정이 전부 **추측**이다. 최근 45일 `completion_source` 57건 모두 OBSERVED,
+CALLBACK 0건. await 태스크 51건 중 **24건이 186초**에 몰려 있는데, 이는 «활동을 한 번도 못 봤으니 180초는
+기다려 보자»(`WAIT_START_GRACE_SECONDS`)를 그대로 태운 값이다. 적재는 진작 끝났는데 버리는 시간이다.
+15초 폴링이 짧은 job 을 놓치면 **빠른 job 일수록 더 오래 기다리는** 역설이 생긴다.
+
+**확인한 것**
+- job 은 **템플릿 그룹을 통째로 복제**해서 만들어진다(`NifiClient.createProcessGroupSnippet` →
+  `instantiateSnippet`). 템플릿에 프로세서를 더하면 **그 뒤에 만드는 job 에 자동으로 따라간다.**
+- 코드가 이름으로 찾는 템플릿 5종: `Initial`(INSERT) · `Incremental`(UPSERT) · `truncate_initial`(TRUNCATE) ·
+  `File` · `HTTP`. 셋 다 **마지막이 PutDatabaseRecord/PutSQL 하나**이고 소스가 `ExecuteSQLRecord` 라
+  조회 1회 = FlowFile 1개다 - 끝에 InvokeHTTP 를 붙이면 **job 당 콜백 1회**가 된다.
+- 콜백 받는 자리는 이미 있다: `POST /api/etl/job-runs/by-pg/{pgId}/complete`(본문 `{"rows":n}` 선택,
+  재전송 안전, `X-Service-Token` 필요). **실제로 불러 확인** - 원장이 `completion_source=CALLBACK` 으로 닫혔다.
+- **MSA 확인(읽기만)**: 루트 `Template` 폴더에 19개가 있고 **같은 이름이 두 벌**이다
+  (`Initial` 프로세서 0개와 3개, `Incremental` 도 마찬가지). `findChildProcessGroup` 은 이름으로 첫 번째를
+  고르므로 순서가 바뀌면 빈 템플릿을 복제하게 된다 - 콜백과 별개로 정리가 필요하다(ETL 담당자 영역).
+
+**한 것(로컬 NiFi 캔버스 - git 에 안 남는 변경이라 여기 적는다)**
+- `Template > Initial`(id `02a1ab2b-…`)에 프로세서 **`99_완료알림`**(InvokeHTTP, id `ec3ee4e6-…`) 추가.
+  POST · `HTTP URL = http://pipeline-api:8081/api/etl/job-runs/by-pg/__PG_ID__/complete` ·
+  `Request Body Enabled=false`(본문 없이 호출) · 사용자 정의 속성 `X-Service-Token`(요청 헤더로 나간다) ·
+  관계 5종 자동 종료.
+- 연결선 `03_타깃테이블 --success--> 99_완료알림` 추가. 프로세서 검증 오류 0.
+
+**검증**: 백엔드가 job 생성에 쓰는 **바로 그 snippet API** 로 템플릿을 복제해 보니 복제본에 `99_완료알림` 과
+연결선이 그대로 들어 있었다(URL 자리표시자까지). 확인 뒤 복제본은 삭제했고, 콜백 시험으로 생긴 원장 행도 지웠다.
+
+**남은 것(2단계)**
+1. job 생성 때 백엔드가 URL 의 `__PG_ID__` 를 **실제 프로세스 그룹 id** 로 치환(이미 SQL · DBCP 를 채우는
+   자리가 있어 거기에 한 줄 는다). 지금 상태로는 복제만 되고 콜백은 안 간다.
+2. 나머지 템플릿 4종에도 같은 처리 + 실패 콜백(`/fail`)도 함께.
+3. **이미 만들어진 job 은 소급되지 않는다** - 보정(프로세서 추가) 또는 재생성이 필요하다.
+4. MSA 반영은 ETL 담당자와 협의(템플릿은 그쪽 소유, 중복 이름 정리도 같이).
+
+## 70. 완료 콜백 구조 영향 분석 + NiFi 템플릿 4종에 콜백 붙이기 - 2단계 템플릿 쪽 (2026-09-30)
+
+**요청**: ① 9/29 목표 구조(콜백 → 트리거러 대기 → Kafka 가속 → 백엔드 집계)를 적용하면 ETL · 워크플로우 어디가 달라지는지,
+② 단일 브로커를 늘려도 되는지(CDC 파이프라인 100개 대비) → `docs/2026-09-30-callback-architecture-impact.md`.
+③ NiFi 템플릿 작업만 먼저 진행(ETL 담당자와 협의용) → `docs/2026-09-30-nifi-template-callback-handoff.md` + `docs/nifi-templates/*.flow.json`.
+
+**확인한 것(영향)**
+- Airflow 3.2.2 스케줄러 소스: `DEFERRED` 는 DAG `max_active_tasks` · 워커 슬롯 집계에서 제외(태스크 단위 `max_active_tis_per_dag` 에만 셈),
+  `default_pool.include_deferred=False`, 트리거러 capacity 1000, `aiohttp 3.13.5` 있음, 트리거러 → pipeline-api 200 · 서비스 토큰 주입 확인.
+  Kafka provider 는 없음(common-messaging 만).
+- 지금 `await` 의 7가지 일(원장 조회 · NiFi 상태 폴링 · 스레드 로그 · bulletin 검사 · 유휴/유예 · 카운터 적재 건수 · observe 보고)이 영향 범위의 전부.
+  로그 화면 적재 건수는 태스크 로그 «이번 실행 적재 건수 (총 N행)» 정규식이라 문구를 유지하면 무변경.
+- **새로 생기는 문제**: 관측기(15초)가 콜백으로 방금 닫힌 실행의 꼬리 증가분을 보고 새 행을 만든다 → 실행 1건이 2행. 관측기 보정 필요.
+- 브로커: apache/kafka 3.8.0 KRaft 1노드, 토픽 전부 RF=1, Debezium 히스토리 토픽 RF 는 브로커 기본값을 따름(jar 확인), `DebeziumOracleTemplate.BOOTSTRAP_SERVERS` 하드코딩.
+  MSA 호스트 31GB/8GB 여유, kafka-connect 는 커넥터 6개로 1.1/1.25GiB → 100개의 병목은 Connect 워커 + Oracle LogMiner 세션 수. 파이프라인 2 · 3 이 `topic.prefix` 공유.
+
+**§69 정정**: «조회 1회 = FlowFile 1개» 는 틀림. ExecuteSQLRecord `Max Rows Per Flow File` 50,000(Initial · Incremental) · 100,000(truncate_initial) 이라
+큰 테이블은 조각 여러 개(166만 행 = 34개). 조각마다 완료를 보내면 첫 조각에서 원장이 닫힌다.
+
+**한 것(로컬 NiFi 캔버스, `Template >` 4종 - git 에 안 남는 변경)**
+- `97_완료판정`(RouteOnAttribute): `last` = `${fragment.count:isNull():or(${fragment.index:plus(1):equals(${fragment.count:toNumber()})})}`, unmatched 자동 종료.
+- `98_실패알림`(InvokeHTTP `…/by-pg/__PG_ID__/fail?error=<EL: putdatabaserecord.error → executesql.error.message, 공백 정리 · 500자 · urlEncode>`),
+  `99_완료알림`(`…/complete`). 둘 다 본문 없음 · `X-Service-Token` 동적 속성 · 관계 5종 자동 종료 · Retry 탭(Retry+Failure, 5회, Penalize, 최대 10분).
+- 실패 모음 funnel → 98. 각 템플릿의 자동 종료돼 있던 failure/retry(File 은 not.found · permission.denied 포함)를 funnel 로, 적재 처리기 success 를 97 로.
+  File 은 «전체 파일 수»를 알 수 없어 완료 콜백 없이 실패 콜백만. HTTP 템플릿은 로컬에 없음.
+- 헬퍼는 airflow-scheduler 컨테이너 안에서 실행(`/tmp/nifi_tpl.py` · `/tmp/nifi_cb.py`, 세션 스크래치패드 원본). 호스트에서 NiFi 8443 이 안 열려 있고,
+  자격 증명을 명령줄에 넣는 방식은 차단되므로 컨테이너 환경변수(NIFI_USERNAME/PASSWORD)로 읽는다.
+
+**검증**
+- 4종 모두 97 · 98 · 99 VALID. 임시 그룹에서 `fragment.index` 0·1·2(count 3) + 조각 없음 → 97 이 2·조각없음만 통과(0·1 은 unmatched 2건), 99 두 건 HTTP 200,
+  원장 CALLBACK 행 생성. 한글 · 줄바꿈 · 탭이 든 오류로 98 → 200, URL `error=ORA-01400%3A+%EB%84%90+…` 인코딩 확인, 원장 FAILED(백엔드가 쿼리 파라미터를 아직 안 읽어 기본 문구).
+- 백엔드가 쓰는 snippet 복제 API 로 `truncate_initial` 복제 → 9 프로세서 · 13 연결 · funnel 1 그대로 따라옴.
+- flow definition 4개 내보내기(`GET /process-groups/{id}/download`) → 토큰 `__SERVICE_TOKEN__` 치환(각 파일 98 · 99 자리 확인), 비밀번호 값 없음.
+- 임시 그룹 · 시험 원장 행 3건(156~158) 삭제.
+
+**남은 것**: ETL 담당자 협의(retry 관계 · 실패 의미 · 토큰 노출 · 행수 · bulletin 레벨 · Max Rows) → MSA 반영(중복 템플릿 이름 정리 포함) → 기존 job 보정.
+백엔드: `__PG_ID__` 치환 · `/fail?error=` 읽기 · 관측기 이중 행 방지. Airflow: deferrable await · bulletin 검사에서 `9x_` 제외.
+로컬 `Template` 폴더의 `DEMO_*` 5개(이전 실험 사본, 실제 DB 접속 보유)는 정리 대상 - 사용자 확인 뒤 삭제.

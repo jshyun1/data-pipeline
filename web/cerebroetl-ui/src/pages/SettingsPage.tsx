@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import dayjs from "dayjs";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -924,6 +924,36 @@ function channelLabel(type: string): string {
  * 저장하면 다음 발송부터 그 값으로 나간다(재기동 없음). 비밀값은 저장돼 있으면 끝 4자리만 보이고,
  * 비워 두면 그대로 유지한다 - GPT 제공자 등록과 같은 규칙이다.
  */
+/**
+ * 채널별 «설정 방법» 안내. 제목 옆 물음표에 얹는다(2026-09-29 요청).
+ *
+ * <p>카카오 알림톡은 우리 화면만 채운다고 나가지 않는다 - 채널 인증 · 대행사 계약 · 템플릿 승인이 먼저다.
+ * 그 순서를 모르면 «설정은 다 넣었는데 왜 안 가지»가 된다. 여기 적는 것은 <b>알림톡을 쓰기 위한 준비와
+ * 이 창의 값이 어디서 오는지</b>이고, 개인 «나에게 보내기»(카카오톡 메모) 이야기가 아니다.
+ */
+const CHANNEL_SETUP_HINT: Record<string, ReactNode> = {
+  KAKAO: (
+    <span>
+      <b>먼저 카카오 · 대행사 쪽에서</b><br />
+      1. 카카오톡 채널 개설 → <b>비즈니스 채널 인증</b><br />
+      2. 알림톡 발송 대행사 가입 · 계약(카카오 공식 대행사)<br />
+      3. 채널을 대행사에 연동 → <b>발신프로필키</b> 발급<br />
+      4. 보낼 문구를 <b>템플릿으로 등록하고 카카오 심사 승인</b>(영업일 1~3일)<br />
+      <br />
+      <b>그다음 이 창에</b> 대행사가 알려 준 값을 넣습니다 - API 주소 · 인증 헤더 · 본문 형식 ·
+      발신프로필키 · 템플릿 코드 · 발신번호, 그리고 API 키(아래 비밀값).<br />
+      <br />
+      <b>보내지는 조건</b><br />
+      · 수신자에 전화번호가 있고 «카카오톡 수신»이 켜져 있어야 합니다.<br />
+      · 외부 채널은 <b>«위험(CRITICAL)» 등급만</b> 나갑니다.<br />
+      · 저장한 뒤 아래 [테스트 발송]으로 실제로 도착하는지 확인합니다.<br />
+      <br />
+      <b>주의</b> — 알림톡은 <b>승인된 템플릿 문구만</b> 나갑니다. 템플릿에 없는 내용을 본문에 넣으면
+      카카오가 거부합니다(변수 자리만 채워집니다). 광고성 문구는 별도 승인 · 수신동의가 필요합니다.
+    </span>
+  ),
+};
+
 function ChannelSettingsModal({ channelType, onClose }: { channelType: string | null; onClose: () => void }) {
   const qc = useQueryClient();
   const [values, setValues] = useState<Record<string, string>>({});
@@ -968,7 +998,18 @@ function ChannelSettingsModal({ channelType, onClose }: { channelType: string | 
   return (
     <Modal
       open={Boolean(channelType)}
-      title={`${channelLabel(channelType ?? "")} 설정`}
+      title={
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          {`${channelLabel(channelType ?? "")} 설정`}
+          {channelType && CHANNEL_SETUP_HINT[channelType] ? (
+            <Tooltip title={CHANNEL_SETUP_HINT[channelType]} overlayStyle={{ maxWidth: 460 }}>
+              <span className="std-hint-mark" role="img" aria-label="설정 방법 안내" tabIndex={0}>
+                <WfIcon name="info" size={15} />
+              </span>
+            </Tooltip>
+          ) : null}
+        </span>
+      }
       onCancel={onClose}
       width={640}
       footer={[
