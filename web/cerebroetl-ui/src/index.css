@@ -8958,9 +8958,50 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   word-break: normal;
 }
 
-/* 오류 분석 제목 아래의 번호 항목 «(1) …» - 한 칸 들여 써서 제목 번호(«1. 원인»)와 구분한다(2026-10-02). */
-.gpt-analysis-item {
+/* 오류 분석 제목(«1. 원인») 아래 본문은 모두 한 칸 들여 쓴다 - 번호 항목 «(1) …»과 일반 문장 모두(2026-10-02). */
+.gpt-analysis-indent {
   padding-left: 14px;
+}
+
+/*
+ * 로그 화면(ETL · CDC) 상태 배지 - ETL 로그의 작은 각진 배지 모양으로 통일(2026-10-02 요청).
+ * 표준 틀(std-page)의 알약 배지 규칙보다 우선하도록 클래스를 겹쳐 쓴다.
+ */
+.std-page .ant-tag.log-status-tag {
+  padding: 0 7px;
+  gap: 0;
+  border-radius: 4px;
+  border: 1px solid #d9d9d9;
+  background: #fafafa;
+  color: rgba(0, 0, 0, 0.88);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 20px;
+  letter-spacing: normal;
+}
+
+.std-page .ant-tag.log-status-tag.ant-tag-success {
+  border-color: #b7eb8f;
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.std-page .ant-tag.log-status-tag.ant-tag-error {
+  border-color: #ffccc7;
+  background: #fff2f0;
+  color: #ff4d4f;
+}
+
+.std-page .ant-tag.log-status-tag.ant-tag-processing {
+  border-color: #91caff;
+  background: #e6f4ff;
+  color: #1677ff;
+}
+
+.std-page .ant-tag.log-status-tag.ant-tag-warning {
+  border-color: #ffe58f;
+  background: #fffbe6;
+  color: #faad14;
 }
 
 .gpt-analysis-heading {
@@ -10654,4 +10695,9 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   outline: none;
   background: var(--color-primary-light);
   color: var(--color-primary);
+}
+
+/* ETL 로그 실패 줄은 눌러서 상세 창을 연다 - CDC 로그 틀(std-full-table)로 옮긴 뒤에도 손가락 커서를 유지(2026-10-02). */
+.std-full-table .etl-log-clickable-row {
+  cursor: pointer;
 }

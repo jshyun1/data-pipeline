@@ -75,16 +75,16 @@ function AnswerText({ text, headings, headingLabels }: {
                   const text = line.replace(/\*\*/g, "").replace(/^#+\s*/, "");
                   const item = /^\s*(\d+)[.)]\s+(.*)$/.exec(text);
                   return item ? (
-                    <div key={`${heading}-${index}`} className="gpt-analysis-line gpt-analysis-item">
+                    <div key={`${heading}-${index}`} className="gpt-analysis-line gpt-analysis-indent gpt-analysis-item">
                       ({item[1]}) {renderAssistantText(item[2])}
                     </div>
                   ) : (
-                    <div key={`${heading}-${index}`} className="gpt-analysis-line">
+                    <div key={`${heading}-${index}`} className="gpt-analysis-line gpt-analysis-indent">
                       {renderAssistantText(text) || " "}
                     </div>
                   );
                 })
-                : <div className="gpt-analysis-line"> </div>}
+                : <div className="gpt-analysis-line gpt-analysis-indent"> </div>}
             </div>
           );
         })}

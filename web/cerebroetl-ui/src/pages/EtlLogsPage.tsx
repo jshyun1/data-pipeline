@@ -12,6 +12,7 @@ import dayjs, { type Dayjs } from "dayjs";
 import { Link, useSearchParams } from "react-router-dom";
 import { activeDayPresetByDate } from "../components/dayPreset";
 import { GptErrorAnalysis } from "../components/gpt/GptErrorAnalysis";
+import { StdPage } from "../components/StdPage";
 import { useGptEnabled } from "../components/gpt/useGptEnabled";
 import {
   getNifiProcessGroupTree,
@@ -348,8 +349,9 @@ export function EtlLogsPage() {
   const selectedPreset = activeDayPresetByDate(appliedRange[0], appliedRange[1]);
 
   const filters = (
-    <Space className="etl-log-filter-toolbar" wrap>
-      <Space.Compact>
+    // CDC 로그와 같은 필터 띠(2026-10-02 요청 - 디자인을 CDC 로그 화면에 맞춘다, 내용 · 기능은 그대로).
+    <div className="std-filter-card">
+      <Space.Compact className="std-date-preset">
         <Button type={selectedPreset === 0 ? "primary" : "default"} onClick={() => applyDatePreset(0)}>당일</Button>
         <Button type={selectedPreset === 1 ? "primary" : "default"} onClick={() => applyDatePreset(1)}>전일</Button>
       </Space.Compact>
@@ -381,7 +383,7 @@ export function EtlLogsPage() {
       <Button type="primary" onClick={() => setAppliedRange(dateRange)}>
         조회
       </Button>
-    </Space>
+    </div>
   );
 
   const metric = (
@@ -404,7 +406,7 @@ export function EtlLogsPage() {
   );
 
   return (
-    <div className="etl-log-page">
+    <StdPage menu="cdc" title="ETL 로그" icon="doc" className="cdc-log-page" fill>
       <div className={`etl-log-dashboard-curtain${dashboardOpen ? " open" : " closed"}`}>
         <button
           type="button"
@@ -427,14 +429,15 @@ export function EtlLogsPage() {
           </section>
         </div>
       </div>
+      <div className="std-card std-table-card">
       {filters}
       <Table<UnifiedEtlLogRow>
-        className="etl-log-table"
+        className="std-full-table"
         rowKey="key"
-        size="small"
+        size="middle"
         loading={(runsQuery.isLoading && !runsQuery.data) || (eventsQuery.isLoading && !eventsQuery.data)}
         dataSource={rows}
-        pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `전체 ${total}건` }}
+        pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `총 ${total}건` }}
         scroll={{ x: 1050 }}
         columns={[
           {
@@ -446,7 +449,7 @@ export function EtlLogsPage() {
             render: (value: string, row) => (
               <Tooltip title={row.message || undefined}>
                 <Tag
-                  className={row.status === "FAILED" && row.message ? "etl-log-status-detail-trigger" : undefined}
+                  className={`log-status-tag${row.status === "FAILED" && row.message ? " etl-log-status-detail-trigger" : ""}`}
                   color={EVENT_STATUS_COLOR[value] ?? "default"}
                   onClick={(event) => {
                     if (row.status === "FAILED" && row.message) {
@@ -517,23 +520,17 @@ export function EtlLogsPage() {
           },
         ]}
         expandable={{
-          rowExpandable: (row) => row.status !== "SUCCESS" && Boolean(row.message),
+          // CDC 로그와 같은 [+] 단추(2026-10-02). 줄은 펼치지 않고 상세 «창»을 연다 - expandedRowRender 가 있어야
+          // antd 가 [+] 열을 그린다(없어서 예전엔 단추가 안 보였다).
           expandedRowKeys: [],
-          expandIcon: ({ record, expandable }) =>
-            expandable ? (
-              <button
-                type="button"
-                className="etl-log-detail-open"
-                aria-label="오류 상세 보기"
-                title="오류 상세 보기"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setDetailRow(record);
-                }}
-              >
+          expandedRowRender: () => null,
+          expandIcon: ({ record }) =>
+            record.status !== "SUCCESS" && record.message ? (
+              <button type="button" className="cdc-log-open" aria-label="오류 상세 보기"
+                      onClick={(event) => { event.stopPropagation(); setDetailRow(record); }}>
                 +
               </button>
-            ) : null,
+            ) : <span className="cdc-log-open is-empty" />,
         }}
         onRow={(row) => ({
           className: row.status === "FAILED" && row.message ? "etl-log-clickable-row" : undefined,
@@ -544,7 +541,8 @@ export function EtlLogsPage() {
           },
         })}
       />
+      </div>
       <LogDetailModal row={detailRow} onClose={() => setDetailRow(null)} />
-    </div>
+    </StdPage>
   );
 }

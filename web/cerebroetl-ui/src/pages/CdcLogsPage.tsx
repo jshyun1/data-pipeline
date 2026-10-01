@@ -510,7 +510,7 @@ export function CdcLogsPage() {
             sorter: (a, b) => compareText(STATUS_LABEL[a.status] ?? a.status, STATUS_LABEL[b.status] ?? b.status),
             render: (value: string, row) => (
               <Tooltip title={row.message || undefined}>
-                <Tag color={STATUS_COLOR[value] ?? "default"}>{STATUS_LABEL[value] ?? value}</Tag>
+                <Tag className="log-status-tag" color={STATUS_COLOR[value] ?? "default"}>{STATUS_LABEL[value] ?? value}</Tag>
               </Tooltip>
             ),
           },
