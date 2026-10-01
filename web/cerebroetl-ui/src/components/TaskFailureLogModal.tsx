@@ -197,7 +197,8 @@ function TaskLogView({ item, dagId, runId, nameOf }: {
   const single = item.attempts.length <= 1;
   const hasReason = item.attempts.some((attempt) => (attempt.log?.exceptions.length ?? 0) > 0) || item.events.length > 0;
   const gptEnabled = useGptEnabled();
-  const [analyzing, setAnalyzing] = useState(false);
+  // 창을 열면 바로 GPT 해석을 시작한다 - ETL · CDC 로그 창과 같다(2026-10-02 요청). 닫으면 «GPT 해석» 단추로 다시 연다.
+  const [analyzing, setAnalyzing] = useState(true);
   return (
     <section className="failure-log-task">
       <div className="failure-log-task-head">
@@ -207,7 +208,7 @@ function TaskLogView({ item, dagId, runId, nameOf }: {
           <Button size="small" className="gpt-analysis-open" onClick={() => setAnalyzing(true)}>GPT 해석</Button>
         )}
       </div>
-      {analyzing && (
+      {gptEnabled && hasReason && analyzing && (
         <GptErrorAnalysis
           targetType="WORKFLOW_TASK"
           target={{ dagId, runId, taskId: item.taskId }}

@@ -1822,17 +1822,13 @@ body {
 .etl-log-detail-modal {
   display: grid;
   gap: 16px;
-  padding-left: 16px;
-  border-left: 4px solid #ef4444;
 }
 
 .etl-log-detail-modal .gpt-analysis {
   margin: 0;
 }
 
-.etl-log-detail-modal-root .ant-modal-container {
-  border-left: 5px solid #ef4444;
-}
+/* 세로 빨간 줄은 뺐다(2026-10-02) - 로그 창 셋 모두 맨 위 강조 띠(accent-modal) 하나로 통일. */
 
 .etl-log-detail-section,
 .etl-log-detail-raw {
@@ -10549,7 +10545,7 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
 }
 
 /* 팝업 맨 위 강조선(2026-09-27 요청). 밋밋한 창 머리에 브랜드 색 띠 한 줄을 얹는다.
-   지금은 워크플로우 로그의 «로그» 창(TaskFailureLogModal)에만 붙인다 - 다른 창은 이 클래스를 붙이면 같이 적용된다(ETL 메뉴 제외). */
+   워크플로우 · ETL · CDC 로그 창 셋이 같이 쓴다(2026-10-02 통일). 다른 창도 이 클래스를 붙이면 같이 적용된다. */
 /* 창의 윗 테두리까지 띠 색으로 - overflow:hidden 이 창 밖으로 나간 띠를 잘라내서, 테두리를 남겨 두면 띠 위에 흰 줄이 한 줄 보인다. */
 .accent-modal .ant-modal-container {
   position: relative;

@@ -16,7 +16,7 @@ class ErrorAnalysisAgentTest {
         assertThat(messages).extracting(LlmMessage::role).containsExactly("system", "user");
         assertThat(messages.get(1).content()).contains("CDC 파이프라인", "## 오류\nX", "첫 답변 형식");
         // 형식은 세 제목뿐이다 - «확신도»는 2026-09-28 에 뺐다(모델이 스스로 매기는 값이라 근거가 없다).
-        assertThat(messages.get(0).content()).contains("[플랫폼 구성]", "원인", "확인사항", "조치 방법");
+        assertThat(messages.get(0).content()).contains("[플랫폼 구성]", "원인", "조치 방법", "확인할 것");
         assertThat(messages.get(0).content()).doesNotContain("확신도");
     }
 

@@ -148,7 +148,7 @@ function hasDetail(row: UnifiedCdcLogRow) {
   return row.kind === "processing" || row.status === "FAILED" || Boolean(row.message);
 }
 
-/** 펼친 줄에 보여 주던 항목들. 이제는 상세 창이 같은 것을 쓴다. */
+/** 펼친 줄에 보여 주던 항목들. 이제는 상세 창이 실패가 아닌 줄의 «로그» 상자에 쓴다. */
 function detailLines(row: UnifiedCdcLogRow): Array<[string, ReactNode]> {
   const lines: Array<[string, ReactNode]> = [];
   lines.push(["구분", `${row.kindLabel} · ${row.status}`]);
@@ -180,37 +180,27 @@ function CdcLogDetailModal({ row, pipelineAlive, onClose }: {
   pipelineAlive: boolean;
   onClose: () => void;
 }) {
+  // 워크플로우 로그 · ETL 로그 창과 같은 모양(2026-10-02 요청): 맨 위 강조 띠, 제목은 파이프라인 이름,
+  // 열자마자 GPT 해석, 그 아래 로그(워크플로우 창의 «실패 원인» 상자 모양). 구분 · 시각 줄은 뺐다.
   const gptEnabled = useGptEnabled();
   const [analysisOpen, setAnalysisOpen] = useState(true);
   const analyzable = Boolean(row) && row?.status === "FAILED" && Boolean(row?.pipelineId) && pipelineAlive;
-  const lines = row ? detailLines(row) : [];
   return (
     <Modal
       open={Boolean(row)}
       onCancel={onClose}
       afterOpenChange={(open) => { if (open) setAnalysisOpen(true); }}
       footer={null}
-      width={860}
+      width={960}
       destroyOnHidden
-      rootClassName="cerebro-modal"
+      rootClassName="cerebro-modal accent-modal"
       title={row ? row.pipelineName || "로그" : undefined}
     >
       {row && (
-        <div style={{ fontSize: 12 }}>
-          {lines.map(([label, value]) => (
-            <div key={label} style={{ display: "flex", gap: 12, lineHeight: 1.8 }}>
-              <span style={{ width: 96, color: "#888", flexShrink: 0 }}>{label}</span>
-              <span style={{ wordBreak: "break-all" }}>{value}</span>
-            </div>
-          ))}
-          {row.message ? (
-            <pre style={{ whiteSpace: "pre-wrap", margin: lines.length ? "8px 0 0" : 0, fontSize: 12 }}>{row.message}</pre>
-          ) : (
-            <div style={{ color: "#888", marginTop: 8 }}>메시지가 없습니다.</div>
-          )}
-          {gptEnabled && row.status === "FAILED" && !pipelineAlive && (
-            <div style={{ color: "#888", marginTop: 8 }}>
-              이 파이프라인은 삭제돼 GPT 해석을 할 수 없습니다(해석에 필요한 설정 · 상태를 더 읽을 수 없습니다).
+        <section className="failure-log-task">
+          {gptEnabled && analyzable && !analysisOpen && (
+            <div className="failure-log-task-head">
+              <Button size="small" className="gpt-analysis-open" onClick={() => setAnalysisOpen(true)}>GPT 해석</Button>
             </div>
           )}
           {gptEnabled && analyzable && analysisOpen && (
@@ -222,7 +212,29 @@ function CdcLogDetailModal({ row, pipelineAlive, onClose }: {
               onClose={() => setAnalysisOpen(false)}
             />
           )}
-        </div>
+          {gptEnabled && row.status === "FAILED" && !pipelineAlive && (
+            <div className="failure-log-note">
+              이 파이프라인은 삭제돼 GPT 해석을 할 수 없습니다(해석에 필요한 설정 · 상태를 더 읽을 수 없습니다).
+            </div>
+          )}
+          {row.status === "FAILED" ? (
+            <div className="failure-log-block">
+              <div className="failure-log-label">에러 로그</div>
+              {row.message
+                ? <pre className="failure-log-exception">{row.message}</pre>
+                : <div className="failure-log-empty">메시지가 없습니다.</div>}
+            </div>
+          ) : (
+            // 실패가 아닌 줄(처리 이력 · 명령 결과)은 GPT 해석이 없고, 구분 · 토픽 · Lag 같은 값이 곧 내용이다.
+            <div className="failure-log-block">
+              <div className="failure-log-label">로그</div>
+              <pre className="failure-log-lines">
+                {detailLines(row).map(([label, value]) => <div key={label}>{label}: {value}</div>)}
+                {row.message && <div>{row.message}</div>}
+              </pre>
+            </div>
+          )}
+        </section>
       )}
     </Modal>
   );

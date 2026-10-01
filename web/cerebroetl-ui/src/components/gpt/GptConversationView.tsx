@@ -13,6 +13,11 @@ import type { GptPreviewState, GptTurn } from "./useGptConversation";
 const HEADINGS = ["원인", "확인사항", "조치 방법", "원인 추정", "확인할 것", "확신도"];
 const HEADING_PATTERN = new RegExp(`^\\s*(?:#+\\s*)?(?:\\*\\*)?(${HEADINGS.join("|")})(?:\\*\\*)?\\s*:?\\s*$`);
 export type GptAnswerHeading = typeof HEADINGS[number];
+/** 옛 형식 제목 → 지금 제목. 모델이 예전 이름으로 답해도 같은 칸에 담는다. */
+const HEADING_ALIAS: Partial<Record<GptAnswerHeading, GptAnswerHeading>> = { "원인 추정": "원인", "확인사항": "확인할 것" };
+/** 오류 분석 첫 답의 표시 순서와 이름(2026-10-02 요청 - 워크플로우 · ETL · CDC 로그 창 공통). */
+export const ERROR_ANALYSIS_HEADINGS: GptAnswerHeading[] = ["원인", "조치 방법", "확인할 것"];
+export const ERROR_ANALYSIS_HEADING_LABELS: GptAnswerHeadingLabels = { "조치 방법": "조치방법" };
 export type GptAnswerHeadingLabels = Partial<Record<GptAnswerHeading, string>>;
 
 export function renderAssistantText(text: string) {
@@ -35,11 +40,16 @@ function AnswerText({ text, headings, headingLabels }: {
     return prev !== undefined && prev.trim() !== "" && !HEADING_PATTERN.test(prev)
       && next !== undefined && next.trim() !== "" && !HEADING_PATTERN.test(next);
   });
-  if (headings) {
+  // 제목을 골라 순서대로 보여 주는 것은 «제목이 있는 답»(첫 분석)에만 한다. 추가 질문의 답은 형식 없이 오는데,
+  // 예전에는 여기서도 제목에 걸리는 줄만 골라서 답이 통째로 빈칸이 됐다(ETL 로그 «추가 질문 무응답», 2026-10-02).
+  const hasHeading = lines.some((line) => HEADING_PATTERN.test(line));
+  if (headings && hasHeading) {
     const sectionLines = new Map<GptAnswerHeading, string[]>();
     let currentHeading: GptAnswerHeading | null = null;
     for (const line of lines) {
-      const heading = HEADING_PATTERN.exec(line)?.[1] as GptAnswerHeading | undefined;
+      const raw = HEADING_PATTERN.exec(line)?.[1] as GptAnswerHeading | undefined;
+      // 옛 제목도 같은 칸으로 모은다(원인 추정 → 원인, 확인사항 → 확인할 것).
+      const heading = raw ? (HEADING_ALIAS[raw] ?? raw) : undefined;
       if (heading) {
         currentHeading = heading;
         if (!sectionLines.has(heading)) {

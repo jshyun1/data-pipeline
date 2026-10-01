@@ -36,12 +36,6 @@ const EVENT_STATUS_COLOR: Record<string, string> = {
   FAILED: "error",
 };
 
-const ETL_LOG_GPT_HEADINGS = ["원인 추정", "조치 방법", "확인할 것"] as const;
-const ETL_LOG_GPT_HEADING_LABELS = {
-  "원인 추정": "원인",
-  "조치 방법": "조치방법",
-  "확인할 것": "확인할 것",
-};
 
 type UnifiedEtlLogKind = "run" | "event";
 type StatusFilter = "ALL" | string;
@@ -100,6 +94,71 @@ function compareDate(a?: string | null, b?: string | null) {
 
 function compareNumber(a?: number | null, b?: number | null) {
   return (a ?? -1) - (b ?? -1);
+}
+
+/** GPT 에 넘길 «화면에 보이는 실패 로그». */
+function etlDetailText(row: UnifiedEtlLogRow) {
+  return [
+    `상태: ${EVENT_STATUS_LABEL[row.status] ?? row.status}`,
+    `Job: ${row.jobName}`,
+    `Processor: ${row.processorName ?? "-"}`,
+    `경로: ${row.path || "-"}`,
+    `발생 시각: ${formatDateTime(row.startedAt)}`,
+    row.message ? `오류 내용:\n${row.message}` : "오류 내용: -",
+  ].join("\n");
+}
+
+/**
+ * ETL 실패 로그 창. 워크플로우 로그 · CDC 로그 창과 같은 모양이다(2026-10-02 요청) - 맨 위 강조 띠, 제목은 job 이름,
+ * 열자마자 GPT 해석(원인 → 조치방법 → 확인할 것), 그 아래 에러 로그(워크플로우 창의 «실패 원인» 상자 모양).
+ *
+ * <p>예전에는 이 창이 페이지 컴포넌트 <b>안에서</b> 선언돼, 페이지가 다시 그려질 때마다 창이 새로 만들어지며 GPT 대화가
+ * 날아갔다. 모듈 수준으로 옮겼다.
+ */
+function LogDetailModal({ row, onClose }: { row: UnifiedEtlLogRow | null; onClose: () => void }) {
+  const gptEnabled = useGptEnabled();
+  const [analysisOpen, setAnalysisOpen] = useState(true);
+  const target: Record<string, string> = {};
+  if (row?.jobId != null) target.jobId = String(row.jobId);
+  if (row?.groupId) target.groupId = row.groupId;
+  const canAnalyze = row != null && gptEnabled && row.status === "FAILED" && (row.jobId != null || Boolean(row.groupId));
+  return (
+    <Modal
+      open={Boolean(row)}
+      title={row?.jobName}
+      footer={null}
+      width={960}
+      destroyOnHidden
+      afterOpenChange={(open) => { if (open) setAnalysisOpen(true); }}
+      rootClassName="cerebro-modal accent-modal"
+      onCancel={onClose}
+    >
+      {row ? (
+        <section className="failure-log-task">
+          {canAnalyze && !analysisOpen && (
+            <div className="failure-log-task-head">
+              <Button size="small" className="gpt-analysis-open" onClick={() => setAnalysisOpen(true)}>GPT 해석</Button>
+            </div>
+          )}
+          {canAnalyze && analysisOpen && (
+            <GptErrorAnalysis
+              key={row.key}
+              targetType="ETL_JOB"
+              target={target}
+              errorText={etlDetailText(row)}
+              onClose={() => setAnalysisOpen(false)}
+            />
+          )}
+          <div className="failure-log-block">
+            <div className="failure-log-label">에러 로그</div>
+            {row.message
+              ? <pre className="failure-log-exception">{row.message}</pre>
+              : <div className="failure-log-empty">상세 정보 없음</div>}
+          </div>
+        </section>
+      ) : null}
+    </Modal>
+  );
 }
 
 /** 733초를 "12분 13초"처럼. 한 관측 주기 안에 끝난 구간은 0초로 들어온다. */
@@ -287,57 +346,6 @@ export function EtlLogsPage() {
   };
   // 이 화면의 RangePicker 는 날짜 단위라 시각까지 비교하는 판정으로는 일치하지 않는다.
   const selectedPreset = activeDayPresetByDate(appliedRange[0], appliedRange[1]);
-
-  const detailText = (row: UnifiedEtlLogRow) => [
-    `상태: ${EVENT_STATUS_LABEL[row.status] ?? row.status}`,
-    `Job: ${row.jobName}`,
-    `Processor: ${row.processorName ?? "-"}`,
-    `경로: ${row.path || "-"}`,
-    `발생 시각: ${formatDateTime(row.startedAt)}`,
-    row.message ? `오류 내용:\n${row.message}` : "오류 내용: -",
-  ].join("\n");
-
-  function LogDetailModal({ row, onClose }: { row: UnifiedEtlLogRow | null; onClose: () => void }) {
-    const gptEnabled = useGptEnabled();
-    const target: Record<string, string> = {};
-    if (row?.jobId != null) target.jobId = String(row.jobId);
-    if (row?.groupId) target.groupId = row.groupId;
-    const canAnalyze = row != null && gptEnabled && row.status === "FAILED" && (row.jobId != null || Boolean(row.groupId));
-    return (
-      <Modal
-        open={Boolean(row)}
-        title={row ? `${row.jobName} 실패 로그` : undefined}
-        footer={null}
-        width={960}
-        rootClassName="cerebro-modal etl-log-detail-modal-root"
-        onCancel={onClose}
-      >
-        {row ? (
-          <div className="etl-log-detail-modal">
-            <section className="etl-log-detail-section">
-              <h3>실패 원인</h3>
-              {canAnalyze ? (
-                <GptErrorAnalysis
-                  targetType="ETL_JOB"
-                  target={target}
-                  errorText={detailText(row)}
-                  onClose={onClose}
-                  headings={[...ETL_LOG_GPT_HEADINGS]}
-                  headingLabels={ETL_LOG_GPT_HEADING_LABELS}
-                />
-              ) : (
-                <div className="etl-log-detail-gpt-empty">GPT 분석을 사용할 수 없습니다.</div>
-              )}
-            </section>
-            <section className="etl-log-detail-raw">
-              <h3>에러 로그</h3>
-              <pre>{row.message ?? "상세 정보 없음"}</pre>
-            </section>
-          </div>
-        ) : null}
-      </Modal>
-    );
-  }
 
   const filters = (
     <Space className="etl-log-filter-toolbar" wrap>

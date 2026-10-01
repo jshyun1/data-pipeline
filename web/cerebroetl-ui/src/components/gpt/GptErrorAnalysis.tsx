@@ -9,6 +9,8 @@ import {
   GptFailure,
   GptPreviewModal,
   GptTurns,
+  ERROR_ANALYSIS_HEADING_LABELS,
+  ERROR_ANALYSIS_HEADINGS,
   type GptAnswerHeading,
   type GptAnswerHeadingLabels,
 } from "./GptConversationView";
@@ -135,8 +137,8 @@ export function GptErrorAnalysis({ targetType, target, errorText, onClose, headi
         <GptTurns
           turns={chat.turns}
           waitingText="분석 중입니다. 내부 모델은 첫 응답까지 수십 초가 걸릴 수 있습니다."
-          headings={headings}
-          headingLabels={headingLabels}
+          headings={headings ?? ERROR_ANALYSIS_HEADINGS}
+          headingLabels={headingLabels ?? ERROR_ANALYSIS_HEADING_LABELS}
         />
         <GptFailure message={chat.failure} onRetry={!chat.answered && !chat.busy ? () => void chat.retryFirst() : undefined} />
       </div>
