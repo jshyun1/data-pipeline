@@ -25,5 +25,13 @@ public record LlmProviderRequest(
         String apiKey,
         @NotNull Boolean maskSensitive,
         @Min(1000) @Max(2_000_000) Integer maxInputChars,
-        String description) {
+        String description,
+        /** 도구 호출 사용: AUTO · ON · OFF. 비우면 AUTO(2026-10-02). */
+        @jakarta.validation.constraints.Pattern(regexp = "AUTO|ON|OFF") String toolCalling) {
+
+    public LlmProviderRequest(String name, LlmProvider provider, LlmBillingType billingType, String baseUrl,
+                              String modelName, String apiKey, Boolean maskSensitive, Integer maxInputChars,
+                              String description) {
+        this(name, provider, billingType, baseUrl, modelName, apiKey, maskSensitive, maxInputChars, description, null);
+    }
 }

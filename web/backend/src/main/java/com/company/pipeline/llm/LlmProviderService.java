@@ -92,7 +92,9 @@ public class LlmProviderService {
         if (hasText(request.apiKey())) {
             applyApiKey(config, request.apiKey());
         }
-        // 설정이 바뀌었으니 예전 테스트 결과는 더 이상 이 설정의 결과가 아니다.
+        // 설정이 바뀌었으니 예전 테스트 결과는 더 이상 이 설정의 결과가 아니다. 도구 호출 감지 결과도 모델 · 주소에 묶여 있다.
+        config.setToolSupport(null);
+        config.setToolCheckedAt(null);
         config.setLastTestStatus(null);
         config.setLastTestMessage(null);
         config.setLastTestedAt(null);
@@ -162,7 +164,13 @@ public class LlmProviderService {
         if (request.provider().getDeployment() == LlmDeployment.EXTERNAL && !hasText(apiKey)) {
             return new LlmTestResult("INVALID_CONFIG", false, "외부 제공자는 API 키가 필요합니다.", null, 0, null);
         }
-        return connectionTester.test(request.provider(), effectiveBaseUrl(request), request.modelName().trim(), apiKey);
+        LlmTestResult result = connectionTester.test(request.provider(), effectiveBaseUrl(request), request.modelName().trim(), apiKey);
+        if (!result.success()) {
+            return result;
+        }
+        // 저장 전 테스트라 감지 결과는 저장하지 않고 안내 문구에만 붙인다.
+        String support = connectionTester.probeTools(request.provider(), effectiveBaseUrl(request), request.modelName().trim(), apiKey);
+        return withToolNote(result, support);
     }
 
     /** 저장된 항목 테스트. 결과를 목록의 «최근 테스트»에 남긴다. */
@@ -172,6 +180,15 @@ public class LlmProviderService {
         String apiKey = config.getEncryptedApiKey() == null ? null : cryptoService.decrypt(config.getEncryptedApiKey());
         LlmTestResult result = connectionTester.test(config.getProvider(), config.effectiveBaseUrl(),
                 config.getModelName(), apiKey);
+        if (result.success()) {
+            // 연결이 되면 도구 호출(function calling) 지원 여부도 같이 확인해 둔다 - 모델을 바꾼 뒤 테스트하면 자동으로 갱신된다.
+            String support = connectionTester.probeTools(config.getProvider(), config.effectiveBaseUrl(),
+                    config.getModelName(), apiKey);
+            if (support != null) {
+                config.recordToolSupport(support);
+            }
+            result = withToolNote(result, support);
+        }
         config.setLastTestStatus(result.status());
         String message = result.message();
         config.setLastTestMessage(message.length() > 500 ? message.substring(0, 500) : message);
@@ -205,6 +222,21 @@ public class LlmProviderService {
         config.setMaxInputChars(request.maxInputChars() != null
                 ? request.maxInputChars() : request.provider().getDefaultMaxInputChars());
         config.setDescription(hasText(request.description()) ? request.description().trim() : null);
+        if (hasText(request.toolCalling())) {
+            config.setToolCalling(request.toolCalling());
+        }
+    }
+
+    /** 연결 테스트 안내 문구 끝에 도구 호출 확인 결과를 붙인다. 확인하지 않은 제공자(null)는 그대로. */
+    private static LlmTestResult withToolNote(LlmTestResult result, String support) {
+        if (support == null) {
+            return result;
+        }
+        String note = LlmProviderConfig.TOOL_SUPPORTED.equals(support)
+                ? " · 도구 호출 지원(질문에 맞춰 job · 파이프라인을 직접 조회합니다)"
+                : " · 도구 호출 미지원(질문 속 대상 상세만 붙여 답합니다)";
+        return new LlmTestResult(result.status(), result.success(), result.message() + note,
+                result.httpStatus(), result.durationMs(), result.detail());
     }
 
     private void applyApiKey(LlmProviderConfig config, String apiKey) {

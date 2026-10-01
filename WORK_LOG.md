@@ -2617,3 +2617,40 @@ ETL(DZ_COM001M 9/5 실패) 추가 질문 «한 문장으로 요약해줘» → �
   [+] 가 안 보이던 원인: `expandedRowRender` 가 없으면 antd 가 펼침 열을 아예 그리지 않는다(CDC 는 빈 함수를 넣어 두었다).
 - 상태 배지: ETL 쪽 모양(4px 모서리 · 12px · antd 기본 색)을 `log-status-tag` 로 두 화면 공통 적용 - 표준 틀의 알약 배지보다 우선.
 - 브라우저 실측: 두 화면 표 머리 12px #475569 · 본문 12.5px #1e293b · 행 48px · 조회 버튼 32px · 배지 4px/12px 동일.
+
+## 76. AI 어시스턴트 - 질문 속 대상 상세(①) + 도구 호출(③, function calling) (2026-10-02)
+
+**요청**: 워크플로우 로그 AI 어시스턴트가 «tb_imp018m 은 어떤 방식으로 구성된 job 이야?» 같은 질문에 «정보가 없다»고만 답했다.
+질문을 받으면 프로젝트 안에서 그 job · 워크플로우 정보를 찾아 답하게. 모델이 바뀌어 도구 호출을 못 받으면 ①만으로 정상 동작해야 한다.
+
+**원인**: 워크플로우 수집기는 워크플로우 자체 정보와 ETL job 단계만 보내고, CDC 노드 · 워크플로우 밖 대상의 구성은 보내지 않았다.
+
+**사전 확인(실측)**: KT AI Nexus Qwen3(`qwen3.8-27b`, vLLM 0.24.0)이 도구 호출을 받는다 - 요청 시 `tool_calls`, 결과를 돌려주면 그걸로 답,
+스트리밍에서도 이름 → 인자 조각 → `finish_reason: tool_calls`.
+
+**변경**
+- ① `RelatedTargetFinder`: 질문의 이름(전체 또는 «- 공백 / . ( )»로 나눈 5자 이상 조각)을 ETL job · CDC 파이프라인 · 워크플로우와 맞춰 최대 6개.
+  워크플로우를 보는 중 «job들 · 각 · 전체 · 모든 · 구성»처럼 묻고 이름이 없으면 그 워크플로우의 CDC · 하위 워크플로우 노드 전부.
+  `LlmChatService.prepare` 가 대상 정보 뒤에 «질문에 나온 대상의 상세»로 붙인다(최대 입력 길이 × 0.25, 최대 8,000자, 대상마다 나눠 자름).
+  [프롬프트] 창으로 대상 정보를 고쳐 보내도 붙는다. 모델과 무관하게 항상.
+- ③ `LlmToolbox`(읽기 전용 4개: search_targets · get_etl_job · get_cdc_pipeline · get_workflow - 결과 = 기존 수집기의 대상 정보, 권한 · 마스킹 · 길이 제한 그대로),
+  `LlmToolLoop`(최대 4차례 도구, 다음 한 번은 도구 없이 마무리). 속성창 AI 어시스턴트의 질문(JOB_ANALYSIS + 질문 있음)에만.
+  `LlmChatClient` 가 OpenAI 형식 `tools` · `tool_calls` · role=tool 을 보내고, 스트리밍 조각을 index 별로 이어 붙인다.
+- 물러나기: 첫 차례 4xx(400 · 404 · 422) → 그 설정 UNSUPPORTED 저장 + 도구 없이 재질문. 도구 호출을 글(`<tool_call>{…}</tool_call>`)로 내면 화면에 흘리지 않고
+  읽어서 실행, 못 읽으면 UNSUPPORTED + 재질문. 정식 tool_calls 를 받으면 SUPPORTED 저장.
+- 설정: V79 `llm_provider_config.tool_calling`(AUTO · ON · OFF, 기본 AUTO) · `tool_support` · `tool_checked_at`. AUTO 는 «안 된다고 확인된 경우»만 끈다.
+  연결 테스트(저장된 항목)가 도구 호출도 확인해 저장, 저장 전 테스트는 문구에만. 수정하면 감지 결과를 지운다. OpenAI · OpenAI 호환만 해당.
+- 화면: GPT 등록 «도구 호출» 칸(자동 · 사용 · 사용 안 함 + 확인 결과), GPT 관리 목록 «도구 호출» 열, AI 어시스턴트 머리줄 «· 도구 조회 사용/미사용»,
+  답 위에 «🔎 «dz_pop» 검색 / 🔎 ETL job «DZ_POP003L» 조회» 줄. SSE 이벤트 `toolMode` · `tool` 추가.
+
+**검증(로컬, 실제 Qwen3)**
+- 연결 테스트: «연결되었습니다 · 도구 호출 지원» → tool_support=SUPPORTED.
+- cdc_imp AI 어시스턴트: «tb_imp018m 은 어떤 방식…» → get_cdc_pipeline 조회 후 소스 Oracle CSB.TB_IMP018M → 타깃 PostgreSQL lw_imp018m, UPSERT, INITIAL, 커넥터 상태까지 답.
+  «DZ_COM001M job 은 어떤 테이블을…»(워크플로우 밖) → search → get_etl_job → CSB.TB_COM001M → public.dz_com001m INSERT, 단계 순서 답.
+  «dz_pop 으로 시작하는 ETL job…» → 화면에 🔎 두 줄 + 정확한 답.
+- 도구 호출 OFF: toolMode=false 인데도 ①로 같은 수준의 답, «이 워크플로우의 job들 구성 알려줘»도 노드 상세로 답. 다시 AUTO + 테스트로 SUPPORTED 복귀.
+- 단위 테스트: 스트리밍 tool_calls 조각 합치기 · OpenAI 형식 직렬화 · 도구 실행 후 최종 답만 흘리기 · 400 → 물러나기(UNSUPPORTED 저장) · 글 형식 도구 호출 · 이름 맞추기.
+  토큰 합산에서 제공자가 토큰 수를 안 주면 NPE 나던 것을 시험 중 발견해 고쳤다.
+
+다른 세션(data-pipeline-fe)의 미커밋 GPT 작업과 같은 파일(LlmChatService · api/llm.ts · useGptConversation · GptChatPanel · GptConversationView · index.css)은
+내 변경만 골라 커밋했다(스테이징본만으로 tsc · 백엔드 테스트 통과 확인).

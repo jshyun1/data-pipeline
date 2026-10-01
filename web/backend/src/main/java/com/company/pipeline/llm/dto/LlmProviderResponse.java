@@ -25,6 +25,10 @@ public record LlmProviderResponse(
         String lastTestMessage,
         OffsetDateTime lastTestedAt,
         String description,
+        /** 도구 호출 사용(AUTO · ON · OFF)과 감지 결과(SUPPORTED · UNSUPPORTED · null). */
+        String toolCalling,
+        String toolSupport,
+        OffsetDateTime toolCheckedAt,
         String createdBy,
         OffsetDateTime createdAt,
         String updatedBy,
@@ -37,6 +41,6 @@ public record LlmProviderResponse(
                 c.getEncryptedApiKey() != null, c.getApiKeyHint(),
                 c.isMaskSensitive(), c.getMaxInputChars(), c.isActive(),
                 c.getLastTestStatus(), c.getLastTestMessage(), c.getLastTestedAt(),
-                c.getDescription(), c.getCreatedBy(), c.getCreatedAt(), c.getUpdatedBy(), c.getUpdatedAt());
+                c.getDescription(), c.getToolCalling(), c.getToolSupport(), c.getToolCheckedAt(), c.getCreatedBy(), c.getCreatedAt(), c.getUpdatedBy(), c.getUpdatedAt());
     }
 }

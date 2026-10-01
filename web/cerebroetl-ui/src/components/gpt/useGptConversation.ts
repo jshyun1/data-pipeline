@@ -15,6 +15,8 @@ export interface GptTurn extends LlmChatTurn {
   streaming?: boolean;
   /** [중지]로 끊은 답 */
   stopped?: boolean;
+  /** 이 답을 쓰기 전에 도구로 조회한 대상(2026-10-02) - «🔎 CDC 파이프라인 «이름» 조회» 줄로 보여 준다. 대화로 보내지 않는다. */
+  toolSteps?: string[];
 }
 
 export interface GptPreviewState {
@@ -57,6 +59,8 @@ export function useGptConversation({ agentType, targetType, target, errorText: s
   const [meta, setMeta] = useState<LlmContextPreview>();
   const [failure, setFailure] = useState<string>();
   const [busy, setBusy] = useState(false);
+  /** 마지막 답에 도구 호출(조회)을 썼는지. 서버가 toolMode 로 알려 준다(모르면 undefined). */
+  const [toolMode, setToolMode] = useState<boolean>();
   const [preview, setPreview] = useState<GptPreviewState>({ open: false, loading: false });
   const abortRef = useRef<AbortController | null>(null);
 
@@ -99,6 +103,8 @@ export function useGptConversation({ agentType, targetType, target, errorText: s
             }
           },
           onDelta: (text) => updateLast((turn) => ({ ...turn, content: turn.content + text })),
+          onToolMode: setToolMode,
+          onTool: (tool) => updateLast((turn) => ({ ...turn, toolSteps: [...(turn.toolSteps ?? []), tool.label] })),
           onError: (error) => setFailure(error.message),
         },
         controller.signal,
@@ -160,6 +166,7 @@ export function useGptConversation({ agentType, targetType, target, errorText: s
     summarizedUpto,
     compacted,
     meta,
+    toolMode,
     failure,
     busy,
     preview,

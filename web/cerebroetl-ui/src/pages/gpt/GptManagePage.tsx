@@ -8,6 +8,7 @@ import { PlusOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import {
   BILLING_LABEL,
+  TOOL_CALLING_LABEL,
   DEPLOYMENT_LABEL,
   PROVIDER_LABEL,
   activateLlmProvider,
@@ -175,6 +176,16 @@ export function GptManagePage() {
             },
             { title: "과금", dataIndex: "billingType", width: 70, sorter: (a, b) => byText(BILLING_LABEL[a.billingType], BILLING_LABEL[b.billingType]), render: (v: LlmProviderResponse["billingType"]) => BILLING_LABEL[v] },
             { title: "마스킹", dataIndex: "maskSensitive", width: 80, sorter: (a, b) => byBool(a.maskSensitive, b.maskSensitive), render: (v: boolean) => (v ? "켜짐" : "꺼짐") },
+            {
+              // 도구 호출(function calling, 2026-10-02): 설정(자동 · 사용 · 사용 안 함)과 감지 결과.
+              title: "도구 호출",
+              width: 120,
+              render: (_: unknown, row: LlmProviderResponse) => {
+                if (row.provider !== "OPENAI" && row.provider !== "OPENAI_COMPATIBLE") return <span style={{ color: "#9ca3af" }}>해당 없음</span>;
+                const detected = row.toolSupport === "SUPPORTED" ? "지원" : row.toolSupport === "UNSUPPORTED" ? "미지원" : "확인 전";
+                return <Tooltip title="연결 테스트 · 실제 질문에서 확인한 지원 여부">{`${TOOL_CALLING_LABEL[row.toolCalling ?? "AUTO"]} · ${detected}`}</Tooltip>;
+              },
+            },
             {
               title: "최근 테스트",
               width: 190,

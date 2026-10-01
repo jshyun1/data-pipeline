@@ -79,6 +79,17 @@ public class LlmProviderConfig {
     @Column(columnDefinition = "TEXT")
     private String description;
 
+    /** 도구 호출 사용: AUTO(감지 결과를 따름) · ON · OFF (V79). */
+    @Column(name = "tool_calling", nullable = false, length = 10)
+    private String toolCalling = TOOL_AUTO;
+
+    /** 감지한 도구 호출 지원 여부: SUPPORTED · UNSUPPORTED · null(모름). */
+    @Column(name = "tool_support", length = 20)
+    private String toolSupport;
+
+    @Column(name = "tool_checked_at")
+    private OffsetDateTime toolCheckedAt;
+
     @Column(name = "created_by", length = 255)
     private String createdBy;
 
@@ -114,6 +125,31 @@ public class LlmProviderConfig {
             url = url.substring(0, url.length() - 1);
         }
         return url;
+    }
+
+    public static final String TOOL_AUTO = "AUTO";
+    public static final String TOOL_ON = "ON";
+    public static final String TOOL_OFF = "OFF";
+    public static final String TOOL_SUPPORTED = "SUPPORTED";
+    public static final String TOOL_UNSUPPORTED = "UNSUPPORTED";
+
+    /**
+     * 이번 호출에 도구를 실을까. 도구 형식은 OpenAI · OpenAI 호환만 구현했다 - 다른 제공자는 언제나 «질문 속 대상 상세»만 쓴다.
+     * AUTO 는 «안 된다고 확인된 경우»만 끈다(모르면 한 번 시도해 보고, 거절되면 그때 UNSUPPORTED 로 적는다).
+     */
+    public boolean toolsEnabled() {
+        if (provider != LlmProvider.OPENAI && provider != LlmProvider.OPENAI_COMPATIBLE) {
+            return false;
+        }
+        if (TOOL_OFF.equals(toolCalling)) {
+            return false;
+        }
+        return TOOL_ON.equals(toolCalling) || !TOOL_UNSUPPORTED.equals(toolSupport);
+    }
+
+    public void recordToolSupport(String support) {
+        this.toolSupport = support;
+        this.toolCheckedAt = OffsetDateTime.now();
     }
 
     public void touch(String actor) {

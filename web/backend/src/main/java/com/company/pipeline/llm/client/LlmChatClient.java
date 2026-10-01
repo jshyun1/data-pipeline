@@ -79,12 +79,22 @@ public class LlmChatClient {
      */
     public LlmChatResult stream(LlmProvider provider, String baseUrl, String model, String apiKey,
                                 List<LlmMessage> messages, int maxOutputTokens, Consumer<String> onDelta) {
+        return stream(provider, baseUrl, model, apiKey, messages, maxOutputTokens, onDelta, null);
+    }
+
+    /**
+     * 도구(function calling) 를 실어 부른다. {@code tools} 는 OpenAI 형식 정의 목록이고, OpenAI · OpenAI 호환만 받는다
+     * (다른 제공자는 형식이 달라 무시한다 - 호출부가 미리 걸러 보낸다). 모델이 도구를 부르면 결과의 {@code toolCalls} 에 담긴다.
+     */
+    public LlmChatResult stream(LlmProvider provider, String baseUrl, String model, String apiKey,
+                                List<LlmMessage> messages, int maxOutputTokens, Consumer<String> onDelta,
+                                List<Map<String, Object>> tools) {
         if (baseUrl == null || baseUrl.isBlank()) {
             throw new LlmCallException("INVALID_CONFIG", "API 주소가 필요합니다.", null);
         }
         HttpRequest request;
         try {
-            request = buildRequest(provider, trimSlash(baseUrl.trim()), model, apiKey, messages, maxOutputTokens);
+            request = buildRequest(provider, trimSlash(baseUrl.trim()), model, apiKey, messages, maxOutputTokens, tools);
         } catch (IllegalArgumentException | IOException ex) {
             throw new LlmCallException("INVALID_CONFIG", "요청을 만들 수 없습니다: " + ex.getMessage(), null);
         }
@@ -121,10 +131,15 @@ public class LlmChatClient {
                     throw new LlmCallException(classified.status(), classified.message(), response.statusCode());
                 }
                 String contentType = response.headers().firstValue("content-type").orElse("");
+                StringBuilder text = new StringBuilder();
+                Consumer<String> sink = delta -> {
+                    text.append(delta);
+                    onDelta.accept(delta);
+                };
                 Usage usage = contentType.contains("text/event-stream")
-                        ? readSse(provider, body, onDelta)
-                        : readWhole(provider, body, onDelta);
-                return new LlmChatResult(usage.input, usage.output, elapsedMs(started));
+                        ? readSse(provider, body, sink)
+                        : readWhole(provider, body, sink);
+                return new LlmChatResult(usage.input, usage.output, elapsedMs(started), text.toString(), usage.toolCalls());
             } finally {
                 guard.cancel(false);
             }
@@ -141,6 +156,12 @@ public class LlmChatClient {
 
     HttpRequest buildRequest(LlmProvider provider, String base, String model, String apiKey,
                              List<LlmMessage> messages, int maxOutputTokens) throws IOException {
+        return buildRequest(provider, base, model, apiKey, messages, maxOutputTokens, null);
+    }
+
+    HttpRequest buildRequest(LlmProvider provider, String base, String model, String apiKey,
+                             List<LlmMessage> messages, int maxOutputTokens,
+                             List<Map<String, Object>> tools) throws IOException {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .timeout(FIRST_RESPONSE_TIMEOUT)
                 .header("Content-Type", "application/json")
@@ -185,8 +206,11 @@ public class LlmChatClient {
                     builder.header("Authorization", "Bearer " + apiKey);
                 }
                 payload.put("model", model);
-                payload.put("messages", messages.stream()
-                        .map(m -> Map.of("role", m.role(), "content", m.content())).toList());
+                payload.put("messages", messages.stream().map(LlmChatClient::openAiMessage).toList());
+                if (tools != null && !tools.isEmpty()) {
+                    payload.put("tools", tools);
+                    payload.put("tool_choice", "auto");
+                }
                 payload.put("stream", true);
                 if (provider == LlmProvider.OPENAI) {
                     // 최신 OpenAI 모델은 max_tokens · temperature 지정을 거절한다(연결 테스트 주석 참고).
@@ -206,9 +230,55 @@ public class LlmChatClient {
 
     // ------------------------------------------------------------------ 응답
 
+    /** OpenAI 형식 메시지 한 개. 도구 호출 차례(tool_calls) · 도구 결과(tool_call_id) 도 여기서 만든다. */
+    private static Map<String, Object> openAiMessage(LlmMessage m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("role", m.role());
+        out.put("content", m.content() == null ? "" : m.content());
+        if (m.toolCalls() != null && !m.toolCalls().isEmpty()) {
+            out.put("tool_calls", m.toolCalls().stream().map(call -> Map.of(
+                    "id", call.id(),
+                    "type", "function",
+                    "function", Map.of("name", call.name(), "arguments", call.arguments() == null ? "{}" : call.arguments())))
+                    .toList());
+        }
+        if (m.toolCallId() != null) {
+            out.put("tool_call_id", m.toolCallId());
+        }
+        return out;
+    }
+
     static final class Usage {
         Integer input;
         Integer output;
+        /** 스트리밍이면 도구 호출이 조각(index 별 이름 · 인자 일부)으로 온다 - index 순서대로 이어 붙인다. */
+        final Map<Integer, String[]> toolParts = new java.util.TreeMap<>();
+
+        void addToolPart(JsonNode call) {
+            int index = call.path("index").asInt(toolParts.size());
+            String[] part = toolParts.computeIfAbsent(index, key -> new String[]{"", "", ""});
+            if (call.hasNonNull("id") && !call.path("id").asText().isEmpty()) {
+                part[0] = call.path("id").asText();
+            }
+            JsonNode function = call.path("function");
+            if (function.hasNonNull("name")) {
+                part[1] = part[1] + function.path("name").asText();
+            }
+            if (function.hasNonNull("arguments")) {
+                part[2] = part[2] + function.path("arguments").asText();
+            }
+        }
+
+        List<LlmMessage.ToolCall> toolCalls() {
+            List<LlmMessage.ToolCall> calls = new ArrayList<>();
+            toolParts.forEach((index, part) -> {
+                if (!part[1].isBlank()) {
+                    String id = part[0].isBlank() ? "call_" + index : part[0];
+                    calls.add(new LlmMessage.ToolCall(id, part[1], part[2].isBlank() ? "{}" : part[2]));
+                }
+            });
+            return calls;
+        }
     }
 
     /** SSE 를 줄 단위로 읽는다. 이벤트는 빈 줄로 끝나고, data 줄이 여러 개면 이어 붙인다. */
@@ -272,7 +342,11 @@ public class LlmChatClient {
                     throw new LlmCallException("PROVIDER_ERROR",
                             "제공자가 답변 중 오류를 보냈습니다: " + node.path("error").path("message").asText(node.path("error").asText()), null);
                 }
-                emit(onDelta, node.path("choices").path(0).path("delta").path("content").asText(""));
+                JsonNode delta = node.path("choices").path(0).path("delta");
+                emit(onDelta, delta.path("content").asText(""));
+                for (JsonNode call : delta.path("tool_calls")) {
+                    usage.addToolPart(call);
+                }
                 readOpenAiUsage(node, usage);
             }
         }
@@ -301,7 +375,11 @@ public class LlmChatClient {
                 }
             }
             default -> {
-                emit(onDelta, node.path("choices").path(0).path("message").path("content").asText(""));
+                JsonNode message = node.path("choices").path(0).path("message");
+                emit(onDelta, message.path("content").asText(""));
+                for (JsonNode call : message.path("tool_calls")) {
+                    usage.addToolPart(call);
+                }
                 readOpenAiUsage(node, usage);
             }
         }

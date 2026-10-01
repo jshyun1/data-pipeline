@@ -34,7 +34,12 @@ export interface LlmProviderRequest {
   maskSensitive: boolean;
   maxInputChars?: number | null;
   description?: string | null;
+  /** 도구 호출 사용: AUTO(감지 결과를 따름) · ON · OFF (2026-10-02). */
+  toolCalling?: LlmToolCalling | null;
 }
+
+export type LlmToolCalling = "AUTO" | "ON" | "OFF";
+export const TOOL_CALLING_LABEL: Record<LlmToolCalling, string> = { AUTO: "자동", ON: "사용", OFF: "사용 안 함" };
 
 export interface LlmProviderResponse {
   id: number;
@@ -54,6 +59,10 @@ export interface LlmProviderResponse {
   lastTestMessage: string | null;
   lastTestedAt: string | null;
   description: string | null;
+  toolCalling: LlmToolCalling;
+  /** 연결 테스트 · 실제 호출에서 감지한 도구 호출 지원 여부. null 이면 아직 모름. */
+  toolSupport: "SUPPORTED" | "UNSUPPORTED" | null;
+  toolCheckedAt: string | null;
   createdBy: string | null;
   createdAt: string;
   updatedBy: string | null;
@@ -209,6 +218,10 @@ export interface LlmStreamHandlers {
   onDone?: (usage: { inputTokens: number | null; outputTokens: number | null; durationMs: number }) => void;
   /** 답변 도중 LLM 쪽에서 난 실패. 시작 전 실패(권한·대상 없음 등)는 Promise 가 reject 된다. */
   onError?: (error: { code: string; message: string }) => void;
+  /** 이번 답에 도구 호출(조회)을 쓰는지. 도구를 거절하는 모델이면 도중에 false 로 한 번 더 온다. */
+  onToolMode?: (enabled: boolean) => void;
+  /** 모델이 도구로 무언가를 조회했다(label 은 «CDC 파이프라인 «이름»» 같은 사람 말). */
+  onTool?: (tool: { name: string; label: string }) => void;
 }
 
 class LlmStreamError extends Error {
@@ -272,6 +285,8 @@ export async function streamLlmChat(request: LlmChatRequest, handlers: LlmStream
     else if (event === "meta") handlers.onMeta?.(payload as LlmContextPreview);
     else if (event === "compacted") handlers.onCompacted?.(payload as LlmCompacted);
     else if (event === "done") handlers.onDone?.(payload);
+    else if (event === "toolMode") handlers.onToolMode?.(Boolean(payload.enabled));
+    else if (event === "tool") handlers.onTool?.({ name: String(payload.name ?? ""), label: String(payload.label ?? payload.name ?? "") });
     else if (event === "error") {
       const error = {
         code: String(payload.code ?? "PROVIDER_ERROR"),

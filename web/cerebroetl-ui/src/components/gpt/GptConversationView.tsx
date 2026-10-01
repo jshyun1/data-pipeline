@@ -121,6 +121,11 @@ export function GptTurns({ turns, summarizedUpto = 0, waitingText, headings, hea
             <div className="gpt-analysis-question">{turn.content}</div>
           ) : (
             <div className="gpt-analysis-reply">
+              {(turn.toolSteps?.length ?? 0) > 0 && (
+                <div className="gpt-analysis-tools">
+                  {turn.toolSteps!.map((step, stepIndex) => <div key={stepIndex}>🔎 {step}</div>)}
+                </div>
+              )}
               {turn.content ? <AnswerText text={turn.content} headings={headings} headingLabels={headingLabels} /> : null}
               {turn.streaming && (
                 <div className="gpt-analysis-waiting">

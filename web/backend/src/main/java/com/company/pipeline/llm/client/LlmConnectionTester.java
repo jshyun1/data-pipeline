@@ -2,6 +2,7 @@ package com.company.pipeline.llm.client;
 
 import com.company.pipeline.llm.LlmProvider;
 import com.company.pipeline.llm.dto.LlmTestResult;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.ConnectException;
@@ -65,6 +66,62 @@ public class LlmConnectionTester {
                     result.message(), result.detail());
         }
         return result;
+    }
+
+    /**
+     * 도구 호출(function calling) 을 받아 주는지 확인한다(2026-10-02). OpenAI · OpenAI 호환만 확인한다 - 다른 제공자는 null.
+     *
+     * <p>도구 하나를 실어 «이 도구를 불러라»고 요청한다. 응답에 {@code tool_calls} 가 오면 SUPPORTED, 요청을 거절(4xx)하거나
+     * 도구를 부르지 않고 글로만 답하면 UNSUPPORTED. 연결 오류 · 시간 초과처럼 판정할 수 없으면 null(감지 결과를 바꾸지 않는다).
+     */
+    public String probeTools(LlmProvider provider, String baseUrl, String modelName, String apiKey) {
+        if ((provider != LlmProvider.OPENAI && provider != LlmProvider.OPENAI_COMPATIBLE) || baseUrl == null || baseUrl.isBlank()) {
+            return null;
+        }
+        try {
+            Map<String, Object> tool = Map.of("type", "function", "function", Map.of(
+                    "name", "lookup_item",
+                    "description", "Look up an item by id",
+                    "parameters", Map.of("type", "object",
+                            "properties", Map.of("id", Map.of("type", "integer")),
+                            "required", List.of("id"))));
+            Map<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("model", modelName);
+            payload.put("messages", List.of(Map.of("role", "user", "content", "Call the tool lookup_item with id 1.")));
+            payload.put("tools", List.of(tool));
+            payload.put("tool_choice", "auto");
+            if (provider == LlmProvider.OPENAI_COMPATIBLE) {
+                payload.put("max_tokens", 64);
+                payload.put("temperature", 0);
+            }
+            HttpRequest.Builder builder = HttpRequest.newBuilder().timeout(REQUEST_TIMEOUT)
+                    .uri(URI.create(trimSlash(baseUrl.trim()) + "/chat/completions"))
+                    .header("Content-Type", "application/json");
+            if (hasText(apiKey)) {
+                builder.header("Authorization", "Bearer " + apiKey);
+            }
+            HttpResponse<String> response = httpClient.send(builder
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload), StandardCharsets.UTF_8))
+                    .build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            String result;
+            if (response.statusCode() / 100 == 4) {
+                result = "UNSUPPORTED";
+            } else if (response.statusCode() / 100 != 2) {
+                return null;
+            } else {
+                JsonNode message = objectMapper.readTree(response.body()).path("choices").path(0).path("message");
+                result = message.path("tool_calls").isArray() && message.path("tool_calls").size() > 0
+                        ? "SUPPORTED" : "UNSUPPORTED";
+            }
+            log.info("LLM 도구 호출 확인 provider={} host={} model={} → {}", provider, hostOf(baseUrl), modelName, result);
+            return result;
+        } catch (IOException | IllegalArgumentException ex) {
+            log.warn("LLM 도구 호출 확인 실패(판정 보류) provider={} host={} model={}: {}", provider, hostOf(baseUrl), modelName, ex.getMessage());
+            return null;
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
     }
 
     private static String hostOf(String baseUrl) {

@@ -10701,3 +10701,17 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
 .std-full-table .etl-log-clickable-row {
   cursor: pointer;
 }
+
+/* AI 어시스턴트가 답하기 전에 도구로 조회한 대상(2026-10-02) - 답 위에 작은 회색 줄로. */
+.gpt-analysis-tools {
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.gpt-chat-tool-mode {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 400;
+}

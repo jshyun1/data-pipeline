@@ -43,7 +43,17 @@ export function GptChatPanel({ targetType, target, draft }: GptChatPanelProps) {
       {/* 윗줄은 왼쪽 GPT 이름 · 오른쪽 «전송 정보» 버튼만(2026-09-18 요청). 대상 안내 · 배치/마스킹 · 저장 안 된 변경 안내 문구는 뺐다 -
           보내는 내용은 «전송 정보» 창이 그대로 보여 준다. */}
       <div className="nifi-ai-summary gpt-chat-head">
-        <strong>{providerName ?? "선택된 GPT"}</strong>
+        <strong>
+          {providerName ?? "선택된 GPT"}
+          {/* 도구 호출(조회) 사용 여부(2026-10-02). 쓰지 못하는 모델이면 질문 속 이름으로 찾은 대상 상세만으로 답한다. */}
+          {chat.toolMode !== undefined && (
+            <span className="gpt-chat-tool-mode" title={chat.toolMode
+              ? "질문에 필요하면 job · CDC 파이프라인 · 워크플로우를 직접 조회해서 답합니다"
+              : "이 모델은 도구 조회를 쓰지 않습니다 - 질문에 나온 이름으로 찾은 대상의 상세를 붙여 답합니다"}>
+              {chat.toolMode ? " · 도구 조회 사용" : " · 도구 조회 미사용"}
+            </span>
+          )}
+        </strong>
         <Button size="small" onClick={() => void chat.openPreview()}>전송 정보</Button>
       </div>
 

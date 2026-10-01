@@ -9,6 +9,7 @@ import {
   DEPLOYMENT_LABEL,
   PROVIDER_LABEL,
   PROVIDERS_BY_DEPLOYMENT,
+  TOOL_CALLING_LABEL,
   createLlmProvider,
   getLlmProvider,
   testLlmDraft,
@@ -18,6 +19,7 @@ import {
   type LlmProvider,
   type LlmProviderRequest,
   type LlmTestResult,
+  type LlmToolCalling,
 } from "../../api/llm";
 
 interface FormValues {
@@ -31,6 +33,7 @@ interface FormValues {
   maxInputChars?: number;
   maskSensitive: boolean;
   description?: string;
+  toolCalling: LlmToolCalling;
 }
 
 /** 외부 제공자는 기본 주소를 서버가 채운다. 화면에는 참고로만 보여 준다(서버 LlmProvider 와 같은 값). */
@@ -47,6 +50,7 @@ const INITIAL: FormValues = {
   name: "",
   modelName: "",
   maskSensitive: true,
+  toolCalling: "AUTO",
 };
 
 /**
@@ -94,6 +98,7 @@ function GptRegisterForm({ editId }: { editId?: number }) {
       maxInputChars: existing.maxInputChars,
       maskSensitive: existing.maskSensitive,
       description: existing.description ?? undefined,
+      toolCalling: existing.toolCalling ?? "AUTO",
     });
   }, [existing, form]);
 
@@ -116,6 +121,7 @@ function GptRegisterForm({ editId }: { editId?: number }) {
     maskSensitive: values.maskSensitive,
     maxInputChars: values.maxInputChars ?? null,
     description: values.description?.trim() || null,
+    toolCalling: values.toolCalling,
   });
 
   const testMutation = useMutation({
@@ -261,6 +267,23 @@ function GptRegisterForm({ editId }: { editId?: number }) {
           extra="전화번호·이메일·주민번호·카드번호 형태를 <종류> 로 가려서 보냅니다. 이름·주소처럼 형태가 없는 값은 가리지 못합니다."
         >
           <Checkbox>전송 시 개인정보 마스킹</Checkbox>
+        </Form.Item>
+
+        <Form.Item
+          label="도구 호출"
+          name="toolCalling"
+          extra={<>
+            AI 어시스턴트가 질문에 필요한 job · CDC 파이프라인 · 워크플로우를 직접 조회해서 답합니다(function calling).
+            «자동»은 연결 테스트 · 실제 질문에서 모델이 받아 주는지 확인해 씁니다 - 받지 않는 모델이면 질문에 나온 이름으로 찾은 대상의
+            상세만 붙여 답합니다.
+            {existing && (existing.provider === "OPENAI" || existing.provider === "OPENAI_COMPATIBLE") && (
+              <> 확인 결과: <b>{existing.toolSupport === "SUPPORTED" ? "지원" : existing.toolSupport === "UNSUPPORTED" ? "미지원" : "아직 확인 안 함"}</b></>
+            )}
+            {" "}(OpenAI · OpenAI 호환 제공자만 해당)
+          </>}
+        >
+          <Radio.Group options={(Object.keys(TOOL_CALLING_LABEL) as LlmToolCalling[])
+            .map((value) => ({ label: TOOL_CALLING_LABEL[value], value }))} />
         </Form.Item>
 
         <Form.Item label="설명" name="description">

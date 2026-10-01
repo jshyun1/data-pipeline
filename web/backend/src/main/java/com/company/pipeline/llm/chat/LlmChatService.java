@@ -20,6 +20,9 @@ import com.company.pipeline.llm.context.LlmContextCollector;
 import com.company.pipeline.llm.context.LlmContextCollector.CollectedTarget;
 import com.company.pipeline.llm.context.LlmTargetType;
 import com.company.pipeline.llm.context.SensitiveDataMasker;
+import com.company.pipeline.llm.tool.LlmToolLoop;
+import com.company.pipeline.llm.tool.LlmToolbox;
+import com.company.pipeline.llm.tool.RelatedTargetFinder;
 import com.company.pipeline.llm.usage.LlmUsageLog;
 import com.company.pipeline.llm.usage.LlmUsageLogRepository;
 import java.util.EnumMap;
@@ -59,6 +62,11 @@ public class LlmChatService {
     static final String AGENT_SUMMARY = "CONVERSATION_SUMMARY";
     /** 대상 정보 · 질문을 감싸는 머리말([분석 대상: …], [이전 대화 요약] 같은 제목 줄)과 안내 문구의 여유분. */
     static final int PROMPT_WRAPPER_CHARS = 200;
+    /** 질문 속 대상 상세(①)에 주는 몫 - 최대 입력 길이의 이 비율, 그리고 {@link #RELATED_MAX_CHARS} 를 넘지 않는다. */
+    static final double RELATED_SHARE = 0.25;
+    static final int RELATED_MAX_CHARS = 8_000;
+    /** 도구 결과 하나의 길이 상한. */
+    static final int TOOL_RESULT_MAX_CHARS = 6_000;
 
     private final LlmProviderConfigRepository configRepository;
     private final PasswordCryptoService cryptoService;
@@ -66,13 +74,20 @@ public class LlmChatService {
     private final LlmChatClient chatClient;
     private final LlmUsageLogRepository usageLogRepository;
     private final Map<LlmTargetType, LlmContextCollector> collectors = new EnumMap<>(LlmTargetType.class);
+    private final RelatedTargetFinder relatedTargetFinder;
+    private final LlmToolbox toolbox;
+    private final LlmToolLoop toolLoop;
 
     @Value("${authz.enforcement.enabled:false}")
     private boolean enforcementEnabled;
 
     public LlmChatService(LlmProviderConfigRepository configRepository, PasswordCryptoService cryptoService,
                           PermissionService permissionService, LlmChatClient chatClient,
-                          LlmUsageLogRepository usageLogRepository, List<LlmContextCollector> collectors) {
+                          LlmUsageLogRepository usageLogRepository, List<LlmContextCollector> collectors,
+                          RelatedTargetFinder relatedTargetFinder, LlmToolbox toolbox, LlmToolLoop toolLoop) {
+        this.relatedTargetFinder = relatedTargetFinder;
+        this.toolbox = toolbox;
+        this.toolLoop = toolLoop;
         this.configRepository = configRepository;
         this.cryptoService = cryptoService;
         this.permissionService = permissionService;
@@ -123,6 +138,8 @@ public class LlmChatService {
         LlmContext.Assembled assembled = target.context().assemble(contextBudget);
         boolean masked = config.isMaskSensitive();
         String contextText = mask(masked, assembled.text());
+        // ① 질문 속 대상 상세: 질문에 나온 job · 파이프라인 · 워크플로우의 구성을 붙인다(2026-10-02). 모델과 무관하게 항상.
+        contextText = contextText + relatedDetails(request, userId, masked, maxChars);
 
         // 순서 · 개수를 그대로 둔다 - 요약 뒤 화면이 «앞에서 몇 개를 덜 보낼지»를 이 목록의 위치로 계산한다.
         List<LlmMessage> history = request.history() == null ? List.of() : request.history().stream()
@@ -134,6 +151,39 @@ public class LlmChatService {
                 contextText.length(), contextBudget, contextText);
         return new Prepared(request, userId, config, target, preview, contextText, history,
                 mask(masked, request.summary()), mask(masked, request.question()), maxChars);
+    }
+
+    /**
+     * 질문에 나온 대상들의 상세. 찾지 못했거나 질문이 없으면 빈 문자열.
+     * 한 대상이 실패(지워짐 · 권한 없음)해도 나머지는 붙인다.
+     */
+    private String relatedDetails(LlmChatRequest request, String userId, boolean masked, int maxChars) {
+        String question = request.question();
+        if (question == null || question.isBlank()) {
+            return "";
+        }
+        List<RelatedTargetFinder.Found> found;
+        try {
+            found = relatedTargetFinder.find(question, request.targetType(), request.target());
+        } catch (RuntimeException ex) {
+            log.warn("질문 속 대상 찾기 실패(상세 없이 진행): {}", ex.getMessage());
+            return "";
+        }
+        if (found.isEmpty()) {
+            return "";
+        }
+        int budget = (int) Math.min(RELATED_MAX_CHARS, maxChars * RELATED_SHARE);
+        LlmToolbox.Caller caller = new LlmToolbox.Caller(userId, masked, Math.max(800, budget / found.size()));
+        StringBuilder out = new StringBuilder("\n\n## 질문에 나온 대상의 상세 (서버가 이름으로 찾아 붙임)");
+        for (RelatedTargetFinder.Found item : found) {
+            try {
+                LlmToolbox.Outcome outcome = toolbox.describe(item.type(), item.target(), caller);
+                out.append("\n\n### ").append(outcome.label().replaceFirst(" 조회$", "")).append("\n").append(outcome.text());
+            } catch (RuntimeException ex) {
+                log.debug("질문 속 대상 상세를 붙이지 못함 {}: {}", item.key(), ex.getMessage());
+            }
+        }
+        return out.toString();
     }
 
     /** 스트리밍 호출. 실패해도 예외를 던지지 않고 {@code listener.error} 로 알린다 - 이미 SSE 응답이 열려 있다. */
@@ -152,8 +202,18 @@ public class LlmChatService {
                     ? jobMessages(prepared, apiKey, listener)
                     : errorMessages(prepared, listener);
             usage.setInputChars(messages.stream().mapToInt(m -> m.content().length()).sum());
-            LlmChatResult result = chatClient.stream(config.getProvider(), config.effectiveBaseUrl(), config.getModelName(),
-                    apiKey, messages, MAX_OUTPUT_TOKENS, listener::delta);
+            // ③ 도구 호출: 속성창 AI 어시스턴트의 질문에만 쓴다(오류 분석은 첫 답 형식이 정해져 있고, 탭을 열 때의 요약은 대상 정보로 충분하다).
+            // 설정이 끄거나 «안 된다»고 확인된 모델이면 ①만으로 답한다(LlmProviderConfig#toolsEnabled).
+            boolean useTools = prepared.request().agentType() == LlmAgentType.JOB_ANALYSIS
+                    && prepared.question() != null && !prepared.question().isBlank()
+                    && config.toolsEnabled();
+            listener.toolMode(useTools);
+            LlmChatResult result = useTools
+                    ? toolLoop.run(config, apiKey, messages, MAX_OUTPUT_TOKENS, listener,
+                            new LlmToolbox.Caller(prepared.userId(), config.isMaskSensitive(),
+                                    Math.min(TOOL_RESULT_MAX_CHARS, (int) (prepared.maxInputChars() * RELATED_SHARE))))
+                    : chatClient.stream(config.getProvider(), config.effectiveBaseUrl(), config.getModelName(),
+                            apiKey, messages, MAX_OUTPUT_TOKENS, listener::delta);
             usage.setStatus("SUCCESS");
             usage.setInputTokens(result.inputTokens());
             usage.setOutputTokens(result.outputTokens());

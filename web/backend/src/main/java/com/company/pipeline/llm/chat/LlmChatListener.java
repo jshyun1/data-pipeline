@@ -20,4 +20,12 @@ public interface LlmChatListener {
     void done(Integer inputTokens, Integer outputTokens, long durationMs);
 
     void error(String code, String message);
+
+    /** 도구 호출을 이번 답에 쓰는지(2026-10-02). 화면이 답 위 정보 줄에 «도구 조회 사용 · 미사용»을 적는다. */
+    default void toolMode(boolean enabled) {
+    }
+
+    /** 모델이 도구 하나를 불러 실행했다. {@code label} 은 «CDC 파이프라인 «AAA-tb_imp018m» 조회» · ««dz» 검색» 같은 사람 말이다. */
+    default void tool(String name, String label) {
+    }
 }

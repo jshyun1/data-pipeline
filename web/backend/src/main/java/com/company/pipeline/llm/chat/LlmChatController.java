@@ -92,6 +92,16 @@ public class LlmChatController {
             public void error(String code, String message) {
                 send(out, "error", Map.of("code", code, "message", message));
             }
+
+            @Override
+            public void toolMode(boolean enabled) {
+                send(out, "toolMode", Map.of("enabled", enabled));
+            }
+
+            @Override
+            public void tool(String name, String label) {
+                send(out, "tool", Map.of("name", name, "label", label));
+            }
         });
     }
 
