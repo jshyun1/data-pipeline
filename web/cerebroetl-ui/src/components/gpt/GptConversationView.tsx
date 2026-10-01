@@ -17,7 +17,7 @@ export type GptAnswerHeading = typeof HEADINGS[number];
 const HEADING_ALIAS: Partial<Record<GptAnswerHeading, GptAnswerHeading>> = { "원인 추정": "원인", "확인사항": "확인할 것" };
 /** 오류 분석 첫 답의 표시 순서와 이름(2026-10-02 요청 - 워크플로우 · ETL · CDC 로그 창 공통). */
 export const ERROR_ANALYSIS_HEADINGS: GptAnswerHeading[] = ["원인", "조치 방법", "확인할 것"];
-export const ERROR_ANALYSIS_HEADING_LABELS: GptAnswerHeadingLabels = { "조치 방법": "조치방법" };
+export const ERROR_ANALYSIS_HEADING_LABELS: GptAnswerHeadingLabels = { "조치 방법": "조치방법", "확인할 것": "확인할것" };
 export type GptAnswerHeadingLabels = Partial<Record<GptAnswerHeading, string>>;
 
 export function renderAssistantText(text: string) {
@@ -63,20 +63,27 @@ function AnswerText({ text, headings, headingLabels }: {
     }
     return (
       <div className="gpt-analysis-answer">
-        {headings.map((heading) => {
-          const body = sectionLines.get(heading);
-          if (!body) {
-            return null;
-          }
+        {headings.filter((heading) => sectionLines.has(heading)).map((heading, order) => {
+          const body = sectionLines.get(heading) ?? [];
+          // 제목은 «1. 원인»처럼 번호를 붙이고, 그 안의 번호 목록은 «(1)»로 바꿔 한 칸 들여 쓴다(2026-10-02 요청) -
+          // 제목 번호와 항목 번호가 같은 «1.» 모양이면 어디가 제목인지 헷갈린다.
           return (
             <div key={heading}>
-              <div className="gpt-analysis-heading">{headingLabels?.[heading] ?? heading}</div>
+              <div className="gpt-analysis-heading">{`${order + 1}. ${headingLabels?.[heading] ?? heading}`}</div>
               {body.length > 0
-                ? body.map((line, index) => (
-                  <div key={`${heading}-${index}`} className="gpt-analysis-line">
-                    {renderAssistantText(line.replace(/\*\*/g, "").replace(/^#+\s*/, "")) || " "}
-                  </div>
-                ))
+                ? body.map((line, index) => {
+                  const text = line.replace(/\*\*/g, "").replace(/^#+\s*/, "");
+                  const item = /^\s*(\d+)[.)]\s+(.*)$/.exec(text);
+                  return item ? (
+                    <div key={`${heading}-${index}`} className="gpt-analysis-line gpt-analysis-item">
+                      ({item[1]}) {renderAssistantText(item[2])}
+                    </div>
+                  ) : (
+                    <div key={`${heading}-${index}`} className="gpt-analysis-line">
+                      {renderAssistantText(text) || " "}
+                    </div>
+                  );
+                })
                 : <div className="gpt-analysis-line"> </div>}
             </div>
           );

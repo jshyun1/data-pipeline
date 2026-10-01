@@ -274,7 +274,7 @@ export function EtlRunsPane({
     const scale = scaleOf(topRuns);
     grid = (
       <table className="lv2-grid">
-        <GridHead nameLabel="실행 차수" />
+        <GridHead nameLabel="실행 차수" runList />
         <tbody>
           {topRuns.map((run) => (
             <RunRow key={`${run.dag_id}|${run.dag_run_id}`} run={run} ctx={ctx} scale={scale} showDate={multiDay}

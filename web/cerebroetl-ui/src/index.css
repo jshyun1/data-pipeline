@@ -8958,6 +8958,11 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   word-break: normal;
 }
 
+/* 오류 분석 제목 아래의 번호 항목 «(1) …» - 한 칸 들여 써서 제목 번호(«1. 원인»)와 구분한다(2026-10-02). */
+.gpt-analysis-item {
+  padding-left: 14px;
+}
+
 .gpt-analysis-heading {
   margin-top: 8px;
   color: #3730a3;

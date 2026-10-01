@@ -42,12 +42,16 @@ export interface GridCtx {
 
 const COLS = 10;
 
-export function GridHead({ nameLabel = "이름" }: { nameLabel?: string } = {}) {
+/**
+ * 표 머리줄. runList 는 워크플로우 로그 위쪽 «실행 목록»(RunRow) - 유형 · 동작 열이 없다(2026-10-02 요청:
+ * 줄이 전부 «워크플로우»라 유형이 뜻이 없고, 줄을 누르면 아래에 상세 실행이력이 나와 «실행 이력» 단추도 필요 없다).
+ */
+export function GridHead({ nameLabel = "이름", runList = false }: { nameLabel?: string; runList?: boolean } = {}) {
   return (
     <thead>
       <tr>
-        <th style={{ width: "30%" }}>{nameLabel}</th><th>유형</th><th>상태</th><th>시작</th><th>종료</th><th>소요</th>
-        <th>적재 / 결과</th><th>재시도</th><th>실행 유형</th><th style={{ width: "1%" }}>동작</th>
+        <th style={{ width: "30%" }}>{nameLabel}</th>{!runList && <th>유형</th>}<th>상태</th><th>시작</th><th>종료</th><th>소요</th>
+        <th>적재 / 결과</th><th>재시도</th><th>실행 유형</th>{!runList && <th style={{ width: "1%" }}>동작</th>}
       </tr>
     </thead>
   );
@@ -115,9 +119,8 @@ export function RunRow({ run, ctx, scale, showDate, expandable = true, ordinal, 
   const key = selectionKey(sel);
   const expanded = expandable && ctx.expanded.has(key);
   const selected = ctx.selectedKey === key;
-  const { jobs, logs, tasks } = useRunTasks(dagId, run.dag_run_id, { enabled: expanded || selected, refreshSeconds: ctx.refreshSeconds });
+  const { jobs, logs } = useRunTasks(dagId, run.dag_run_id, { enabled: expanded || selected, refreshSeconds: ctx.refreshSeconds });
   const totals = runTotals(jobs, logs);
-  const failedTasks = (tasks ?? []).filter((task) => task.state === "failed");
   const name = dag ? displayName(dag) : dagId;
   const started = runAt(run);
   const end = run.end_date ?? (run.state === "running" ? dayjs().toISOString() : undefined);
@@ -138,25 +141,14 @@ export function RunRow({ run, ctx, scale, showDate, expandable = true, ordinal, 
             </span>
           </div>
         </td>
-        <td className="lv2-muted">워크플로우</td>
         <td><StateBadge state={run.state} /></td>
         <td className="lv2-num">{formatAt(started)}</td>
         <td className="lv2-num">{formatAt(run.end_date)}</td>
         <td><DurCell seconds={durationSeconds(started, end)} text={duration(started, run.end_date ?? end)} scale={scale} /></td>
-        <td>
-          {run.state === "failed" && failedTasks.length ? (
-            <button type="button" className="lv2-btn sm danger"
-                    onClick={(event) => { event.stopPropagation(); ctx.openTab(sel, "log"); }}>로그</button>
-          ) : <span className="lv2-num">{totals.result}</span>}
-        </td>
+        {/* 실패한 실행도 «로그» 단추 없이 적재 합계만 적는다(2026-10-02 요청) - 실패 로그는 아래 상세 실행이력의 job 줄에서 연다. */}
+        <td><span className="lv2-num">{totals.result}</span></td>
         <td className="lv2-num">{totals.retry}</td>
         <td className="lv2-muted">{runTypeLabel(run)}</td>
-        <td>
-          <div className="lv2-acts">
-            <button type="button" className="lv2-btn sm"
-                    onClick={(event) => { event.stopPropagation(); ctx.openTab(sel, "history"); }}>실행 이력</button>
-          </div>
-        </td>
       </tr>
       {expanded && <RunBody dagId={dagId} runId={run.dag_run_id} depth={1} ctx={ctx} scale={durationSeconds(started, end)} />}
     </>
