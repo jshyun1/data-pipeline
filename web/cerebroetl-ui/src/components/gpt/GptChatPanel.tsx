@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Button } from "antd";
 import type { LlmTargetType } from "../../api/llm";
+import { downloadGptMarkdown, TARGET_TYPE_LABEL } from "./gptMarkdown";
 import { useGptConversation } from "./useGptConversation";
 import { useLlmStatus } from "./useGptEnabled";
 import { GptAskBox, GptCompactedNote, GptFailure, GptPreviewModal, GptTurns } from "./GptConversationView";
@@ -18,6 +19,17 @@ export interface GptChatPanelProps {
 }
 
 /**
+ * 탭을 열 때 화면에 남길 첫 질문 한 줄(2026-10-02 요청). 서버에는 질문 없이 보내 정해진 요약 요청을 쓰되,
+ * 대화에는 «무엇을 물어서 나온 답인지»가 보이게 한다.
+ */
+const OPENING_ASK: Partial<Record<LlmTargetType, string>> = {
+  CDC_PIPELINE: "CDC 정보 요약해줘",
+  WORKFLOW: "워크플로우 정보 요약해줘",
+  WORKFLOW_DRAFT: "워크플로우 정보 요약해줘",
+  WORKFLOW_NODE: "워크플로우 정보 요약해줘",
+};
+
+/**
  * 속성창 GPT 탭(설계 5-2). CDC 파이프라인 상세 창 · 워크플로우 캔버스 노드 속성창이 같이 쓴다.
  *
  * <p>대화는 저장하지 않는다 - 창을 닫거나 다른 대상을 고르면 사라진다(부모가 대상별 key 로 새로 그린다).
@@ -30,11 +42,24 @@ export function GptChatPanel({ targetType, target, draft }: GptChatPanelProps) {
   useEffect(() => {
     // 탭을 열면 묻기 전에 대상 요약부터 내어 준다(2026-09-27 요청) - 로그 화면의 [GPT 해석] 과 같은 자리다.
     // 질문 없이 보내면 서버가 «요약 요청»으로 바꿔 답한다(JobAnalysisAgent.SUMMARY_REQUEST).
+    // 화면에는 그 자리에 «… 요약해줘» 한 줄을 남긴다(2026-10-02 요청).
     // 대상이 바뀌면 부모가 key 로 이 컴포넌트를 새로 만들므로 여기서 대상 변화를 보지 않는다.
-    void chat.send();
+    void chat.sendOpening(OPENING_ASK[targetType] ?? "대상 정보 요약해줘");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const providerName = chat.meta?.providerName ?? status?.providerName;
+  const targetLabel = chat.meta?.targetLabel ?? TARGET_TYPE_LABEL[targetType];
+
+  const saveMarkdown = () => downloadGptMarkdown({
+    title: `${targetLabel} AI 어시스턴트`,
+    targetType,
+    providerName,
+    deployment: chat.meta?.deployment ?? status?.deployment ?? undefined,
+    masked: chat.meta?.masked ?? status?.maskSensitive,
+    turns: chat.turns,
+    failure: chat.failure,
+    fileSuffix: "_AI_어시스턴트",
+  });
 
   // 모양은 ETL 관리 화면 속성창의 «AI 어시스턴트» 탭(nifi-ai-*)과 같다(2026-09-17 요청): 위 요약 카드(GPT 이름 · 안내 ·
   // 전송될 정보 보기) → 대화 칸(남은 높이를 다 씀) → 둥근 보내기 버튼이 붙은 입력칸. 보내는 정보 · 대화 규칙은 그대로다.
@@ -54,7 +79,10 @@ export function GptChatPanel({ targetType, target, draft }: GptChatPanelProps) {
             </span>
           )}
         </strong>
-        <Button size="small" onClick={() => void chat.openPreview()}>전송 정보</Button>
+        <span className="gpt-chat-head-actions">
+          <Button size="small" onClick={() => void chat.openPreview()}>전송 정보</Button>
+          <Button size="small" onClick={saveMarkdown} disabled={chat.turns.length === 0}>MD 저장하기</Button>
+        </span>
       </div>
 
       <GptFailure message={chat.failure} />
@@ -77,7 +105,8 @@ export function GptChatPanel({ targetType, target, draft }: GptChatPanelProps) {
             : <Button size="small" onClick={chat.reset}>새 대화</Button>}
         </div>
       )}
-      <GptPreviewModal preview={chat.preview} onClose={chat.closePreview} />
+      <GptPreviewModal preview={chat.preview} onClose={chat.closePreview}
+                       onApply={chat.applyContextOverride} overridden={Boolean(chat.contextOverride)} />
     </section>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Button } from "antd";
 import { DEPLOYMENT_LABEL, type LlmTargetType } from "../../api/llm";
+import { downloadGptMarkdown, TARGET_TYPE_LABEL } from "./gptMarkdown";
 import { useGptConversation } from "./useGptConversation";
 import { useLlmStatus } from "./useGptEnabled";
 import {
@@ -26,25 +27,6 @@ export interface GptErrorAnalysisProps {
   headingLabels?: GptAnswerHeadingLabels;
 }
 
-const TARGET_TYPE_LABEL: Record<LlmTargetType, string> = {
-  ETL_ASSISTANT: "ETL 관리 어시스턴트",
-  ETL_JOB: "ETL job",
-  CDC_PIPELINE: "CDC 파이프라인",
-  WORKFLOW: "워크플로우",
-  WORKFLOW_DRAFT: "작성 중인 워크플로우",
-  WORKFLOW_NODE: "워크플로우 노드",
-  WORKFLOW_TASK: "워크플로우 작업",
-};
-
-function safeMarkdown(text?: string | null) {
-  return (text ?? "").replace(/```/g, "``\\`");
-}
-
-function fileSafeName(text: string) {
-  const cleaned = text.trim().replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_");
-  return (cleaned || "gpt-error-analysis").slice(0, 80);
-}
-
 function targetFallbackLabel(targetType: LlmTargetType, target: Record<string, string>) {
   return target.name ?? target.selectedName ?? target.jobName ?? target.taskId ?? target.jobId ?? target.pipelineId
     ?? target.workflowId ?? TARGET_TYPE_LABEL[targetType];
@@ -62,7 +44,8 @@ export function GptErrorAnalysis({ targetType, target, errorText, onClose, headi
 
   useEffect(() => {
     // 열릴 때 한 번 분석한다. 대상이 바뀌면 부모가 창을 새로 연다.
-    void chat.send();
+    // 서버에는 질문 없이 보내 정해진 분석 요청을 쓰고, 화면에만 «실패 로그 분석해줘» 한 줄을 남긴다(2026-10-02 요청).
+    void chat.sendOpening("실패 로그 분석해줘");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -71,43 +54,18 @@ export function GptErrorAnalysis({ targetType, target, errorText, onClose, headi
   const masked = chat.meta?.masked ?? status?.maskSensitive;
   const targetLabel = chat.meta?.targetLabel ?? targetFallbackLabel(targetType, target);
 
-  const saveMarkdown = () => {
-    const lines = [
-      `# ${targetLabel} 실패 로그`,
-      "",
-      "## GPT 해석",
-      "",
-      `- 대상: ${TARGET_TYPE_LABEL[targetType]}`,
-      `- 모델: ${providerName ?? "-"}${deployment ? ` (${DEPLOYMENT_LABEL[deployment]})` : ""}`,
-      `- 개인정보 마스킹: ${masked ? "켜짐" : "꺼짐"}`,
-      `- 저장 시각: ${new Date().toLocaleString()}`,
-      "",
-      "## 대화",
-      "",
-      ...chat.turns.flatMap((turn, index) => [
-        `### ${turn.role === "user" ? "질문" : index === 0 ? "답변" : "답변"}${turn.stopped ? " (중지됨)" : ""}`,
-        "",
-        safeMarkdown(turn.content || (turn.streaming ? "답변 중입니다." : "")),
-        "",
-      ]),
-      ...(chat.failure ? ["## 오류", "", safeMarkdown(chat.failure), ""] : []),
-      "## 원문 로그",
-      "",
-      "```text",
-      safeMarkdown(errorText),
-      "```",
-      "",
-    ];
-    const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${fileSafeName(targetLabel)}_실패_로그.md`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-  };
+  // 저장 내용 · 형식은 예전 그대로다. 속성창 AI 어시스턴트와 같은 함수를 쓴다(2026-10-02).
+  const saveMarkdown = () => downloadGptMarkdown({
+    title: `${targetLabel} 실패 로그`,
+    targetType,
+    providerName,
+    deployment,
+    masked,
+    turns: chat.turns,
+    failure: chat.failure,
+    sections: [{ heading: "원문 로그", body: errorText, code: true }],
+    fileSuffix: "_실패_로그",
+  });
 
   return (
     <div className="gpt-analysis">
@@ -146,7 +104,8 @@ export function GptErrorAnalysis({ targetType, target, errorText, onClose, headi
       {chat.answered && (
         <GptAskBox busy={chat.busy} placeholder="추가 질문 (Enter 보내기 · Shift+Enter 줄바꿈)" onSend={chat.send} />
       )}
-      <GptPreviewModal preview={chat.preview} onClose={chat.closePreview} />
+      <GptPreviewModal preview={chat.preview} onClose={chat.closePreview}
+                       onApply={chat.applyContextOverride} overridden={Boolean(chat.contextOverride)} />
     </div>
   );
 }

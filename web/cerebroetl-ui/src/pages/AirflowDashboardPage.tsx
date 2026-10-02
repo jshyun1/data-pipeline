@@ -52,6 +52,7 @@ import { GptChatPanel } from "../components/gpt/GptChatPanel";
 import { useGptEnabled } from "../components/gpt/useGptEnabled";
 import { EtlRunsPane } from "./workflowLog/EtlRunsPane";
 import { SideDock } from "../components/SideDock";
+import { TreeHead } from "../components/TreeHead";
 import { useSideDock } from "../components/useSideDock";
 
 type BusinessCategory = Exclude<DagCategory, "기타">;
@@ -476,6 +477,8 @@ function BusinessTree({
   onSelect,
   onDetail,
   onExecution,
+  onRefresh,
+  refreshing,
 }: {
   dags: DashboardDag[];
   /** 워크플로우 목록. ETL 가지는 이 상하 관계로 그린다(스케줄링 화면 트리와 같은 모양). */
@@ -493,8 +496,20 @@ function BusinessTree({
   onSelect: (dagId: string) => void;
   onDetail: (dag: DashboardDag) => void;
   onExecution: (dag: DashboardDag) => void;
+  /** 트리 머리 «새로고침» - 목록을 다시 불러온다. */
+  onRefresh: () => void;
+  refreshing: boolean;
 }) {
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
+  /**
+   * 지금까지 그려 본 «하위가 있는 칸»의 키. «전체 접기»가 쓴다 - 접힌 칸의 자손은 그려지지 않아서,
+   * 그 순간 보이는 것만 모으면 다시 펼쳤을 때 속이 펼쳐진 채로 나온다. 한 번 본 키는 지우지 않는다.
+   */
+  const branchKeys = useRef<Set<string>>(new Set());
+  const rememberBranch = (key: string) => {
+    branchKeys.current.add(key);
+    return key;
+  };
   const seeded = useRef(false);
   // 실행(트리거)은 Airflow 쓰기 권한이 있어야 한다. 권한이 아직 안 실렸으면 사이드바와
   // 같은 규칙으로 fail-open 한다(실제 차단은 백엔드가 한다).
@@ -783,7 +798,7 @@ function BusinessTree({
       key: string, label: string, count: number,
       selected: boolean, onClick: () => void, children: React.ReactNode,
     ) => {
-      const collapsed = collapsedNodes.has(key);
+      const collapsed = collapsedNodes.has(rememberBranch(key));
       return (
         <div key={key} className="tree-node">
           {treeRow({
@@ -853,7 +868,7 @@ function BusinessTree({
   const renderWorkflowTree = (item: WorkflowTreeItem, etlDags: DashboardDag[]): React.ReactNode => {
     const needle = search.trim().toLowerCase();
     const nodeKey = `wf:${item.workflow.id}`;
-    const collapsed = collapsedNodes.has(nodeKey);
+    const collapsed = collapsedNodes.has(item.children.length > 0 ? rememberBranch(nodeKey) : nodeKey);
     const renderedChildren = collapsed ? [] : item.children
       .map((child) => renderWorkflowTree(child, etlDags))
       .filter(Boolean);
@@ -897,15 +912,18 @@ function BusinessTree({
 
   return (
     <aside className="airflow-dashboard-panel airflow-business-tree">
-      {/* 트리 제목 줄(«업무별 트리»)은 뺐다(사용자 요청) - 스케줄링 트리와 같이 검색칸부터 시작한다. */}
-      <div className="airflow-tree-search">
-        <Input allowClear prefix={<WfIcon name="search" size={13} />} placeholder="검색" aria-label="트리 검색"
-               value={search} onChange={(event) => onSearch(event.target.value)} />
-      </div>
+      {/* 트리 제목 줄(«업무별 트리»)은 뺐다(사용자 요청) - 스케줄링 트리와 같이 검색칸부터 시작한다.
+          머리 단추(새로고침 · 전체 접기)는 ETL 관리 트리와 같다(2026-10-01 요청). */}
+      <TreeHead onRefresh={onRefresh} refreshing={refreshing}
+                refreshTitle="트리를 다시 불러옵니다"
+                onCollapseAll={() => setCollapsedNodes(new Set(branchKeys.current))}
+                onExpandAll={() => setCollapsedNodes(new Set())} />
+      <input className="nifi-tree-search-input" aria-label="트리 검색" placeholder="이름"
+             value={search} onChange={(event) => onSearch(event.target.value)} />
       <div className="airflow-tree-body" role="tree" aria-label="업무별 트리">
         {CATEGORY_ORDER.map((category) => {
           const categoryDags = dags.filter((dag) => categoryOf(dag) === category);
-          const categoryNode = `category:${category}`;
+          const categoryNode = rememberBranch(`category:${category}`);
           const categoryCollapsed = collapsedNodes.has(categoryNode);
           return (
             <section key={category} className={`tree-node airflow-tree-category airflow-tree-category--${category.toLowerCase()}`}>
@@ -2321,7 +2339,9 @@ export function AirflowDashboardPage() {
                           pipelines={pipelines} connectionNames={connectionNames} selectedPipelineId={selectedPipelineId}
                           scope={scope} onScope={changeScope}
                           selectedDagId={selectedDagId} search={search} onSearch={setSearch}
-                          onSelect={selectDag} onDetail={showDagDetail} onExecution={showExecutionSettings} />
+                          onSelect={selectDag} onDetail={showDagDetail} onExecution={showExecutionSettings}
+                          onRefresh={() => { void dashboardQuery.refetch(); void workflowsQuery.refetch(); }}
+                          refreshing={dashboardQuery.isFetching || workflowsQuery.isFetching} />
             </SideDock>
             {etlRunsScope ? (
               // ETL 범위(워크플로우 선택 · ETL 지표): 로그2 식 실행 목록 + 실행 이력(2026-09-18 요청).

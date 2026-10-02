@@ -1,4 +1,4 @@
-import { useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useState, type DragEvent, type ReactNode } from "react";
 import { WfIcon, type WfIconName } from "./WorkflowPageHeader";
 
 /**
@@ -41,12 +41,37 @@ export function PaletteTree({
   nodes,
   defaultOpenKeys,
   ariaLabel,
+  collapseSignal = 0,
+  expandSignal = 0,
 }: {
   nodes: PaletteTreeNode[];
   defaultOpenKeys: string[];
   ariaLabel: string;
+  /** 값이 바뀌면 전부 접는다 - 패널 머리의 «전체 접기»가 쓴다(ETL 관리 트리와 같은 단추, 2026-10-01). */
+  collapseSignal?: number;
+  /** 값이 바뀌면 하위가 있는 칸을 전부 연다(«전체 열기»). */
+  expandSignal?: number;
 }) {
   const [openKeys, setOpenKeys] = useState<Set<string>>(() => new Set(defaultOpenKeys));
+
+  useEffect(() => {
+    if (collapseSignal > 0) {
+      setOpenKeys(new Set());
+    }
+  }, [collapseSignal]);
+
+  useEffect(() => {
+    if (expandSignal > 0) {
+      const keys = new Set<string>();
+      const walk = (list: PaletteTreeNode[]) => list.forEach((node) => {
+        if (node.children?.length) { keys.add(node.key); walk(node.children); }
+      });
+      walk(nodes);
+      setOpenKeys(keys);
+    }
+    // nodes 는 자료가 바뀔 때마다 새로 만들어진다 - 단추를 누른 그 순간의 것만 쓴다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandSignal]);
 
   const toggle = (key: string) => {
     setOpenKeys((current) => {

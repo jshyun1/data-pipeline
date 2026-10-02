@@ -25,6 +25,7 @@ import { Dropdown, Form, Modal } from "antd";
 import type { StuckSinkPosition } from "../api/pipelines";
 import type { MenuProps } from "antd";
 import { WfIcon } from "../components/WorkflowPageHeader";
+import { TreeHead } from "../components/TreeHead";
 import { StdPage } from "../components/StdPage";
 import { GptChatPanel } from "../components/gpt/GptChatPanel";
 import { useGptEnabled } from "../components/gpt/useGptEnabled";
@@ -138,7 +139,10 @@ export function PipelinesPage() {
   // 확인 창을 hook 으로 연다 - 정적 Modal.confirm 은 화면 테마(StdPage)를 못 받아 파란 버튼 · 옛 모양으로 떴다.
   const [modal, modalHolder] = Modal.useModal();
 
-  const { data: pipelines, isLoading } = useQuery({
+  // 트리 머리 «전체 접기»(ETL 관리 트리와 같은 단추, 2026-10-01).
+  const [treeCollapseSignal, setTreeCollapseSignal] = useState(0);
+  const [treeExpandSignal, setTreeExpandSignal] = useState(0);
+  const { data: pipelines, isLoading, isFetching: pipelinesFetching, refetch: refetchPipelines } = useQuery({
     queryKey: ["pipelines"],
     queryFn: listPipelines,
   });
@@ -481,21 +485,18 @@ export function PipelinesPage() {
         {/* 디자인 작업물 cdc-manage.html: 왼쪽 «파이프라인 탐색» 트리 카드 · 오른쪽 필터 + 표 카드. 두 카드는 화면 바닥까지 늘인다. */}
         <div className="cdc-manage-layout">
           <section className="std-card cdc-tree-card">
-            <div className="std-card-head">
-              <h2 className="std-card-title"><WfIcon name="folder" size={16} />파이프라인 탐색</h2>
-              <span className="tree-node-badge">{pipelines?.length ?? 0}</span>
-            </div>
-            {/* 검색칸·트리는 워크플로우 관리 화면 트리 카드와 같은 마크업·클래스다(2026-09-11 요청). */}
-            <div className="wf-tree-search">
-              <WfIcon name="search" size={13} />
-              <input
-                className="wf-tree-search-input"
-                aria-label="트리 검색"
-                value={treeSearch}
-                onChange={(event) => setTreeSearch(event.target.value)}
-                placeholder="이름·스키마·테이블 검색"
-              />
-            </div>
+            {/* 카드 제목 줄(«파이프라인 탐색»)은 뺐다(2026-10-01 요청) - 다른 트리처럼 «트리 검색» 머리줄부터 시작한다. */}
+            <TreeHead onRefresh={() => void refetchPipelines()} refreshing={pipelinesFetching}
+                      refreshTitle="파이프라인 목록을 다시 불러옵니다"
+                      onCollapseAll={() => setTreeCollapseSignal((n) => n + 1)}
+                      onExpandAll={() => setTreeExpandSignal((n) => n + 1)} />
+            <input
+              className="nifi-tree-search-input"
+              aria-label="트리 검색"
+              value={treeSearch}
+              onChange={(event) => setTreeSearch(event.target.value)}
+              placeholder="이름·스키마·테이블"
+            />
             <div className="wf-tree-scroll cdc-tree-scroll">
               <PipelineTreeView
                 root={pipelineTree}
@@ -505,6 +506,8 @@ export function PipelinesPage() {
                 onSelect={setSelectedTreeKey}
                 menuItemsOf={treeMenuItems}
                 onMenu={onTreeMenu}
+                collapseSignal={treeCollapseSignal}
+                expandSignal={treeExpandSignal}
               />
             </div>
           </section>
@@ -1168,6 +1171,8 @@ function PipelineTreeView({
   onSelect,
   menuItemsOf,
   onMenu,
+  collapseSignal = 0,
+  expandSignal = 0,
 }: {
   root: PipelineTreeNode;
   selectedKey: string;
@@ -1175,9 +1180,37 @@ function PipelineTreeView({
   onSelect: (key: string) => void;
   menuItemsOf: (key: string) => MenuProps["items"];
   onMenu: (key: string, action: string) => void;
+  /** 값이 바뀌면 전부 접는다(트리 머리의 «전체 접기», 2026-10-01). */
+  collapseSignal?: number;
+  /** 값이 바뀌면 전부 연다(«전체 열기»). */
+  expandSignal?: number;
 }) {
   // 접어 둔 칸만 기억한다 - 새로 생긴 그룹은 따로 챙기지 않아도 펼친 채로 나온다.
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    if (collapseSignal === 0) {
+      return;
+    }
+    // 하위가 있는 칸을 모두 접는다 - 접힌 칸 속은 그려지지 않으므로 자료에서 바로 모은다.
+    const keys = new Set<string>();
+    const walk = (node: PipelineTreeNode) => {
+      if (node.children.length > 0) {
+        keys.add(node.key);
+        node.children.forEach(walk);
+      }
+    };
+    walk(root);
+    setCollapsed(keys);
+    // root 는 자료가 바뀔 때마다 새로 만들어진다 - 단추를 누른 그 순간의 것만 쓴다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collapseSignal]);
+
+  useEffect(() => {
+    if (expandSignal > 0) {
+      setCollapsed(new Set());
+    }
+  }, [expandSignal]);
 
   const toggle = (key: string) => {
     setCollapsed((current) => {

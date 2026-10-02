@@ -176,6 +176,8 @@ export interface LlmChatRequest {
   summary?: string | null;
   /** WORKFLOW_DRAFT: 화면의 작성 중 설계(JSON - 속성 입력 · 노드 · 연결). 서버에 아직 없는 대상이라 화면이 보낸다. */
   draft?: string | null;
+  /** [프롬프트] 창에서 고친 대상 정보. 있으면 서버가 모은 것 대신 이것을 보낸다(마스킹 · 길이 제한은 서버가 다시 건다). */
+  contextOverride?: string | null;
   question?: string | null;
 }
 

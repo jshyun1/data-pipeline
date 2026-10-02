@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Button, Input, Modal, Spin } from "antd";
 import { ArrowUpOutlined } from "@ant-design/icons";
 import { DEPLOYMENT_LABEL, type LlmCompacted } from "../../api/llm";
@@ -237,10 +237,35 @@ export function GptFailure({ message, onRetry }: { message?: string; onRetry?: (
   );
 }
 
-/** [프롬프트] 창 - 마스킹·자르기가 적용된 대상 정보 그대로. */
-export function GptPreviewModal({ preview, onClose }: { preview: GptPreviewState; onClose: () => void }) {
+/**
+ * [프롬프트] 창 - 마스킹·자르기가 적용된 대상 정보. 2026-10-02 요청으로 <b>고칠 수 있다</b>:
+ * 고쳐서 «적용»하면 이 창의 다음 질문부터 서버가 모은 것 대신 이 내용을 보낸다(되돌리면 원래대로).
+ */
+export function GptPreviewModal({ preview, onClose, onApply, overridden = false }: {
+  preview: GptPreviewState;
+  onClose: () => void;
+  /** 없으면 예전처럼 읽기 전용으로만 보여 준다. */
+  onApply?: (text?: string) => void;
+  /** 지금 고친 내용을 쓰고 있는지 - 창 안내에 적는다. */
+  overridden?: boolean;
+}) {
+  const [draft, setDraft] = useState<string>("");
+  // 창을 열 때마다 지금 보낼 내용으로 입력칸을 맞춘다.
+  useEffect(() => {
+    if (preview.open && preview.data) {
+      setDraft(preview.data.text ?? "");
+    }
+  }, [preview.open, preview.data]);
+
   return (
-    <Modal open={preview.open} title="프롬프트" onCancel={onClose} footer={null} width={860} rootClassName="cerebro-modal">
+    <Modal open={preview.open} title="프롬프트" onCancel={onClose} width={860} rootClassName="cerebro-modal"
+           footer={onApply ? (
+             <>
+               {overridden && <Button onClick={() => { onApply(undefined); onClose(); }}>원래대로</Button>}
+               <Button type="primary" onClick={() => { onApply(draft); onClose(); }}>적용</Button>
+               <Button onClick={onClose}>닫기</Button>
+             </>
+           ) : null}>
       {preview.loading ? (
         <div className="failure-log-empty"><Spin size="small" /> 프롬프트 정보를 모으는 중입니다.</div>
       ) : preview.error ? (
@@ -253,9 +278,16 @@ export function GptPreviewModal({ preview, onClose }: { preview: GptPreviewState
             {" · "}{preview.data.inputChars.toLocaleString()}자 / 대상 정보 제한 {preview.data.maxInputChars.toLocaleString()}자
             {preview.data.truncated ? " · 일부 생략" : ""}
           </div>
-          <pre className="failure-log-lines gpt-analysis-preview">{preview.data.text}</pre>
+          {onApply ? (
+            <Input.TextArea className="gpt-analysis-preview-edit" value={draft} autoSize={{ minRows: 12, maxRows: 24 }}
+                            aria-label="프롬프트 내용" onChange={(event) => setDraft(event.target.value)} />
+          ) : (
+            <pre className="failure-log-lines gpt-analysis-preview">{preview.data.text}</pre>
+          )}
           <div className="failure-log-empty">
             이 프롬프트 정보와 함께 역할 지시문과 이번 창의 대화가 전송됩니다. 연결 계정·비밀번호·API 키는 수집하지 않습니다.
+            {onApply ? " 고친 내용은 «적용»을 누르면 이 창의 다음 질문부터 쓰입니다." : ""}
+            {overridden ? " (지금은 고친 내용을 쓰고 있습니다)" : ""}
           </div>
         </>
       ) : null}

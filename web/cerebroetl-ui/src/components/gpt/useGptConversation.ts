@@ -62,23 +62,34 @@ export function useGptConversation({ agentType, targetType, target, errorText: s
   /** 마지막 답에 도구 호출(조회)을 썼는지. 서버가 toolMode 로 알려 준다(모르면 undefined). */
   const [toolMode, setToolMode] = useState<boolean>();
   const [preview, setPreview] = useState<GptPreviewState>({ open: false, loading: false });
+  /**
+   * [프롬프트] 창에서 고친 대상 정보(2026-10-02 요청). 있으면 이 창의 다음 요청부터 서버가 모은 것 대신 이것을 보낸다.
+   * 되돌리면 다시 서버가 모은 것으로 돌아간다.
+   */
+  const [contextOverride, setContextOverride] = useState<string>();
   const abortRef = useRef<AbortController | null>(null);
 
-  const baseRequest = useCallback((): LlmChatRequest => ({ agentType, targetType, target, errorText: screenError, draft: draftRef.current?.() }),
+  const baseRequest = useCallback((): LlmChatRequest => ({
+    agentType, targetType, target, errorText: screenError, draft: draftRef.current?.(),
+    contextOverride: contextOverride ?? null,
+  }),
     // target 은 호출하는 쪽이 매 렌더 새 객체로 넘긴다 - 내용으로 비교한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [agentType, targetType, JSON.stringify(target), screenError]);
+    [agentType, targetType, JSON.stringify(target), screenError, contextOverride]);
 
   /**
    * @param history 지금까지의 대화(화면에 보이는 그대로)
-   * @param ask     이번 질문. 오류 분석의 첫 요청이면 없다
+   * @param ask     이번 질문. 오류 분석 · 대상 요약의 첫 요청이면 없다
+   * @param shownAsk 화면에만 적는 질문(2026-10-02 요청). 서버에는 질문 없이 보내 정해진 요약 · 분석 요청을 그대로 쓰되,
+   *                 대화에는 «무엇을 물었는지»가 한 줄 남는다. 다음 요청부터는 이 줄도 대화에 포함해 보낸다
    */
-  const run = async (history: GptTurn[], ask?: string) => {
+  const run = async (history: GptTurn[], ask?: string, shownAsk?: string) => {
     const controller = new AbortController();
     abortRef.current = controller;
     setBusy(true);
     setFailure(undefined);
-    setTurns([...history, ...(ask ? [{ role: "user" as const, content: ask }] : []), { role: "assistant", content: "", streaming: true }]);
+    const asked = ask ?? shownAsk;
+    setTurns([...history, ...(asked ? [{ role: "user" as const, content: asked }] : []), { role: "assistant", content: "", streaming: true }]);
     const updateLast = (update: (turn: GptTurn) => GptTurn) =>
       setTurns((current) => current.map((turn, index) => (index === current.length - 1 ? update(turn) : turn)));
 
@@ -172,11 +183,16 @@ export function useGptConversation({ agentType, targetType, target, errorText: s
     preview,
     /** @returns 시작 전에 거절되면 그 질문(입력칸으로 되돌리라고) */
     send: (ask?: string) => run(turns, ask),
+    /** 탭·창을 열 때의 첫 요청. 질문은 서버가 정한 것을 쓰고, 화면에는 shownAsk 한 줄을 남긴다. */
+    sendOpening: (shownAsk: string) => run([], undefined, shownAsk),
     retryFirst: () => run([]),
     stop,
     reset,
     openPreview,
     closePreview: () => setPreview({ open: false, loading: false }),
+    contextOverride,
+    /** [프롬프트] 창의 고친 내용을 이 창에 적용한다. 빈 값이면 서버가 모은 것으로 되돌린다. */
+    applyContextOverride: (text?: string) => setContextOverride(text && text.trim() ? text : undefined),
     answered: turns.some((turn) => turn.role === "assistant" && turn.content && !turn.streaming),
   };
 }

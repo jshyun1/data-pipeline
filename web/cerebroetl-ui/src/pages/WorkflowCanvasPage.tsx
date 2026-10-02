@@ -41,7 +41,7 @@ import {
   LockOutlined,
   MinusOutlined,
   PlusOutlined,
-  SyncOutlined,
+
   UnlockOutlined,
 } from "@ant-design/icons";
 import { useAuth } from "../auth/AuthContext";
@@ -57,6 +57,7 @@ import { PaletteTree, type PaletteTreeNode } from "../components/PaletteTree";
 import { EtlJobSummary } from "./ConsoleFramePage";
 import { GptChatPanel } from "../components/gpt/GptChatPanel";
 import { SideDock } from "../components/SideDock";
+import { TreeHead } from "../components/TreeHead";
 import { useSideDock } from "../components/useSideDock";
 import {
   ParentScheduleNotice,
@@ -159,6 +160,9 @@ export function WorkflowCanvasPage() {
   // 싶다는 요청으로 바꿨다. 2026-09-10)
   const isDraft = !Number.isFinite(workflowId);
   const paletteDock = useSideDock("left", 260, 200, 560);
+  // 팔레트 «전체 접기» - 값이 바뀌면 세 구역 트리가 모두 접힌다.
+  const [paletteCollapseSignal, setPaletteCollapseSignal] = useState(0);
+  const [paletteExpandSignal, setPaletteExpandSignal] = useState(0);
   const detailDock = useSideDock("right", 300, 260, 720);
   const [draftName, setDraftName] = useState("");
   const navigate = useNavigate();
@@ -947,13 +951,12 @@ export function WorkflowCanvasPage() {
           {/* 좌: job 팔레트 - ETL(NiFi)에서 만들어 둔 job 목록.
               모양은 ETL 관리 화면 왼쪽 트리 패널(nifi-tree-panel)과 같다(2026-09-17 요청). 트리 줄 · 점선은 그대로. */}
           <aside className="nifi-tree-panel wf-palette-panel" aria-label="job 팔레트">
-            <div className="nifi-tree-search-heading">
-              <span className="nifi-tree-section-title">job 팔레트</span>
-              <Button type="text" size="small" className="nifi-tree-refresh-button" icon={<SyncOutlined />}
-                      title="ETL에서 다시 읽어옵니다" aria-label="ETL에서 다시 읽어옵니다"
-                      loading={syncMutation.isPending}
-                      onClick={() => syncMutation.mutate()} />
-            </div>
+            {/* 머리줄은 ETL 관리 트리와 같다. 새로고침은 이 화면만의 «ETL 에서 다시 읽기»라 그 자리에 넣는다.
+                «전체 접기»는 세 구역(워크플로우 · ETL 태스크 · CDC)을 한꺼번에 접는다(2026-10-01 요청). */}
+            <TreeHead onRefresh={() => syncMutation.mutate()} refreshing={syncMutation.isPending}
+                      refreshTitle="ETL에서 다시 읽어옵니다"
+                      onCollapseAll={() => setPaletteCollapseSignal((n) => n + 1)}
+                      onExpandAll={() => setPaletteExpandSignal((n) => n + 1)} />
             <div className="nifi-tree-scroll wf-palette-scroll">
             {/* 워크플로우도 하나의 노드로 얹을 수 있다. 그래야 «daily = monthly 끝나면
                 years» 같은 조립이 가능하다. 자기 자신은 넣을 수 없다(무한 중첩).
@@ -966,7 +969,7 @@ export function WorkflowCanvasPage() {
                 </Typography.Text>
               ) : (
                 // 세 구역 모두 워크플로우 관리 화면 트리와 같은 모양이다(components/PaletteTree, 2026-09-11).
-                <PaletteTree ariaLabel="워크플로우" nodes={subWorkflowTree} defaultOpenKeys={subWorkflowOpenKeys} />
+                <PaletteTree ariaLabel="워크플로우" nodes={subWorkflowTree} defaultOpenKeys={subWorkflowOpenKeys} collapseSignal={paletteCollapseSignal} expandSignal={paletteExpandSignal} />
               )}
             </section>
             <section className="wf-palette-section">
@@ -976,7 +979,7 @@ export function WorkflowCanvasPage() {
               ) : paletteTree.length === 0 ? (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="job이 없습니다" />
               ) : (
-                <PaletteTree ariaLabel="ETL 태스크" nodes={paletteTree} defaultOpenKeys={defaultOpenKeys} />
+                <PaletteTree ariaLabel="ETL 태스크" nodes={paletteTree} defaultOpenKeys={defaultOpenKeys} collapseSignal={paletteCollapseSignal} expandSignal={paletteExpandSignal} />
               )}
             </section>
             <section className="wf-palette-section">
@@ -988,7 +991,7 @@ export function WorkflowCanvasPage() {
               ) : (
                 // 아직 캔버스에 얹을 수 없다(노드 종류에 CDC 가 없다). 그래서 줄은 끌 수 없게 두고
                 // 흐리게만 그린다. 화면에 따로 적지는 않는다.
-                <PaletteTree ariaLabel="CDC" nodes={cdcTree} defaultOpenKeys={cdcOpenKeys} />
+                <PaletteTree ariaLabel="CDC" nodes={cdcTree} defaultOpenKeys={cdcOpenKeys} collapseSignal={paletteCollapseSignal} expandSignal={paletteExpandSignal} />
               )}
             </section>
             </div>

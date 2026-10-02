@@ -126,12 +126,21 @@ const HIDE_TOOL_CHROME_CSS = `
   [${NIFI_STATUS_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
   [${NIFI_STATUS_BAR_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
   [${NIFI_TOOL_HIDDEN_ATTRIBUTE}="true"] { display: none !important; }
+  /*
+   * ETL 이 띄우는 안내 글자(«프로세스 그룹» 등)는 이 겹침 칸에 그려진다. 기본 1000 이라 공구막대(아래 z-index)
+   * 뒤로 들어가 글자가 가려졌다(2026-10-02 요청). 막대보다 위로 올려 앞에 보이게 한다.
+   */
+  .cdk-overlay-container {
+    z-index: 100010 !important;
+  }
   #${NIFI_MINI_TOOLBAR_ID} {
     position: fixed !important;
     left: 14px !important;
     bottom: 14px !important;
     transform: none !important;
-    z-index: 9100 !important;
+    /* 캔버스 쪽 패널이 9100 보다 위에 있어, 막대 안에 그려지는 안내 글자가 가려졌다(2026-10-02 요청).
+       막대를 그 위로 올린다 - 왼쪽 아래 구석의 작은 칸이라 다른 조작을 가리지 않는다. */
+    z-index: 100000 !important;
     display: flex !important;
     flex-direction: column !important;
     align-items: center !important;
@@ -189,7 +198,7 @@ const HIDE_TOOL_CHROME_CSS = `
     left: calc(100% + 8px) !important;
     top: 50% !important;
     transform: translateY(-50%) !important;
-    z-index: 9200 !important;
+    z-index: 100002 !important;
     min-width: max-content !important;
     max-width: 180px !important;
     padding: 5px 8px !important;
@@ -210,7 +219,7 @@ const HIDE_TOOL_CHROME_CSS = `
     left: calc(100% + 3px) !important;
     top: 50% !important;
     transform: translateY(-50%) rotate(45deg) !important;
-    z-index: 9199 !important;
+    z-index: 100001 !important;
     width: 8px !important;
     height: 8px !important;
     background: #0f172a !important;
@@ -222,7 +231,7 @@ const HIDE_TOOL_CHROME_CSS = `
     left: calc(100% + 8px) !important;
     top: 50% !important;
     transform: translateY(-50%) !important;
-    z-index: 9200 !important;
+    z-index: 100002 !important;
     min-width: max-content !important;
     max-width: 180px !important;
     padding: 5px 8px !important;
@@ -243,7 +252,7 @@ const HIDE_TOOL_CHROME_CSS = `
     left: calc(100% + 3px) !important;
     top: 50% !important;
     transform: translateY(-50%) rotate(45deg) !important;
-    z-index: 9199 !important;
+    z-index: 100001 !important;
     width: 8px !important;
     height: 8px !important;
     background: #0f172a !important;
@@ -308,7 +317,9 @@ const HIDE_TOOL_CHROME_CSS = `
     left: 14px !important;
     bottom: 14px !important;
     transform: none !important;
-    z-index: 9100 !important;
+    /* 캔버스 쪽 패널이 9100 보다 위에 있어, 막대 안에 그려지는 안내 글자가 가려졌다(2026-10-02 요청).
+       막대를 그 위로 올린다 - 왼쪽 아래 구석의 작은 칸이라 다른 조작을 가리지 않는다. */
+    z-index: 100000 !important;
     width: 42px !important;
     max-width: 42px !important;
     min-height: 0 !important;

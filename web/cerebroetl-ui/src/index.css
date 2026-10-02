@@ -1939,7 +1939,7 @@ body {
 .airflow-tree-body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 10px 8px;
+  padding: 4px 8px 12px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -7910,7 +7910,7 @@ button.alert-compact-trigger.is-clear:hover {
 .wf-tree-scroll {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 10px 8px;
+  padding: 4px 8px 12px;
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -7927,25 +7927,23 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 /* 초안 base.css 는 전체 줄 높이가 1.5 다. 우리 body 는 기본값(약 1.2)이라 줄이 27px 로 낮았다 - 트리 줄만 맞춘다. */
+/* 줄 규격은 ETL 관리 트리(.nifi-tree-row · .nifi-tree-label)와 같은 값이다(2026-10-01 요청) -
+   높이 27px · 글자 14px · 색 #1f2937 · 아이콘과 글자 사이 6px. 고른 줄 색만 이 화면들 기존 색(빨강)을 쓴다. */
 :is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row {
   position: relative;
-  padding: 6px 8px;
-  line-height: 1.5;
+  min-height: 27px;
+  padding: 0;
+  line-height: 1.4;
   display: flex;
   align-items: center;
   gap: 6px;
   border-radius: 6px;
-  color: #334155;
-  font-size: 12.5px;
-  font-weight: 500;
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 400;
+  white-space: nowrap;
   cursor: pointer;
   user-select: none;
-  transition: all 0.12s ease;
-}
-
-:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row:hover {
-  background: #f1f5f9;
-  color: #0f172a;
 }
 
 :is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row.active {
@@ -7965,25 +7963,39 @@ button.alert-compact-trigger.is-clear:hover {
   content: "";
 }
 
+/*
+ * 펼침 단추는 ETL 관리 트리와 같은 네모 [+] · [-] 다(2026-10-01 요청).
+ * 마크업의 ▶ 글자는 글자 크기 0 으로 숨기고 ::before 로 부호만 그린다 - 트리를 그리는 다섯 화면
+ * (워크플로우 관리 · 설계 팔레트 · 로그 · 로그2 · CDC 관리)이 같은 마크업을 쓰고 있어 CSS 한 곳이면 된다.
+ */
 :is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-toggle-arrow {
   flex-shrink: 0;
-  width: 14px;
-  height: 14px;
+  width: 17px;
+  min-width: 17px;
+  height: 17px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 0;
-  background: transparent;
-  color: #64748b;
-  font: inherit;
+  border: 1px solid #9aa5b1;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 0;
   line-height: 1;
   cursor: pointer;
-  transition: transform 0.15s ease;
 }
 
-:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-toggle-arrow.open {
-  transform: rotate(90deg);
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-toggle-arrow::before {
+  content: "+";
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 13px;
+}
+
+:is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-toggle-arrow.open::before {
+  content: "-";
 }
 
 /*
@@ -7996,10 +8008,10 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 :is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-node-icon {
-  flex-shrink: 0;
-  width: 15px;
-  height: 15px;
-  color: #64748b;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: #4f6f95;
 }
 
 :is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row.active .tree-node-icon {
@@ -8051,7 +8063,7 @@ button.alert-compact-trigger.is-clear:hover {
   left: -11px;
   top: -2px;
   bottom: 0;
-  border-left: 1px dashed #cbd5e1;
+  border-left: 1px dotted #a8b0bb;
 }
 
 /* 마지막 자식은 제 줄 가운데서 끊는다 - 여기가 └─ 의 모서리다. */
@@ -8067,7 +8079,7 @@ button.alert-compact-trigger.is-clear:hover {
   left: -11px;
   top: 15px;          /* 줄 높이 30.8px 의 절반(실측) */
   width: 11px;        /* 세로선에서 줄 왼쪽 끝까지 - 줄 배경 위를 지나가지 않게 딱 붙인다 */
-  border-top: 1px dashed #cbd5e1;
+  border-top: 1px dotted #a8b0bb;
 }
 
 :is(.wf-tree-scroll, .airflow-tree-body, .wf-palette-tree) .tree-item-row:focus-visible,
@@ -10695,6 +10707,21 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   outline: none;
   background: var(--color-primary-light);
   color: var(--color-primary);
+}
+
+
+/* 속성창 AI 어시스턴트 윗줄의 단추 두 개(전송 정보 · MD 저장하기, 2026-10-02 요청). */
+.gpt-chat-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* [프롬프트] 창의 고칠 수 있는 본문 - 읽기 전용이던 자리와 같은 글꼴로 둔다. */
+.gpt-analysis-preview-edit.ant-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 /* ETL 로그 실패 줄은 눌러서 상세 창을 연다 - CDC 로그 틀(std-full-table)로 옮긴 뒤에도 손가락 커서를 유지(2026-10-02). */

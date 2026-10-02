@@ -137,8 +137,22 @@ public class LlmChatService {
         // 자른 뒤 마스킹한다. 마스킹 표시(<전화번호>)는 원문보다 짧거나 비슷해 제한을 넘기지 않는다.
         LlmContext.Assembled assembled = target.context().assemble(contextBudget);
         boolean masked = config.isMaskSensitive();
-        String contextText = mask(masked, assembled.text());
+        // 화면 [프롬프트] 창에서 고쳐 보냈으면 그 본문을 쓴다(2026-10-02 요청). 수집기 · 권한 확인은 그대로 거친 뒤
+        // 본문만 바꾼다 - 길이 제한과 마스킹은 서버가 다시 건다.
+        String override = request.contextOverride();
+        boolean overridden = override != null && !override.isBlank();
+        String rawContext = assembled.text();
+        boolean truncated = assembled.truncated();
+        List<String> omitted = assembled.omittedTitles();
+        if (overridden) {
+            String edited = override.strip();
+            truncated = edited.length() > contextBudget;
+            rawContext = truncated ? edited.substring(0, contextBudget) : edited;
+            omitted = List.of();
+        }
+        String contextText = mask(masked, rawContext);
         // ① 질문 속 대상 상세: 질문에 나온 job · 파이프라인 · 워크플로우의 구성을 붙인다(2026-10-02). 모델과 무관하게 항상.
+        // [프롬프트] 창에서 대상 정보를 고쳐 보냈어도 붙인다 - 고친 것은 «지금 대상»의 정보이고, 이것은 «이번 질문»에 딸린 것이다.
         contextText = contextText + relatedDetails(request, userId, masked, maxChars);
 
         // 순서 · 개수를 그대로 둔다 - 요약 뒤 화면이 «앞에서 몇 개를 덜 보낼지»를 이 목록의 위치로 계산한다.
@@ -147,7 +161,7 @@ public class LlmChatService {
                 .toList();
 
         LlmContextPreview preview = new LlmContextPreview(target.label(), config.getName(), config.getDeployment(),
-                config.getModelName(), masked, assembled.truncated(), assembled.omittedTitles(),
+                config.getModelName(), masked, truncated, omitted,
                 contextText.length(), contextBudget, contextText);
         return new Prepared(request, userId, config, target, preview, contextText, history,
                 mask(masked, request.summary()), mask(masked, request.question()), maxChars);

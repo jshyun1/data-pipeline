@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ConfigProvider, Empty, Input, message, Popconfirm, Select, Space, Table } from "antd";
@@ -18,6 +18,7 @@ import {
   type WorkflowTreeItem,
 } from "../utils/workflowTree";
 import { WfIcon, WorkflowPageHeader } from "../components/WorkflowPageHeader";
+import { TreeHead } from "../components/TreeHead";
 import { cronToKoreanText, parseCronToPreset } from "../utils/schedulePreset";
 import { cerebroBrandTheme } from "../theme/cerebro";
 
@@ -88,12 +89,36 @@ function WorkflowTreeView({
   items,
   selectedId,
   onSelect,
+  collapseSignal = 0,
+  expandSignal = 0,
 }: {
   items: WorkflowTreeItem[];
   selectedId?: number;
   onSelect: (id: number | undefined) => void;
+  /** 값이 바뀌면 전부 접는다(트리 머리의 «전체 접기»). */
+  collapseSignal?: number;
+  /** 값이 바뀌면 하위가 있는 칸을 전부 연다(«전체 열기»). */
+  expandSignal?: number;
 }) {
   const [openIds, setOpenIds] = useState<Set<number>>(() => new Set(items.map((item) => item.workflow.id)));
+
+  useEffect(() => {
+    if (collapseSignal > 0) {
+      setOpenIds(new Set());
+    }
+  }, [collapseSignal]);
+
+  useEffect(() => {
+    if (expandSignal > 0) {
+      const ids = new Set<number>();
+      const walk = (list: WorkflowTreeItem[]) => list.forEach((item) => {
+        if (item.children.length > 0) { ids.add(item.workflow.id); walk(item.children); }
+      });
+      walk(items);
+      setOpenIds(ids);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandSignal]);
 
   const toggle = (id: number) => {
     setOpenIds((current) => {
@@ -176,7 +201,10 @@ export function WorkflowDesignPage() {
   const [nameFilter, setNameFilter] = useState("");
   const [publishFilter, setPublishFilter] = useState<string[]>([]);
 
-  const { data, isLoading } = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
+  const { data, isLoading, refetch, isFetching } = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
+  // 트리 머리 «전체 접기»: 값이 바뀌면 트리가 전부 접힌다(ETL 관리 트리와 같은 단추).
+  const [collapseSignal, setCollapseSignal] = useState(0);
+  const [expandSignal, setExpandSignal] = useState(0);
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["workflows"] });
 
@@ -381,23 +409,26 @@ export function WorkflowDesignPage() {
       <div className="wf-design-body">
         {/* 트리 카드 제목 줄은 뺐다(사용자 요청) - 화면 제목이 이미 무엇의 트리인지 말한다. */}
         <aside className="wf-tree-card">
-          <div className="wf-tree-search">
-            <WfIcon name="search" size={13} />
-            <input
-              id="wf-tree-search"
-              className="wf-tree-search-input"
-              aria-label="트리 검색"
-              value={treeSearch}
-              onChange={(event) => setTreeSearch(event.target.value)}
-              placeholder="워크플로우명 검색"
-            />
-          </div>
+          <TreeHead onRefresh={() => void refetch()} refreshing={isFetching}
+                    refreshTitle="워크플로우 목록을 다시 불러옵니다"
+                    onCollapseAll={() => setCollapseSignal((n) => n + 1)}
+                    onExpandAll={() => setExpandSignal((n) => n + 1)} />
+          <input
+            id="wf-tree-search"
+            className="nifi-tree-search-input"
+            aria-label="트리 검색"
+            value={treeSearch}
+            onChange={(event) => setTreeSearch(event.target.value)}
+            placeholder="워크플로우명"
+          />
           <div className="wf-tree-scroll">
             {isLoading ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="불러오는 중" /> : (
               <WorkflowTreeView
                 // 검색어가 바뀌면 트리 모양이 달라지므로 다시 마운트해 펼침 기본값(최상단만)을 새로 먹인다.
                 key={`wf-tree-${treeSearch}-${visibleTree.length}`}
                 items={visibleTree}
+                collapseSignal={collapseSignal}
+                expandSignal={expandSignal}
                 selectedId={selectedWorkflowId}
                 onSelect={setSelectedWorkflowId}
               />
