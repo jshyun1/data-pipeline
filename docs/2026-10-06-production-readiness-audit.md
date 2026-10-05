@@ -146,3 +146,5 @@ NiFi single-user 관리자 · Airflow 관리자를 모든 구성요소가 공유
 | **3단계 - 판매 구성** | 1분기+ | HA 기준 구성(Kafka 3+3 · Connect 2+ · NiFi 클러스터 + Registry · PostgreSQL 복제/PITR) · RPO/RTO, CDC 를 DB 당 커넥터로 이전, Prometheus/Alertmanager, mTLS/OIDC · 비밀 저장소, 릴리스 digest · SBOM · 업그레이드 절차 |
 
 1단계는 대부분 설정 · 몇 줄 수정이라 바로 시작할 수 있다. 2 · 3단계는 각 항목마다 설계안(상용 제품 방식 비교 · 실측 계획)을 먼저 만들고 승인 후 진행한다.
+
+항목별 상용 제품 비교 · 채택안 · 실측 계획(합격 기준 포함)은 `docs/2026-10-06-production-improvement-design.md`.
