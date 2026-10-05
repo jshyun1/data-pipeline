@@ -44,6 +44,21 @@ release/data-pipeline-1.0.0/
 
 반입 전에 `offline/image-manifest.json`의 `releaseVersion`을 `APP_VERSION`과 맞춰뒀는지 확인한다.
 
+### 1-1. NiFi 화면(Cerebro 판) - 빌드 PC 요구 사항 · 반입 전 확인
+
+NiFi 화면은 공식 소스 + Cerebro 수정분(`nifi/ui-custom`)으로 빌드한 Cerebro 판을 쓴다(2026-10-05 채택,
+`docs/2026-10-05-nifi-ui-option2-guide.md`). `save-images.sh` 는 빌드 PC 의 `.env` 와 상관없이 이것을 켜서 빌드하고,
+이미지에 들어갔는지 검사해서 빠졌으면 멈춘다. 공식 화면 사본도 같은 이미지에 늘 함께 들어간다.
+
+- 빌드 PC 접속: Docker Hub · Maven Central · PyPI 에 더해 **GitHub**(NiFi 화면 소스) · **npm 저장소** · **Debian 패키지 저장소**.
+- 빌드 PC 메모리: NiFi 화면 빌드에 2GB 이상. 8GB PC 는 돌던 스택을 멈추고 실행한다(멈추지 않으면 WSL 이 멈춘다).
+- 반입 전에 한 번 더 확인하려면:
+
+```bash
+docker run --rm --entrypoint ls data-pipeline-nifi:${APP_VERSION} /opt/nifi/cerebro-ui/custom /opt/nifi/cerebro-ui/official
+# 두 폴더에 nifi-server-nar-<버전>.nar 가 하나씩 보이면 정상
+```
+
 ## 2. 폐쇄망 서버에서: 반입 + 설치
 
 ```bash
@@ -66,6 +81,13 @@ vi .env   # TARGET_DB_HOST 등을 회사 DB로, APP_VERSION을 반입한 버전�
 
 로컬 Target DB 컨테이너까지 포함해서 반입했다면(`--with-poc`로 저장한 경우) `install.sh --with-poc`로
 그 컨테이너까지 같이 띄울 수 있다.
+
+### NiFi 화면 확인 · 되돌리기
+
+- `.env` 의 `CEREBRO_NIFI_UI=custom`(`.env.example` 기본값)이면 Cerebro 화면으로 뜬다. 기동 로그에서 확인:
+  `docker compose logs nifi | grep 'NiFi 화면'` → `NiFi 화면: custom (...)`.
+- 실행 중에는 외부로 나가는 요청이 없다(글꼴까지 이미지 안에 있다 - 2026-10-05 외부 요청을 전부 막고 확인).
+- 공식 화면으로 되돌리기: `.env` 에서 `CEREBRO_NIFI_UI=official` → `docker compose up -d --no-build nifi`(재빌드 · 재반입 필요 없음).
 
 ## 2-1. 알림 발송(이메일 / SMS) 켜기
 

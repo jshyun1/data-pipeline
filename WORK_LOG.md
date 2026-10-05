@@ -2815,3 +2815,7 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 - **바로잡기**: §79 에 «예전 덧칠 코드는 지울 수 있다»고 적었는데, 이 덧칠은 워크플로우 관리(Airflow iframe, `/airflow/manage`)에도 걸린다
   (CSS 주입 · 1초 주기 번역 · 패널 배치 감시 · 편집 잠금 감시 - 화면에서 확인). 정리 방향은 안내 문서 10-2(추천: NiFi iframe 에만 걸기).
 - 안내 문서 9절(폐쇄망) · 10절(MSA 반영 방법 · 덧칠 정리) 추가.
+- (같은 날) 사용자 승인으로 A · B · C 적용: `offline/save-images.sh` 는 `CEREBRO_NIFI_UI_BUILD=on` 을 강제하고 빌드 뒤 이미지에
+  `/opt/nifi/cerebro-ui/{custom,official}` 이 있는지 네트워크 없는 컨테이너로 검사(새 이미지 통과 · before-ui 이미지는 멈춤 확인),
+  `.env.example` `CEREBRO_NIFI_UI=custom`(compose 기본값 official 은 그대로 - 키 없는 기존 .env 영향 없음), `offline/README.md` 1-1절 · 확인/되돌리기.
+  전체 릴리스(save → load → install)는 돌리지 않았다 - 스크립트 문법 · 검사 로직 · `--env-file .env.example` 기본값만 확인.

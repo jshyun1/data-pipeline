@@ -34,8 +34,21 @@ IMAGE_DIR="${RELEASE_DIR}/images"
 IMAGE_TAR="${IMAGE_DIR}/data-pipeline-images-${APP_VERSION}.tar"
 mkdir -p "${IMAGE_DIR}"
 
-echo "== 자체 빌드 이미지 빌드 (APP_VERSION=${APP_VERSION}) =="
+# NiFi 화면은 Cerebro 판(nifi/ui-custom, 2026-10-05 채택)을 반드시 이미지에 넣는다 - 빌드 PC 의 .env 값(.env.example 기본 off)과
+# 상관없이 켠다. 공식 화면 NAR 사본도 늘 함께 들어가므로, 폐쇄망에서 공식 화면이 필요하면 .env 의 CEREBRO_NIFI_UI=official 로 고른다.
+# 이 빌드는 GitHub · npm 접속과 메모리 2GB 이상이 필요하다(8GB PC 는 스택을 멈추고 실행).
+export CEREBRO_NIFI_UI_BUILD=on
+
+echo "== 자체 빌드 이미지 빌드 (APP_VERSION=${APP_VERSION}, CEREBRO_NIFI_UI_BUILD=on) =="
 APP_VERSION="${APP_VERSION}" docker compose build kafka-connect nifi pipeline-api cerebroetl-ui
+
+# Cerebro NiFi 화면이 실제로 들어갔는지 확인 - 빠진 채 반입하면 폐쇄망에서 기존 화면으로 뜬다.
+if ! docker run --rm --network none --entrypoint sh "data-pipeline-nifi:${APP_VERSION}" \
+    -c 'ls /opt/nifi/cerebro-ui/custom/nifi-server-nar-*.nar && ls /opt/nifi/cerebro-ui/official/nifi-server-nar-*.nar' > /dev/null; then
+  echo "오류: data-pipeline-nifi:${APP_VERSION} 에 Cerebro NiFi 화면(/opt/nifi/cerebro-ui/custom)이 없습니다 - 반입 패키지를 만들지 않습니다." >&2
+  exit 1
+fi
+echo "확인: data-pipeline-nifi:${APP_VERSION} 에 Cerebro NiFi 화면 · 공식 화면 사본이 들어 있음"
 
 IMAGES=(
   "data-pipeline-kafka-connect:${APP_VERSION}"
