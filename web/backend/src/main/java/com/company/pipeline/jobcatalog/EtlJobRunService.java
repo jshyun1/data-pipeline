@@ -35,12 +35,20 @@ public class EtlJobRunService {
     private final EtlJobRepository jobRepository;
     private final NifiExecutionLogEntryRepository executionLogRepository;
 
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     public EtlJobRunService(EtlJobRunRepository runRepository,
                             EtlJobRepository jobRepository,
                             NifiExecutionLogEntryRepository executionLogRepository) {
         this.runRepository = runRepository;
         this.jobRepository = jobRepository;
         this.executionLogRepository = executionLogRepository;
+    }
+
+    /** 원장 job 단위 잠금(JobRunLedgerService#lockJob)에 쓴다. 테스트에서는 비워 둔다. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setJdbc(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
     }
 
     /**
@@ -50,9 +58,19 @@ public class EtlJobRunService {
      */
     @Transactional
     public Optional<EtlJobRun> openOrAttach(Long jobId, LocalDateTime now, boolean newStepRun) {
+        return openOrAttach(jobId, now, newStepRun, null);
+    }
+
+    /**
+     * @param previousTickAt 관측기가 직전에 본 시각. 콜백으로 닫힌 실행이 그 뒤에 끝났으면, 지금 본 활동은 그 실행의 꼬리다.
+     *        «지금부터 45초»로만 보면 백엔드가 멈췄다 깨어난 경우(관측이 몇 분 비었다) 꼬리를 새 실행으로 잘못 연다(2026-10-05 시험 5).
+     */
+    @Transactional
+    public Optional<EtlJobRun> openOrAttach(Long jobId, LocalDateTime now, boolean newStepRun, LocalDateTime previousTickAt) {
         if (jobId == null) {
             return Optional.empty();
         }
+        com.company.pipeline.workflow.JobRunLedgerService.lockJob(jdbc, jobId);
         Optional<EtlJobRun> open = runRepository.findByJobIdAndEndedAtIsNull(jobId);
         if (open.isEmpty()) {
             // 콜백(NiFi 완료 감시)이 방금 닫은 실행이면 새로 열지 않고 거기에 붙인다(2026-10-05). 감시는 «조용해진 직후» 닫고
@@ -60,7 +78,8 @@ public class EtlJobRunService {
             // «콜백 성공 + 유휴정리 성공» 두 행으로 갈라지고 적재 건수도 나뉜다.
             Optional<EtlJobRun> justClosed = runRepository.findFirstByJobIdAndEndedAtIsNotNullOrderByEndedAtDesc(jobId)
                     .filter(run -> EtlJobRun.SOURCE_CALLBACK.equals(run.getCompletionSource()))
-                    .filter(run -> !run.getEndedAt().isBefore(now.minusSeconds(CALLBACK_TAIL_SECONDS)));
+                    .filter(run -> !run.getEndedAt().isBefore(previousTickAt != null
+                            ? previousTickAt.minusSeconds(5) : now.minusSeconds(CALLBACK_TAIL_SECONDS)));
             if (justClosed.isPresent()) {
                 return justClosed;
             }

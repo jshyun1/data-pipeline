@@ -97,6 +97,9 @@ public class NifiProcessorRunTracker {
             int activeThreads) {
     }
 
+    /** 직전 관측 시각 - 콜백으로 닫힌 실행에 꼬리 활동을 붙일지 정할 때 쓴다(EtlJobRunService#openOrAttach). */
+    private volatile LocalDateTime lastTrackedAt;
+
     @Scheduled(fixedRate = 15_000, initialDelay = 20_000)
     @Transactional
     public void track() {
@@ -113,6 +116,8 @@ public class NifiProcessorRunTracker {
         }
 
         LocalDateTime now = LocalDateTime.now(clock);
+        LocalDateTime previousTickAt = lastTrackedAt;
+        lastTrackedAt = now;
         List<ProcessorSnapshot> processors = collectLoadProcessors(flow);
         Map<String, Long> counterByProcessor = extractInsertCounters(counters);
         Map<String, NifiProcessorRun> openRuns = new HashMap<>();
@@ -139,7 +144,7 @@ public class NifiProcessorRunTracker {
                 // 프로세서) 구간만 남고 실행 묶음은 다음 주기 이후에 붙는다.
                 Long jobId = jobLookup.resolveJobId(processor.id(), processor.groupId()).orElse(null);
                 if (jobId != null) {
-                    Long jobRunId = jobRunService.openOrAttach(jobId, now, newStepRun)
+                    Long jobRunId = jobRunService.openOrAttach(jobId, now, newStepRun, previousTickAt)
                             .map(EtlJobRun::getId).orElse(null);
                     open.assignJob(jobId, jobRunId);
                     jobRunService.recordActivity(jobRunId, now, delta);

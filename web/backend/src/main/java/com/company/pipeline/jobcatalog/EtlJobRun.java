@@ -149,6 +149,13 @@ public class EtlJobRun {
         this.updatedAt = LocalDateTime.now();
     }
 
+    /** 실제 시작이 더 일렀다(NiFi 완료 감시가 본 시각). 관측기가 늦게 연 실행의 시작을 당긴다. */
+    public void startedEarlier(LocalDateTime at) {
+        if (at.isBefore(this.startedAt)) {
+            this.startedAt = at;
+        }
+    }
+
     /** 완료 보고로 실행을 닫는다. 이미 닫혔으면 아무것도 하지 않는다(콜백 멱등). */
     public void completeBy(String source, String status, Long rows, String errorMessage,
                            LocalDateTime at) {

@@ -2661,9 +2661,9 @@ ETL(DZ_COM001M 9/5 실패) 추가 질문 «한 문장으로 요약해줘» → �
 
 **NAR** (`nifi/extensions/cerebro-nifi`, Maven · Java 21 · nifi-api 2.0.0 - NiFi 2.2.0 이미지가 싣는 API 버전)
 - `JobCompletionReportingTask`(Reporting Task, 기본 2초 주기): 백엔드가 준 job 그룹 목록(`GET /api/etl/job-runs/watched-groups`, 60초마다)만 본다.
-  판정 로직은 `CompletionDetector`(순수 Java, 단위 테스트 6건): 활동 = active 스레드 · 대기열 · 적재 카운터(«… updates performed») 증가 · 처리 횟수 증가,
+  판정 로직은 `CompletionDetector`(순수 Java, 단위 테스트 7건): 활동 = active 스레드 · 대기열 · 적재 카운터(«… updates performed») 증가 · 처리 횟수 증가,
   활동 뒤 3초 조용하면 완료, 그 사이 그룹의 ERROR bulletin 이 있으면 실패. 적재 건수 = 카운터 증가분.
-  보고는 별도 스레드 하나가 대기열(상한 1,000)에서 꺼내 `POST /by-pg/{id}/complete|fail`(3초 시간 제한, 2·4·8·16초 재시도) - NiFi 타이머 스레드를 붙잡지 않는다.
+  보고는 별도 스레드 하나가 대기열(상한 1,000)에서 꺼내 `POST /by-pg/{id}/complete|fail`(3초 시간 제한, 최대 8회 · 2→60초 간격 재시도 ≈ 3분 - 아래 시험 5) - NiFi 타이머 스레드를 붙잡지 않는다.
   서비스 토큰은 민감(sensitive) 속성. 예외는 밖으로 던지지 않는다.
 - 이미지: `nifi/Dockerfile` 첫 단계(maven)에서 빌드해 `lib/` 에 넣는다(자동 로드 폴더 `nar_extensions` 는 볼륨에 가려질 수 있어 피함). `nifi/.dockerignore` 추가.
 - 등록: 백엔드 `NifiCompletionMonitorProvisioner`(기동 60초 뒤 · 5분마다) - 없으면 «Cerebro job 완료 감시»를 만들고(API URL · 서비스 토큰) 시작.
@@ -2683,5 +2683,33 @@ MSA 원본 템플릿(읽기 전용 확인: 콜백 없음, 적재 처리기 succe
 Incremental 에 9/30 이후 생긴 두 번째 `01_소스테이블`(id 1f80faca, 출처 미상)은 철거 스크립트가 자동 종료를 바꿨다가 원래 값(빈 값)으로 되돌렸다.
 `docs/nifi-templates/*.flow.json` 삭제, 협의 문서(2026-09-30-nifi-template-callback-handoff) 폐기 표시.
 
-**남은 것**: MSA 반영(NiFi 이미지 재빌드 - MSA 에서 maven 이 Maven Central 에 닿아야 한다), 실제 적재 job 의 적재 건수(카운터)가 rows 로 오는지
-실 job 으로 확인(시험 그룹은 적재 처리기가 없었다). 감시가 너무 빨리 «완료»로 보는 job(소스 처리기가 긴 간격으로 끊어 넣는 경우)이 있으면 Settle Seconds 조정.
+**남은 것**: MSA 반영(NiFi 이미지 재빌드 - MSA 에서 maven 이 Maven Central 에 닿아야 한다), 실제 템플릿으로 만든 job 에서
+적재 건수(카운터)가 rows 로 오는지 확인(아래 시험은 PutDatabaseRecord 로 확인했다). 감시가 너무 빨리 «완료»로 보는 job(소스 처리기가 긴 간격으로 끊어 넣는 경우)이 있으면 Settle Seconds 조정.
+
+**여러 방법 시험(로컬, 같은 날) - 고친 것 포함**
+시험용 NiFi 그룹 `_감시시험`(job 3개: 적재 12행 · 긴 작업 30행/20초 · 없는 테이블에 적재)과 대상 DB 시험 테이블, 시험 워크플로우 2개로 돌렸다.
+
+| # | 방법 | 결과 |
+|---|---|---|
+| 1 | job 직접 실행(12행 적재) | 원장 1행 CALLBACK SUCCESS rows 12, 적재 카운터 증가분과 일치 |
+| 2 | 긴 작업(20초 동안 30행) | 끝까지 «실행 중» 유지 → 마감 1행 rows 30, 꼬리 적재분은 같은 행에 붙음 |
+| 3 | DB 오류(없는 테이블) | **처음엔 SUCCESS 로 기록(버그)** → 고친 뒤 FAILED + `TableNotFoundException` 문구 |
+| 4 | 워크플로우 순차(job 2개) · 실패 전파 | await 6.4초 / 23초 «콜백 확정», 실패 job 은 await 2.3초 failed → 후행 upstream_failed |
+| 5 | 백엔드 70초 멈춤(그 사이 job 완료) | **처음엔 원장 이중 행** → 고친 뒤 1행, 재전송 5건 무시, rows 12 |
+| 6 | 감시(Reporting Task) 정지 | 예전 추측 판정으로 물러남: await 184.5초 / 48.8초, OBSERVED rows 12 / 30 - 워크플로우는 성공 |
+
+시험 중 고친 것:
+- 실패를 성공으로 본 문제(시험 3): 짧은 job 은 오류 bulletin 이 «실행 시작 감지»보다 먼저 찍혀 범위 밖이었다 →
+  실행 시작을 «활동을 처음 본 주기»가 아니라 **직전 주기 시각**으로 잡고, 오류 수집을 판정 전에 하고 마감 때 시작~끝을 한 번 더 훑는다.
+- 시작 시각 부정확(시험 2): 원장 시작이 관측기 쪽 늦은 시각이었다 → 콜백 본문에 `startedAt`·`endedAt`(epoch ms)을 실어 보내고 백엔드가 시작을 앞당긴다.
+- 이중 행(시험 5): 백엔드가 깨어나자 쌓인 재전송이 동시에 들어와 각각 행을 만들었다 → job 단위 잠금(`pg_advisory_xact_lock(7301, jobId)`) +
+  «같은 끝 시각(1초 안)으로 이미 닫힌 콜백 실행이면 재전송으로 보고 무시». 관측기도 깨어난 뒤 그 실행의 적재를 «새 실행»으로 열었다 →
+  `openOrAttach` 가 직전 관측 시각(`previousTickAt`)을 받아 «직전 관측 뒤에 닫힌 콜백 실행»이면 45초가 지났어도 붙인다.
+- 재시도 창이 짧았다(≈30초, 백엔드 재기동보다 짧음) → 8회 · 최대 60초 간격(≈3분).
+- NiFi 이미지 빌드가 Maven Central 다운로드 중간 끊김으로 실패 → Dockerfile 에 BuildKit 캐시 마운트(`/root/.m2`) + 다운로드 재시도 옵션.
+
+테스트: NAR 단위 7건, 백엔드 전체 294건 중 293 통과 - 실패 1건은 `ConnectionRepositoryIT`(Testcontainers 가 빌드 컨테이너 안에서 Docker 를 못 찾음, 이번 변경과 무관).
+시험 그룹 · 테이블 · 워크플로우 51/52 · DAG · 원장 행(job 34~36, 23행) 삭제, target-db 다시 정지, 감시는 RUNNING 으로 되돌림.
+
+곁가지 발견(안 고침): 로컬 Airflow 연결 `target_db_postgres` 의 포트가 15432(호스트 포트)라 컨테이너 안에서는 닿지 않는다(5432 여야 함) -
+로컬에서 `verify_landing` 류 검증이 조용히 실패할 수 있다. MSA 연결 값은 따로 확인 필요.

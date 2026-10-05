@@ -13,6 +13,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,9 +36,23 @@ public class JobRunLedgerService {
     private final EtlJobRunRepository runRepository;
     private final EtlJobRepository jobRepository;
 
-    public JobRunLedgerService(EtlJobRunRepository runRepository, EtlJobRepository jobRepository) {
+    private final JdbcTemplate jdbc;
+
+    public JobRunLedgerService(EtlJobRunRepository runRepository, EtlJobRepository jobRepository, JdbcTemplate jdbc) {
         this.runRepository = runRepository;
         this.jobRepository = jobRepository;
+        this.jdbc = jdbc;
+    }
+
+    /**
+     * 같은 job 의 원장 변경을 이 트랜잭션이 끝날 때까지 한 줄로 세운다(PostgreSQL advisory lock, 커밋 · 롤백 때 풀림).
+     * 백엔드가 멈췄다 깨어나면 감시의 재전송 여러 개가 <b>동시에</b> 들어온다 - 서로의 저장을 못 본 채 모두 «처음»으로 판단해
+     * 실행 1건이 5행이 됐다(2026-10-05 시험 5). 관측기(EtlJobRunService)도 같은 열쇠를 쓴다.
+     */
+    public static void lockJob(JdbcTemplate jdbc, Long jobId) {
+        if (jdbc != null && jobId != null) {
+            jdbc.query("SELECT pg_advisory_xact_lock(7301, ?)", rs -> null, jobId.intValue());
+        }
     }
 
     /** 열려 있으면 입양하고 없으면 연다. 동시 생성 경합은 재조회로 흡수한다. */
@@ -87,23 +102,50 @@ public class JobRunLedgerService {
     /** NiFi 완료 콜백(플랜 B-1). 이미 닫힌 실행이면 조용히 넘어간다(재전송 대비). */
     @Transactional
     public void completeByPg(String nifiPgId, Long rows, boolean failed, String errorMessage) {
+        completeByPg(nifiPgId, rows, failed, errorMessage, null, null);
+    }
+
+    /**
+     * @param startedAtMillis · endedAtMillis NiFi 완료 감시가 본 실제 실행 시각(epoch ms). 없으면 받은 시각으로 닫는다.
+     *        시작은 원장보다 이를 때만 당긴다 - 워크플로우가 연 실행은 NiFi 를 켜기 전에 열려 이미 더 이르다.
+     *        관측기가 연 실행은 첫 관측(15초 간격)에 열려 실제보다 늦다(2026-10-05 시험 2 에서 확인).
+     */
+    @Transactional
+    public void completeByPg(String nifiPgId, Long rows, boolean failed, String errorMessage,
+                             Long startedAtMillis, Long endedAtMillis) {
         Long jobId = resolveJobId(null, nifiPgId);
+        lockJob(jdbc, jobId);
         Optional<EtlJobRun> open = runRepository.findByJobIdAndEndedAtIsNull(jobId);
         LocalDateTime now = LocalDateTime.now();
+        LocalDateTime reportedStart = toLocal(startedAtMillis, now);
+        LocalDateTime reportedEnd = toLocal(endedAtMillis, now);
+        LocalDateTime end = reportedEnd != null ? reportedEnd : now;
+        if (reportedEnd != null && isResend(jobId, reportedEnd)) {
+            // 같은 실행의 재전송이다(감시가 응답을 못 받아 다시 보냈는데, 백엔드는 앞의 것을 이미 처리했다 - 2026-10-05 시험 5 에서 6행이 생겼다).
+            log.info("잡 실행 콜백 재전송 무시 - jobId={} endedAt={}", jobId, reportedEnd);
+            return;
+        }
         if (open.isEmpty()) {
             // Airflow 없이 NiFi에서 직접 돌린 실행도 이력에 남긴다.
-            EtlJobRun standalone = runRepository.save(new EtlJobRun(jobId, now));
+            LocalDateTime start = reportedStart != null && !reportedStart.isAfter(end) ? reportedStart : end;
+            EtlJobRun standalone = runRepository.save(new EtlJobRun(jobId, start));
             standalone.completeBy(EtlJobRun.SOURCE_CALLBACK,
                     failed ? EtlJobRun.STATUS_FAILED : EtlJobRun.STATUS_SUCCESS,
-                    rows, errorMessage, now);
+                    rows, errorMessage, end);
             runRepository.save(standalone);
             log.info("잡 실행 콜백(원장 없이 시작된 실행) - jobId={} failed={}", jobId, failed);
             return;
         }
         EtlJobRun run = open.get();
+        if (reportedStart != null && reportedStart.isBefore(run.getStartedAt())) {
+            run.startedEarlier(reportedStart);
+        }
+        if (end.isBefore(run.getStartedAt())) {
+            end = now;
+        }
         run.completeBy(EtlJobRun.SOURCE_CALLBACK,
                 failed ? EtlJobRun.STATUS_FAILED : EtlJobRun.STATUS_SUCCESS,
-                rows, errorMessage, now);
+                rows, errorMessage, end);
         runRepository.save(run);
         log.info("잡 실행 콜백 - jobId={} runId={} failed={} rows={}", jobId, run.getId(), failed, rows);
     }
@@ -131,6 +173,23 @@ public class JobRunLedgerService {
                 errorMessage, LocalDateTime.now());
         runRepository.save(run);
         log.info("잡 실행 실패 기록 - runId={} {}", run.getId(), errorMessage);
+    }
+
+    /** 이 job 의 가장 최근 «콜백으로 닫힌» 실행이 같은 끝 시각이면 재전송이다. 감시는 같은 실행을 같은 본문(같은 시각)으로 다시 보낸다. */
+    private boolean isResend(Long jobId, LocalDateTime reportedEnd) {
+        return runRepository.findFirstByJobIdAndEndedAtIsNotNullOrderByEndedAtDesc(jobId)
+                .filter(run -> EtlJobRun.SOURCE_CALLBACK.equals(run.getCompletionSource()))
+                .filter(run -> Math.abs(java.time.Duration.between(run.getEndedAt(), reportedEnd).toMillis()) < 1_000L)
+                .isPresent();
+    }
+
+    /** epoch ms → 서버 시각. 없거나 미래(시계 차이)면 null. */
+    private static LocalDateTime toLocal(Long epochMillis, LocalDateTime now) {
+        if (epochMillis == null || epochMillis <= 0) {
+            return null;
+        }
+        LocalDateTime at = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(epochMillis), java.time.ZoneId.systemDefault());
+        return at.isAfter(now) ? null : at;
     }
 
     private Long resolveJobId(Long jobId, String nifiPgId) {

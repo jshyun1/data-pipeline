@@ -77,7 +77,8 @@ public class JobRunLedgerController {
     @PostMapping("/by-pg/{nifiPgId}/complete")
     public ApiResponse<Void> completeByPg(@PathVariable String nifiPgId,
                                           @RequestBody(required = false) CompleteRequest request) {
-        ledgerService.completeByPg(nifiPgId, request == null ? null : request.rows(), false, null);
+        ledgerService.completeByPg(nifiPgId, request == null ? null : request.rows(), false, null,
+                request == null ? null : request.startedAt(), request == null ? null : request.endedAt());
         return ApiResponse.success(null);
     }
 
@@ -86,7 +87,8 @@ public class JobRunLedgerController {
     public ApiResponse<Void> failByPg(@PathVariable String nifiPgId,
                                       @RequestBody(required = false) FailRequest request) {
         ledgerService.completeByPg(nifiPgId, null, true,
-                request == null ? "NiFi가 실패를 보고했습니다." : request.error());
+                request == null || request.error() == null ? "NiFi가 실패를 보고했습니다." : request.error(),
+                request == null ? null : request.startedAt(), request == null ? null : request.endedAt());
         return ApiResponse.success(null);
     }
 
@@ -97,10 +99,17 @@ public class JobRunLedgerController {
     public record ObserveRequest(Long rows) {
     }
 
-    public record CompleteRequest(Long rows) {
+    /**
+     * @param startedAt · endedAt NiFi 완료 감시가 본 실제 실행 시각(epoch ms, 선택). 있으면 원장의 시작 · 끝을 이것으로 맞춘다.
+     */
+    public record CompleteRequest(Long rows, Long startedAt, Long endedAt) {
     }
 
-    public record FailRequest(String error) {
+    public record FailRequest(String error, Long startedAt, Long endedAt) {
+
+        public FailRequest(String error) {
+            this(error, null, null);
+        }
     }
 
     /** {@code completionSource}가 화면에서 "확정 / 추정"을 가르는 근거다. */

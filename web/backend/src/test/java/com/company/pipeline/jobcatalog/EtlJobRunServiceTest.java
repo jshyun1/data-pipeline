@@ -84,6 +84,21 @@ class EtlJobRunServiceTest {
     }
 
     @Test
+    void 백엔드가_멈췄다_깨어나도_직전_관측_뒤에_닫힌_실행이면_꼬리를_붙인다() {
+        // 시험 5: 관측기가 16:58:20 에 마지막으로 보고 멈췄다가 16:59:36 에 깨어나 그 사이 실행(16:58:25 콜백 마감)의 적재를 봤다.
+        EtlJobRun closed = new EtlJobRun(7L, T0);
+        closed.completeBy(EtlJobRun.SOURCE_CALLBACK, EtlJobRun.STATUS_SUCCESS, 12L, null, T0.plusSeconds(25));
+        when(runRepository.findByJobIdAndEndedAtIsNull(7L)).thenReturn(Optional.empty());
+        when(runRepository.findFirstByJobIdAndEndedAtIsNotNullOrderByEndedAtDesc(7L)).thenReturn(Optional.of(closed));
+
+        EtlJobRun run = service.openOrAttach(7L, T0.plusSeconds(96), true, T0.plusSeconds(20)).orElseThrow();
+        assertThat(run).isSameAs(closed);
+
+        // 직전 관측이 마감보다 뒤였다면 지금 본 활동은 새 실행이다.
+        assertThat(service.openOrAttach(7L, T0.plusSeconds(96), true, T0.plusSeconds(81)).orElseThrow()).isNotSameAs(closed);
+    }
+
+    @Test
     void 잡을_해석하지_못하면_실행을_열지_않는다() {
         assertThat(service.openOrAttach(null, T0, true)).isEmpty();
     }

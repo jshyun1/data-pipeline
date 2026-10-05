@@ -5,7 +5,10 @@ ARG NIFI_IMAGE_TAG=2.2.0
 FROM maven:3.9-eclipse-temurin-21 AS cerebro-nar
 WORKDIR /build
 COPY extensions/cerebro-nifi/ ./
-RUN mvn -q -B package
+# 의존성은 BuildKit 캐시에 두고 다시 쓴다 - 빌드마다 새로 받으면 느리고, 받다 끊기면 빌드가 실패한다(2026-10-05 실제로 한 번 끊김).
+# 끊김에 대비해 재시도도 늘린다.
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -q -B -Dmaven.wagon.http.retryHandler.count=5 -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 package
 
 FROM apache/nifi:${NIFI_IMAGE_TAG}
 

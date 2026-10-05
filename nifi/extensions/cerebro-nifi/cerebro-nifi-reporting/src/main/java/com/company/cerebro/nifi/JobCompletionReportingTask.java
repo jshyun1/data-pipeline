@@ -84,7 +84,12 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
             .build();
 
     static final int QUEUE_LIMIT = 1_000;
-    private static final int MAX_ATTEMPTS = 5;
+    /**
+     * 재전송 횟수 · 간격: 2 · 4 · 8 · 16 · 32 · 60 · 60초 → 약 3분. 백엔드 재배포(기동 60~90초) 동안 끝난 실행도 놓치지 않게
+     * 그보다 길게 잡는다(처음엔 5번 · 약 30초였다가 시험 중 재배포 시간보다 짧은 것을 보고 늘렸다).
+     */
+    private static final int MAX_ATTEMPTS = 8;
+    private static final long MAX_BACKOFF_MILLIS = 60_000L;
     private static final String LOAD_COUNTER_SUFFIX = "updates performed";
     private static final Pattern UUID_IN_JSON = Pattern.compile("\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\"");
 
@@ -146,23 +151,19 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
 
             Map<String, CompletionDetector.Snapshot> snapshots = new HashMap<>();
             collect(context.getEventAccess().getControllerStatus(), snapshots);
-            List<CompletionDetector.Completion> done = detector.tick(snapshots, now);
-
-            // 실행 중인 그룹의 ERROR 알림을 모은다(이번 실행이 시작된 뒤의 것만).
+            // 실행 중인 그룹의 ERROR 알림을 판정 전에 모은다. 긴 실행은 알림 보관(최근 몇 분)에서 앞쪽 알림이 밀려나므로 끝날 때만 보면 놓친다.
             for (String groupId : snapshots.keySet()) {
-                if (!detector.inRun(groupId)) {
-                    continue;
-                }
-                long since = detector.runStartedAt(groupId) - 1_000L;
-                for (Bulletin bulletin : context.getBulletinRepository().findBulletinsForGroupBySource(groupId)) {
-                    if ("ERROR".equalsIgnoreCase(bulletin.getLevel()) && bulletin.getTimestamp() != null
-                            && bulletin.getTimestamp().getTime() >= since) {
-                        detector.addError(groupId, bulletin.getSourceName() + ": " + bulletin.getMessage());
-                    }
+                if (detector.inRun(groupId)) {
+                    errorsSince(context, groupId, detector.runStartedAt(groupId)).forEach(error -> detector.addError(groupId, error));
                 }
             }
+            List<CompletionDetector.Completion> done = detector.tick(snapshots, now);
+            detector.startedThisTick.forEach(line -> getLogger().info("job 그룹 실행 시작 감지: {}", line));
             for (CompletionDetector.Completion completion : done) {
-                enqueue(completion);
+                // 끝난 순간에 한 번 더 훑는다 - 판정 간격보다 짧게 끝난 job 은 실행 중에 한 번도 «실행 중»으로 안 잡혔다(시험 중 발견).
+                Set<String> errors = new java.util.LinkedHashSet<>(completion.errors());
+                errors.addAll(errorsSince(context, completion.groupId(), completion.startedAtMillis()));
+                enqueue(completion, errors.stream().limit(CompletionDetector.MAX_ERRORS).toList());
             }
             flush(api, token);
         } catch (RuntimeException ex) {
@@ -182,6 +183,18 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
         if (children != null) {
             children.forEach(child -> collect(child, out));
         }
+    }
+
+    /** 그룹의 ERROR 알림 중 {@code sinceMillis} 1초 전부터의 것(알림 시각은 초 단위로 잘리기도 한다). */
+    private static List<String> errorsSince(ReportingContext context, String groupId, long sinceMillis) {
+        List<String> out = new java.util.ArrayList<>();
+        for (Bulletin bulletin : context.getBulletinRepository().findBulletinsForGroupBySource(groupId)) {
+            if ("ERROR".equalsIgnoreCase(bulletin.getLevel()) && bulletin.getTimestamp() != null
+                    && bulletin.getTimestamp().getTime() >= sinceMillis - 1_000L) {
+                out.add(bulletin.getSourceName() + ": " + bulletin.getMessage());
+            }
+        }
+        return out;
     }
 
     private static CompletionDetector.Snapshot snapshot(ProcessGroupStatus group) {
@@ -241,19 +254,23 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
         }
     }
 
-    private void enqueue(CompletionDetector.Completion completion) {
-        String path = "/api/etl/job-runs/by-pg/" + completion.groupId() + (completion.failed() ? "/fail" : "/complete");
-        String body = completion.failed()
-                ? "{\"error\":" + json(truncate(completion.error(), 1_000)) + "}"
-                : "{\"rows\":" + (completion.rows() == null ? "null" : completion.rows()) + "}";
+    private void enqueue(CompletionDetector.Completion completion, List<String> errors) {
+        boolean failed = !errors.isEmpty();
+        String path = "/api/etl/job-runs/by-pg/" + completion.groupId() + (failed ? "/fail" : "/complete");
+        // 시작 · 끝 시각(epoch ms)도 보낸다 - 원장의 소요시간이 백엔드 관측(15초 간격)이 아니라 실제 실행 시각을 따르게.
+        String times = ",\"startedAt\":" + completion.startedAtMillis() + ",\"endedAt\":" + completion.endedAtMillis();
+        String body = failed
+                ? "{\"error\":" + json(truncate(String.join("\n", errors), 1_000)) + times + "}"
+                : "{\"rows\":" + (completion.rows() == null ? "null" : completion.rows()) + times + "}";
         synchronized (outbox) {
             if (outbox.size() >= QUEUE_LIMIT) {
                 outbox.pollFirst();
             }
             outbox.addLast(new Outgoing(path, body, 0, 0L));
         }
-        getLogger().info("job 그룹 {} 실행 {} 감지(rows={})", completion.groupId(),
-                completion.failed() ? "실패" : "완료", completion.rows());
+        getLogger().info("job 그룹 {} 실행 {} 감지(rows={}, {}초, 적재 카운터 {}→{})", completion.groupId(), failed ? "실패" : "완료",
+                completion.rows(), (completion.endedAtMillis() - completion.startedAtMillis()) / 1000,
+                completion.baselineLoad(), completion.finalLoad());
     }
 
     /** 대기열을 별도 스레드에서 보낸다. 이미 보내는 중이면 그 스레드가 이어서 처리한다. */
@@ -277,7 +294,7 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
                     }
                     if (!post(api, token, next)) {
                         if (next.attempt() + 1 < MAX_ATTEMPTS) {
-                            long backoff = 2_000L << next.attempt();   // 2 · 4 · 8 · 16초
+                            long backoff = Math.min(MAX_BACKOFF_MILLIS, 2_000L << next.attempt());
                             synchronized (outbox) {
                                 outbox.addFirst(new Outgoing(next.path(), next.body(), next.attempt() + 1,
                                         System.currentTimeMillis() + backoff));

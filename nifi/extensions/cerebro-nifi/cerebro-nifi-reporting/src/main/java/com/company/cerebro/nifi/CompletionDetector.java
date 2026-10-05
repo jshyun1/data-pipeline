@@ -24,9 +24,16 @@ final class CompletionDetector {
     record Snapshot(int activeThreads, int queued, Long loadCount, long invocations) {
     }
 
-    /** 판정 결과 - 실행 한 번이 끝났다. {@code rows} 는 이번 실행의 적재 건수(카운터가 없으면 null). */
-    record Completion(String groupId, boolean failed, Long rows, String error, long startedAtMillis, long endedAtMillis) {
+    /**
+     * 판정 결과 - 실행 한 번이 끝났다. {@code rows} 는 이번 실행의 적재 건수(카운터가 없으면 null), {@code errors} 는 실행 중 모은
+     * ERROR 알림. 실패 여부는 호출하는 쪽이 끝난 순간의 알림까지 다시 훑어 정한다(짧은 job 은 실행 중 판정에 한 번도 안 잡힌다).
+     */
+    record Completion(String groupId, Long rows, List<String> errors, long startedAtMillis, long endedAtMillis,
+                      Long baselineLoad, Long finalLoad) {
     }
+
+    /** 이번 판정에서 «실행 시작»으로 본 그룹과 그 이유(로그용). */
+    final List<String> startedThisTick = new ArrayList<>();
 
     private static final class State {
         boolean inRun;
@@ -35,6 +42,8 @@ final class CompletionDetector {
         Long lastLoad;
         long lastInvocations;
         Long baselineLoad;
+        /** 직전 판정 시각. 활동을 이번에 처음 봤으면 실제 시작은 그 사이 어딘가다 - 시작 시각을 이것으로 잡는다. */
+        long lastTickAt = -1L;
         final Set<String> errors = new LinkedHashSet<>();
     }
 
@@ -74,6 +83,7 @@ final class CompletionDetector {
      */
     List<Completion> tick(Map<String, Snapshot> snapshots, long nowMillis) {
         states.keySet().retainAll(snapshots.keySet());
+        startedThisTick.clear();
         List<Completion> done = new ArrayList<>();
         snapshots.forEach((groupId, snap) -> {
             State state = states.get(groupId);
@@ -81,10 +91,12 @@ final class CompletionDetector {
                 state = new State();
                 state.lastLoad = snap.loadCount();
                 state.lastInvocations = snap.invocations();
+                state.lastTickAt = nowMillis;
                 states.put(groupId, state);
                 // 감시를 켰을 때 이미 돌고 있었으면 그 실행부터 잡는다(카운터 증가는 기준이 없어 보지 않는다).
                 if (snap.activeThreads() > 0 || snap.queued() > 0) {
                     startRun(state, nowMillis, snap.loadCount());
+                    startedThisTick.add(groupId + " 처음 봄(실행 중) 기준=" + snap.loadCount());
                 }
                 return;
             }
@@ -94,7 +106,11 @@ final class CompletionDetector {
             if (busy || loadGrew || invoked) {
                 if (!state.inRun) {
                     // 카운터가 이번에 늘었다면 시작 기준은 직전 값이다(이번 증가분까지 이번 실행의 적재로 센다).
-                    startRun(state, nowMillis, state.lastLoad);
+                    // 시작 시각은 직전 판정 시각 - 실제로는 그 뒤 어딘가에서 시작했다. 늦게 잡으면 그 사이 난 오류를 놓친다(시험 중 발견).
+                    startRun(state, state.lastTickAt >= 0 ? state.lastTickAt : nowMillis, state.lastLoad);
+                    state.lastActivityAt = nowMillis;
+                    startedThisTick.add(groupId + " active=" + snap.activeThreads() + " queued=" + snap.queued()
+                            + " 적재=" + state.lastLoad + "→" + snap.loadCount() + " 처리=" + state.lastInvocations + "→" + snap.invocations());
                 }
                 state.lastActivityAt = nowMillis;
             } else if (state.inRun && nowMillis - state.lastActivityAt >= settleMillis) {
@@ -103,14 +119,15 @@ final class CompletionDetector {
             state.lastLoad = snap.loadCount();
             // 처리 횟수는 «최근 5분» 누적이라 줄어들 수도 있다 - 줄어든 것은 활동이 아니라 기준만 옮긴다.
             state.lastInvocations = snap.invocations();
+            state.lastTickAt = nowMillis;
         });
         return done;
     }
 
-    private static void startRun(State state, long nowMillis, Long baselineLoad) {
+    private static void startRun(State state, long startedAtMillis, Long baselineLoad) {
         state.inRun = true;
-        state.runStartedAt = nowMillis;
-        state.lastActivityAt = nowMillis;
+        state.runStartedAt = startedAtMillis;
+        state.lastActivityAt = startedAtMillis;
         state.baselineLoad = baselineLoad;
         state.errors.clear();
     }
@@ -122,9 +139,8 @@ final class CompletionDetector {
             // NiFi 가 재시작되면 카운터가 0 부터 다시 오른다 - 그땐 현재값이 곧 이번분이다.
             rows = loadNow >= base ? loadNow - base : loadNow;
         }
-        boolean failed = !state.errors.isEmpty();
-        String error = failed ? String.join("\n", state.errors) : null;
-        Completion completion = new Completion(groupId, failed, rows, error, state.runStartedAt, state.lastActivityAt);
+        Completion completion = new Completion(groupId, rows, List.copyOf(state.errors), state.runStartedAt, state.lastActivityAt,
+                state.baselineLoad, loadNow);
         state.inRun = false;
         state.errors.clear();
         return completion;

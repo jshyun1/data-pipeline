@@ -27,8 +27,10 @@ class CompletionDetectorTest {
         assertTrue(tick(8_000, 0, 0, 243L, 6).isEmpty());       // 조용 2초
         List<CompletionDetector.Completion> done = tick(9_500, 0, 0, 243L, 6);
         assertEquals(1, done.size());
-        assertFalse(done.get(0).failed());
+        assertTrue(done.get(0).errors().isEmpty());
         assertEquals(143L, done.get(0).rows());
+        assertEquals(0L, done.get(0).startedAtMillis());        // 활동을 처음 본 판정(2초)의 직전 판정 시각
+        assertEquals(6_000L, done.get(0).endedAtMillis());
         assertTrue(tick(20_000, 0, 0, 243L, 6).isEmpty());      // 한 번만 보고
     }
 
@@ -48,9 +50,16 @@ class CompletionDetectorTest {
         detector.addError(G, "PutSQL: Connection refused");
         tick(4_000, 0, 0, null, 1);
         CompletionDetector.Completion done = tick(7_000, 0, 0, null, 1).get(0);
-        assertTrue(done.failed());
-        assertEquals("PutSQL: Connection refused", done.error());
+        assertEquals(List.of("PutSQL: Connection refused"), done.errors());
         assertNull(done.rows());
+    }
+
+    @Test
+    void shortRunSeenOnlyByDelta_startsAtPreviousTick() {
+        // 판정 사이에 시작해 끝난 job - 실행 시작을 «활동을 본 시각»으로 잡으면 그 전에 난 오류를 놓친다(시험 3 에서 실제로 놓쳤다).
+        tick(10_000, 0, 0, 0L, 0);
+        tick(12_000, 0, 0, 0L, 2);
+        assertEquals(10_000L, detector.runStartedAt(G));
     }
 
     @Test
