@@ -1037,6 +1037,20 @@ function iframeDocument(frame: HTMLIFrameElement) {
   }
 }
 
+/**
+ * iframe 안이 Cerebro 판 NiFi 화면(nifi/ui-custom, CEREBRO_NIFI_UI=custom)인가. 그 화면은 이 파일이 하던 덧칠
+ * (배치 바꾸기 · 한글 바꾸기)을 NiFi 안에서 처음 그릴 때부터 한다 - 여기서 또 하면 일이 겹치고, 덧칠이 늦게 붙는 동안 원래 배치가
+ * 잠깐 보이던 깜빡임(2026-10-05 실측 약 0.4초)이 남는다. 공식 화면이나 Airflow 화면에는 이 표시가 없어 예전처럼 덧칠한다.
+ */
+function isCerebroNifiUi(frame: HTMLIFrameElement) {
+  return iframeDocument(frame)?.documentElement.hasAttribute("data-cerebro-nifi-ui") ?? false;
+}
+
+function isFrameDocumentLoaded(frame: HTMLIFrameElement) {
+  const doc = iframeDocument(frame);
+  return Boolean(doc && doc.readyState === "complete" && doc.location.href !== "about:blank");
+}
+
 function isVisibleElement(element: Element) {
   const rect = element.getBoundingClientRect();
   const style = element.ownerDocument.defaultView?.getComputedStyle(element);
@@ -4441,7 +4455,9 @@ export function ConsoleFramePage({
 
     const timerId = window.setTimeout(() => {
       const frame = frameRef.current;
-      if (frame) {
+      // 아직 다 안 읽힌 문서(빈 about:blank, 읽는 중인 NiFi)면 Cerebro 판인지 알 수 없다 - 덧칠은 onLoad(handleFrameLoad)에 맡긴다.
+      // 여기서 걸면 Cerebro 판 화면에도 덧칠(1초 주기 훑기)이 붙는다(2026-10-05 확인).
+      if (frame && isFrameDocumentLoaded(frame) && !isCerebroNifiUi(frame)) {
         hideToolChrome(frame);
         patchKoreanTooltips(frame);
         installNifiPanelLayout(frame);
@@ -4525,10 +4541,15 @@ export function ConsoleFramePage({
   const handleFrameLoad = (event: SyntheticEvent<HTMLIFrameElement>) => {
     const frame = event.currentTarget;
     frameRef.current = frame;
-    cleanupLegacyNifiMiniCreateToolbars(frame);
-    const chromeHidden = hideToolChrome(frame);
-    patchKoreanTooltips(frame);
-    installNifiPanelLayout(frame);
+    // Cerebro 판 NiFi 화면이면 배치 · 한글을 NiFi 가 이미 처리했다 - 덧칠은 건너뛰고 연동(잠금 · 선택 · 경로)만 건다.
+    const cerebroNifiUi = isCerebroNifiUi(frame);
+    let chromeHidden = true;
+    if (!cerebroNifiUi) {
+      cleanupLegacyNifiMiniCreateToolbars(frame);
+      chromeHidden = hideToolChrome(frame);
+      patchKoreanTooltips(frame);
+      installNifiPanelLayout(frame);
+    }
     installProcessorEditReadonlyGuard(frame, processorEditLockFrameState);
     clickNifiMenuItem(frame, nifiAutoOpenMenuTitles);
     if (showProcessGroupTree) {
@@ -4539,7 +4560,7 @@ export function ConsoleFramePage({
         (target) => resolveProcessGroupIdByCanvasText(target, processGroupIdRef.current, processGroupTreeRef.current),
       );
     }
-    if (!showProcessGroupTree) {
+    if (!showProcessGroupTree || cerebroNifiUi) {
       window.requestAnimationFrame(() => setFrameChromeReady(true));
     } else {
       window.setTimeout(() => {

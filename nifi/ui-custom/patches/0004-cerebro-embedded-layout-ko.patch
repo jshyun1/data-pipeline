@@ -1,0 +1,698 @@
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss
+new file mode 100644
+index 0000000000000000000000000000000000000000..5a3151b734df277850da993a9d2e7f684f5378e3
+--- /dev/null
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss
+@@ -0,0 +1,273 @@
++/*
++ * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
++ *
++ * Cerebro «ETL 관리» 화면(iframe) 안에서의 NiFi 배치. html.cerebro-embedded 일 때만(cerebro-ui.ts) - NiFi 에 직접 들어오면 원래 배치.
++ * 예전 ConsoleFramePage 의 HIDE_TOOL_CHROME_CSS 를 옮긴 것이다(2026-10-05). 그때는 NiFi 가 다 그린 뒤 JS 가 요소마다 표식을 달아야
++ * 적용돼서 첫 진입 때 원래 배치(위쪽 머리줄 · 상태줄)가 0.4초쯤 보였다. 여기서는 처음 그릴 때부터 이 배치다.
++ *
++ *   머리줄      → 왼쪽 아래 세로 공구막대(도구 3개, Cerebro 아이콘 · 마우스 올리면 이름). 상태줄 · 메뉴 단추는 숨김
++ *   아래 경로줄 → 숨김(왼쪽 트리가 위치를 보여준다), 작업 패널의 «선택 항목» 칸도 숨김(예전 덧칠과 같은 모습)
++ *   캔버스      → 흰 바탕, 프로세스 그룹 상자 색
++ */
++html.cerebro-embedded {
++    .splash {
++        display: none !important;
++    }
++
++    // ETL 이 띄우는 안내 글자(«프로세스 그룹» 등)는 이 겹침 칸에 그려진다 - 공구막대(아래 z-index)보다 위로.
++    .cdk-overlay-container {
++        z-index: 100010 !important;
++    }
++
++    fd-header header.nifi-header {
++        position: fixed !important;
++        left: 14px !important;
++        bottom: 14px !important;
++        // 캔버스 쪽 패널(9100)보다 위 - 왼쪽 아래 구석의 작은 칸이라 다른 조작을 가리지 않는다.
++        z-index: 100000 !important;
++        width: 42px !important;
++        padding: 6px 5px !important;
++        display: flex !important;
++        flex-direction: column !important;
++        align-items: center !important;
++        gap: 6px !important;
++        background: #ffffff !important;
++        border: 1px solid #dbe3ee !important;
++        border-radius: 9px !important;
++        box-shadow: 0 2px 8px rgb(15 23 42 / 9%) !important;
++        overflow: visible !important;
++
++        > flow-status {
++            display: none !important;
++        }
++
++        navigation,
++        navigation > div,
++        nav.nifi-navigation,
++        nav.nifi-navigation > div,
++        nav.nifi-navigation > div > div:first-child {
++            display: flex !important;
++            flex-direction: column !important;
++            align-items: center !important;
++            gap: 6px !important;
++            width: auto !important;
++            height: auto !important;
++            min-height: 0 !important;
++            margin: 0 !important;
++            padding: 0 !important;
++            background: transparent !important;
++            border: 0 !important;
++            box-shadow: none !important;
++        }
++
++        // 사용자 이름(0001 이 안 그림) · 전역 메뉴 단추 묶음
++        nav.nifi-navigation > div > div:not(:first-child) {
++            display: none !important;
++        }
++
++        new-canvas-item {
++            position: relative !important;
++            width: 30px !important;
++            height: 30px !important;
++            min-width: 30px !important;
++            min-height: 30px !important;
++            margin: 0 !important;
++            padding: 0 !important;
++            display: inline-flex !important;
++            align-items: center !important;
++            justify-content: center !important;
++            border: 1px solid #dbe3ee !important;
++            border-radius: 6px !important;
++            background: #ffffff !important;
++            color: #475569 !important;
++            box-shadow: 0 1px 2px rgb(15 23 42 / 8%) !important;
++            overflow: hidden !important;
++            cursor: grab !important;
++            user-select: none !important;
++            touch-action: none !important;
++
++            &:active {
++                cursor: grabbing !important;
++            }
++
++            &:hover {
++                overflow: visible !important;
++                background: #f8fafc !important;
++                color: #0f172a !important;
++            }
++
++            &[tooltip='프로세스 그룹'] {
++                border-color: #ff3b30 !important;
++                background: #ffffff !important;
++                color: #ff3b30 !important;
++                box-shadow: none !important;
++            }
++
++            // NiFi 원래 도구(끌어다 놓기를 맡는다)는 투명하게 위에 둔다 - 보이는 것은 아래의 Cerebro 아이콘.
++            > :not(.cerebro-tool-icon),
++            > :not(.cerebro-tool-icon) * {
++                opacity: 0 !important;
++                background: transparent !important;
++                border-color: transparent !important;
++                box-shadow: none !important;
++            }
++
++            > :not(.cerebro-tool-icon) {
++                z-index: 2 !important;
++                pointer-events: auto !important;
++            }
++
++            .cerebro-tool-icon {
++                position: absolute !important;
++                inset: 0 !important;
++                width: 18px !important;
++                height: 18px !important;
++                margin: auto !important;
++                pointer-events: none !important;
++                z-index: 1 !important;
++
++                * {
++                    vector-effect: non-scaling-stroke;
++                }
++            }
++
++            // 마우스를 올리면 오른쪽에 이름
++            &:hover::after {
++                content: attr(tooltip);
++                position: absolute;
++                left: calc(100% + 8px);
++                top: 50%;
++                transform: translateY(-50%);
++                z-index: 100002;
++                min-width: max-content;
++                max-width: 180px;
++                padding: 5px 8px;
++                border: 1px solid #cbd5e1;
++                border-radius: 6px;
++                background: #0f172a;
++                color: #ffffff;
++                font-size: 12px;
++                font-weight: 600;
++                line-height: 1.2;
++                white-space: nowrap;
++                box-shadow: 0 6px 16px rgb(15 23 42 / 18%);
++                pointer-events: none;
++            }
++
++            &:hover::before {
++                content: '';
++                position: absolute;
++                left: calc(100% + 3px);
++                top: 50%;
++                transform: translateY(-50%) rotate(45deg);
++                z-index: 100001;
++                width: 8px;
++                height: 8px;
++                background: #0f172a;
++                pointer-events: none;
++            }
++        }
++    }
++
++    fd-footer,
++    operation-control component-context {
++        display: none !important;
++    }
++
++    body,
++    #canvas-container,
++    .canvas-background {
++        background: #ffffff !important;
++        background-image: none !important;
++    }
++
++    svg g.process-group {
++        rect {
++            shape-rendering: crispEdges !important;
++        }
++
++        .body,
++        .border,
++        .process-group-background,
++        .process-group-body,
++        .component-background {
++            fill: #ffffff !important;
++            stroke: #d8e0ea !important;
++            stroke-width: 1px !important;
++        }
++
++        .component-header,
++        .header,
++        .process-group-header,
++        .process-group-header-background,
++        .component-header-background {
++            fill: #34445a !important;
++            stroke: #34445a !important;
++        }
++
++        .name,
++        .process-group-name,
++        .component-name {
++            fill: #ffffff !important;
++            color: #ffffff !important;
++            font-weight: 700 !important;
++        }
++
++        .component-type,
++        .process-group-type {
++            fill: #cbd5e1 !important;
++            color: #cbd5e1 !important;
++            font-size: 10px !important;
++        }
++
++        .stats-label,
++        .status-label,
++        .queued-label {
++            fill: #3b5270 !important;
++            color: #3b5270 !important;
++            font-weight: 600 !important;
++        }
++
++        .stats-value,
++        .status-value,
++        .queued-value {
++            fill: #020617 !important;
++            color: #020617 !important;
++            font-weight: 700 !important;
++        }
++
++        .process-group-stats rect,
++        .component-stats rect,
++        .status-container rect {
++            fill: #ffffff !important;
++            stroke: #e8edf4 !important;
++            stroke-width: 1px !important;
++        }
++
++        .bulletin-background {
++            fill: #ffffff !important;
++            stroke: #e8edf4 !important;
++        }
++
++        .fa-play,
++        .icon-play,
++        .fa-warning,
++        .fa-exclamation-triangle,
++        .fa-star {
++            fill: #64748b !important;
++            color: #64748b !important;
++        }
++
++        .fa-stop,
++        .icon-stop {
++            fill: #ef4444 !important;
++            color: #ef4444 !important;
++        }
++
++        .refresh-interval,
++        .status-history {
++            fill: #f1f5f9 !important;
++            stroke: #dbe4ee !important;
++        }
++    }
++}
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fc721394ec2f8e02bfb3631ffbba270854da20f3
+--- /dev/null
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
+@@ -0,0 +1,277 @@
++/*
++ * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
++ *
++ * NiFi 화면 글자를 한글로 바꾼다. 예전에는 Cerebro «ETL 관리» 화면(ConsoleFramePage)이 iframe 밖에서 이 일을 했다 -
++ * NiFi 가 영어로 그린 뒤 1초마다 문서 전체를 훑어 바꿨기 때문에 영어가 잠깐 보였고(깜빡임) 가만히 있어도 CPU 를 썼다.
++ * 이제 NiFi 안에서 화면에 그려지기 전에(MutationObserver 는 다음 그리기 전에 돈다) 바꾸고, 주기적으로 훑지 않는다.
++ *
++ * 사전과 규칙은 ConsoleFramePage 의 것을 그대로 옮겼다(2026-10-05). 낱말을 바꾸면 그쪽 판정(작업 패널 글자로 선택을 읽는 코드 등)과
++ * 맞는지 같이 본다. 대화상자 안은 바꾸지 않는다 - 예전과 같고, 프로세서 편집 잠금이 대화상자의 «Apply» 글자를 읽는다.
++ */
++const TEXT: Record<string, string> = {
++    Processor: '프로세서',
++    'Process Group': '프로세스 그룹',
++    'Remote Process Group': '원격 프로세스 그룹',
++    'Input Port': '입력 포트',
++    'Output Port': '출력 포트',
++    Funnel: '퍼널',
++    Label: '라벨',
++    Template: '템플릿',
++    'Import from Registry': '레지스트리에서 가져오기',
++    'Active Threads': '활성 스레드',
++    'Total queued data': '총 대기 데이터',
++    'Running Components': '실행 중 컴포넌트',
++    'Stopped Components': '중지된 컴포넌트',
++    'Invalid Components': '유효하지 않은 컴포넌트',
++    'Disabled Components': '비활성 컴포넌트',
++    'Valid Components': '유효한 컴포넌트',
++    'Last refresh': '마지막 새로고침',
++    'Last Refresh': '마지막 새로고침',
++    'Connected nodes / Total number of nodes in the cluster': '연결된 노드 / 클러스터 전체 노드',
++    'Transmitting Remote Process Groups': '전송 중인 원격 프로세스 그룹',
++    'Not Transmitting Remote Process Groups': '전송 중이 아닌 원격 프로세스 그룹',
++    'Up to date Versioned Process Groups': '유효한 컴포넌트',
++    'Locally modified Versioned Process Groups': '로컬 수정된 버전 프로세스 그룹',
++    'Stale Versioned Process Groups': '오래된 버전 프로세스 그룹',
++    'Locally modified and stale Versioned Process Groups': '로컬 수정 및 오래된 버전 프로세스 그룹',
++    'Sync failure Versioned Process Groups': '동기화 실패 버전 프로세스 그룹',
++    Canvas: '캔버스',
++    Summary: '요약',
++    Counter: '카운터',
++    'Bulletin Board': '공지 게시판',
++    'Data Provenance': '데이터 계보',
++    'Controller Settings': '컨트롤러 설정',
++    'Parameter Contexts': '파라미터 컨텍스트',
++    'Flow Configuration History': '플로우 구성 이력',
++    'Node Status History': '노드 상태 이력',
++    'System Diagnostics': '시스템 진단',
++    Users: '사용자',
++    Policies: '정책',
++    Help: '도움말',
++    About: '정보',
++    Appearance: '화면 표시',
++    Animations: '애니메이션',
++    Refresh: '새로고침',
++    'Leave Group': '상위 그룹으로 이동',
++    Configure: '설정',
++    'Controller Services': '컨트롤러 서비스',
++    Start: '시작',
++    Stop: '중지',
++    Enable: '활성화',
++    Disable: '비활성화',
++    'Enable All Controller Services': '모든 컨트롤러 서비스 활성화',
++    'Disable All Controller Services': '모든 컨트롤러 서비스 비활성화',
++    'View Status History': '상태 기록 조회',
++    'Manage Access Policies': '접근 권한 관리',
++    'Download Flow Definition': '플로우 정의 다운로드',
++    'Without External Services': '외부 서비스 제외',
++    'With External Services': '외부 서비스 포함',
++    'Without Externel Services': '외부 서비스 제외',
++    'With Externel Services': '외부 서비스 포함',
++    'Empty All Queues': '모든 대기열 비우기',
++    Navigation: '탐색',
++    Operation: '작업',
++    'NiFi Counters': 'ETL 카운터',
++    'NiFi Counter': 'ETL 카운터',
++    Counters: 'ETL 카운터',
++    Filter: '검색어 입력',
++    'Filter By': '필터 기준',
++    Context: '영역',
++    Name: '이름',
++    name: '이름',
++    Value: '값',
++    'NiFi Summary': '요약',
++    'Nifi Summary': '요약',
++    Processors: '프로세서',
++    'Input Ports': '입력 포트',
++    'Output Ports': '출력 포트',
++    'Remote Process Groups': '원격 프로세스 그룹',
++    Connections: '연결',
++    'Process Groups': '프로세스 그룹',
++    Status: '상태',
++    'All Statuses': '전체 상태',
++    'Primary Node': '대표 노드',
++    Type: '유형',
++    'Run Status': '실행 상태',
++    'Process Gro...': '프로세스 그룹',
++    'Process Gro…': '프로세스 그룹',
++    'Read | Write...': '읽기 | 쓰기',
++    'Read | Write…': '읽기 | 쓰기',
++    'Tasks | Tim...': '작업 수 | 시간',
++    'Tasks | Tim…': '작업 수 | 시간',
++    'NiFi Bulletin Board': 'ETL 알림판',
++    'Nifi Bulletin Board': 'ETL 알림판',
++    message: '메시지',
++    Message: '메시지',
++    Provenance: '계보',
++    'Showing the most recent events.': '최신 이벤트를 표시 중입니다.',
++    'component name': '컴포넌트 이름',
++    'Component Name': '컴포넌트 이름',
++    'Component Type': '컴포넌트 유형',
++    'Event Time': '발생 시각',
++    'FlowFile UUID': 'FlowFile UUID',
++    'File Size': '파일 크기',
++    'NiFi Settings': 'ETL 설정',
++    'Nifi Settings': 'ETL 설정',
++    General: '일반',
++    'Management Controller Services': '관리 컨트롤러 서비스',
++    'Reporting Tasks': '리포팅 태스크',
++    'Flow Analysis Rules': '플로우 분석 규칙',
++    'Registry Clients': '레지스트리 클라이언트',
++    'Parameter Providers': '파라미터 제공자',
++    'Maximum Timer Driven Thread Count': '최대 타이머 기반 스레드 수',
++    Provider: '제공자',
++    Description: '설명',
++    id: 'ID',
++    Id: 'ID',
++    ID: 'ID',
++    'Date Range': '기간',
++    'Start Time (KST)*': '시작 시간 (KST)*',
++    'End Time (KST)*': '종료 시간 (KST)*',
++    'Clear Filter': '필터 초기화',
++    'Date/Time': '일시',
++    User: '사용자',
++    user: '사용자',
++    'NiFi Users': '사용자',
++    'Nifi Users': '사용자',
++    'Add User': '사용자 추가',
++    Individual: '개인',
++    Group: '그룹',
++    'Identity*': '식별 정보*',
++    Membership: '멤버십',
++    Cancel: '취소',
++    Add: '추가',
++    Apply: '적용',
++};
++
++const ATTRIBUTES = ['title', 'aria-label', 'data-tooltip', 'mattooltip', 'tooltip', 'placeholder'];
++const DIALOG_SELECTOR = '[role="dialog"], .mat-dialog-container, .mat-mdc-dialog-container, .processor-configuration';
++const SKIP_PARENTS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA']);
++
++const SORTABLE: Array<[RegExp, string]> = [
++    [/^Name\s*([↑↓])?$/, '이름'],
++    [/^Provider\s*([↑↓])?$/, '제공자'],
++    [/^Description\s*([↑↓])?$/, '설명'],
++    [/^Id\s*([↑↓])?$/i, 'ID'],
++    [/^Date\/Time\s*([↑↓])?$/, '일시'],
++    [/^Operation\s*([↑↓])?$/, '작업'],
++    [/^User\s*([↑↓])?$/, '사용자']
++];
++
++export function translateNifiText(value: string): string | undefined {
++    const trimmed = value.trim();
++    const exact = TEXT[trimmed];
++    if (exact) {
++        return exact;
++    }
++    if (trimmed.startsWith('Active Threads')) {
++        return trimmed.replace('Active Threads', TEXT['Active Threads']);
++    }
++    const displaying = trimmed.match(/^Displaying\s+(\d+)\s+of\s+(\d+)$/i);
++    if (displaying) {
++        return `전체 ${displaying[2]}개 중 ${displaying[1]}개 표시 중`;
++    }
++    const filterMatched = trimmed.match(/^Filter\s+matched\s+(\d+)\s+of\s+(\d+)$/i);
++    if (filterMatched) {
++        return `필터 조건 일치: ${filterMatched[1]} / ${filterMatched[2]}개`;
++    }
++    const oldestEvent = trimmed.match(/^Oldest\s+event\s+available:\s*(.+)$/i);
++    if (oldestEvent) {
++        return `가장 오래된 이벤트: ${oldestEvent[1]}`;
++    }
++    if (/^Maximum\s+Timer\s+Driven\s+Thread\s+Count\b/i.test(trimmed)) {
++        return '최대 타이머 기반 스레드 수';
++    }
++    for (const [pattern, label] of SORTABLE) {
++        const matched = trimmed.match(pattern);
++        if (matched) {
++            return matched[1] ? `${label} ${matched[1]}` : label;
++        }
++    }
++    if (/^In\s+\(Size\)/i.test(trimmed)) {
++        return 'In';
++    }
++    if (/^Out\s+\(Size\)/i.test(trimmed)) {
++        return 'Out';
++    }
++    if (/^Read\s*\|\s*Write/i.test(trimmed)) {
++        return '읽기 | 쓰기';
++    }
++    if (/^Tasks\s*\|\s*Tim/i.test(trimmed)) {
++        return '작업 수 | 시간';
++    }
++    return undefined;
++}
++
++function inDialog(node: Node): boolean {
++    const element = node instanceof Element ? node : node.parentElement;
++    return Boolean(element?.closest(DIALOG_SELECTOR));
++}
++
++function translateTextNode(node: Text): void {
++    const value = node.nodeValue ?? '';
++    const trimmed = value.trim();
++    if (!trimmed || trimmed.length > 80 || trimmed.includes('\n')) {
++        return;
++    }
++    const parent = node.parentElement;
++    if (!parent || SKIP_PARENTS.has(parent.tagName) || inDialog(node)) {
++        return;
++    }
++    const translated = translateNifiText(trimmed);
++    if (translated && translated !== trimmed) {
++        node.nodeValue = value.replace(trimmed, translated);
++    }
++}
++
++function translateAttributes(element: Element): void {
++    if (inDialog(element)) {
++        return;
++    }
++    for (const name of ATTRIBUTES) {
++        const value = element.getAttribute(name);
++        const translated = value ? translateNifiText(value) : undefined;
++        if (translated && translated !== value) {
++            element.setAttribute(name, translated);
++        }
++    }
++}
++
++function translateTree(root: Node): void {
++    if (root.nodeType === Node.TEXT_NODE) {
++        translateTextNode(root as Text);
++        return;
++    }
++    if (!(root instanceof Element) || root.closest(DIALOG_SELECTOR)) {
++        return;
++    }
++    translateAttributes(root);
++    root.querySelectorAll(ATTRIBUTES.map((name) => `[${name}]`).join(', ')).forEach(translateAttributes);
++    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
++    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
++        translateTextNode(node as Text);
++    }
++}
++
++/** 앱이 그리기 전에 한 번 부른다. 그 뒤로는 새로 붙거나 바뀐 글자 · 속성만 바꾼다. */
++export function startCerebroKoreanText(): void {
++    const observer = new MutationObserver((mutations) => {
++        for (const mutation of mutations) {
++            if (mutation.type === 'characterData') {
++                translateTextNode(mutation.target as Text);
++            } else if (mutation.type === 'attributes') {
++                translateAttributes(mutation.target as Element);
++            } else {
++                mutation.addedNodes.forEach(translateTree);
++            }
++        }
++    });
++    observer.observe(document.documentElement, {
++        childList: true,
++        subtree: true,
++        characterData: true,
++        attributes: true,
++        attributeFilter: ATTRIBUTES
++    });
++    translateTree(document.body);
++}
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ui.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ui.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..01b0da2ed8ca6ce651d668c6b38feff9aa213a62
+--- /dev/null
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ui.ts
+@@ -0,0 +1,19 @@
++/*
++ * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
++ *
++ * main.ts 가 앱을 띄우기 전에 부른다.
++ *  - <html data-cerebro-nifi-ui>: «Cerebro 판 NiFi 화면»이라는 표시. Cerebro ETL 관리 화면(ConsoleFramePage)이 이걸 보고
++ *    iframe 밖에서 하던 덧칠(배치 바꾸기 · 한글 바꾸기)을 건너뛴다. 공식 화면으로 되돌리면 표시가 없어 예전 덧칠이 다시 돈다.
++ *  - <html class="cerebro-embedded">: Cerebro 안(iframe)에서 열렸을 때만. _cerebro-embedded.scss 가 이 아래에서만 배치를 바꾼다.
++ */
++import { isEmbeddedInCerebro } from './cerebro-embed';
++import { startCerebroKoreanText } from './cerebro-ko';
++
++export function initCerebroUi(): void {
++    const root = document.documentElement;
++    root.setAttribute('data-cerebro-nifi-ui', '1');
++    if (isEmbeddedInCerebro()) {
++        root.classList.add('cerebro-embedded');
++    }
++    startCerebroKoreanText();
++}
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html
+index e530d7f860b4864dd877c776957538ed47f02b9d..318ef6e1c1655b9fb47f195d99794da89c3692b2 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html
+@@ -14,6 +14,34 @@
+   ~ See the License for the specific language governing permissions and
+   ~ limitations under the License.
+   -->
++<!-- Cerebro: ETL 관리 화면(iframe) 안에서는 Cerebro 아이콘을 그린다. 원래 도구는 _cerebro-embedded.scss 가 투명하게 위에 둔다. -->
++@if (cerebroIcon) {
++    <svg
++        class="cerebro-tool-icon"
++        viewBox="0 0 24 24"
++        fill="none"
++        stroke="currentColor"
++        stroke-width="1.9"
++        stroke-linecap="round"
++        stroke-linejoin="round"
++        aria-hidden="true">
++        @switch (cerebroIcon) {
++            @case ('processor') {
++                <rect x="7" y="7" width="10" height="10" rx="1.5"></rect>
++                <path d="M4 9h3M4 15h3M17 9h3M17 15h3M9 4v3M15 4v3M9 17v3M15 17v3"></path>
++            }
++            @case ('group') {
++                <rect x="5" y="6" width="13" height="12" rx="2"></rect>
++                <path d="M9 6V4h10v10h-1"></path>
++                <path d="M8 11h7M8 14h5"></path>
++            }
++            @case ('label') {
++                <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H20l-4 7 4 7H6.5A2.5 2.5 0 0 1 4 16.5v-9z"></path>
++                <path d="M8 10h5M8 14h4"></path>
++            }
++        }
++    </svg>
++}
+ <div
+     class="new-canvas-item"
+     nifiTooltip
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.ts
+index 8370a552615ae364a614f39fb2e360c8a66d8024..843acaf9bd56404c19f6eb5c20ecd010299ffeb3 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.ts
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.ts
+@@ -26,6 +26,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+ import { CanvasView } from '../../../../service/canvas-view.service';
+ import { ComponentType, NifiTooltipDirective, TextTip } from '@nifi/shared';
+ import { ConnectedPosition } from '@angular/cdk/overlay';
++import { isEmbeddedInCerebro } from '../../../../../../cerebro/cerebro-embed';
+ 
+ @Component({
+     selector: 'new-canvas-item',
+@@ -42,6 +43,24 @@ export class NewCanvasItem {
+     @Input() tooltip = '';
+ 
+     protected readonly TextTip = TextTip;
++    private readonly embedded = isEmbeddedInCerebro();
++
++    // Cerebro: ETL 관리 화면(iframe) 안에서 그릴 아이콘. 그 밖이면 null(원래 NiFi 아이콘).
++    get cerebroIcon(): 'processor' | 'group' | 'label' | null {
++        if (!this.embedded) {
++            return null;
++        }
++        switch (this.type) {
++            case ComponentType.Processor:
++                return 'processor';
++            case ComponentType.ProcessGroup:
++                return 'group';
++            case ComponentType.Label:
++                return 'label';
++            default:
++                return null;
++        }
++    }
+ 
+     tooltipPosition: ConnectedPosition = {
+         originX: 'center',
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/main.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/main.ts
+index 2d0bdf4ada15f293f7d7a454633e3afe99c3aa76..3fe54d614a3edadfebb22dbf577c7882ce6c2829 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/main.ts
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/main.ts
+@@ -18,6 +18,7 @@
+ import { platformBrowserDynamic } from '@angular/platform-browser-dynamic';
+ 
+ import { AppModule } from './app/app.module';
++import { initCerebroUi } from './app/cerebro/cerebro-ui';
+ 
+ import 'codemirror/addon/edit/matchbrackets';
+ import 'codemirror/addon/fold/brace-fold';
+@@ -28,6 +29,9 @@ import 'codemirror/addon/fold/markdown-fold';
+ import 'codemirror/addon/fold/xml-fold';
+ import 'codemirror/addon/hint/show-hint';
+ 
++// Cerebro: 화면 표식 · Cerebro 안 배치 · 한글 바꾸기를 앱이 그리기 전에 켠다(app/cerebro/cerebro-ui.ts).
++initCerebroUi();
++
+ platformBrowserDynamic()
+     .bootstrapModule(AppModule)
+     .catch((err) => console.error(err));
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/styles.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/styles.scss
+index da74f6f69d6da340d63a944c17fea0eed8430c7f..a5df2da0800172060cb37fdb54dc9fddf928a6d8 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/styles.scss
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/styles.scss
+@@ -56,6 +56,8 @@
+     processor-status-table;
+ @use 'app/pages/flow-designer/ui/canvas/change-color-dialog/change-color-dialog.component-theme' as change-color-dialog;
+ @use 'libs/shared/src/components/map-table/editors/text-editor/text-editor.component-theme' as text-editor;
++// Cerebro: ETL 관리 화면(iframe) 안 배치 - html.cerebro-embedded 일 때만.
++@use 'app/cerebro/cerebro-embedded';
+ 
+ // Plus imports for other components in your app.
+ @use 'libs/shared/src/assets/fonts/flowfont/flowfont.css';

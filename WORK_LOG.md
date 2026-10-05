@@ -2756,3 +2756,40 @@ Incremental 에 9/30 이후 생긴 두 번째 `01_소스테이블`(id 1f80faca, 
 패널 배치 · 그룹 선택 동기화는 Cerebro 고유 기능이라 남는다(옮기려면 화면 소스에 새로 만들어야 함).
 
 **남은 것**: 채택 여부 결정. MSA 반영은 빌드 장비(메모리 · GitHub · npm 접속) 정한 뒤 - 지금은 off 라 MSA 는 영향 없음.
+
+## 79. ②안 마무리 - ETL 관리 덧칠을 NiFi 화면 소스로 옮겨 첫 진입 깜빡임 · 상시 CPU 제거 (2026-10-05)
+
+**요청**: 관리 화면 첫 진입 때 «기존 NiFi 화면»이 깜빡인다 - 적용된 것 맞나? 기존(①)과 ②의 차이, 지금 상태, 고치는 방법·경로를 자세히.
+ETL 담당자 영역은 신경 쓰지 말고 작업(사용자가 내일 담당자에게 전달).
+
+**원인(실측)**: CDP screencast 로 첫 진입을 찍으니 2.45~2.84초에 NiFi 원래 배치(위쪽 머리줄 · 상태줄)가 0.4초 보였다 - 공식 화면이 아니라
+Cerebro 화면(로고 없음 · «탐색/작업» 한글 · Pretendard)이었다. `ConsoleFramePage` 가 iframe 을 load 후 0.45~0.65초에 보이게 하고,
+NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주기 전체 훑기)이 요소에 표식을 달아야 CSS(왼쪽 아래 공구막대 등)가 걸린다.
+덧칠 조사 결과: 패널 배치 기능은 «Navigation» 글자로 패널을 찾는데 번역이 먼저 «탐색»으로 바꿔 사실상 꺼져 있었고,
+경로줄 숨김 규칙이 작업 패널의 «선택 항목»(component-context)까지 숨기고 있었다(지금 모습의 일부라 그대로 옮김).
+
+**한 일**
+- 수정분 0004(`nifi/ui-custom/patches/0004-cerebro-embedded-layout-ko.patch`, NiFi 소스 기준):
+  - `app/cerebro/cerebro-ui.ts`: main.ts 가 앱 시작 전에 부름 - `<html data-cerebro-nifi-ui>` 표시, iframe 안이면 `html.cerebro-embedded`, 번역 켜기.
+  - `app/cerebro/cerebro-ko.ts`: ConsoleFramePage 번역 사전 133개 · 규칙을 그대로 옮긴 번역기. NiFi 안 MutationObserver(그리기 전)로
+    새로 붙거나 바뀐 글자 · 속성만 바꾼다. 주기 훑기 없음. 대화상자 안은 안 바꾼다(예전과 같음 - 편집 잠금이 «Apply» 를 읽음).
+  - `app/cerebro/_cerebro-embedded.scss`: 덧칠 CSS 를 html.cerebro-embedded 아래로 옮김 - 머리줄=왼쪽 아래 세로 공구막대, 상태줄 · 메뉴 ·
+    아래 경로줄 · 작업 패널 선택 칸 숨김, 흰 캔버스, 그룹 상자 색. 표식 대신 실제 요소(`fd-header`, `new-canvas-item`, `fd-footer` …)를 선택자로.
+  - `new-canvas-item`: iframe 안이면 Cerebro 아이콘(SVG)을 템플릿에서 그림(예전엔 JS 가 끼워 넣음). 끌어다 놓기는 원래 NiFi 버튼이 투명하게 위에서 맡는다.
+- `ConsoleFramePage.tsx`: iframe 문서에 `data-cerebro-nifi-ui` 가 있으면 덧칠 4종(cleanupLegacy · hideToolChrome · patchKoreanTooltips ·
+  installNifiPanelLayout)을 건너뛰고 load 즉시 보인다. 연동(편집 잠금 · 경로 동기화 · 선택 동기화 · 메뉴 자동 클릭)은 그대로.
+  1.5초 대비 타이머는 문서가 다 읽힌 뒤에만 판단(`isFrameDocumentLoaded`) - 읽는 중인 문서에 덧칠이 붙던 경합을 막음.
+  공식 화면 · Airflow 화면은 표시가 없어 예전과 똑같이 덧칠한다.
+- `nifi/ui-custom/patch-tool.sh`: `checkout <폴더>`(공식 소스 + 수정분) · `save <폴더>`(고친 것을 수정분으로, 전체 해시로 저장해 왕복해도 같음).
+  README 를 «무엇을 어디서 고치나» 표 중심으로 다시 씀. 안내 문서 `docs/2026-10-05-nifi-ui-option2-guide.md`.
+
+**검증(로컬)**: NiFi 이미지 122초 · 화면 이미지 23~27초 빌드(스택 정지 22:49~22:55, 화면 재빌드 때는 NiFi · kafka-connect 만 2분).
+- 첫 진입 181프레임 중 iframe 위쪽에 머리줄 색이 나온 프레임 0(이전 0.4초). 로딩 중엔 빈 화면 → 바로 최종 배치.
+- iframe 문서: 덧칠 설치 표식 없음, 연동 표식(readonly-lock · route-sync · selection-sync)만(2회 확인).
+- 가만히 둔 10초의 스크립트 시간: ETL 관리 554~810ms → **19ms**. NiFi 직접 0ms.
+- 조작: 그룹 클릭 → 오른쪽 상세 바뀜, 오른쪽 클릭 메뉴 한글(설정 · 시작 · 중지 …, 사전에 없는 Enter Group · Copy 는 영어 - 예전과 같음),
+  프로세서 도구 끌어다 놓기 → «Add Processor» 대화상자(취소, 생성 없음), 더블클릭 진입 → 경로 바뀜.
+- 공식 화면으로 전환: 덧칠 설치 표식 다시 생김, 같은 조작 모두 동작, 유휴 839ms · Inter(예전 그대로) → 다시 custom. 완료 감시 RUNNING.
+
+**남은 것**: ②를 계속 쓰기로 하면 ConsoleFramePage 의 예전 덧칠 코드(약 1,500줄)는 공식 화면 대비용으로만 남는다 - 공식 화면으로 되돌릴 일이 없다고
+정하면 지울 수 있다. 대화상자 · 일부 메뉴(Enter Group 등)는 여전히 영어. MSA 반영은 빌드 장비 정한 뒤.

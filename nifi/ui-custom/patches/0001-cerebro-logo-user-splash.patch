@@ -1,5 +1,5 @@
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/app.component.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/app.component.scss
-index eb11c7a3..28fd1af8 100644
+index eb11c7a3d20d545d0d768d085660de6064fb6234..28fd1af8b71d9c29118dfede8d61771012aa562f 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/app.component.scss
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/app.component.scss
 @@ -15,9 +15,9 @@
@@ -16,7 +16,7 @@ index eb11c7a3..28fd1af8 100644
  }
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-embed.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-embed.ts
 new file mode 100644
-index 00000000..ea2fd8c8
+index 0000000000000000000000000000000000000000..ea2fd8c8e1feb0b9658f04e8f3d0351aa5278bf3
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-embed.ts
 @@ -0,0 +1,15 @@
@@ -36,7 +36,7 @@ index 00000000..ea2fd8c8
 +    }
 +}
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/error/feature/error.component.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/error/feature/error.component.scss
-index 1967102e..c5a59adf 100644
+index 1967102ee2fb0cf33afc3bf486574670bc8f82cb..c5a59adfef5fdf59db0a94bba9186178f400cde4 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/error/feature/error.component.scss
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/error/feature/error.component.scss
 @@ -16,5 +16,6 @@
@@ -48,7 +48,7 @@ index 1967102e..c5a59adf 100644
 +    background: none;
  }
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/login/feature/_login.component-theme.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/login/feature/_login.component-theme.scss
-index 6f7598db..c0f8a26a 100644
+index 6f7598db0f7a45b35d5850ee80cdbc9f9e212eee..c0f8a26affb9b17286d7f0fcf2719ad78973ace4 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/login/feature/_login.component-theme.scss
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/login/feature/_login.component-theme.scss
 @@ -36,7 +36,6 @@
@@ -61,7 +61,7 @@ index 6f7598db..c0f8a26a 100644
      }
  }
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/logout/feature/_logout.component-theme.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/logout/feature/_logout.component-theme.scss
-index d8585da7..44b5b738 100644
+index d8585da7de3d9fdd3961fb4160aaa46d4de78daf..44b5b738113cc8d727e859911118840c8c6302c2 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/logout/feature/_logout.component-theme.scss
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/logout/feature/_logout.component-theme.scss
 @@ -36,7 +36,6 @@
@@ -74,7 +74,7 @@ index d8585da7..44b5b738 100644
      }
  }
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/route-not-found/feature/route-not-found.component.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/route-not-found/feature/route-not-found.component.scss
-index c5e316a2..a228660a 100644
+index c5e316a243727d2415772651576c73bc43bce285..a228660a002a17672103eafd245ca8b0fda3f883 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/route-not-found/feature/route-not-found.component.scss
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/route-not-found/feature/route-not-found.component.scss
 @@ -16,5 +16,6 @@
@@ -86,7 +86,7 @@ index c5e316a2..a228660a 100644
 +    background: none;
  }
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.html
-index c22ee5b8..e1628140 100644
+index c22ee5b8c2daae467d7e19b5582916f6ae378351..e16281401f4b7693a197bb3e8436f8ef0477fa2b 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.html
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.html
 @@ -19,19 +19,13 @@
@@ -121,7 +121,7 @@ index c22ee5b8..e1628140 100644
                          <i class="fa fa-navicon text-[32px]"></i>
                      </button>
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.ts
-index 24c1ec1c..23ee6b50 100644
+index 24c1ec1c59360a26f866b621f537f12f8e8cb8ed..23ee6b5033b6ce5be461ae775d4ff4fabf87cccd 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.ts
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.ts
 @@ -46,6 +46,7 @@ import {

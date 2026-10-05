@@ -1,5 +1,5 @@
 diff --git a/nifi-frontend/src/main/frontend/libs/shared/src/assets/themes/material.scss b/nifi-frontend/src/main/frontend/libs/shared/src/assets/themes/material.scss
-index bb25c0ee..6ea725ea 100644
+index bb25c0eeac80071c2e3edb1e28e3acdcbfb787ad..6ea725eaf418dc51ba630f4b0f4c7d5aa1c1d84d 100644
 --- a/nifi-frontend/src/main/frontend/libs/shared/src/assets/themes/material.scss
 +++ b/nifi-frontend/src/main/frontend/libs/shared/src/assets/themes/material.scss
 @@ -29,41 +29,55 @@

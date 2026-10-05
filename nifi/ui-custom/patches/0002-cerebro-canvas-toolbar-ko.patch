@@ -1,5 +1,5 @@
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/navigation-control/navigation-control.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/navigation-control/navigation-control.component.html
-index 8f1f309..e7f45d2 100644
+index 8f1f309618e725a1abe3939021d3e0e30786bc03..e7f45d2b08355d59d4b5ef123aab5d8534294c89 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/navigation-control/navigation-control.component.html
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/navigation-control/navigation-control.component.html
 @@ -20,7 +20,7 @@
@@ -12,7 +12,7 @@ index 8f1f309..e7f45d2 100644
          </div>
          @if (!navigationCollapsed || !shouldDockWhenCollapsed) {
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/operation-control/operation-control.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/operation-control/operation-control.component.html
-index 3aa493f..a9a8ee7 100644
+index 3aa493f75f049d76b65e3de5481e44dec3d7b12f..a9a8ee7e344ef51def3313107d5ec06117bdb9e1 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/operation-control/operation-control.component.html
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/operation-control/operation-control.component.html
 @@ -20,7 +20,7 @@
@@ -25,7 +25,7 @@ index 3aa493f..a9a8ee7 100644
          </div>
          @if (!operationCollapsed || !shouldDockWhenCollapsed) {
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.html
-index 5d9c04b..d50e2a3 100644
+index 5d9c04b55ae7ed0b3521636f9e0ce70fd4bd9f6a..d50e2a323a44cede96aee4491c7754c54d483793 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.html
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.html
 @@ -17,9 +17,11 @@
@@ -159,7 +159,7 @@ index 5d9c04b..d50e2a3 100644
          <div class="flex">
              <search [currentProcessGroupId]="currentProcessGroupId"></search>
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.ts
-index adabd60..bd6b883 100644
+index adabd604972f17925e83f74428bb87bc719e15d2..bd6b883060bb07a89767a3441e7b821ce863ae7c 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.ts
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.ts
 @@ -31,6 +31,7 @@ import { Store } from '@ngrx/store';
@@ -191,7 +191,7 @@ index adabd60..bd6b883 100644
      }
  
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html
-index 7c32034..bb529d9 100644
+index 7c320341e38fc19bd4657d4e23d52d94751b99a7..bb529d9ad359c376fd391ed84c3e25caeaff9cd6 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html
 @@ -17,55 +17,63 @@
@@ -267,7 +267,7 @@ index 7c32034..bb529d9 100644
      </navigation>
      <flow-status
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts
-index 196af83..8573fdc 100644
+index 196af83b9379161daafd1154f1bb86ee800736a7..8573fdc849927846e83ec7a673016ebf0526d705 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts
 @@ -38,6 +38,7 @@ import { FlowStatus } from './flow-status/flow-status.component';
