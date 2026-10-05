@@ -191,17 +191,34 @@ index adabd604972f17925e83f74428bb87bc719e15d2..bd6b883060bb07a89767a3441e7b821c
      }
  
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html
-index 7c320341e38fc19bd4657d4e23d52d94751b99a7..bb529d9ad359c376fd391ed84c3e25caeaff9cd6 100644
+index 7c320341e38fc19bd4657d4e23d52d94751b99a7..bbb23d09963ffb9f1d28fd5b7a984c3bbe917b04 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html
-@@ -17,55 +17,63 @@
+@@ -17,55 +17,76 @@
  
  <header class="nifi-header">
      <navigation>
 +        <!--
-+            Cerebro: 도구 이름은 한글로(ETL 관리 화면 덧칠의 번역 사전과 같은 낱말 - 덧칠이 이 tooltip 속성으로 도구를 찾는다).
-+            Cerebro 안(iframe)에서는 ETL job 을 만드는 데 쓰는 프로세서 · 프로세스 그룹 · 라벨만 보인다.
++            Cerebro: 도구 이름은 한글로(ETL 관리 화면 덧칠의 번역 사전과 같은 낱말 - 공식 화면으로 되돌렸을 때 덧칠이 이 tooltip 속성으로 도구를 찾는다).
++            Cerebro 안(iframe)에서는 디자인(etl-manage)대로 새로고침 + 도구 8개를 가로 막대로 - 배치 · 순서는 _cerebro-embedded.scss.
 +        -->
++        @if (embedded) {
++            <button type="button" class="cerebro-refresh" tooltip="새로고침" aria-label="새로고침" (click)="refresh()">
++                <svg
++                    viewBox="0 0 24 24"
++                    fill="none"
++                    stroke="currentColor"
++                    stroke-width="2.2"
++                    stroke-linecap="round"
++                    stroke-linejoin="round"
++                    aria-hidden="true">
++                    <polyline points="23 4 23 10 17 10"></polyline>
++                    <polyline points="1 20 1 14 7 14"></polyline>
++                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
++                </svg>
++            </button>
++            <div class="cerebro-toolbar-divider"></div>
++        }
          @if (canvasPermissions$ | async; as canvasPermissions) {
              <new-canvas-item
                  [type]="ComponentType.Processor"
@@ -210,7 +227,6 @@ index 7c320341e38fc19bd4657d4e23d52d94751b99a7..bb529d9ad359c376fd391ed84c3e25ca
                  iconHoverClass="icon-processor-add"
 -                tooltip="Processor"></new-canvas-item>
 +                tooltip="프로세서"></new-canvas-item>
-+            @if (!embedded) {
              <new-canvas-item
                  [type]="ComponentType.InputPort"
                  [disabled]="!canvasPermissions.canWrite"
@@ -225,7 +241,6 @@ index 7c320341e38fc19bd4657d4e23d52d94751b99a7..bb529d9ad359c376fd391ed84c3e25ca
                  iconHoverClass="icon-port-out-add"
 -                tooltip="Output Port"></new-canvas-item>
 +                tooltip="출력 포트"></new-canvas-item>
-+            }
              <new-canvas-item
                  [type]="ComponentType.ProcessGroup"
                  [disabled]="!canvasPermissions.canWrite"
@@ -233,7 +248,6 @@ index 7c320341e38fc19bd4657d4e23d52d94751b99a7..bb529d9ad359c376fd391ed84c3e25ca
                  iconHoverClass="icon-group-add"
 -                tooltip="Process Group"></new-canvas-item>
 +                tooltip="프로세스 그룹"></new-canvas-item>
-+            @if (!embedded) {
              <new-canvas-item
                  [type]="ComponentType.RemoteProcessGroup"
                  [disabled]="!canvasPermissions.canWrite"
@@ -255,7 +269,6 @@ index 7c320341e38fc19bd4657d4e23d52d94751b99a7..bb529d9ad359c376fd391ed84c3e25ca
                  iconHoverClass="icon-import-from-registry-add"
 -                tooltip="Import from Registry"></new-canvas-item>
 +                tooltip="레지스트리에서 가져오기"></new-canvas-item>
-+            }
              <new-canvas-item
                  [type]="ComponentType.Label"
                  [disabled]="!canvasPermissions.canWrite"
@@ -267,10 +280,18 @@ index 7c320341e38fc19bd4657d4e23d52d94751b99a7..bb529d9ad359c376fd391ed84c3e25ca
      </navigation>
      <flow-status
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts
-index 196af83b9379161daafd1154f1bb86ee800736a7..8573fdc849927846e83ec7a673016ebf0526d705 100644
+index 196af83b9379161daafd1154f1bb86ee800736a7..0ea4efcbae39352317e68d5f3339c3458a2d1669 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts
-@@ -38,6 +38,7 @@ import { FlowStatus } from './flow-status/flow-status.component';
+@@ -27,6 +27,7 @@ import {
+     selectFlowAnalysisOpen,
+     selectLastRefreshed
+ } from '../../../state/flow/flow.selectors';
++import { reloadFlow } from '../../../state/flow/flow.actions';
+ import { LoadingService } from '../../../../../service/loading.service';
+ import { NewCanvasItem } from './new-canvas-item/new-canvas-item.component';
+ import { MatButtonModule } from '@angular/material/button';
+@@ -38,6 +39,7 @@ import { FlowStatus } from './flow-status/flow-status.component';
  import { Navigation } from '../../../../../ui/common/navigation/navigation.component';
  import { selectClusterSummary } from '../../../../../state/cluster-summary/cluster-summary.selectors';
  import { selectFlowAnalysisState } from '../../../state/flow-analysis/flow-analysis.selectors';
@@ -278,7 +299,7 @@ index 196af83b9379161daafd1154f1bb86ee800736a7..8573fdc849927846e83ec7a673016ebf
  
  @Component({
      selector: 'fd-header',
-@@ -58,6 +59,7 @@ import { selectFlowAnalysisState } from '../../../state/flow-analysis/flow-analy
+@@ -58,6 +60,7 @@ import { selectFlowAnalysisState } from '../../../state/flow-analysis/flow-analy
  })
  export class HeaderComponent {
      protected readonly ComponentType = ComponentType;
@@ -286,3 +307,13 @@ index 196af83b9379161daafd1154f1bb86ee800736a7..8573fdc849927846e83ec7a673016ebf
  
      controllerStatus$ = this.store.select(selectControllerStatus);
      lastRefreshed$ = this.store.select(selectLastRefreshed);
+@@ -72,4 +75,9 @@ export class HeaderComponent {
+         private store: Store<CanvasState>,
+         public loadingService: LoadingService
+     ) {}
++
++    // Cerebro: 공구막대 새로고침 단추(디자인) - 캔버스 오른쪽 클릭 «새로고침»과 같은 동작.
++    refresh(): void {
++        this.store.dispatch(reloadFlow());
++    }
+ }

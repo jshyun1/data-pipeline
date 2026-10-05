@@ -1,46 +1,52 @@
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss
 new file mode 100644
-index 0000000000000000000000000000000000000000..5a3151b734df277850da993a9d2e7f684f5378e3
+index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca023542fa
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,675 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
-+ * Cerebro «ETL 관리» 화면(iframe) 안에서의 NiFi 배치. html.cerebro-embedded 일 때만(cerebro-ui.ts) - NiFi 에 직접 들어오면 원래 배치.
-+ * 예전 ConsoleFramePage 의 HIDE_TOOL_CHROME_CSS 를 옮긴 것이다(2026-10-05). 그때는 NiFi 가 다 그린 뒤 JS 가 요소마다 표식을 달아야
-+ * 적용돼서 첫 진입 때 원래 배치(위쪽 머리줄 · 상태줄)가 0.4초쯤 보였다. 여기서는 처음 그릴 때부터 이 배치다.
++ * Cerebro «ETL 관리» 화면(iframe) 안에서의 NiFi 캔버스 모양. html.cerebro-embedded 일 때만(cerebro-ui.ts) - NiFi 에 직접 들어오면 원래 모양.
++ * 디자인: CEREBRO_ETL_UI_DESIGN_20260917 etl-manage.html · css/etl-manage.css 의 캔버스 부분(2026-10-05 적용). 값은 디자인 CSS 그대로다.
++ * 캔버스 바탕만 디자인(점 격자)과 달리 흰색으로 둔다(사용자 요청).
 + *
-+ *   머리줄      → 왼쪽 아래 세로 공구막대(도구 3개, Cerebro 아이콘 · 마우스 올리면 이름). 상태줄 · 메뉴 단추는 숨김
-+ *   아래 경로줄 → 숨김(왼쪽 트리가 위치를 보여준다), 작업 패널의 «선택 항목» 칸도 숨김(예전 덧칠과 같은 모습)
-+ *   캔버스      → 흰 바탕, 프로세스 그룹 상자 색
++ *   공구막대   → 왼쪽 위 가로 막대: 새로고침 | 그룹 · 원격 그룹 · 입력/출력 포트 · 퍼널 · 프로세서 · 레지스트리 가져오기 · 라벨
++ *   메뉴(≡)    → 오른쪽 위 단추(NiFi 전역 메뉴)
++ *   탐색 · 작업 → 왼쪽 위 떠 있는 창(머리띠 · 확대 단추 줄 · 미니맵 / 선택 정보 · 동작 단추)
++ *   경로       → 왼쪽 아래 둥근 알약
++ *   그룹 · 프로세서 · 연결선(SVG) → 디자인 색 · 테두리 · 선택 표시(빨강)
++ *
++ * 예전(①)에는 ConsoleFramePage 가 iframe 밖에서 비슷한 일을 했다(HIDE_TOOL_CHROME_CSS) - 그때 모양(왼쪽 아래 세로 막대)은 이 디자인으로 바뀌었다.
 + */
++$cerebro-red: #ff3b30;
++
 +html.cerebro-embedded {
 +    .splash {
 +        display: none !important;
 +    }
 +
-+    // ETL 이 띄우는 안내 글자(«프로세스 그룹» 등)는 이 겹침 칸에 그려진다 - 공구막대(아래 z-index)보다 위로.
++    // ETL 이 띄우는 안내 글자(«프로세스 그룹» 등)는 이 겹침 칸에 그려진다 - 공구막대 · 창보다 위로.
 +    .cdk-overlay-container {
 +        z-index: 100010 !important;
 +    }
 +
++    /* ---------------- 1. 공구막대 (디자인 .nifi-toolbar-wrap / .nifi-component-toolbar) ---------------- */
++
 +    fd-header header.nifi-header {
 +        position: fixed !important;
-+        left: 14px !important;
-+        bottom: 14px !important;
-+        // 캔버스 쪽 패널(9100)보다 위 - 왼쪽 아래 구석의 작은 칸이라 다른 조작을 가리지 않는다.
-+        z-index: 100000 !important;
-+        width: 42px !important;
-+        padding: 6px 5px !important;
++        top: 14px !important;
++        left: 16px !important;
++        z-index: 30 !important;
 +        display: flex !important;
-+        flex-direction: column !important;
 +        align-items: center !important;
-+        gap: 6px !important;
-+        background: #ffffff !important;
-+        border: 1px solid #dbe3ee !important;
-+        border-radius: 9px !important;
-+        box-shadow: 0 2px 8px rgb(15 23 42 / 9%) !important;
++        width: auto !important;
++        height: auto !important;
++        padding: 4px 6px !important;
++        background: rgba(255, 255, 255, 0.98) !important;
++        border: 1px solid #cbd5e1 !important;
++        border-radius: 8px !important;
++        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08) !important;
 +        overflow: visible !important;
 +
 +        > flow-status {
@@ -53,9 +59,9 @@ index 0000000000000000000000000000000000000000..5a3151b734df277850da993a9d2e7f68
 +        nav.nifi-navigation > div,
 +        nav.nifi-navigation > div > div:first-child {
 +            display: flex !important;
-+            flex-direction: column !important;
++            flex-direction: row !important;
 +            align-items: center !important;
-+            gap: 6px !important;
++            gap: 3px !important;
 +            width: auto !important;
 +            height: auto !important;
 +            min-height: 0 !important;
@@ -66,28 +72,113 @@ index 0000000000000000000000000000000000000000..5a3151b734df277850da993a9d2e7f68
 +            box-shadow: none !important;
 +        }
 +
-+        // 사용자 이름(0001 이 안 그림) · 전역 메뉴 단추 묶음
++        // 사용자 이름(0001 이 안 그림) · 전역 메뉴 단추 묶음 - 칸을 차지하지 않게 하고 단추만 오른쪽 위로 뺀다.
 +        nav.nifi-navigation > div > div:not(:first-child) {
-+            display: none !important;
++            display: contents !important;
 +        }
 +
++        .cerebro-refresh {
++            order: -2;
++        }
++        .cerebro-toolbar-divider {
++            order: -1;
++            width: 1px;
++            height: 18px;
++            margin: 0 3px;
++            background: #e2e8f0;
++        }
++        // 디자인 순서: 그룹 · 원격 그룹 · 입력 포트 · 출력 포트 · 퍼널 · 프로세서 · 템플릿(→ 레지스트리 가져오기) · 라벨
++        new-canvas-item[tooltip='프로세스 그룹'] {
++            order: 1;
++        }
++        new-canvas-item[tooltip='원격 프로세스 그룹'] {
++            order: 2;
++        }
++        new-canvas-item[tooltip='입력 포트'] {
++            order: 3;
++        }
++        new-canvas-item[tooltip='출력 포트'] {
++            order: 4;
++        }
++        new-canvas-item[tooltip='퍼널'] {
++            order: 5;
++        }
++        new-canvas-item[tooltip='프로세서'] {
++            order: 6;
++        }
++        new-canvas-item[tooltip='레지스트리에서 가져오기'] {
++            order: 7;
++        }
++        new-canvas-item[tooltip='라벨'] {
++            order: 8;
++        }
++
++        .cerebro-refresh,
 +        new-canvas-item {
 +            position: relative !important;
-+            width: 30px !important;
-+            height: 30px !important;
-+            min-width: 30px !important;
-+            min-height: 30px !important;
-+            margin: 0 !important;
-+            padding: 0 !important;
 +            display: inline-flex !important;
 +            align-items: center !important;
 +            justify-content: center !important;
-+            border: 1px solid #dbe3ee !important;
++            width: 32px !important;
++            height: 32px !important;
++            min-width: 32px !important;
++            margin: 0 !important;
++            padding: 0 !important;
++            border: 1.5px solid transparent !important;
 +            border-radius: 6px !important;
-+            background: #ffffff !important;
++            background: transparent !important;
 +            color: #475569 !important;
-+            box-shadow: 0 1px 2px rgb(15 23 42 / 8%) !important;
-+            overflow: hidden !important;
++            cursor: pointer;
++            transition: all 0.15s ease;
++
++            &:hover {
++                background: #f1f5f9 !important;
++                color: #0f172a !important;
++            }
++
++            // 말풍선(디자인 .toolbar-btn::after) - 아래쪽
++            &::after {
++                content: attr(tooltip);
++                position: absolute;
++                top: 100%;
++                left: 50%;
++                transform: translateX(-50%) translateY(8px);
++                z-index: 100002;
++                padding: 4px 8px;
++                border-radius: 4px;
++                background: #0f172a;
++                color: #ffffff;
++                font-size: 11px;
++                font-weight: 500;
++                line-height: 1.3;
++                white-space: nowrap;
++                opacity: 0;
++                pointer-events: none;
++                transition:
++                    opacity 0.18s ease,
++                    transform 0.18s ease;
++            }
++
++            &:hover::after {
++                opacity: 1;
++                transform: translateX(-50%) translateY(5px);
++            }
++
++            svg {
++                width: 17px;
++                height: 17px;
++            }
++        }
++
++        // 디자인에서 «선택된» 모양인 그룹 도구(.toolbar-btn.active)
++        new-canvas-item[tooltip='프로세스 그룹'] {
++            border-color: $cerebro-red !important;
++            background: #fff1f0 !important;
++            color: $cerebro-red !important;
++            box-shadow: 0 1px 3px rgba(255, 59, 48, 0.15) !important;
++        }
++
++        new-canvas-item {
 +            cursor: grab !important;
 +            user-select: none !important;
 +            touch-action: none !important;
@@ -96,89 +187,386 @@ index 0000000000000000000000000000000000000000..5a3151b734df277850da993a9d2e7f68
 +                cursor: grabbing !important;
 +            }
 +
-+            &:hover {
-+                overflow: visible !important;
-+                background: #f8fafc !important;
-+                color: #0f172a !important;
-+            }
-+
-+            &[tooltip='프로세스 그룹'] {
-+                border-color: #ff3b30 !important;
-+                background: #ffffff !important;
-+                color: #ff3b30 !important;
-+                box-shadow: none !important;
-+            }
-+
-+            // NiFi 원래 도구(끌어다 놓기를 맡는다)는 투명하게 위에 둔다 - 보이는 것은 아래의 Cerebro 아이콘.
-+            > :not(.cerebro-tool-icon),
-+            > :not(.cerebro-tool-icon) * {
-+                opacity: 0 !important;
-+                background: transparent !important;
-+                border-color: transparent !important;
-+                box-shadow: none !important;
-+            }
-+
-+            > :not(.cerebro-tool-icon) {
++            // NiFi 원래 도구(끌어다 놓기를 맡는다)는 32px 칸에 맞춰 투명하게 위에 둔다 - 보이는 것은 아래의 Cerebro 아이콘.
++            > .new-canvas-item {
++                position: absolute !important;
++                inset: 0 !important;
 +                z-index: 2 !important;
-+                pointer-events: auto !important;
++                opacity: 0 !important;
++
++                > div {
++                    display: none !important;
++                }
++
++                > button {
++                    width: 32px !important;
++                    height: 32px !important;
++                    margin: 0 !important;
++                    padding: 0 !important;
++                }
 +            }
 +
 +            .cerebro-tool-icon {
 +                position: absolute !important;
 +                inset: 0 !important;
-+                width: 18px !important;
-+                height: 18px !important;
 +                margin: auto !important;
 +                pointer-events: none !important;
 +                z-index: 1 !important;
++            }
++        }
 +
-+                * {
-+                    vector-effect: non-scaling-stroke;
-+                }
++        // 전역 메뉴 단추(디자인 .btn-canvas-menu) - 오른쪽 위
++        button.global-menu {
++            position: fixed !important;
++            top: 14px !important;
++            right: 16px !important;
++            z-index: 30 !important;
++            display: flex !important;
++            align-items: center !important;
++            justify-content: center !important;
++            width: 34px !important;
++            height: 34px !important;
++            min-width: 34px !important;
++            padding: 0 !important;
++            border: 1px solid #cbd5e1 !important;
++            border-radius: 8px !important;
++            background: rgba(255, 255, 255, 0.98) !important;
++            color: #475569 !important;
++            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08) !important;
++            transition: all 0.15s ease;
++
++            &:hover {
++                background: #f8fafc !important;
++                border-color: #94a3b8 !important;
++                color: #0f172a !important;
 +            }
 +
-+            // 마우스를 올리면 오른쪽에 이름
-+            &:hover::after {
-+                content: attr(tooltip);
-+                position: absolute;
-+                left: calc(100% + 8px);
-+                top: 50%;
-+                transform: translateY(-50%);
-+                z-index: 100002;
-+                min-width: max-content;
-+                max-width: 180px;
-+                padding: 5px 8px;
-+                border: 1px solid #cbd5e1;
-+                border-radius: 6px;
-+                background: #0f172a;
-+                color: #ffffff;
-+                font-size: 12px;
-+                font-weight: 600;
-+                line-height: 1.2;
-+                white-space: nowrap;
-+                box-shadow: 0 6px 16px rgb(15 23 42 / 18%);
-+                pointer-events: none;
-+            }
-+
-+            &:hover::before {
-+                content: '';
-+                position: absolute;
-+                left: calc(100% + 3px);
-+                top: 50%;
-+                transform: translateY(-50%) rotate(45deg);
-+                z-index: 100001;
-+                width: 8px;
-+                height: 8px;
-+                background: #0f172a;
-+                pointer-events: none;
++            i {
++                margin: 0 !important;
++                font-size: 18px !important;
++                line-height: 1 !important;
 +            }
 +        }
 +    }
 +
-+    fd-footer,
-+    operation-control component-context {
-+        display: none !important;
++    /* ---------------- 2. 탐색 · 작업 창 (디자인 .canvas-nav-window / .canvas-operate-window) ---------------- */
++
++    div.graph-controls {
++        left: 16px !important;
++        top: 62px !important;
++        z-index: 25 !important;
++        gap: 10px !important;
 +    }
++
++    div.navigation-control,
++    div.operation-control {
++        width: 240px !important;
++        margin: 0 !important;
++        gap: 0 !important;
++        overflow: hidden !important;
++        background: rgba(255, 255, 255, 0.98) !important;
++        border: 1px solid #cbd5e1 !important;
++        border-radius: 8px !important;
++        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08) !important;
++    }
++
++    .navigation-control-header,
++    .operation-control-header {
++        align-items: center !important;
++        padding: 6px 10px !important;
++        background: #f1f5f9 !important;
++        border-bottom: 1px solid #e2e8f0 !important;
++
++        > div:first-child {
++            gap: 5px;
++        }
++
++        .text-sm {
++            font-size: 12px !important;
++            font-weight: 700 !important;
++            line-height: 1.4 !important;
++            color: #334155 !important;
++        }
++
++        .fa {
++            width: auto !important;
++            height: auto !important;
++            line-height: 1 !important;
++            font-size: 13px !important;
++            color: #334155 !important;
++        }
++
++        // 디자인 아이콘: 탐색 = 돋보기, 작업 = 손바닥, 접기 = −, 펼치기 = +
++        .fa-compass::before {
++            content: '\f002';
++        }
++        .fa-hand-o-up::before {
++            content: '\f256';
++        }
++        .navigation-control-expansion,
++        .operation-control-expansion {
++            padding: 2px 4px;
++            border-radius: 4px;
++            font-size: 11px !important;
++            color: #64748b !important;
++
++            &:hover {
++                background: #e2e8f0;
++                color: #0f172a !important;
++            }
++        }
++        .fa-minus-square-o::before {
++            content: '\f068';
++        }
++        .fa-plus-square-o::before {
++            content: '\f067';
++        }
++    }
++
++    .navigation-control > div.w-72,
++    .operation-control > div.w-72 {
++        width: auto !important;
++        padding: 0 !important;
++        gap: 0 !important;
++        background: #ffffff;
++    }
++
++    // 확대 단추 줄(디자인 .nav-zoom-toolbar / .btn-zoom)
++    .navigation-control > div.w-72 > div.flex {
++        display: flex !important;
++        gap: 3px !important;
++        padding: 5px 6px !important;
++        border-bottom: 1px solid #f1f5f9;
++
++        > div.flex {
++            display: contents !important;
++        }
++
++        button.mat-mdc-icon-button {
++            --mdc-icon-button-state-layer-size: 24px;
++            flex: 1;
++            width: auto !important;
++            height: 24px !important;
++            margin: 0 !important;
++            padding: 0 !important;
++            border: 1px solid #e2e8f0 !important;
++            border-radius: 4px !important;
++            background: #f8fafc !important;
++            color: #475569 !important;
++            font-size: 12px !important;
++
++            &:hover {
++                background: #edf2f7 !important;
++                border-color: #cbd5e1 !important;
++                color: #0f172a !important;
++            }
++
++            i {
++                margin: 0 !important;
++                font-size: 12px !important;
++            }
++
++            // 화면 맞춤 = 대각 화살표, 1:1 = 글자, 상위 그룹 = 위 화살표.
++            // NiFi 아이콘 글꼴(flowfont.css)이 ::before 에 글꼴 · 폭을 직접 주므로 ::before 에 덮어쓴다.
++            i.icon-zoom-fit::before {
++                content: '\f065';
++                width: auto;
++                margin: 0;
++                font-family: FontAwesome !important;
++            }
++            i.icon-zoom-actual::before {
++                content: '1:1';
++                width: auto;
++                margin: 0;
++                font-family: 'Pretendard Variable', Inter, sans-serif !important;
++                font-size: 10.5px;
++                font-weight: 700;
++            }
++            i.fa-level-up::before {
++                content: '\f062';
++            }
++        }
++    }
++
++    // 미니맵(디자인 .nav-minimap-body) - 크기는 NiFi 가 이 상자에서 잰다.
++    #birdseye {
++        width: 238px !important;
++        height: 100px !important;
++        border: 0 !important;
++        background: #f8fafc !important;
++
++        rect.birdseye-brush {
++            stroke: #2563eb !important;
++            fill: rgba(37, 99, 235, 0.1) !important;
++        }
++    }
++
++    // 작업 창 본문(디자인 .operate-window-body)
++    .operation-control > div.w-72 {
++        padding: 10px !important;
++    }
++
++    .component-context {
++        margin-bottom: 8px;
++
++        > div.flex {
++            align-items: flex-start !important;
++            gap: 8px !important;
++        }
++
++        .context-logo {
++            flex-shrink: 0;
++            width: 36px;
++            height: 36px;
++            align-items: center !important;
++            justify-content: center !important;
++            border: 1px solid #e2e8f0;
++            border-radius: 6px;
++            background: #ffffff;
++            font-size: 22px !important;
++
++            i {
++                color: #8c5836 !important;
++            }
++        }
++
++        .context-name {
++            overflow: hidden;
++            font-size: 13.5px;
++            font-weight: 700;
++            color: #0f172a;
++            white-space: nowrap;
++            text-overflow: ellipsis;
++        }
++
++        .context-type {
++            padding-top: 1px !important;
++            font-size: 11px;
++            font-weight: 600;
++            color: #0d9488 !important;
++        }
++
++        .context-id {
++            max-width: 175px;
++            margin: 3px 0 0 44px;
++            overflow: hidden;
++            font-family: monospace;
++            font-size: 10px;
++            line-height: 1.2;
++            color: #64748b !important;
++            white-space: nowrap;
++            text-overflow: ellipsis;
++        }
++    }
++
++    // 동작 단추(디자인 .operate-action-row / .btn-operate-icon-action)
++    .operation-control > div.w-72 > div.flex-col {
++        gap: 6px !important;
++
++        > div.flex {
++            gap: 4px !important;
++        }
++        > div.flex:first-child {
++            justify-content: space-between;
++        }
++
++        button.mat-mdc-icon-button {
++            --mdc-icon-button-state-layer-size: 30px;
++            width: 32px !important;
++            height: 30px !important;
++            margin: 0 !important;
++            padding: 0 !important;
++            border: 1px solid #e2e8f0 !important;
++            border-radius: 6px !important;
++            background: #f8fafc !important;
++            color: #004d40 !important;
++            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
++            transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
++
++            i {
++                margin: 0 !important;
++                font-size: 15px !important;
++            }
++
++            &:not([disabled]):hover {
++                background: #ffffff !important;
++                border-color: $cerebro-red !important;
++                color: $cerebro-red !important;
++                box-shadow: 0 2px 6px rgba(255, 59, 48, 0.18);
++                transform: translateY(-1px);
++            }
++
++            &[disabled] {
++                color: #94a3b8 !important;
++                opacity: 0.7;
++            }
++        }
++    }
++
++    /* ---------------- 3. 경로 (디자인 .canvas-breadcrumb-bar) ---------------- */
++
++    fd-footer {
++        position: fixed !important;
++        left: 16px !important;
++        bottom: 16px !important;
++        z-index: 20 !important;
++
++        .breadcrumb-container {
++            padding: 5px 14px !important;
++            border: 1px solid #cbd5e1 !important;
++            border-radius: 20px !important;
++            background: rgba(255, 255, 255, 0.95) !important;
++            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08) !important;
++        }
++
++        .breadcrumbs {
++            padding: 0 !important;
++            overflow: visible !important;
++            font-size: 12px;
++            font-weight: 600;
++            color: #64748b;
++
++            > div {
++                height: auto !important;
++            }
++
++            a {
++                color: #64748b !important;
++                text-decoration: none !important;
++                cursor: pointer;
++
++                &:hover {
++                    color: $cerebro-red !important;
++                }
++
++                &.current-process-group {
++                    color: #0f172a !important;
++                    font-weight: 700 !important;
++                }
++            }
++
++            // 맨 앞 «🏠» · 구분자 «>»(NiFi 는 «»»)
++            > div:first-child a::before {
++                content: '\f015';
++                margin-right: 6px;
++                font-family: FontAwesome;
++                font-weight: normal;
++            }
++
++            .mx-3\.5 {
++                margin: 0 6px !important;
++                font-size: 0;
++                color: #cbd5e1;
++
++                &::before {
++                    content: '>';
++                    font-size: 12px;
++                }
++            }
++        }
++    }
++
++    /* ---------------- 4. 캔버스(SVG) - 바탕은 흰색 그대로 ---------------- */
 +
 +    body,
 +    #canvas-container,
@@ -187,93 +575,107 @@ index 0000000000000000000000000000000000000000..5a3151b734df277850da993a9d2e7f68
 +        background-image: none !important;
 +    }
 +
-+    svg g.process-group {
-+        rect {
-+            shape-rendering: crispEdges !important;
++    svg.canvas-svg {
++        // 모든 컴포넌트 테두리 · 선택(디자인 .nifi-node-card / .selected)
++        g.component rect.border {
++            stroke: #cbd5e1 !important;
++            stroke-width: 1.5px;
 +        }
 +
-+        .body,
-+        .border,
-+        .process-group-background,
-+        .process-group-body,
-+        .component-background {
-+            fill: #ffffff !important;
-+            stroke: #d8e0ea !important;
-+            stroke-width: 1px !important;
++        g.component.selected rect.border {
++            stroke: $cerebro-red !important;
++            stroke-width: 2px;
 +        }
 +
-+        .component-header,
-+        .header,
-+        .process-group-header,
-+        .process-group-header-background,
-+        .component-header-background {
-+            fill: #34445a !important;
-+            stroke: #34445a !important;
-+        }
-+
-+        .name,
-+        .process-group-name,
-+        .component-name {
-+            fill: #ffffff !important;
-+            color: #ffffff !important;
-+            font-weight: 700 !important;
-+        }
-+
-+        .component-type,
-+        .process-group-type {
-+            fill: #cbd5e1 !important;
-+            color: #cbd5e1 !important;
-+            font-size: 10px !important;
-+        }
-+
-+        .stats-label,
-+        .status-label,
-+        .queued-label {
-+            fill: #3b5270 !important;
-+            color: #3b5270 !important;
-+            font-weight: 600 !important;
-+        }
-+
-+        .stats-value,
-+        .status-value,
-+        .queued-value {
-+            fill: #020617 !important;
-+            color: #020617 !important;
-+            font-weight: 700 !important;
-+        }
-+
-+        .process-group-stats rect,
-+        .component-stats rect,
-+        .status-container rect {
-+            fill: #ffffff !important;
-+            stroke: #e8edf4 !important;
-+            stroke-width: 1px !important;
-+        }
-+
-+        .bulletin-background {
-+            fill: #ffffff !important;
-+            stroke: #e8edf4 !important;
-+        }
-+
-+        .fa-play,
-+        .icon-play,
-+        .fa-warning,
-+        .fa-exclamation-triangle,
-+        .fa-star {
-+            fill: #64748b !important;
-+            color: #64748b !important;
-+        }
-+
-+        .fa-stop,
-+        .icon-stop {
-+            fill: #ef4444 !important;
-+            color: #ef4444 !important;
-+        }
-+
-+        .refresh-interval,
-+        .status-history {
++        rect.row-border,
++        rect.process-group-stats-border,
++        rect.processor-stats-border {
 +            fill: #f1f5f9 !important;
-+            stroke: #dbe4ee !important;
++        }
++
++        rect.odd,
++        rect.even,
++        rect.process-group-stats-in-out,
++        rect.processor-read-write-stats {
++            fill: #ffffff !important;
++        }
++
++        text.stats-label {
++            fill: #64748b !important;
++            font-weight: 600;
++        }
++
++        text.stats-value {
++            fill: #0f172a !important;
++        }
++
++        text.stats-info {
++            fill: #94a3b8 !important;
++        }
++
++        // 프로세스 그룹(디자인 .nifi-card-header / .nifi-status-bar / .nifi-metrics-table)
++        rect.process-group-banner,
++        rect.remote-process-group-banner {
++            fill: #334155 !important;
++        }
++
++        text.process-group-name,
++        text.remote-process-group-name {
++            fill: #ffffff !important;
++            font-weight: 700;
++        }
++
++        rect.process-group-details-banner {
++            fill: #f8fafc !important;
++        }
++
++        text.process-group-contents-count {
++            fill: #64748b !important;
++            font-weight: 600;
++        }
++
++        // 프로세서(디자인 .nifi-processor-card / .proc-header)
++        rect.processor-icon-container {
++            fill: #f8fafc !important;
++        }
++
++        text.processor-icon {
++            fill: #475569 !important;
++        }
++
++        text.processor-name {
++            fill: #0f172a !important;
++            font-weight: 700;
++        }
++
++        text.processor-type {
++            fill: #64748b !important;
++        }
++
++        text.processor-bundle {
++            fill: #94a3b8 !important;
++        }
++
++        // 연결선 · 대기열 상자(디자인 .pipeline-connector-svg / .flow-queue-box)
++        g.connection path.connection-path {
++            stroke: #94a3b8 !important;
++        }
++
++        marker#normal,
++        marker#normal path {
++            fill: #94a3b8 !important;
++        }
++
++        g.connection rect.body {
++            fill: #ffffff !important;
++        }
++
++        g.connection rect.border {
++            stroke: #cbd5e1 !important;
++        }
++
++        g.connection.selected rect.border {
++            stroke: $cerebro-red !important;
 +        }
 +    }
 +}
@@ -585,38 +987,87 @@ index 0000000000000000000000000000000000000000..01b0da2ed8ca6ce651d668c6b38feff9
 +    }
 +    startCerebroKoreanText();
 +}
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/birdseye-view.service.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/birdseye-view.service.ts
+index f27e1219a947658c6215cd66e57006686c459442..eb232539da206d427147e4f982472519c89b8dce 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/birdseye-view.service.ts
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/birdseye-view.service.ts
+@@ -316,7 +316,8 @@ export class BirdseyeView {
+         });
+ 
+         // remote process groups
+-        context.fillStyle = '#728e9b';
++        // Cerebro: 미니맵 상자 색을 Cerebro 디자인(etl-manage 미니맵 #94a3b8)으로.
++        context.fillStyle = '#94a3b8';
+         this.remoteProcessGroupManager.selectAll().each(function (d: any) {
+             context.fillRect(d.position.x, d.position.y, d.dimensions.width, d.dimensions.height);
+         });
+@@ -328,8 +329,8 @@ export class BirdseyeView {
+ 
+         // processors
+         this.processorManager.selectAll().each((d: ComponentEntityWithDimensions) => {
+-            // default color
+-            let color = '#dde4eb';
++            // default color (Cerebro: 디자인 미니맵 색)
++            let color = '#94a3b8';
+ 
+             if (d.permissions.canRead) {
+                 // use the specified color if appropriate
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html
-index e530d7f860b4864dd877c776957538ed47f02b9d..318ef6e1c1655b9fb47f195d99794da89c3692b2 100644
+index e530d7f860b4864dd877c776957538ed47f02b9d..2ab6818740dfd1b47beb0b109cf177d253fa569c 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html
-@@ -14,6 +14,34 @@
+@@ -14,12 +14,64 @@
    ~ See the License for the specific language governing permissions and
    ~ limitations under the License.
    -->
-+<!-- Cerebro: ETL 관리 화면(iframe) 안에서는 Cerebro 아이콘을 그린다. 원래 도구는 _cerebro-embedded.scss 가 투명하게 위에 둔다. -->
++<!-- Cerebro: ETL 관리 화면(iframe) 안에서는 디자인(CEREBRO_ETL_UI_DESIGN_20260917 etl-manage) 아이콘을 그린다.
++     원래 NiFi 도구는 _cerebro-embedded.scss 가 투명하게 위에 둔다 - 끌어다 놓기는 그대로 NiFi 가 한다. -->
 +@if (cerebroIcon) {
 +    <svg
 +        class="cerebro-tool-icon"
 +        viewBox="0 0 24 24"
 +        fill="none"
 +        stroke="currentColor"
-+        stroke-width="1.9"
++        stroke-width="2"
 +        stroke-linecap="round"
 +        stroke-linejoin="round"
 +        aria-hidden="true">
 +        @switch (cerebroIcon) {
-+            @case ('processor') {
-+                <rect x="7" y="7" width="10" height="10" rx="1.5"></rect>
-+                <path d="M4 9h3M4 15h3M17 9h3M17 15h3M9 4v3M15 4v3M9 17v3M15 17v3"></path>
-+            }
 +            @case ('group') {
-+                <rect x="5" y="6" width="13" height="12" rx="2"></rect>
-+                <path d="M9 6V4h10v10h-1"></path>
-+                <path d="M8 11h7M8 14h5"></path>
++                <rect x="3" y="3" width="13" height="13" rx="2"></rect>
++                <rect x="8" y="8" width="13" height="13" rx="2"></rect>
++            }
++            @case ('remote') {
++                <circle cx="12" cy="12" r="9"></circle>
++                <line x1="2" y1="12" x2="22" y2="12"></line>
++                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
++            }
++            @case ('input') {
++                <circle cx="12" cy="12" r="9"></circle>
++                <polyline points="12 8 16 12 12 16"></polyline>
++                <line x1="8" y1="12" x2="16" y2="12"></line>
++            }
++            @case ('output') {
++                <circle cx="12" cy="12" r="9"></circle>
++                <polyline points="12 16 8 12 12 8"></polyline>
++                <line x1="16" y1="12" x2="8" y2="12"></line>
++            }
++            @case ('funnel') {
++                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
++            }
++            @case ('processor') {
++                <circle cx="12" cy="12" r="3"></circle>
++                <path
++                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
++            }
++            @case ('import') {
++                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
++                <polyline points="7 10 12 15 17 10"></polyline>
++                <line x1="12" y1="15" x2="12" y2="3"></line>
 +            }
 +            @case ('label') {
-+                <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H20l-4 7 4 7H6.5A2.5 2.5 0 0 1 4 16.5v-9z"></path>
-+                <path d="M8 10h5M8 14h4"></path>
++                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
++                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
 +            }
 +        }
 +    </svg>
@@ -624,8 +1075,15 @@ index e530d7f860b4864dd877c776957538ed47f02b9d..318ef6e1c1655b9fb47f195d99794da8
  <div
      class="new-canvas-item"
      nifiTooltip
+     [tooltipComponentType]="TextTip"
+     [tooltipInputData]="tooltip"
+-    [tooltipDisabled]="dragging"
++    [tooltipDisabled]="dragging || embedded"
+     [position]="tooltipPosition"
+     [delayClose]="false">
+     <div class="h-16 w-16 pl-1.5 flex items-center justify-center relative icon text-3xl" [class]="iconClass"></div>
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.ts
-index 8370a552615ae364a614f39fb2e360c8a66d8024..843acaf9bd56404c19f6eb5c20ecd010299ffeb3 100644
+index 8370a552615ae364a614f39fb2e360c8a66d8024..c7b90a430082ca835bb112c14dd7f04e2f66b358 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.ts
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.ts
 @@ -26,6 +26,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -636,22 +1094,32 @@ index 8370a552615ae364a614f39fb2e360c8a66d8024..843acaf9bd56404c19f6eb5c20ecd010
  
  @Component({
      selector: 'new-canvas-item',
-@@ -42,6 +43,24 @@ export class NewCanvasItem {
+@@ -42,6 +43,34 @@ export class NewCanvasItem {
      @Input() tooltip = '';
  
      protected readonly TextTip = TextTip;
-+    private readonly embedded = isEmbeddedInCerebro();
++    // Cerebro: ETL 관리 화면(iframe) 안이면 디자인 아이콘 · 디자인 말풍선(_cerebro-embedded.scss)을 쓰고 NiFi 말풍선은 끈다.
++    protected readonly embedded = isEmbeddedInCerebro();
 +
-+    // Cerebro: ETL 관리 화면(iframe) 안에서 그릴 아이콘. 그 밖이면 null(원래 NiFi 아이콘).
-+    get cerebroIcon(): 'processor' | 'group' | 'label' | null {
++    get cerebroIcon(): string | null {
 +        if (!this.embedded) {
 +            return null;
 +        }
 +        switch (this.type) {
-+            case ComponentType.Processor:
-+                return 'processor';
 +            case ComponentType.ProcessGroup:
 +                return 'group';
++            case ComponentType.RemoteProcessGroup:
++                return 'remote';
++            case ComponentType.InputPort:
++                return 'input';
++            case ComponentType.OutputPort:
++                return 'output';
++            case ComponentType.Funnel:
++                return 'funnel';
++            case ComponentType.Processor:
++                return 'processor';
++            case ComponentType.Flow:
++                return 'import';
 +            case ComponentType.Label:
 +                return 'label';
 +            default:

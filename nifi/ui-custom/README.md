@@ -15,11 +15,12 @@ NiFi 엔진은 공식 이미지를 그대로 쓰고, **화면(nifi-frontend)만*
 
 | 바꾸고 싶은 것 | 파일 | 수정분 |
 |---|---|---|
-| Cerebro 안(iframe)에서의 배치 - 공구막대 위치 · 모양, 숨길 것, 캔버스 · 그룹 상자 색 | `apps/nifi/src/app/cerebro/_cerebro-embedded.scss` | 0004 |
+| Cerebro 안(iframe)에서의 배치 · 디자인(etl-manage) - 공구막대 · 메뉴 · 탐색/작업 창 · 경로 알약 · 그룹/프로세서/연결선 색 | `apps/nifi/src/app/cerebro/_cerebro-embedded.scss` | 0004 |
 | 한글 낱말(사전) · 번역 규칙 | `apps/nifi/src/app/cerebro/cerebro-ko.ts` | 0004 |
-| 공구막대 도구 아이콘(Cerebro 안) | `apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html` · `.ts` | 0004 |
+| 공구막대 도구 아이콘(Cerebro 안, 디자인 8종) | `apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html` · `.ts` | 0004 |
+| 미니맵 상자 색 | `apps/nifi/src/app/pages/flow-designer/service/birdseye-view.service.ts` | 0004 |
 | 시작 때 할 일(표시 · Cerebro 안 판정 · 번역 켜기) | `apps/nifi/src/app/cerebro/cerebro-ui.ts`, `apps/nifi/src/main.ts`, `apps/nifi/src/styles.scss` | 0004 |
-| 도구 이름 · Cerebro 안에서 보일 도구 | `apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html` · `.ts` | 0002 |
+| 도구 이름 · 새로고침 단추(Cerebro 안) | `apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html` · `.ts` | 0002 |
 | 상태줄 이름 · 숨김 | `.../canvas/header/flow-status/flow-status.component.html` · `.ts` | 0002 |
 | 탐색 · 작업 패널 제목 | `.../canvas/graph-controls/navigation-control/…html`, `operation-control/…html` | 0002 |
 | 로고 · 사용자 이름 · 로딩 · 오류 화면 그림 | `apps/nifi/src/app/ui/common/navigation/navigation.component.*`, `app.component.scss`, `pages/{error,route-not-found,login,logout}/…scss` | 0001 |
