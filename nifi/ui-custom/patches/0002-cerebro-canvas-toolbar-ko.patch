@@ -1,0 +1,288 @@
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/navigation-control/navigation-control.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/navigation-control/navigation-control.component.html
+index 8f1f309..e7f45d2 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/navigation-control/navigation-control.component.html
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/navigation-control/navigation-control.component.html
+@@ -20,7 +20,7 @@
+         <div class="flex items-center">
+             <div class="fa fa-compass primary-color"></div>
+             @if (!navigationCollapsed || !shouldDockWhenCollapsed) {
+-                <div class="text-sm">Navigation</div>
++                <div class="text-sm">탐색</div>
+             }
+         </div>
+         @if (!navigationCollapsed || !shouldDockWhenCollapsed) {
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/operation-control/operation-control.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/operation-control/operation-control.component.html
+index 3aa493f..a9a8ee7 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/operation-control/operation-control.component.html
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/graph-controls/operation-control/operation-control.component.html
+@@ -20,7 +20,7 @@
+         <div class="flex items-center">
+             <div class="fa fa-hand-o-up primary-color"></div>
+             @if (!operationCollapsed || !shouldDockWhenCollapsed) {
+-                <div class="text-sm">Operation</div>
++                <div class="text-sm">작업</div>
+             }
+         </div>
+         @if (!operationCollapsed || !shouldDockWhenCollapsed) {
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.html
+index 5d9c04b..d50e2a3 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.html
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.html
+@@ -17,9 +17,11 @@
+ 
+ <div class="h-8 flow-status border-b select-none">
+     <div class="flex justify-between">
++        <!-- Cerebro: 상태 이름은 한글로. Cerebro 안(iframe)에서는 상태 숫자 줄을 숨기고 검색 · 흐름 분석 · 알림만 둔다. -->
+         <div class="flex flex-1 justify-around pr-20">
++            @if (!embedded) {
+             @if (clusterSummary?.clustered) {
+-                <div class="flex items-center gap-x-2" title="Connected nodes / Total number of nodes in the cluster">
++                <div class="flex items-center gap-x-2" title="연결된 노드 / 클러스터 전체 노드">
+                     <div class="fa fa-cubes" [class]="getClusterStyle()"></div>
+                     <div class="text">{{ formatClusterMessage() }}</div>
+                 </div>
+@@ -28,11 +30,11 @@
+                 <div class="icon icon-threads" [class]="getActiveThreadsStyle()"></div>
+                 <div class="tertiary-color font-medium">{{ formatActiveThreads() }}</div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Total queued data">
++            <div class="flex items-center gap-x-2" title="총 대기 데이터">
+                 <div class="fa fa-list" [class]="getQueuedStyle()"></div>
+                 <div class="tertiary-color font-medium">{{ controllerStatus.queued }}</div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Transmitting Remote Process Groups">
++            <div class="flex items-center gap-x-2" title="전송 중인 원격 프로세스 그룹">
+                 <div
+                     class="fa fa-bullseye"
+                     [class]="getActiveStyle(controllerStatus.activeRemotePortCount, 'success-color-variant')"></div>
+@@ -40,7 +42,7 @@
+                     {{ formatValue(controllerStatus.activeRemotePortCount) }}
+                 </div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Not Transmitting Remote Process Groups">
++            <div class="flex items-center gap-x-2" title="전송 중이 아닌 원격 프로세스 그룹">
+                 <div
+                     class="icon icon-transmit-false"
+                     [class]="getActiveStyle(controllerStatus.inactiveRemotePortCount, 'neutral-color')"></div>
+@@ -48,7 +50,7 @@
+                     {{ formatValue(controllerStatus.inactiveRemotePortCount) }}
+                 </div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Running Components">
++            <div class="flex items-center gap-x-2" title="실행 중 컴포넌트">
+                 <div
+                     class="fa fa-play"
+                     [class]="getActiveStyle(controllerStatus.runningCount, 'success-color-default')"></div>
+@@ -56,7 +58,7 @@
+                     {{ formatValue(controllerStatus.runningCount) }}
+                 </div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Stopped Components">
++            <div class="flex items-center gap-x-2" title="중지된 컴포넌트">
+                 <div
+                     class="fa fa-stop"
+                     [class]="getActiveStyle(controllerStatus.stoppedCount, 'error-color-variant')"></div>
+@@ -64,7 +66,7 @@
+                     {{ formatValue(controllerStatus.stoppedCount) }}
+                 </div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Invalid Components">
++            <div class="flex items-center gap-x-2" title="유효하지 않은 컴포넌트">
+                 <div
+                     class="fa fa-warning invalid"
+                     [class]="getActiveStyle(controllerStatus.invalidCount, 'caution-color')"></div>
+@@ -72,7 +74,7 @@
+                     {{ formatValue(controllerStatus.invalidCount) }}
+                 </div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Disabled Components">
++            <div class="flex items-center gap-x-2" title="비활성 컴포넌트">
+                 <div
+                     class="icon icon-enable-false"
+                     [class]="getActiveStyle(controllerStatus.disabledCount, 'neutral-color')"></div>
+@@ -80,7 +82,7 @@
+                     {{ formatValue(controllerStatus.disabledCount) }}
+                 </div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Up to date Versioned Process Groups">
++            <div class="flex items-center gap-x-2" title="최신 버전 프로세스 그룹">
+                 <div
+                     class="fa fa-check"
+                     [class]="getActiveStyle(controllerStatus.upToDateCount, 'success-color-default')"></div>
+@@ -88,7 +90,7 @@
+                     {{ formatValue(controllerStatus.upToDateCount) }}
+                 </div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Locally modified Versioned Process Groups">
++            <div class="flex items-center gap-x-2" title="로컬 수정된 버전 프로세스 그룹">
+                 <div
+                     class="fa fa-asterisk"
+                     [class]="getActiveStyle(controllerStatus.locallyModifiedCount, 'neutral-color')"></div>
+@@ -96,7 +98,7 @@
+                     {{ formatValue(controllerStatus.locallyModifiedCount) }}
+                 </div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Stale Versioned Process Groups">
++            <div class="flex items-center gap-x-2" title="오래된 버전 프로세스 그룹">
+                 <div
+                     class="fa fa-arrow-circle-up"
+                     [class]="getActiveStyle(controllerStatus.staleCount, 'error-color-variant')"></div>
+@@ -104,7 +106,7 @@
+                     {{ formatValue(controllerStatus.staleCount) }}
+                 </div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Locally modified and stale Versioned Process Groups">
++            <div class="flex items-center gap-x-2" title="로컬 수정 및 오래된 버전 프로세스 그룹">
+                 <div
+                     class="fa fa-exclamation-circle"
+                     [class]="
+@@ -114,7 +116,7 @@
+                     {{ formatValue(controllerStatus.locallyModifiedAndStaleCount) }}
+                 </div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Sync failure Versioned Process Groups">
++            <div class="flex items-center gap-x-2" title="동기화 실패 버전 프로세스 그룹">
+                 <div
+                     class="fa fa-question"
+                     [class]="getActiveStyle(controllerStatus.syncFailureCount, 'neutral-color')"></div>
+@@ -122,10 +124,11 @@
+                     {{ formatValue(controllerStatus.syncFailureCount) }}
+                 </div>
+             </div>
+-            <div class="flex items-center gap-x-2" title="Last refresh">
++            <div class="flex items-center gap-x-2" title="마지막 새로고침">
+                 <div class="fa fa-refresh primary-color" [class.fa-spin]="loadingStatus"></div>
+                 <div class="tertiary-color font-medium">{{ lastRefreshed }}</div>
+             </div>
++            }
+         </div>
+         <div class="flex">
+             <search [currentProcessGroupId]="currentProcessGroupId"></search>
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.ts
+index adabd60..bd6b883 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.ts
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/flow-status/flow-status.component.ts
+@@ -31,6 +31,7 @@ import { Store } from '@ngrx/store';
+ import { NiFiState } from '../../../../../../state';
+ import { setFlowAnalysisOpen } from '../../../../state/flow/flow.actions';
+ import { CanvasUtils } from '../../../../service/canvas-utils.service';
++import { isEmbeddedInCerebro } from '../../../../../../cerebro/cerebro-embed';
+ 
+ @Component({
+     selector: 'flow-status',
+@@ -40,6 +41,7 @@ import { CanvasUtils } from '../../../../service/canvas-utils.service';
+     styleUrls: ['./flow-status.component.scss']
+ })
+ export class FlowStatus {
++    protected readonly embedded = isEmbeddedInCerebro();
+     private static readonly FLOW_ANALYSIS_VISIBILITY_KEY: string = 'flow-analysis-visibility';
+     private static readonly FLOW_ANALYSIS_KEY: string = 'flow-analysis';
+     public flowAnalysisNotificationClass: string = '';
+@@ -125,9 +127,9 @@ export class FlowStatus {
+ 
+     getActiveThreadsTitle(): string {
+         if (this.hasTerminatedThreads()) {
+-            return 'Active Threads (Terminated)';
++            return '활성 스레드 (강제 종료 포함)';
+         } else {
+-            return 'Active Threads';
++            return '활성 스레드';
+         }
+     }
+ 
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html
+index 7c32034..bb529d9 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html
+@@ -17,55 +17,63 @@
+ 
+ <header class="nifi-header">
+     <navigation>
++        <!--
++            Cerebro: 도구 이름은 한글로(ETL 관리 화면 덧칠의 번역 사전과 같은 낱말 - 덧칠이 이 tooltip 속성으로 도구를 찾는다).
++            Cerebro 안(iframe)에서는 ETL job 을 만드는 데 쓰는 프로세서 · 프로세스 그룹 · 라벨만 보인다.
++        -->
+         @if (canvasPermissions$ | async; as canvasPermissions) {
+             <new-canvas-item
+                 [type]="ComponentType.Processor"
+                 [disabled]="!canvasPermissions.canWrite"
+                 iconClass="icon-processor"
+                 iconHoverClass="icon-processor-add"
+-                tooltip="Processor"></new-canvas-item>
++                tooltip="프로세서"></new-canvas-item>
++            @if (!embedded) {
+             <new-canvas-item
+                 [type]="ComponentType.InputPort"
+                 [disabled]="!canvasPermissions.canWrite"
+                 iconClass="icon-port-in"
+                 iconHoverClass="icon-port-in-add"
+-                tooltip="Input Port"></new-canvas-item>
++                tooltip="입력 포트"></new-canvas-item>
+             <new-canvas-item
+                 [type]="ComponentType.OutputPort"
+                 [disabled]="!canvasPermissions.canWrite"
+                 iconClass="icon-port-out"
+                 iconHoverClass="icon-port-out-add"
+-                tooltip="Output Port"></new-canvas-item>
++                tooltip="출력 포트"></new-canvas-item>
++            }
+             <new-canvas-item
+                 [type]="ComponentType.ProcessGroup"
+                 [disabled]="!canvasPermissions.canWrite"
+                 iconClass="icon-group"
+                 iconHoverClass="icon-group-add"
+-                tooltip="Process Group"></new-canvas-item>
++                tooltip="프로세스 그룹"></new-canvas-item>
++            @if (!embedded) {
+             <new-canvas-item
+                 [type]="ComponentType.RemoteProcessGroup"
+                 [disabled]="!canvasPermissions.canWrite"
+                 iconClass="icon-group-remote"
+                 iconHoverClass="icon-group-remote-add"
+-                tooltip="Remote Process Group"></new-canvas-item>
++                tooltip="원격 프로세스 그룹"></new-canvas-item>
+             <new-canvas-item
+                 [type]="ComponentType.Funnel"
+                 [disabled]="!canvasPermissions.canWrite"
+                 iconClass="icon-funnel"
+                 iconHoverClass="icon-funnel-add"
+-                tooltip="Funnel"></new-canvas-item>
++                tooltip="퍼널"></new-canvas-item>
+             <new-canvas-item
+                 [type]="ComponentType.Flow"
+                 [disabled]="!canvasPermissions.canWrite"
+                 iconClass="icon-import-from-registry"
+                 iconHoverClass="icon-import-from-registry-add"
+-                tooltip="Import from Registry"></new-canvas-item>
++                tooltip="레지스트리에서 가져오기"></new-canvas-item>
++            }
+             <new-canvas-item
+                 [type]="ComponentType.Label"
+                 [disabled]="!canvasPermissions.canWrite"
+                 iconClass="icon-label"
+                 iconHoverClass="icon-label-add"
+-                tooltip="Label"></new-canvas-item>
++                tooltip="라벨"></new-canvas-item>
+         }
+     </navigation>
+     <flow-status
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts
+index 196af83..8573fdc 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts
+@@ -38,6 +38,7 @@ import { FlowStatus } from './flow-status/flow-status.component';
+ import { Navigation } from '../../../../../ui/common/navigation/navigation.component';
+ import { selectClusterSummary } from '../../../../../state/cluster-summary/cluster-summary.selectors';
+ import { selectFlowAnalysisState } from '../../../state/flow-analysis/flow-analysis.selectors';
++import { isEmbeddedInCerebro } from '../../../../../cerebro/cerebro-embed';
+ 
+ @Component({
+     selector: 'fd-header',
+@@ -58,6 +59,7 @@ import { selectFlowAnalysisState } from '../../../state/flow-analysis/flow-analy
+ })
+ export class HeaderComponent {
+     protected readonly ComponentType = ComponentType;
++    protected readonly embedded = isEmbeddedInCerebro();
+ 
+     controllerStatus$ = this.store.select(selectControllerStatus);
+     lastRefreshed$ = this.store.select(selectLastRefreshed);

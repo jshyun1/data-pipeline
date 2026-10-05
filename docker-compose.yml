@@ -197,6 +197,8 @@ services:
         NIFI_IMAGE_TAG: ${NIFI_IMAGE_TAG}
         POSTGRES_JDBC_VERSION: ${POSTGRES_JDBC_VERSION}
         OJDBC_VERSION: ${OJDBC_VERSION}
+        # Cerebro NiFi 화면(nifi/ui-custom)을 이미지에 같이 빌드할지(on | off). 기본 off - nifi/Dockerfile 주석 참고.
+        CEREBRO_NIFI_UI_BUILD: ${CEREBRO_NIFI_UI_BUILD:-off}
     container_name: nifi
     restart: unless-stopped
     depends_on:
@@ -207,6 +209,9 @@ services:
       # TZ는 OS/로그 시간에, user.timezone은 NiFi가 생성하는 화면·API 시간값에 적용된다.
       TZ: Asia/Seoul
       JAVA_TOOL_OPTIONS: "-Duser.timezone=Asia/Seoul"
+      # NiFi 화면: official(공식) | custom(Cerebro 화면, 이미지를 CEREBRO_NIFI_UI_BUILD=on 으로 빌드했을 때만).
+      # 바꾼 뒤 `docker compose up -d nifi` 로 다시 띄우면 된다 - 되돌리기도 같다(apply-nifi-properties.sh).
+      CEREBRO_NIFI_UI: ${CEREBRO_NIFI_UI:-official}
       NIFI_WEB_HTTPS_HOST: 0.0.0.0
       NIFI_WEB_HTTPS_PORT: ${NIFI_HTTPS_PORT}
       NIFI_JVM_HEAP_INIT: ${NIFI_JVM_HEAP_INIT}

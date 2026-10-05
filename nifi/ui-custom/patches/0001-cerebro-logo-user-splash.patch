@@ -1,0 +1,142 @@
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/app.component.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/app.component.scss
+index eb11c7a3..28fd1af8 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/app.component.scss
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/app.component.scss
+@@ -15,9 +15,9 @@
+  * limitations under the License.
+  */
+ 
++// Cerebro: 로딩 화면의 NiFi 물방울 그림을 빼고 돌아가는 표시만 남긴다.
+ .splash {
+     .splash-img {
+-        background: transparent url(../../../../libs/shared/src/assets/icons/nifi-drop-splash.svg) no-repeat center
+-            center;
++        background: transparent;
+     }
+ }
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-embed.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-embed.ts
+new file mode 100644
+index 00000000..ea2fd8c8
+--- /dev/null
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-embed.ts
+@@ -0,0 +1,15 @@
++/*
++ * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
++ *
++ * Cerebro «ETL 관리» 화면은 NiFi 를 iframe 으로 띄운다. 기능을 줄이는 변경(도구 숨김, 사용자 이름 · 로그아웃 숨김)은
++ * 그 안에서 열렸을 때만 적용한다 - NiFi 에 직접 들어온 관리자는 원래 기능(깔때기 · 포트 등)을 그대로 써야 한다.
++ * 모양만 바꾸는 변경(한글 · 색 · 글꼴)은 어디서 열든 적용한다.
++ */
++export function isEmbeddedInCerebro(): boolean {
++    try {
++        return window.self !== window.top;
++    } catch {
++        // 다른 출처의 부모가 접근을 막으면 예외가 난다 - 그 자체가 iframe 안이라는 뜻이다.
++        return true;
++    }
++}
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/error/feature/error.component.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/error/feature/error.component.scss
+index 1967102e..c5a59adf 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/error/feature/error.component.scss
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/error/feature/error.component.scss
+@@ -16,5 +16,6 @@
+  */
+ 
+ .error-background {
+-    background: url(../../../../../../../libs/shared/src/assets/icons/bg-error.png) left top no-repeat;
++    // Cerebro: NiFi 물방울 배경 그림을 뺀다.
++    background: none;
+ }
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/login/feature/_login.component-theme.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/login/feature/_login.component-theme.scss
+index 6f7598db..c0f8a26a 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/login/feature/_login.component-theme.scss
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/login/feature/_login.component-theme.scss
+@@ -36,7 +36,6 @@
+                 $is-material-dark,
+                 $material-theme-neutral-palette-darker,
+                 $material-theme-neutral-palette-lighter
+-            )
+-            url(../../../../../../../libs/shared/src/assets/icons/bg-error.png) left top no-repeat;
++            ); // Cerebro: NiFi 물방울 배경 그림을 빼고 바탕색만 남긴다.
+     }
+ }
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/logout/feature/_logout.component-theme.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/logout/feature/_logout.component-theme.scss
+index d8585da7..44b5b738 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/logout/feature/_logout.component-theme.scss
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/logout/feature/_logout.component-theme.scss
+@@ -36,7 +36,6 @@
+                 $is-material-dark,
+                 $material-theme-neutral-palette-darker,
+                 $material-theme-neutral-palette-lighter
+-            )
+-            url(../../../../../../../libs/shared/src/assets/icons/bg-error.png) left top no-repeat;
++            ); // Cerebro: NiFi 물방울 배경 그림을 빼고 바탕색만 남긴다.
+     }
+ }
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/route-not-found/feature/route-not-found.component.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/route-not-found/feature/route-not-found.component.scss
+index c5e316a2..a228660a 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/route-not-found/feature/route-not-found.component.scss
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/route-not-found/feature/route-not-found.component.scss
+@@ -16,5 +16,6 @@
+  */
+ 
+ .error-background {
+-    background: url(../../../../../../../libs/shared/src/assets/icons/bg-error.png) left top no-repeat;
++    // Cerebro: NiFi 물방울 배경 그림을 뺀다.
++    background: none;
+ }
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.html
+index c22ee5b8..e1628140 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.html
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.html
+@@ -19,19 +19,13 @@
+     <nav class="nifi-navigation select-none">
+         <div class="flex justify-between items-center h-16 pl-4">
+             <div class="flex">
+-                <div class="h-16 w-28 mr-6 relative">
+-                    <img
+-                        ngSrc="assets/icons/nifi-logo.svg"
+-                        fill
+-                        priority
+-                        alt="NiFi Logo"
+-                        class="pointer"
+-                        [routerLink]="getCanvasLink()" />
+-                </div>
++                <!-- Cerebro: NiFi 로고를 뺀다(화면 맨 위 Cerebro 머리줄이 이미 있다). 캔버스로 가기는 전역 메뉴 «Canvas». -->
+                 <ng-content></ng-content>
+             </div>
+             @if (currentUser(); as user) {
+                 <div class="flex justify-between items-center gap-x-1">
++                    <!-- Cerebro: 사용자 이름 · 로그인 · 로그아웃은 Cerebro 머리줄이 맡는다. NiFi 에 직접 들어온 경우에만 보인다. -->
++                    @if (!embedded) {
+                     <div class="flex flex-col justify-between items-end gap-y-1">
+                         @if (!user.anonymous) {
+                             <div class="current-user">{{ user.identity }}</div>
+@@ -43,6 +37,7 @@
+                             <a (click)="logout()">log out</a>
+                         }
+                     </div>
++                    }
+                     <button mat-button [matMenuTriggerFor]="globalMenu" class="global-menu-icon global-menu">
+                         <i class="fa fa-navicon text-[32px]"></i>
+                     </button>
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.ts
+index 24c1ec1c..23ee6b50 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.ts
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/ui/common/navigation/navigation.component.ts
+@@ -46,6 +46,7 @@ import {
+ import { selectClusterSummary } from '../../../state/cluster-summary/cluster-summary.selectors';
+ import { selectLoginConfiguration } from '../../../state/login-configuration/login-configuration.selectors';
+ import { selectBackNavigation } from '../../../state/navigation/navigation.selectors';
++import { isEmbeddedInCerebro } from '../../../cerebro/cerebro-embed';
+ 
+ @Component({
+     selector: 'navigation',
+@@ -65,6 +66,7 @@ import { selectBackNavigation } from '../../../state/navigation/navigation.selec
+     styleUrls: ['./navigation.component.scss']
+ })
+ export class Navigation implements OnInit, OnDestroy {
++    readonly embedded = isEmbeddedInCerebro();
+     theme: any | undefined;
+     darkModeOn: boolean | undefined;
+     LIGHT_THEME: string = LIGHT_THEME;

@@ -1,4 +1,8 @@
 ARG NIFI_IMAGE_TAG=2.2.0
+# Cerebro NiFi 화면(②안, 2026-10-05 시험): on 이면 NiFi 화면을 공식 소스 + nifi/ui-custom/patches 로 빌드해 이미지에 같이 넣는다.
+# 기본 off - 빌드에 메모리 2GB 이상 · GitHub · npm 접속이 필요하고, off 면 이미지 내용이 예전과 같다(MSA 영향 없음).
+# 넣은 화면을 실제로 쓸지는 기동 때 CEREBRO_NIFI_UI(official | custom)로 고른다 - apply-nifi-properties.sh.
+ARG CEREBRO_NIFI_UI_BUILD=off
 
 # Cerebro NiFi 확장(NAR) 빌드 - job 완료 · 실패 감시(Reporting Task). 소스: extensions/cerebro-nifi (2026-10-05).
 # NiFi 소스는 건드리지 않고 공식 확장 방식으로 끼워 넣는다.
@@ -9,6 +13,25 @@ COPY extensions/cerebro-nifi/ ./
 # 끊김에 대비해 재시도도 늘린다.
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -q -B -Dmaven.wagon.http.retryHandler.count=5 -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 package
+
+FROM apache/nifi:${NIFI_IMAGE_TAG} AS nifi-official
+
+# Cerebro NiFi 화면 빌드(CEREBRO_NIFI_UI_BUILD=on 일 때만 이 단계를 탄다). 화면은 node 22 이상이 필요하다(NiFi 2.2.0 package.json).
+FROM node:22-bookworm-slim AS nifi-ui-on
+ARG NIFI_IMAGE_TAG
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3 && rm -rf /var/lib/apt/lists/*
+COPY ui-custom/ /ui-custom/
+COPY --from=nifi-official /opt/nifi/nifi-current/lib/nifi-server-nar-${NIFI_IMAGE_TAG}.nar /build/official/
+ENV NODE_OPTIONS=--max-old-space-size=3072
+RUN --mount=type=cache,target=/root/.npm \
+    sh /ui-custom/build.sh "${NIFI_IMAGE_TAG}" "/build/official/nifi-server-nar-${NIFI_IMAGE_TAG}.nar" /out
+
+# off: 빈 결과. 새 이미지를 받지 않도록 이미 받는 공식 NiFi 이미지를 쓴다.
+FROM apache/nifi:${NIFI_IMAGE_TAG} AS nifi-ui-off
+USER root
+RUN mkdir -p /out
+
+FROM nifi-ui-${CEREBRO_NIFI_UI_BUILD} AS nifi-ui
 
 FROM apache/nifi:${NIFI_IMAGE_TAG}
 
@@ -40,6 +63,12 @@ RUN mkdir -p /opt/nifi/nifi-current/drivers && \
 # Cerebro 확장은 lib 에 둔다. 자동 로드 폴더(nar_extensions)를 쓰지 않는 이유: 볼륨으로 잡히면 이미지에 넣은 파일이
 # 예전 볼륨 내용에 가려진다. lib 는 이미지 쪽이라 이미지를 다시 만들면 항상 새 NAR 이 들어간다.
 COPY --from=cerebro-nar --chown=nifi:nifi /build/cerebro-nifi-nar/target/cerebro-nifi-nar-*.nar /opt/nifi/nifi-current/lib/
+
+# NiFi 화면 고르기용: 공식 화면 NAR 사본(되돌리기용, 항상)과 Cerebro 화면 NAR(빌드했을 때만). 기동 때 apply-nifi-properties.sh 가 lib 에 놓는다.
+COPY --from=nifi-ui --chown=nifi:nifi /out/ /opt/nifi/cerebro-ui/
+RUN mkdir -p /opt/nifi/cerebro-ui/official && \
+    cp /opt/nifi/nifi-current/lib/nifi-server-nar-*.nar /opt/nifi/cerebro-ui/official/ && \
+    chown -R nifi:nifi /opt/nifi/cerebro-ui
 
 # LAN IP(호스트명 아닌 IP 리터럴)로 접속 시 Jetty가 TLS SNI 불일치로 거부하는
 # "HTTP ERROR 400 Invalid SNI" 문제 회피 (자체 서명 인증서가 IP를 SAN으로 포함하지 않음)

@@ -133,7 +133,39 @@ ensure_root_group_name() {
     trap - EXIT HUP INT TERM
 }
 
+# NiFi 화면(nifi-ui war)이 들어 있는 nifi-server-nar 를 공식본 / Cerebro 본(nifi/ui-custom) 중에서 고른다(2026-10-05 ②안 시험).
+# 이미지에 둘 다 들어 있어서(/opt/nifi/cerebro-ui/official · custom) 다시 빌드하지 않고 CEREBRO_NIFI_UI 만 바꿔 되돌릴 수 있다.
+# NAR 이 바뀌면 NiFi 가 지문(work/nar/.../nar-digest)을 보고 다시 푼다. 흐름 · 설정 · 실행 이력은 볼륨이라 영향이 없다.
+select_ui_nar() {
+    ui_dir=/opt/nifi/cerebro-ui
+    choice=${CEREBRO_NIFI_UI:-official}
+    official=$(ls "${ui_dir}"/official/nifi-server-nar-*.nar 2>/dev/null | head -n 1)
+    if [ -z "${official}" ]; then
+        # 이 장치가 없던 예전 이미지 - 고를 것이 없다.
+        return
+    fi
+
+    source_nar=${official}
+    if [ "${choice}" = "custom" ]; then
+        custom=$(ls "${ui_dir}"/custom/nifi-server-nar-*.nar 2>/dev/null | head -n 1)
+        if [ -n "${custom}" ]; then
+            source_nar=${custom}
+        else
+            echo "CEREBRO_NIFI_UI=custom 이지만 이미지에 Cerebro 화면이 없습니다(CEREBRO_NIFI_UI_BUILD=on 으로 빌드해야 함) - 공식 화면으로 뜹니다." >&2
+            choice=official
+        fi
+    elif [ "${choice}" != "official" ]; then
+        echo "CEREBRO_NIFI_UI 값 «${choice}» 은 쓸 수 없습니다(official | custom) - 공식 화면으로 뜹니다." >&2
+        choice=official
+    fi
+
+    # 내용이 같으면 지문도 같아서 NiFi 가 다시 풀지 않는다 - 매번 복사해도 된다.
+    cp -f "${source_nar}" "/opt/nifi/nifi-current/lib/$(basename "${source_nar}")"
+    echo "NiFi 화면: ${choice} ($(basename "${source_nar}"))"
+}
+
 ensure_tls_stores
+select_ui_nar
 
 # 적재 시작은 오직 Airflow만 지시한다는 원칙을 컨테이너 레벨에서 강제한다.
 #

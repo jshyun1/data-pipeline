@@ -1,0 +1,148 @@
+diff --git a/nifi-frontend/src/main/frontend/libs/shared/src/assets/themes/material.scss b/nifi-frontend/src/main/frontend/libs/shared/src/assets/themes/material.scss
+index bb25c0ee..6ea725ea 100644
+--- a/nifi-frontend/src/main/frontend/libs/shared/src/assets/themes/material.scss
++++ b/nifi-frontend/src/main/frontend/libs/shared/src/assets/themes/material.scss
+@@ -29,41 +29,55 @@
+     }
+ }
+ 
++// Cerebro: 글꼴을 Cerebro 와 같은 Pretendard 가변 글꼴로(SIL OFL 1.1). 파일은 빌드 때 nifi/ui-custom/build.sh 가 넣는다 -
++// 폐쇄망에서도 CDN 없이 뜨도록 화면 묶음에 들어간다. Inter 는 Pretendard 에 없는 글자를 위한 예비.
++@font-face {
++    font-family: 'Pretendard Variable';
++    font-style: normal;
++    font-weight: 45 920;
++    font-display: swap;
++    src: url('../fonts/pretendard/PretendardVariable.woff2') format('woff2');
++}
++
++// Cerebro: 밝은 테마 색을 Cerebro 디자인(ETL 관리 화면 덧칠과 같은 slate 계열)으로 바꾼다. 상태 색(오류 빨강 · 실행 초록 · 주의 노랑)은 그대로 둔다 -
++// Cerebro 강조색 빨강(#ff3b30)을 주 색으로 쓰면 NiFi 의 «중지 · 오류» 빨강과 구분이 안 된다. 어두운 테마는 Cerebro 가 쓰지 않아 원본 그대로.
+ $primary-light: (
+     0: #000000,
+-    10: #002020,
+-    20: #003738,
+-    25: #004344,
+-    30: #004849,
+-    35: #004849,
+-    40: #004849,
+-    50: #478081,
+-    60: #629a9b,
+-    70: #7cb5b6,
+-    80: #97d1d1,
+-    90: #b3eded,
+-    95: #c1fbfc,
+-    98: #e2ffff,
+-    99: #f1fffe,
++    10: #020617,
++    20: #0f172a,
++    25: #172033,
++    30: #1e293b,
++    35: #273449,
++    40: #334155,
++    50: #475569,
++    60: #64748b,
++    70: #94a3b8,
++    80: #cbd5e1,
++    90: #e2e8f0,
++    95: #f1f5f9,
++    98: #f8fafc,
++    99: #fcfdfe,
+     100: #ffffff
+ );
+ 
++// Cerebro: 머리줄 · 프로세스 그룹 제목 띠 바탕(50단계, 글자는 검정). 밝기는 원래 NiFi(#abbdc5)와 비슷하게 둔다 -
++// ETL 관리 화면 덧칠이 그룹 제목 글자를 흰색으로 칠해서, 더 밝으면 제목이 안 보인다(2026-10-05 #cbd5e1 로 했다가 확인).
+ $secondary-light: (
+     0: #000000,
+-    10: #314149,
+-    20: #3f5863,
+-    25: #4e6c79,
+-    30: #597b8a,
+-    35: #728e9b,
+-    40: #8aa2ad,
+-    50: #abbdc5,
+-    60: #abbdc5,
+-    70: #abbdc5,
+-    80: #cbd8dd,
+-    90: #cbd8dd,
+-    95: #cbd8dd,
+-    98: #cbd8dd,
+-    99: #cbd8dd,
++    10: #0f172a,
++    20: #1e293b,
++    25: #334155,
++    30: #475569,
++    35: #64748b,
++    40: #8a99ae,
++    50: #a0aec0,
++    60: #b4c0cf,
++    70: #cbd5e1,
++    80: #e2e8f0,
++    90: #e2e8f0,
++    95: #f1f5f9,
++    98: #f1f5f9,
++    99: #f8fafc,
+     100: #ffffff
+ );
+ 
+@@ -86,22 +100,23 @@ $primary-dark: (
+     100: #ffffff
+ );
+ 
++// Cerebro: 값 글자 · 로딩 표시 색(덧칠이 쓰는 남청색 #3b5270 계열). 어두운 테마도 이 값을 같이 쓴다.
+ $tertiary: (
+     0: #000000,
+-    10: #3e2723,
+-    20: #4e342e,
+-    25: #4e342e,
+-    30: #5d4037,
+-    35: #6d4c41,
+-    40: #795548,
+-    50: #8d6e63,
+-    60: #a1887f,
+-    70: #bcaaa4,
+-    80: #d7ccc8,
+-    90: #d7ccc8,
+-    95: #efebe9,
+-    98: #efebe9,
+-    99: #efebe9,
++    10: #0b1220,
++    20: #1c2a3d,
++    25: #24344b,
++    30: #2c3e57,
++    35: #34445a,
++    40: #3b5270,
++    50: #556b8a,
++    60: #7085a3,
++    70: #93a5bf,
++    80: #b9c6d8,
++    90: #dbe3ee,
++    95: #e8edf4,
++    98: #f5f7fa,
++    99: #fafbfd,
+     100: #ffffff
+ );
+ 
+@@ -296,8 +311,8 @@ $m3-dark-theme: mat.define-theme(
+             tertiary: $_dark-theme-tertiary
+         ),
+         typography: (
+-            plain-family: Inter,
+-            brand-family: Inter,
++            plain-family: ('Pretendard Variable', Inter, 'Malgun Gothic', sans-serif),
++            brand-family: ('Pretendard Variable', Inter, 'Malgun Gothic', sans-serif),
+             bold-weight: 700,
+             regular-weight: 400
+         ),
+@@ -325,8 +340,8 @@ $m3-light-theme: mat.define-theme(
+             tertiary: $_light-theme-tertiary
+         ),
+         typography: (
+-            plain-family: Inter,
+-            brand-family: Inter,
++            plain-family: ('Pretendard Variable', Inter, 'Malgun Gothic', sans-serif),
++            brand-family: ('Pretendard Variable', Inter, 'Malgun Gothic', sans-serif),
+             bold-weight: 700,
+             regular-weight: 400
+         ),

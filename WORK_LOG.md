@@ -2713,3 +2713,46 @@ Incremental 에 9/30 이후 생긴 두 번째 `01_소스테이블`(id 1f80faca, 
 
 곁가지 발견(안 고침): 로컬 Airflow 연결 `target_db_postgres` 의 포트가 15432(호스트 포트)라 컨테이너 안에서는 닿지 않는다(5432 여야 함) -
 로컬에서 `verify_landing` 류 검증이 조용히 실패할 수 있다. MSA 연결 값은 따로 확인 필요.
+
+## 78. NiFi 화면 ②안 시험 - 화면만 공식 소스 + Cerebro 수정분으로 빌드, 공식 ↔ Cerebro 즉시 전환 (2026-10-05)
+
+**요청**: NiFi 소스 변경 방안 중 ②(엔진은 공식 그대로, 화면만 소스로)를 로컬에 적용해 보되, 지금 버전으로 되돌릴 수 있어야 한다.
+범위(사용자 선택): 로고 · 로딩 그림 · 사용자 이름 제거, 캔버스 공구막대 한글화 · 정리, 색 · 글꼴 Cerebro 디자인.
+
+**사전 측정(③ 부담 질문)**: NiFi 2.2.0 전체 소스 = Java 약 117만 줄 · 모듈 659개 · 화면 TS 약 12만 줄. 엔진 묶음 첫 빌드 약 7분 반,
+엔진 파일 하나 고친 뒤 재빌드 43초. 화면 빌드는 스택을 띄운 채로는 메모리 고갈(WSL 재시작 1회 유발 추정)이라 못 끝냄.
+2.2.0 이후 출시 12번(최신 2.12.0), 2.2.0→2.12.0 화면 1,591개 파일 변경.
+
+**구조** (`nifi/ui-custom/`, README 에 절차)
+- 공식 이미지에서 화면은 `nifi-server-nar` 안의 `nifi-ui-2.2.0.war`(Angular 빌드 결과 + META-INF · WEB-INF) 하나다. NiFi 는 기동 때 이를 work/ 에 풀고,
+  NAR 지문(nar-digest)이 바뀌면 다시 푼다. work/ 는 볼륨이 아니다.
+- `build.sh`: 공식 소스를 같은 태그로 화면 폴더만 받기(sparse, 19MB) → `patches/*.patch` 적용 → Pretendard 1.3.9(Cerebro 글꼴 파일과 바이트 동일) →
+  `nx build nifi` → `repack_nar.py` 로 공식 NAR 에서 화면 파일만 바꾼 NAR. META-INF · WEB-INF 와 다른 항목(web-api war 등)은 그대로.
+- `nifi/Dockerfile`: `CEREBRO_NIFI_UI_BUILD=on` 일 때만 node 22 단계를 탄다(기본 off - off 면 공식 NiFi 이미지만 써서 새로 받는 이미지 없음, MSA 영향 없음).
+  이미지에는 늘 공식 화면 NAR 사본(`/opt/nifi/cerebro-ui/official`)을, on 이면 Cerebro 본(`custom`)을 같이 넣는다.
+- `apply-nifi-properties.sh` `select_ui_nar`: 기동 때 `CEREBRO_NIFI_UI`(official | custom)에 따라 lib 에 놓는다 → **되돌리기 = 값 바꾸고 `docker compose up -d nifi`**.
+  custom 인데 이미지에 없으면 경고 후 공식. 시험 전 이미지는 `data-pipeline-nifi:before-ui` 로 태그해 뒀다.
+- compose: 빌드 인자 `CEREBRO_NIFI_UI_BUILD`(기본 off), 환경 `CEREBRO_NIFI_UI`(기본 official). `.env.example` 문서화. 로컬 `.env` 는 on / custom.
+
+**수정분 3개** (원칙: 기능을 줄이는 변경은 Cerebro 안(iframe, `window.self !== window.top`)에서만, 모양 변경은 어디서나 - NiFi 직접 접속 관리자는 깔때기 · 포트 등 그대로)
+- 0001: NiFi 로고 · 로딩 물방울 · 오류/없는 주소/로그인/로그아웃 화면 배경 그림 제거, 사용자 이름 · 로그아웃은 Cerebro 안에서만 숨김.
+- 0002: 공구막대 도구 이름 · 상태줄 title · 탐색/작업 패널 제목 한글화. 낱말은 `ConsoleFramePage` 번역 사전과 같게(덧칠이 `tooltip`/`title` 의 영/한 이름으로
+  도구 · 상태를 찾는다). Cerebro 안에서는 도구 3개(프로세서 · 프로세스 그룹 · 라벨)만, 상태 숫자 줄 숨김(검색 · 흐름 분석 · 알림은 둠).
+  전역 메뉴는 덧칠이 메뉴 글자로 항목을 눌러서 번역하지 않았다. 들여쓰기는 원본 그대로 - 수정분 전체가 15개 파일(새 파일 1개 포함) +131/-89줄이고, 그중 팔레트 표가 절반이다.
+- 0003: 밝은 테마 주 색 slate(#334155), 보조(머리줄 · 그룹 제목 띠) #a0aec0, 강조 #3b5270, 글꼴 Pretendard(+Inter 예비).
+  Cerebro 빨강을 주 색으로 안 쓴 이유: NiFi 의 «중지 · 오류» 빨강과 구분이 안 된다. 상태 색(빨강 · 초록 · 노랑)과 어두운 테마는 원본.
+  처음엔 보조 색을 #cbd5e1 로 했더니 ETL 관리 덧칠이 그룹 제목을 흰 글자로 칠해서 «DW» 가 안 보였다 → 원래 NiFi 밝기로 낮춤.
+
+**빌드 · 검증(로컬)**: 스택 정지(사용자 승인, 다른 세션 알림) 후 빌드 - 1회차 200초(npm 1분 + Angular 72초), 2회차 125초. 스택 정지는 각각 약 9분 · 6분 반.
+- iframe 안: 도구 [프로세서, 프로세스 그룹, 라벨], 사용자 이름 · 상태 숫자 · 로고 없음, 글꼴 Pretendard. NiFi 직접(/nifi/): 도구 8개 한글, 사용자 이름 있음.
+- 전환: official → 공식 화면(Inter · 영어) 확인, custom → Cerebro 화면 확인(각 NiFi 재시작 약 1분 반). job 완료 감시 Reporting Task 는 재시작 뒤 RUNNING.
+- 가만히 둔 10초의 스크립트 시간: ETL 관리(덧칠 있음) 554~810ms(공식/Cerebro 화면 차이 없음 - 덧칠이 그대로 돈다), NiFi 직접 0ms.
+  → ②의 성능 이득은 덧칠에서 이제 필요 없는 부분을 걷어내야 생긴다.
+- 캔버스 상자 크기 차이는 저장된 확대 상태 차이였다(공식 화면에서도 같음).
+- 설정 화면 «Authorization check failed» 는 cktnqhd15 계정에 NiFi 컨트롤러 읽기 권한이 없어서 - 화면 변경과 무관(원래 그렇다).
+
+**ETL 담당자와 협의할 것**(ConsoleFramePage 는 손대지 않았다): Cerebro 화면을 채택하면 덧칠 중 로고 숨김 CSS, 도구 숨김/허용 판정, 상태 줄 숨김,
+공구막대 · 상태 · 패널 제목 번역은 할 일이 없어진다 - 걷어내면 1초 주기 전체 훑기 · MutationObserver 부담이 준다. 미니 공구막대 · 읽기 전용 잠금 ·
+패널 배치 · 그룹 선택 동기화는 Cerebro 고유 기능이라 남는다(옮기려면 화면 소스에 새로 만들어야 함).
+
+**남은 것**: 채택 여부 결정. MSA 반영은 빌드 장비(메모리 · GitHub · npm 접속) 정한 뒤 - 지금은 off 라 MSA 는 영향 없음.
