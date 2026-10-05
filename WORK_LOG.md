@@ -2805,3 +2805,13 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 | 빈 곳 끌어 이동 3초 | 820~1,335ms / 4~8회(최장 153ms), 53~57fps | 174~186ms / 0회, 60fps |
 
 남는 부하는 NiFi 자체 그리기와 연동 감시(편집 잠금 MutationObserver · 0.5초 경로 확인)뿐이다. MSA 는 ② 이미지가 반영돼야 좋아진다.
+
+**폐쇄망 확인 · 바로잡기(같은 날, 사용자 «②안 채택» 후)**
+- 실행: 브라우저에서 Cerebro 서버 밖으로 가는 요청을 전부 막고 ETL 관리 · NiFi 직접 화면 · 요약/알림판/구성 이력 · Cerebro 주요 화면을 열었다 -
+  막힌 요청 0건(331건 모두 Cerebro 서버), 화면 오류 0, 글꼴 4종 모두 묶음 안 파일. 화면 묶음 속 Google Fonts · Typekit 주소는 WebFontLoader 의
+  선택 기능 문자열(설정 안 하면 안 씀). 네트워크 장치 없는 컨테이너에서 화면 고르기(custom/official) 정상. 이미지 +10.6MB.
+- 패키징 빈틈: `save-images.sh` 는 빌드 PC `.env` 를 따르고 `.env.example` 기본값이 `CEREBRO_NIFI_UI_BUILD=off` · `CEREBRO_NIFI_UI=official` 이라
+  그대로 릴리스하면 폐쇄망에는 ①이 뜬다. 고칠 안(A: 릴리스 빌드 on 고정 + 이미지 검사, B: `.env.example` custom, C: offline/README) - 사용자 확인 대기.
+- **바로잡기**: §79 에 «예전 덧칠 코드는 지울 수 있다»고 적었는데, 이 덧칠은 워크플로우 관리(Airflow iframe, `/airflow/manage`)에도 걸린다
+  (CSS 주입 · 1초 주기 번역 · 패널 배치 감시 · 편집 잠금 감시 - 화면에서 확인). 정리 방향은 안내 문서 10-2(추천: NiFi iframe 에만 걸기).
+- 안내 문서 9절(폐쇄망) · 10절(MSA 반영 방법 · 덧칠 정리) 추가.

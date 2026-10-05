@@ -1,4 +1,4 @@
-# NiFi 화면 ②안 안내 - 기존 덧칠 방식과 무엇이 달라졌나 (2026-10-05)
+# NiFi 화면 ②안 안내 - 기존 덧칠 방식과 무엇이 달라졌나 · 폐쇄망 확인 · 남은 결정 (2026-10-05)
 
 대상: Cerebro ETL 관리 화면 / NiFi 화면을 고치는 개발자(ETL 담당자 포함). 자세한 작업 기록은 WORK_LOG §78 · §79,
 절차는 `nifi/ui-custom/README.md`.
@@ -95,8 +95,8 @@ git diff nifi/ui-custom/patches                         # 확인 후 커밋 → 
 | 로고 · 사용자 이름 | `apps/nifi/src/app/ui/common/navigation/navigation.component.html` |
 | 색 · 글꼴 | `libs/shared/src/assets/themes/material.scss` |
 
-- **`ConsoleFramePage.tsx` 의 예전 덧칠 코드는 ②에서는 실행되지 않는다** - 화면 모양을 바꾸려고 거기를 고치면 ②에 반영되지 않는다.
-  (공식 화면으로 되돌렸을 때만 쓰인다. ②를 계속 쓰기로 정하면 지워도 된다.)
+- **`ConsoleFramePage.tsx` 의 예전 덧칠 코드는 ②의 ETL 관리 화면에서는 실행되지 않는다** - NiFi 화면 모양을 바꾸려고 거기를 고치면 ②에 반영되지 않는다.
+  (공식 NiFi 화면으로 되돌렸을 때와 워크플로우 관리(Airflow) 화면에서는 지금도 돈다 - 10-2 참고.)
 - 한글 낱말을 바꿀 때 주의: `ConsoleFramePage` 의 연동이 일부 글자를 읽는다 - 작업 패널의 «Process Group / 프로세스 그룹»으로 선택된 그룹을,
   대화상자의 «Apply / 적용»으로 편집 잠금 대상 버튼을 찾는다. 그래서 대화상자 안은 번역하지 않는다.
 - 수정분은 작게(들여쓰기 그대로) - NiFi 버전을 올릴 때 다시 맞추는 양이 준다.
@@ -105,5 +105,67 @@ git diff nifi/ui-custom/patches                         # 확인 후 커밋 → 
 
 1. `ConsoleFramePage.tsx` 변경(커밋 참고): `isCerebroNifiUi` · `isFrameDocumentLoaded` 추가, `handleFrameLoad` 와 1.5초 타이머에서
    Cerebro 판이면 덧칠 4종을 건너뜀. 연동 코드는 손대지 않음.
-2. ②를 계속 쓸지 - 쓰면 예전 덧칠 약 1,500줄을 정리할 수 있다. 공식 화면 대비가 필요하면 남겨 둔다.
+2. 예전 덧칠 코드 정리 방향 - 아래 10-2. **워크플로우 관리(Airflow iframe) 화면에도 같은 덧칠이 걸리고 있어서** 그냥 지우면 안 된다.
 3. 아직 영어인 곳: 대화상자(일부러), 사전에 없는 메뉴(Enter Group · Center In View · Copy 등). 필요하면 `cerebro-ko.ts` 에 추가.
+
+## 9. 폐쇄망에서도 쓸 수 있나 (2026-10-05 확인)
+
+이 프로젝트의 폐쇄망 방식(`offline/README.md`)은 **외부망 PC 에서 이미지 빌드 → tar 로 반입 → 폐쇄망 서버는 `load-images.sh` · `install.sh`
+(빌드 없이 `up --no-build`)** 이다. ②도 이 방식을 그대로 따른다.
+
+### 결론
+
+- **실행(폐쇄망 서버) - 그대로 된다.** 인터넷 없이 ①과 똑같이 동작하는 것을 확인했다.
+- **패키징 - 설정 두 개를 바꿔야 ②가 들어간다.** 지금 기본값 그대로 릴리스하면 ②가 이미지에 안 들어가거나, 들어가도 기존(①) 화면으로 뜬다.
+  ①로 떠도 ETL 관리는 동작한다(예전 덧칠이 그대로 돈다) - 다만 깜빡임 · 렉도 예전 그대로다.
+
+### 확인한 것
+
+| 항목 | 방법 | 결과 |
+|---|---|---|
+| 화면이 외부로 요청하나 | 브라우저에서 Cerebro 서버 말고 다른 곳으로 가는 요청을 전부 막고 ETL 관리 · NiFi 직접 화면 · 요약 · 알림판 · 구성 이력 · Cerebro 대시보드 · CDC · 로그를 열었다 | 막힌 요청 **0건**(전체 331건 모두 Cerebro 서버), 화면 오류 0건 |
+| 글꼴 | 위 상태에서 브라우저의 글꼴 로드 상태 확인 | Pretendard · Inter · flowfont · FontAwesome 모두 화면 묶음 안 파일로 로드 |
+| 화면 묶음 속 외부 주소 | NiFi 화면 파일 전체에서 주소 문자열 검색 | 라이선스 · 설명 링크와, NiFi 의 글꼴 로더(WebFontLoader)가 «외부 글꼴을 쓰도록 설정했을 때만» 쓰는 주소(Google Fonts · Typekit 등)뿐. NiFi 는 내장 글꼴만 쓰도록 설정돼 있어 실제 요청은 없다(위 0건) |
+| 화면 고르기(custom/official) | 네트워크 장치가 아예 없는 컨테이너에서 이미지의 고르기 단계만 실행 | custom · official 모두 정상(파일 복사만 한다) |
+| 이미지 크기 | 시험 전 이미지와 비교 | +10.6MB(Cerebro 화면 NAR · 공식 사본 · 글꼴) |
+| 폐쇄망 설치 스크립트 | `install.sh` 확인 | `up -d --no-build` - 빌드 인자는 쓰지 않으므로 바꿀 것 없음. 반입 이미지 목록(`image-manifest.json`)도 그대로(node 는 빌드 때만 쓰고 이미지에 안 들어감) |
+
+### 외부망 빌드 PC 에 필요한 것 (②로 늘어난 것)
+
+- 접속: 기존(Docker Hub · Maven Central · PyPI)에 더해 **GitHub**(NiFi 화면 소스 2.2.0, 19MB) · **npm 저장소**(패키지 1,668개 · Pretendard 72MB) ·
+  **Debian 패키지 저장소**(빌드 단계의 git · python3) · Docker Hub 의 `node:22-bookworm-slim`.
+- 메모리: NiFi 화면 빌드에 2GB 이상. 8GB PC 는 스택을 멈추고 빌드한다(멈추지 않으면 WSL 이 멈춘다 - 실측).
+- 시간: NiFi 이미지 빌드 약 2~3분 늘어남.
+
+### 바꿔야 할 것 (적용 여부 확인 후 진행)
+
+| # | 파일 | 지금 | 바꿀 내용 | 이유 |
+|---|---|---|---|---|
+| A | `offline/save-images.sh` | 빌드 PC 의 `.env` 값을 따른다(`.env.example` 기본 off) | 릴리스 빌드는 `CEREBRO_NIFI_UI_BUILD=on` 으로 고정하고, 빌드 뒤 이미지에 `/opt/nifi/cerebro-ui/custom` 이 있는지 검사해 없으면 멈춘다 | 빌드 PC 설정에 따라 ②가 빠진 채 반입되는 것을 막는다 |
+| B | `.env.example` | `CEREBRO_NIFI_UI=official` | `custom` | 폐쇄망 서버는 `.env.example` 을 복사해 쓴다. Cerebro 화면이 없는 이미지면 경고만 남기고 공식 화면으로 뜨므로 안전하다. `docker-compose.yml` 의 기본값(official)은 그대로 둬서 MSA 등 기존 `.env` 에는 영향이 없다 |
+| C | `offline/README.md` | ② 언급 없음 | 빌드 PC 요구 사항, 반입 전 확인 명령(`docker run --rm --entrypoint ls data-pipeline-nifi:<버전> /opt/nifi/cerebro-ui/custom`), 되돌리기(`CEREBRO_NIFI_UI=official`) 추가 | 설치 담당자가 알아야 한다 |
+
+## 10. 정해야 할 것
+
+### 10-1. MSA 서버 반영 방법
+
+| 방법 | 내용 | 장점 | 단점 |
+|---|---|---|---|
+| **① 빌드 PC 에서 이미지를 만들어 옮기기 (추천)** | 외부망 PC 에서 `CEREBRO_NIFI_UI_BUILD=on` 으로 nifi · cerebroetl-ui 이미지 빌드 → `docker save` → MSA 로 복사 → `docker load` → `.env` 에 `CEREBRO_NIFI_UI=custom` → `docker compose up -d --no-build nifi cerebroetl-ui` | 폐쇄망 반입과 같은 절차라 **폐쇄망 예행연습**이 된다. MSA 에 빌드 부하 · GitHub/npm 접속이 필요 없다. 같은 이미지를 그대로 쓰니 로컬에서 본 그대로 뜬다 | 이미지 파일(nifi 약 1.1GB)을 옮겨야 한다 |
+| ② MSA 에서 직접 빌드 | MSA 에서 `git pull` 후 `.env` 에 on · custom → `docker compose build nifi cerebroetl-ui` | 지금 MSA 배포 습관과 같다 | MSA 에서 GitHub · npm 에 닿아야 하고, 빌드 중 메모리 2GB 이상 - MSA 여유 메모리를 먼저 봐야 한다. 빌드 동안 다른 서비스가 느려질 수 있다 |
+
+- 어느 쪽이든 NiFi 재기동(약 1분 반) 동안 ETL 관리 화면이 잠깐 안 뜬다. 되돌리기는 `CEREBRO_NIFI_UI=official` → `up -d nifi`.
+- NAR 완료 감시(커밋 6a7b6e6 · 2c0f677)도 같은 nifi 이미지에 들어 있어 함께 반영된다.
+
+### 10-2. 예전 덧칠 코드(`ConsoleFramePage.tsx`) 정리
+
+**확인된 사실**: 예전 덧칠은 ETL 관리(②)에서는 안 돌지만, **워크플로우 관리(Airflow iframe, `/airflow/manage`) 화면에는 지금도 걸린다**
+(CSS 주입, 1초 주기 번역 · 표식, 패널 배치 감시, 편집 잠금 감시 - 2026-10-05 화면에서 확인). NiFi 용으로 만든 것이 Airflow 화면에도 붙어 있는 상태다.
+
+| 방법 | 내용 | 장점 | 단점 |
+|---|---|---|---|
+| **① NiFi 전용 덧칠을 NiFi iframe 에만 걸기 (추천)** | 덧칠 4종(CSS 주입 · 번역/표식 · 패널 배치 · 옛 미니 막대 정리)을 «NiFi 화면일 때만» 실행하게 조건을 건다. 공식 NiFi 화면 대비용으로는 남긴다 | Airflow 화면의 1초 주기 훑기 · 감시가 사라진다. 되돌리기 대비는 유지 | Airflow 화면에서 덧칠로 바뀌던 것이 있었다면(일반 낱말 번역 등) 원래대로 돌아간다 - 먼저 화면 비교 필요 |
+| ② 그대로 두기 | 지금 상태 유지 | 바꿀 것 없음 | Airflow 화면에 불필요한 상시 부하가 계속 있다 |
+| ③ 모두 지우기 | 덧칠 4종 코드 삭제(약 1,500줄) | 코드가 가장 단순해진다 | 공식 NiFi 화면으로 되돌리면 ETL 관리 모양이 깨진다(영어 · 원래 배치). Airflow 화면 영향도 ①과 같다 |
+
+- 연동 기능(편집 잠금 · 캔버스 선택 · 경로 동기화)은 어느 방법이든 남긴다 - ②도 이것을 쓴다.

@@ -47,9 +47,13 @@ docker compose start <나머지>; docker compose up -d --no-deps nifi
 - 새 파일을 만들었으면 `save` 가 «어느 수정분에도 속하지 않은 변경»으로 알려준다. 처음 한 번만 알맞은 .patch 에 넣는다
   (`git -C /tmp/nifi-ui diff --full-index -- <새 파일> >> patches/000N-….patch`). 다음부터는 `save` 가 챙긴다.
 - 수정분은 작게 유지한다(들여쓰기를 바꾸지 말 것) - 버전을 올릴 때 다시 맞추는 양이 그만큼 준다.
-- `ConsoleFramePage.tsx` 의 예전 덧칠 코드는 공식 화면으로 되돌렸을 때를 위해 남아 있다. ②를 계속 쓰기로 하면 Cerebro 화면 쪽만 고치면 된다.
+- `ConsoleFramePage.tsx` 의 예전 덧칠 코드는 공식 화면으로 되돌렸을 때를 위해 남아 있다. NiFi 화면 모양은 Cerebro 화면(수정분) 쪽만 고치면 된다.
+  단, 이 덧칠은 워크플로우 관리(Airflow iframe) 화면에도 걸리고 있어 그냥 지우면 안 된다(`docs/2026-10-05-nifi-ui-option2-guide.md` 10-2).
 
 ## 켜기 · 되돌리기
+
+폐쇄망 반입도 같은 이미지로 된다 - 실행 때 외부 요청이 없다(2026-10-05 확인). 릴리스 빌드에서 켜는 방법과 남은 설정은
+`docs/2026-10-05-nifi-ui-option2-guide.md` 9절.
 
 ```bash
 # .env (로컬)
