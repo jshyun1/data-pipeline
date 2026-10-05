@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Cerebro ETL 용 NiFi 확장(NAR). NiFi 소스는 건드리지 않고 공식 확장 방식으로 기능을 끼워 넣는다(2026-10-05).
+  빌드: nifi/Dockerfile 의 첫 단계가 이 폴더를 Maven 으로 빌드해 .nar 를 extensions 폴더에 넣는다.
+  nifi-api 는 이미지에 들어 있는 버전(2.0.0, NiFi 2.2.0 이미지 기준)에 맞춘다 - provided 라 NAR 에는 들어가지 않는다.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.company.cerebro</groupId>
+    <artifactId>cerebro-nifi</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <nifi.api.version>2.0.0</nifi.api.version>
+        <nifi.nar.plugin.version>2.0.0</nifi.nar.plugin.version>
+        <junit.version>5.10.2</junit.version>
+    </properties>
+
+    <modules>
+        <module>cerebro-nifi-reporting</module>
+        <module>cerebro-nifi-nar</module>
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.apache.nifi</groupId>
+                <artifactId>nifi-api</artifactId>
+                <version>${nifi.api.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.5</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.nifi</groupId>
+                    <artifactId>nifi-nar-maven-plugin</artifactId>
+                    <version>${nifi.nar.plugin.version}</version>
+                    <extensions>true</extensions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

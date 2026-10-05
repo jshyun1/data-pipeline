@@ -51,6 +51,39 @@ class EtlJobRunServiceTest {
     }
 
     @Test
+    void 콜백으로_방금_닫힌_실행이면_새로_열지_않고_꼬리_활동을_붙인다() {
+        // NiFi 완료 감시가 조용해진 직후 닫고, 관측기는 15초 뒤에 마지막 적재분을 본다(2026-10-05 이중 행 방지).
+        EtlJobRun closed = new EtlJobRun(7L, T0);
+        closed.completeBy(EtlJobRun.SOURCE_CALLBACK, EtlJobRun.STATUS_SUCCESS, 100L, null, T0.plusSeconds(60));
+        when(runRepository.findByJobIdAndEndedAtIsNull(7L)).thenReturn(Optional.empty());
+        when(runRepository.findFirstByJobIdAndEndedAtIsNotNullOrderByEndedAtDesc(7L)).thenReturn(Optional.of(closed));
+
+        EtlJobRun run = service.openOrAttach(7L, T0.plusSeconds(75), true).orElseThrow();
+
+        assertThat(run).isSameAs(closed);
+        org.mockito.Mockito.verify(runRepository, org.mockito.Mockito.never())
+                .save(org.mockito.ArgumentMatchers.argThat(saved -> saved != closed));
+    }
+
+    @Test
+    void 콜백으로_닫힌지_오래됐거나_관측으로_닫힌_실행이면_새로_연다() {
+        EtlJobRun old = new EtlJobRun(7L, T0);
+        old.completeBy(EtlJobRun.SOURCE_CALLBACK, EtlJobRun.STATUS_SUCCESS, 100L, null, T0.plusSeconds(60));
+        when(runRepository.findByJobIdAndEndedAtIsNull(7L)).thenReturn(Optional.empty());
+        when(runRepository.findFirstByJobIdAndEndedAtIsNotNullOrderByEndedAtDesc(7L)).thenReturn(Optional.of(old));
+
+        EtlJobRun later = service.openOrAttach(7L, T0.plusSeconds(60 + EtlJobRunService.CALLBACK_TAIL_SECONDS + 1), true)
+                .orElseThrow();
+        assertThat(later).isNotSameAs(old);
+
+        EtlJobRun observed = new EtlJobRun(8L, T0);
+        observed.completeBy(EtlJobRun.SOURCE_OBSERVED, EtlJobRun.STATUS_SUCCESS, 5L, null, T0.plusSeconds(60));
+        when(runRepository.findByJobIdAndEndedAtIsNull(8L)).thenReturn(Optional.empty());
+        when(runRepository.findFirstByJobIdAndEndedAtIsNotNullOrderByEndedAtDesc(8L)).thenReturn(Optional.of(observed));
+        assertThat(service.openOrAttach(8L, T0.plusSeconds(65), true).orElseThrow()).isNotSameAs(observed);
+    }
+
+    @Test
     void 잡을_해석하지_못하면_실행을_열지_않는다() {
         assertThat(service.openOrAttach(null, T0, true)).isEmpty();
     }

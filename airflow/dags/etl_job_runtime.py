@@ -2,10 +2,10 @@
 
 핵심은 완료 판정을 **콜백 우선 + 유휴 추측 fallback** 이중 구조로 둔 것이다.
 
-- 지금(범위 A): NiFi가 아직 콜백을 보내지 않으므로 항상 fallback(유휴 판정)으로 끝난다.
-  기존 `wait_for_group_completion`과 같은 기준이라 동작이 달라지지 않는다.
-- 나중(플랜 B-1): NiFi 잡 종단에 InvokeHTTP 2개를 붙여 `/complete`·`/fail`을 호출하면
-  1순위 경로가 켜진다. **이 파일도 백엔드도 고칠 필요가 없다.**
+- 1순위: NiFi 안의 완료 감시(Cerebro NAR · JobCompletionReportingTask, 2026-10-05)가 job 이 끝나면
+  `/complete`·`/fail` 로 원장을 닫는다. 여기서는 원장을 3초마다 보고 닫히면 바로 끝낸다.
+- 2순위(fallback): 감시가 없는 환경(NAR 을 넣지 않은 이미지) · 감시 장애 때는 예전처럼 NiFi 상태를 15초마다 보고
+  유휴로 추측한다.
 
 그래서 `completion_source`가 신뢰도 지표가 된다 - `CALLBACK`이면 확정, `OBSERVED`면 추정.
 """
@@ -203,11 +203,25 @@ def _await_completion(node: dict, run_token: str, **context) -> None:
             nifi.fail_if_errors(pg_name, errors)
             _report_observed(run_token, rows)
             return
-        time.sleep(nifi.WAIT_POLL_INTERVAL_SECONDS)
+        _wait_for_ledger(run_token, nifi.WAIT_POLL_INTERVAL_SECONDS)
 
     raise RuntimeError(
         f"[{pg_name}] {timeout}초 안에 완료되지 않음 (queued={queued}, activeThreads={active}). "
         "백프레셔로 막혔거나 하류가 소비하지 못하고 있을 수 있음")
+
+
+# 원장은 몇 초마다 본다(가벼운 단일 행 조회). NiFi 상태 조회(무거움)는 지금처럼 WAIT_POLL_INTERVAL_SECONDS 마다만 한다.
+# NiFi 안의 완료 감시(Cerebro NAR, 2026-10-05)가 job 이 끝나는 즉시 원장을 닫으므로, 여기서 몇 초 안에 알아챈다.
+LEDGER_POLL_SECONDS = 3
+
+
+def _wait_for_ledger(run_token: str, seconds: float) -> None:
+    """다음 NiFi 조회까지 기다리되, 그 사이 원장이 닫히면 바로 돌아간다(루프 맨 위에서 원장을 다시 보고 끝낸다)."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        time.sleep(min(LEDGER_POLL_SECONDS, max(0.0, deadline - time.time())))
+        if run_token and _callback_state(run_token)[0]:
+            return
 
 
 def _report_failed(run_token: str, message: str) -> None:

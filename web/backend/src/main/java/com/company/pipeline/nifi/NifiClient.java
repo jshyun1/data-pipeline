@@ -1533,6 +1533,67 @@ public class NifiClient {
         }
     }
 
+    // ------------------------------------------------------------ Reporting Task (Cerebro NAR, 2026-10-05)
+
+    /** 등록된 Reporting Task 목록(원본 JSON). */
+    public com.fasterxml.jackson.databind.JsonNode listReportingTasks() {
+        try {
+            return restClient.get().uri("/nifi-api/flow/reporting-tasks")
+                    .header("Authorization", "Bearer " + getToken())
+                    .retrieve().body(com.fasterxml.jackson.databind.JsonNode.class);
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi Reporting Task 목록 조회 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    /** 설치된 Reporting Task 종류(번들 좌표 포함). */
+    public com.fasterxml.jackson.databind.JsonNode reportingTaskTypes() {
+        try {
+            return restClient.get().uri("/nifi-api/flow/reporting-task-types")
+                    .header("Authorization", "Bearer " + getToken())
+                    .retrieve().body(com.fasterxml.jackson.databind.JsonNode.class);
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi Reporting Task 종류 조회 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    /** Reporting Task 를 만든다. @return 만든 엔티티(원본 JSON - id · revision 포함) */
+    public com.fasterxml.jackson.databind.JsonNode createReportingTask(String type, Map<String, Object> bundle, String name,
+                                                                      Map<String, String> properties, String schedulingPeriod) {
+        Map<String, Object> component = new LinkedHashMap<>();
+        component.put("type", type);
+        component.put("bundle", bundle);
+        component.put("name", name);
+        component.put("schedulingPeriod", schedulingPeriod);
+        component.put("properties", properties);
+        Map<String, Object> body = Map.of(
+                "revision", Map.of("clientId", UUID.randomUUID().toString(), "version", 0),
+                "component", component);
+        try {
+            return restClient.post().uri("/nifi-api/controller/reporting-tasks")
+                    .header("Authorization", "Bearer " + getToken())
+                    .contentType(MediaType.APPLICATION_JSON).body(body)
+                    .retrieve().body(com.fasterxml.jackson.databind.JsonNode.class);
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi Reporting Task 생성 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    /** Reporting Task 를 시작한다. */
+    public void startReportingTask(String id, long version) {
+        Map<String, Object> body = Map.of(
+                "revision", Map.of("clientId", UUID.randomUUID().toString(), "version", version),
+                "state", "RUNNING");
+        try {
+            restClient.put().uri("/nifi-api/reporting-tasks/{id}/run-status", id)
+                    .header("Authorization", "Bearer " + getToken())
+                    .contentType(MediaType.APPLICATION_JSON).body(body)
+                    .retrieve().toBodilessEntity();
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi Reporting Task 시작 실패: " + ex.getMessage(), ex);
+        }
+    }
+
     private String getToken() {
         if (!StringUtils.hasText(properties.username()) || !StringUtils.hasText(properties.password())) {
             throw new NifiClientException("NiFi 서비스 계정 정보가 설정되지 않았습니다.", null);

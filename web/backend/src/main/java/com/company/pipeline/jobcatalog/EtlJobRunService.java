@@ -23,6 +23,12 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class EtlJobRunService {
 
+    /**
+     * 콜백으로 닫힌 실행에 관측기의 꼬리 활동을 붙여 주는 시간. 관측 주기(15초) 두 번 + 여유.
+     * 이보다 늦게 잡힌 활동은 새 실행으로 본다(같은 job 을 곧바로 다시 돌린 경우).
+     */
+    static final long CALLBACK_TAIL_SECONDS = 45;
+
     private static final Logger log = LoggerFactory.getLogger(EtlJobRunService.class);
 
     private final EtlJobRunRepository runRepository;
@@ -47,7 +53,19 @@ public class EtlJobRunService {
         if (jobId == null) {
             return Optional.empty();
         }
-        EtlJobRun run = runRepository.findByJobIdAndEndedAtIsNull(jobId)
+        Optional<EtlJobRun> open = runRepository.findByJobIdAndEndedAtIsNull(jobId);
+        if (open.isEmpty()) {
+            // 콜백(NiFi 완료 감시)이 방금 닫은 실행이면 새로 열지 않고 거기에 붙인다(2026-10-05). 감시는 «조용해진 직후» 닫고
+            // 관측기는 15초마다 카운터를 보므로, 같은 실행의 마지막 적재분이 닫힌 뒤에 관측기에 잡힌다 - 새로 열면 실행 1건이
+            // «콜백 성공 + 유휴정리 성공» 두 행으로 갈라지고 적재 건수도 나뉜다.
+            Optional<EtlJobRun> justClosed = runRepository.findFirstByJobIdAndEndedAtIsNotNullOrderByEndedAtDesc(jobId)
+                    .filter(run -> EtlJobRun.SOURCE_CALLBACK.equals(run.getCompletionSource()))
+                    .filter(run -> !run.getEndedAt().isBefore(now.minusSeconds(CALLBACK_TAIL_SECONDS)));
+            if (justClosed.isPresent()) {
+                return justClosed;
+            }
+        }
+        EtlJobRun run = open
                 .orElseGet(() -> {
                     EtlJobRun created = runRepository.save(new EtlJobRun(jobId, now));
                     log.info("잡 실행 시작 관측 - jobId={} runId={}", jobId, created.getId());

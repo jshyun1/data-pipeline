@@ -1,5 +1,10 @@
 # NiFi 템플릿 완료/실패 콜백 — ETL 담당자 협의용 (2026-09-30)
 
+> **폐기(2026-10-05)** — 이 방식은 쓰지 않는다. 템플릿에 프로세서를 붙이는 대신 **NiFi 확장(NAR)의 «job 완료 감시»**
+> (`nifi/extensions/cerebro-nifi`, Reporting Task)가 모든 job 그룹의 완료 · 실패를 원장에 알린다 - 캔버스 · 템플릿 수정이 필요 없고
+> 이미 만든 job 에도 적용된다. 로컬 템플릿 4종의 97 · 98 · 99 · funnel 은 걷어냈고(자동 종료 원복, MSA 원본과 같음),
+> 내보냈던 `docs/nifi-templates/*.flow.json` 도 지웠다. **MSA 템플릿에 반영하지 말 것.** 자세한 것은 WORK_LOG §77.
+
 대상 독자: ETL 템플릿(`Template > Initial · Incremental · truncate_initial · File`)을 관리하는 ETL 담당자.
 로컬 NiFi(2.2.0)에서 먼저 만들어 검증한 내용이며, **MSA 반영은 이 문서로 협의한 뒤** 진행한다.
 내보낸 flow definition: [`docs/nifi-templates/`](nifi-templates/) (토큰은 `__SERVICE_TOKEN__` 으로 비워 둠).

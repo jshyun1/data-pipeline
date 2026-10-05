@@ -2654,3 +2654,34 @@ ETL(DZ_COM001M 9/5 실패) 추가 질문 «한 문장으로 요약해줘» → �
 
 다른 세션(data-pipeline-fe)의 미커밋 GPT 작업과 같은 파일(LlmChatService · api/llm.ts · useGptConversation · GptChatPanel · GptConversationView · index.css)은
 내 변경만 골라 커밋했다(스테이징본만으로 tsc · 백엔드 테스트 통과 확인).
+
+## 77. NiFi 확장(NAR) «job 완료 감시» + 관측기 이중 행 방지, 템플릿 콜백 철거 (2026-10-05)
+
+**요청**: 워크플로우 완료 판정을 NiFi 소스 수정 없이 공식 확장(NAR)으로 바꾸고, 관측기 이중 행을 막는다. 그러면 템플릿의 97~99 는 지운다.
+
+**NAR** (`nifi/extensions/cerebro-nifi`, Maven · Java 21 · nifi-api 2.0.0 - NiFi 2.2.0 이미지가 싣는 API 버전)
+- `JobCompletionReportingTask`(Reporting Task, 기본 2초 주기): 백엔드가 준 job 그룹 목록(`GET /api/etl/job-runs/watched-groups`, 60초마다)만 본다.
+  판정 로직은 `CompletionDetector`(순수 Java, 단위 테스트 6건): 활동 = active 스레드 · 대기열 · 적재 카운터(«… updates performed») 증가 · 처리 횟수 증가,
+  활동 뒤 3초 조용하면 완료, 그 사이 그룹의 ERROR bulletin 이 있으면 실패. 적재 건수 = 카운터 증가분.
+  보고는 별도 스레드 하나가 대기열(상한 1,000)에서 꺼내 `POST /by-pg/{id}/complete|fail`(3초 시간 제한, 2·4·8·16초 재시도) - NiFi 타이머 스레드를 붙잡지 않는다.
+  서비스 토큰은 민감(sensitive) 속성. 예외는 밖으로 던지지 않는다.
+- 이미지: `nifi/Dockerfile` 첫 단계(maven)에서 빌드해 `lib/` 에 넣는다(자동 로드 폴더 `nar_extensions` 는 볼륨에 가려질 수 있어 피함). `nifi/.dockerignore` 추가.
+- 등록: 백엔드 `NifiCompletionMonitorProvisioner`(기동 60초 뒤 · 5분마다) - 없으면 «Cerebro job 완료 감시»를 만들고(API URL · 서비스 토큰) 시작.
+  NAR 이 없는 NiFi 면 아무것도 안 한다(그 환경은 예전 추측 판정). 이미 있으면 건드리지 않는다. `nifi.completion-monitor.enabled|api-url`.
+
+**백엔드 · Airflow**
+- 이중 행 방지: `EtlJobRunService.openOrAttach` - 열린 실행이 없을 때 «45초 안에 콜백으로 닫힌 실행»이 있으면 새로 열지 않고 거기에 붙인다(테스트 2건).
+- Airflow `etl_job_runtime`: NiFi 조회(무거움)는 15초 그대로, 그 사이 원장(가벼움)을 3초마다 보고 닫히면 바로 끝낸다.
+
+**검증(로컬)**: NAR 로드 · 자동 등록 · 시작 확인. 시험 그룹(정상: Generate → Route → Log / 실패: PutFile 권한 없는 경로)을 직접 켜서
+정상 → 약 5초 뒤 CALLBACK SUCCESS, 실패 → CALLBACK FAILED + 오류 문구(«02_쓰기실패: PutFile … routing to 'failure'»).
+시험 워크플로우(job 1개) 실행: **await 5.2초 «완료(콜백 확정)»**(예전 추측 판정은 활동을 못 보면 186초). 원장은 실행당 1행.
+시험 그룹 · 워크플로우 · DAG · 원장 행은 지웠다.
+
+**템플릿 콜백 철거**: 로컬 `Template >` Initial · Incremental · truncate_initial · File 에서 97 · 98 · 99 · funnel 삭제, 선이 없어진 관계를 자동 종료로 원복 -
+MSA 원본 템플릿(읽기 전용 확인: 콜백 없음, 적재 처리기 success · failure · retry 자동 종료)과 같다.
+Incremental 에 9/30 이후 생긴 두 번째 `01_소스테이블`(id 1f80faca, 출처 미상)은 철거 스크립트가 자동 종료를 바꿨다가 원래 값(빈 값)으로 되돌렸다.
+`docs/nifi-templates/*.flow.json` 삭제, 협의 문서(2026-09-30-nifi-template-callback-handoff) 폐기 표시.
+
+**남은 것**: MSA 반영(NiFi 이미지 재빌드 - MSA 에서 maven 이 Maven Central 에 닿아야 한다), 실제 적재 job 의 적재 건수(카운터)가 rows 로 오는지
+실 job 으로 확인(시험 그룹은 적재 처리기가 없었다). 감시가 너무 빨리 «완료»로 보는 job(소스 처리기가 긴 간격으로 끊어 넣는 경우)이 있으면 Settle Seconds 조정.

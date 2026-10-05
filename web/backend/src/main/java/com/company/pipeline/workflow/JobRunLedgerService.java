@@ -7,6 +7,7 @@ import com.company.pipeline.jobcatalog.EtlJobRepository;
 import com.company.pipeline.jobcatalog.EtlJobRun;
 import com.company.pipeline.jobcatalog.EtlJobRunRepository;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -71,6 +72,16 @@ public class JobRunLedgerService {
                 .findFirst()
                 .orElseThrow(() -> new BusinessException(ErrorCode.VALIDATION_ERROR,
                         "실행을 찾을 수 없습니다: " + runToken));
+    }
+
+    /** NiFi 완료 감시가 볼 그룹 - 지워지지 않은 ETL job 의 NiFi 그룹 id. */
+    @Transactional(readOnly = true)
+    public List<String> watchedGroupIds() {
+        return jobRepository.findByDeletedAtIsNullOrderByJobNameAsc().stream()
+                .map(EtlJob::getNifiPgId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
     }
 
     /** NiFi 완료 콜백(플랜 B-1). 이미 닫힌 실행이면 조용히 넘어간다(재전송 대비). */

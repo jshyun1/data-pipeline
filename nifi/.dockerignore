@@ -1,0 +1,5 @@
+# 이미지 빌드에 필요 없는 큰 폴더(백업 · 내보내기)와 NAR 빌드 산출물은 빌드 컨텍스트에서 뺀다.
+backup/
+flow-exports/
+samples/
+extensions/**/target/

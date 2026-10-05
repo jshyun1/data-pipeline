@@ -6,6 +6,7 @@ import com.company.pipeline.authz.SystemCode;
 import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.jobcatalog.EtlJobRun;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,12 +18,8 @@ import org.springframework.web.bind.annotation.RestController;
  * 잡 실행 원장 API.
  *
  * <p>호출자가 사람이 아니라 <b>Airflow와 NiFi</b>다. Airflow는 {@code _pipeline_svc_auth}가
- * {@code X-Service-Token}을 자동으로 얹고, NiFi는 플랜 B-1에서 InvokeHTTP에 같은 헤더를
- * 넣게 된다. 인가 강제가 켜져도 이 경로가 살아야 워크플로우가 돈다.
- *
- * <p>{@code by-pg} 콜백은 범위 A에서는 아무도 호출하지 않는 <b>예약된 자리</b>다. NiFi 잡
- * 종단에 InvokeHTTP 2개를 붙이는 순간(플랜 B-1) 완료 판정이 추정에서 확정으로 바뀌는데,
- * 그때 백엔드·Airflow 코드는 고칠 필요가 없다.
+ * {@code X-Service-Token}을 자동으로 얹고, NiFi 쪽은 Cerebro NAR 의 «job 완료 감시»(JobCompletionReportingTask)가
+ * 같은 헤더로 {@code by-pg} 콜백을 부른다(2026-10-05). 인가 강제가 켜져도 이 경로가 살아야 워크플로우가 돈다.
  */
 @RestController
 @RequestMapping("/api/etl/job-runs")
@@ -41,6 +38,16 @@ public class JobRunLedgerController {
         return ApiResponse.success(RunView.from(ledgerService.openOrAdopt(
                 request.jobId(), request.nifiPgId(), request.workflowKey(),
                 request.nodeKey(), request.dagRunId(), request.taskId())));
+    }
+
+    /**
+     * NiFi job 완료 감시(Cerebro NAR · JobCompletionReportingTask)가 감시할 그룹 목록 - 지워지지 않은 ETL job 의 NiFi 그룹 id.
+     * 감시는 이 목록에 있는 그룹만 보고한다(상위 폴더 · 템플릿 그룹이 «완료»로 보고되지 않게).
+     */
+    @GetMapping("/watched-groups")
+    @RequirePermission(system = SystemCode.NIFI)
+    public ApiResponse<List<String>> watchedGroups() {
+        return ApiResponse.success(ledgerService.watchedGroupIds());
     }
 
     /** Airflow sensor가 완료를 확인하려고 폴링한다. */
