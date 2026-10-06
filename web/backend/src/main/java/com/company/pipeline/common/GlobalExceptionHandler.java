@@ -1,6 +1,7 @@
 package com.company.pipeline.common;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.slf4j.Logger;
@@ -13,6 +14,8 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    // 오류 응답은 항상 JSON 으로 쓴다. 요청이 다른 형식만 받겠다고 해도(예: GPT 해석 스트리밍 요청의 Accept: text/event-stream)
+    // 형식 협상에 막혀 «No acceptable representation» → 사유 없는 500 이 되지 않게(2026-10-06). 화면은 오류 본문의 message 를 읽는다.
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
@@ -23,6 +26,7 @@ public class GlobalExceptionHandler {
                 .map(fieldError -> fieldError.getField() + ": " + fieldError.getDefaultMessage())
                 .orElse(ErrorCode.VALIDATION_ERROR.getDefaultMessage());
         return ResponseEntity.status(ErrorCode.VALIDATION_ERROR.getHttpStatus())
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(ApiResponse.error(ErrorCode.VALIDATION_ERROR, message));
     }
 
@@ -39,6 +43,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleBadRequest(Exception ex) {
         log.debug("잘못된 요청: {}", ex.getMessage());
         return ResponseEntity.status(ErrorCode.VALIDATION_ERROR.getHttpStatus())
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(ApiResponse.error(ErrorCode.VALIDATION_ERROR, "요청 형식이 올바르지 않습니다."));
     }
 
@@ -46,6 +51,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleBusiness(BusinessException ex) {
         ErrorCode code = ex.getErrorCode();
         return ResponseEntity.status(code.getHttpStatus())
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(ApiResponse.error(code, ex.getMessage()));
     }
 
@@ -53,6 +59,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleUnexpected(Exception ex) {
         log.error("Unexpected API error", ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(ApiResponse.error(ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.getDefaultMessage()));
     }
 }

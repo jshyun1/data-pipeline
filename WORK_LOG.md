@@ -2860,3 +2860,42 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
   실측(지표 · 방법 · 합격 기준) · 영향/작업량», 공통 실측 환경(로컬 축소 규모 + 부하 시험 서버 필요)과 계측 추가(1-0)를 첫 작업으로.
   2-1 은 «Single Batch Per Node 경계는 입력 포트로 들어오는 FlowFile 에만 적용» → job 그룹을 «입력 포트 시작 FlowFile» 구조로 바꾸는 PoC 를 먼저.
   사용자 검토 대기, 코드 변경 없음.
+
+## 82. ETL 로그 실패 건 GPT 해석이 HTTP 500 으로 실패 (2026-10-06)
+
+**증상**: ETL 로그 화면에서 `_감시시험_DB실패` 실패 건의 GPT 해석이 «GPT 해석 요청이 실패했습니다(HTTP 500)».
+
+**원인**(백엔드 로그 · 코드 확인)
+1. 해석 대상이 **지운 job**(36번, 10/5 NAR 시험용 job)이었다. `EtlJobContextCollector.resolveJob` 이 삭제된 job 을 걸러
+   `LLM_TARGET_NOT_FOUND` 를 던졌다. 실행 로그는 job 을 지운 뒤에도 남으므로 해석할 수 있어야 한다.
+2. GPT 해석 요청은 `Accept: text/event-stream` 이다. 공통 오류 처리기의 JSON 오류 응답이 형식 협상에 막혀
+   (`HttpMediaTypeNotAcceptableException: No acceptable representation`) 사유 없는 500 이 됐다.
+   → GPT 해석 중 나는 **모든 업무 오류**가 화면에 «HTTP 500»으로만 보이고 있었다.
+
+**고친 것**(사용자 선택 1·2)
+- `EtlJobContextCollector`:
+  - 지운 job 도 찾고, 정보에 «삭제된 job(삭제 시각)» 줄을 붙인다.
+  - job 기록이 아예 없으면 오류 내용만으로 해석한다.
+  - 둘 다 없으면 «찾을 수 없음»(404)으로 끝낸다.
+  - 테스트 3건 추가(`EtlJobContextCollectorTest`).
+- `GlobalExceptionHandler`: 오류 응답 4종에 `contentType(application/json)` 을 명시한다. 응답 형식을 미리 정하면 Spring 이 형식 협상을 건너뛴다.
+  화면(`api/llm.ts`)은 이미 오류 본문의 message 를 읽어 표시한다.
+
+**확인**
+- GPT 관련 테스트 통과(파일 14개 실패 0, 새 테스트 3건 통과).
+- 실제 요청 결과:
+  - 지운 job 36 해석 성공(스트림 정상 완료)
+  - 기록 없는 job + 오류 내용 → 오류 내용만으로 해석 성공
+  - 기록도 오류 내용도 없음 → 404 «ETL Job을 찾을 수 없습니다: jobId 999999»
+
+**같이 확인했지만 고치지 않은 것**(사용자 미선택)
+- ETL 로그 «실패» 목록에 진짜가 아닌 실패가 섞여 있다.
+  - 시험 job 34~36 실행 로그 16건 · 처리기 실행 12건이 남아 있다(10/5 정리 때 원장만 지움 - 내 누락).
+  - «Cerebro job 완료 감시» NAR 이 백엔드가 멈춘 동안 남긴 «감시 대상 목록 조회 실패» 경고 19건이 있다.
+    알림판 수집기(`NifiPipelineMetricScheduler.java:144-169`)가 job 과 무관한 WARNING 도 ETL 실행 실패로 기록하기 때문이다.
+  - 대안: 수집기는 job 그룹 출처만 기록, NAR 은 끊김 · 회복 때 한 번씩만 경고, 잘못 쌓인 기록 삭제.
+- 워크플로우 GPT 수집기(`WorkflowContextCollector` 등)도 지운 워크플로우를 거부한다. 이제는 500 대신 사유가 보인다.
+
+**사고**: 처음 테스트를 스택이 다 떠 있는 채로 돌리다(11:39~12:11) 메모리 압박 95%가 됐다.
+- Airflow 3종이 재시작됐다(OOM 아님, DAG 실행 영향 없음).
+- 테스트 컨테이너를 강제 종료해 회복했고, 다시 할 때는 NiFi · kafka-connect 를 잠시 멈추고(12:13~12:18) 진행했다.

@@ -7,6 +7,7 @@ import com.company.pipeline.jobcatalog.EtlJobRepository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,36 +36,61 @@ public class EtlJobContextCollector implements LlmContextCollector {
     @Override
     @Transactional(readOnly = true)
     public CollectedTarget collect(Map<String, String> target, String errorText) {
-        EtlJob job = resolveJob(target);
+        String ref = targetRef(target);
         LlmContext context = new LlmContext();
-        context.add("화면에 표시된 오류 내용", etlErrorText(errorText), LlmContext.PRIORITY_ERROR);
+        String error = etlErrorText(errorText);
+        context.add("화면에 표시된 오류 내용", error, LlmContext.PRIORITY_ERROR);
+
+        // 실행 로그는 job 이 지워진 뒤에도 남는다(ETL 로그 화면). 지워진 job 도 해석할 수 있어야 한다(2026-10-06 - 지워진 job 이면
+        // «찾을 수 없음»으로 막혀 실패 로그 해석이 HTTP 500 으로 끝났다). job 기록마저 없으면 오류 내용만으로 해석한다.
+        Optional<EtlJob> found = findJob(target);
+        if (found.isEmpty()) {
+            if (error == null) {
+                throw new BusinessException(ErrorCode.LLM_TARGET_NOT_FOUND, "ETL Job을 찾을 수 없습니다: " + ref);
+            }
+            context.add("ETL Job", "이 실행 기록의 job 정보가 남아 있지 않습니다(" + ref + "). 화면의 오류 내용만으로 분석하십시오.",
+                    LlmContext.PRIORITY_IDENTITY);
+            return new CollectedTarget(ref, ref, context);
+        }
+
+        EtlJob job = found.get();
         context.add("ETL Job", identity(job), LlmContext.PRIORITY_IDENTITY);
         context.add("Job 단계", jobText.steps(job), LlmContext.PRIORITY_DETAIL);
         context.add("최근 실행 (최신순)", jobText.recentRuns(job, null), LlmContext.PRIORITY_HISTORY);
         return new CollectedTarget(String.valueOf(job.getId()), job.getJobName(), context);
     }
 
-    private EtlJob resolveJob(Map<String, String> target) {
+    /** 지워진 job 도 찾는다 - 표시는 {@link #identity} 가 «삭제됨»으로 붙인다. */
+    private Optional<EtlJob> findJob(Map<String, String> target) {
         Long jobId = optionalLong(target, "jobId");
         if (jobId != null) {
-            return jobRepository.findById(jobId)
-                    .filter(job -> job.getDeletedAt() == null)
-                    .orElseThrow(() -> new BusinessException(ErrorCode.LLM_TARGET_NOT_FOUND,
-                            "ETL Job을 찾을 수 없습니다: " + jobId));
+            return jobRepository.findById(jobId);
         }
         String groupId = target == null ? null : target.get("groupId");
         if (groupId != null && !groupId.isBlank()) {
-            return jobRepository.findByNifiPgId(groupId.trim())
-                    .filter(job -> job.getDeletedAt() == null)
-                    .orElseThrow(() -> new BusinessException(ErrorCode.LLM_TARGET_NOT_FOUND,
-                            "ETL 그룹에 해당하는 Job을 찾을 수 없습니다: " + groupId));
+            return jobRepository.findByNifiPgId(groupId.trim());
         }
         throw new BusinessException(ErrorCode.VALIDATION_ERROR, "jobId 또는 groupId가 필요합니다.");
+    }
+
+    private static String targetRef(Map<String, String> target) {
+        if (target == null) {
+            return "-";
+        }
+        String jobId = target.get("jobId");
+        if (jobId != null && !jobId.isBlank()) {
+            return "jobId " + jobId.trim();
+        }
+        String groupId = target.get("groupId");
+        return groupId == null || groupId.isBlank() ? "-" : "groupId " + groupId.trim();
     }
 
     private static String identity(EtlJob job) {
         List<String> lines = new ArrayList<>();
         lines.add("이름: " + job.getJobName());
+        if (job.getDeletedAt() != null) {
+            lines.add("상태: 삭제된 job(" + job.getDeletedAt() + " 삭제) - NiFi 에는 이 그룹이 더 이상 없을 수 있습니다");
+        }
         lines.add("ETL 그룹 ID: " + ContextText.orDash(job.getNifiPgId()));
         lines.add("상위 그룹 ID: " + ContextText.orDash(job.getParentPgId()));
         lines.add("Airflow DAG: " + ContextText.orDash(job.getAirflowDagId()));
