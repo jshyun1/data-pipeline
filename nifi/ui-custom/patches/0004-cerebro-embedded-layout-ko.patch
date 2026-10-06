@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca023542fa
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss
-@@ -0,0 +1,762 @@
+@@ -0,0 +1,790 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -285,7 +285,7 @@ index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca
 +        border-left: 0 !important;
 +        border-radius: 0 8px 8px 0 !important;
 +        background: #ffffff !important;
-+        color: #64748b !important;
++        color: #3b5270 !important;
 +        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08) !important;
 +        cursor: pointer !important;
 +
@@ -324,29 +324,46 @@ index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca
 +    }
 +
 +    div.navigation-control:has(.fa-plus-square-o),
-+    div.operation-control:has(.fa-plus-square-o) {
++    div.operation-control:has(.fa-plus-square-o),
++    div.navigation-control:not(:has(> div.w-72)),
++    div.operation-control:not(:has(> div.w-72)) {
 +        width: 38px !important;
 +        height: 38px !important;
 +        min-width: 38px !important;
 +        min-height: 38px !important;
 +        max-width: 38px !important;
 +        max-height: 38px !important;
++        padding: 0 !important;
++        border: 1px solid #dbe3ee !important;
++        border-radius: 8px !important;
++        background: #ffffff !important;
++        color: #3b5270 !important;
++        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08) !important;
 +        cursor: pointer !important;
 +    }
 +
 +    div.navigation-control:has(.fa-plus-square-o) > :not(:first-child),
-+    div.operation-control:has(.fa-plus-square-o) > :not(:first-child) {
++    div.operation-control:has(.fa-plus-square-o) > :not(:first-child),
++    div.navigation-control:not(:has(> div.w-72)) > :not(:first-child),
++    div.operation-control:not(:has(> div.w-72)) > :not(:first-child) {
 +        display: none !important;
 +    }
 +
 +    div.navigation-control:has(.fa-plus-square-o) .navigation-control-header,
-+    div.operation-control:has(.fa-plus-square-o) .operation-control-header {
++    div.operation-control:has(.fa-plus-square-o) .operation-control-header,
++    div.navigation-control:not(:has(> div.w-72)) .navigation-control-header,
++    div.operation-control:not(:has(> div.w-72)) .operation-control-header,
++    div.navigation-control:not(:has(> div.w-72)) > :first-child,
++    div.operation-control:not(:has(> div.w-72)) > :first-child {
 +        width: 38px !important;
 +        height: 38px !important;
 +        min-width: 38px !important;
 +        min-height: 38px !important;
++        display: flex !important;
++        align-items: center !important;
 +        justify-content: center !important;
 +        padding: 0 !important;
++        margin: 0 !important;
 +        border: 0 !important;
 +        background: #ffffff !important;
 +    }
@@ -354,8 +371,19 @@ index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca
 +    div.navigation-control:has(.fa-plus-square-o) .navigation-control-header .text-sm,
 +    div.navigation-control:has(.fa-plus-square-o) .navigation-control-expansion,
 +    div.operation-control:has(.fa-plus-square-o) .operation-control-header .text-sm,
-+    div.operation-control:has(.fa-plus-square-o) .operation-control-expansion {
++    div.operation-control:has(.fa-plus-square-o) .operation-control-expansion,
++    div.navigation-control:not(:has(> div.w-72)) .navigation-control-header .text-sm,
++    div.navigation-control:not(:has(> div.w-72)) .navigation-control-expansion,
++    div.operation-control:not(:has(> div.w-72)) .operation-control-header .text-sm,
++    div.operation-control:not(:has(> div.w-72)) .operation-control-expansion {
 +        display: none !important;
++    }
++
++    div.navigation-control:not(:has(> div.w-72)) i,
++    div.operation-control:not(:has(> div.w-72)) i {
++        margin: 0 !important;
++        color: #3b5270 !important;
++        font-size: 15px !important;
 +    }
 +
 +    .navigation-control-header,
@@ -771,7 +799,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..fc721394ec2f8e02bfb3631ffbba270854da20f3
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
-@@ -0,0 +1,277 @@
+@@ -0,0 +1,343 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -921,6 +949,36 @@ index 0000000000000000000000000000000000000000..fc721394ec2f8e02bfb3631ffbba2708
 +const ATTRIBUTES = ['title', 'aria-label', 'data-tooltip', 'mattooltip', 'tooltip', 'placeholder'];
 +const DIALOG_SELECTOR = '[role="dialog"], .mat-dialog-container, .mat-mdc-dialog-container, .processor-configuration';
 +const SKIP_PARENTS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA']);
++const PROCESSOR_EDIT_TEXT: Record<string, string> = {
++    Settings: '설정',
++    Scheduling: '스케줄링',
++    Properties: '속성',
++    Relationships: '관계',
++    Comments: '코멘트',
++    Name: '이름',
++    'Name*': '이름*',
++    Id: 'ID',
++    ID: 'ID',
++    Type: '타입',
++    Bundle: '번들',
++    'Penalty Duration': '패널티 지속시간',
++    'Penalty Duration*': '패널티 지속시간*',
++    'Yield Duration': '양보 지속시간',
++    'Yield Duration*': '양보 지속시간*',
++    'Bulletin Level': '알림 레벨',
++    'Bulletin Level*': '알림 레벨*',
++    'Scheduling Strategy': '스케줄링 전략',
++    'Scheduling Strategy*': '스케줄링 전략*',
++    'Concurrent Tasks': '동시 작업 수',
++    'Concurrent Tasks*': '동시 작업 수*',
++    'Run Schedule': '실행 주기',
++    'Run Schedule*': '실행 주기*',
++    Execution: '실행 대상',
++    'Execution*': '실행 대상*'
++};
++const PROCESSOR_EDIT_TAB_TEXT = new Set(['Settings', 'Scheduling', 'Properties', 'Relationships', 'Comments']);
++const PROCESSOR_EDIT_CONTENT_TABS = new Set(['Settings', '설정', 'Scheduling', '스케줄링']);
++const PROCESSOR_EDIT_TAB_SELECTOR = '[role="tab"], .mat-mdc-tab, .mat-tab-label';
 +
 +const SORTABLE: Array<[RegExp, string]> = [
 +    [/^Name\s*([↑↓])?$/, '이름'],
@@ -977,9 +1035,42 @@ index 0000000000000000000000000000000000000000..fc721394ec2f8e02bfb3631ffbba2708
 +    return undefined;
 +}
 +
++function translateProcessorEditText(value: string, includeFieldLabels = true): string | undefined {
++    const trimmed = value.replace(/\s+/g, ' ').trim();
++    const exact = PROCESSOR_EDIT_TEXT[trimmed];
++    if (exact && (includeFieldLabels || PROCESSOR_EDIT_TAB_TEXT.has(trimmed))) {
++        return exact;
++    }
++    const normalized = trimmed.replace(/\s*\*$/, '');
++    const normalizedExact = PROCESSOR_EDIT_TEXT[normalized];
++    if (normalizedExact && (includeFieldLabels || PROCESSOR_EDIT_TAB_TEXT.has(normalized))) {
++        return `${normalizedExact}${trimmed.endsWith('*') ? '*' : ''}`;
++    }
++    return undefined;
++}
++
 +function inDialog(node: Node): boolean {
 +    const element = node instanceof Element ? node : node.parentElement;
 +    return Boolean(element?.closest(DIALOG_SELECTOR));
++}
++
++function elementText(element: Element): string {
++    return (element.textContent ?? '').replace(/\s+/g, ' ').trim();
++}
++
++function activeDialogTab(element: Element): string {
++    const dialog = element.closest(DIALOG_SELECTOR);
++    const selectedTab = dialog?.querySelector('[role="tab"][aria-selected="true"], .mat-mdc-tab.mdc-tab--active, .mat-tab-label-active');
++    return selectedTab ? elementText(selectedTab) : '';
++}
++
++function allowsDialogFieldTranslation(element: Element): boolean {
++    const activeTab = activeDialogTab(element);
++    return !activeTab || PROCESSOR_EDIT_CONTENT_TABS.has(activeTab);
++}
++
++function isProcessorEditTabLabel(element: Element | null): boolean {
++    return Boolean(element?.closest(PROCESSOR_EDIT_TAB_SELECTOR));
 +}
 +
 +function translateTextNode(node: Text): void {
@@ -989,22 +1080,25 @@ index 0000000000000000000000000000000000000000..fc721394ec2f8e02bfb3631ffbba2708
 +        return;
 +    }
 +    const parent = node.parentElement;
-+    if (!parent || SKIP_PARENTS.has(parent.tagName) || inDialog(node)) {
++    if (!parent || SKIP_PARENTS.has(parent.tagName)) {
 +        return;
 +    }
-+    const translated = translateNifiText(trimmed);
++    const translated = inDialog(node)
++        ? translateProcessorEditText(trimmed, allowsDialogFieldTranslation(parent) || isProcessorEditTabLabel(parent))
++        : translateNifiText(trimmed);
 +    if (translated && translated !== trimmed) {
 +        node.nodeValue = value.replace(trimmed, translated);
 +    }
 +}
 +
 +function translateAttributes(element: Element): void {
-+    if (inDialog(element)) {
-+        return;
-+    }
 +    for (const name of ATTRIBUTES) {
 +        const value = element.getAttribute(name);
-+        const translated = value ? translateNifiText(value) : undefined;
++        const translated = value
++            ? (inDialog(element)
++                ? translateProcessorEditText(value, allowsDialogFieldTranslation(element) || isProcessorEditTabLabel(element))
++                : translateNifiText(value))
++            : undefined;
 +        if (translated && translated !== value) {
 +            element.setAttribute(name, translated);
 +        }
@@ -1016,7 +1110,7 @@ index 0000000000000000000000000000000000000000..fc721394ec2f8e02bfb3631ffbba2708
 +        translateTextNode(root as Text);
 +        return;
 +    }
-+    if (!(root instanceof Element) || root.closest(DIALOG_SELECTOR)) {
++    if (!(root instanceof Element)) {
 +        return;
 +    }
 +    translateAttributes(root);
@@ -1054,7 +1148,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..01b0da2ed8ca6ce651d668c6b38feff9aa213a62
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ui.ts
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,99 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -1074,10 +1168,13 @@ index 0000000000000000000000000000000000000000..01b0da2ed8ca6ce651d668c6b38feff9
 +    root.dataset['cerebroRecentPanel'] = 'submenu';
 +
 +    const clickExpansion = (panel: RecentPanel): void => {
-+        const selector = panel === 'navigation'
++        const controlSelector = panel === 'navigation' ? '.navigation-control' : '.operation-control';
++        const expansionSelector = panel === 'navigation'
 +            ? '.navigation-control .navigation-control-expansion'
 +            : '.operation-control .operation-control-expansion';
-+        (document.querySelector(selector) as HTMLElement | null)?.click();
++        const expansion = document.querySelector(expansionSelector) as HTMLElement | null;
++        const control = document.querySelector(controlSelector) as HTMLElement | null;
++        (expansion ?? control)?.click();
 +    };
 +
 +    const isOpen = (panel: RecentPanel): boolean => {

@@ -56,6 +56,7 @@ import {
   type LlmContextPreview,
 } from "../api/llm";
 import { renderAssistantText } from "../components/gpt/GptConversationView";
+import { fileSafeName, safeMarkdown } from "../components/gpt/gptMarkdown";
 import { getWorkflow, listWorkflows, type WorkflowDetail } from "../api/workflows";
 import { cronToKoreanText } from "../utils/schedulePreset";
 
@@ -488,7 +489,7 @@ const HIDE_TOOL_CHROME_CSS = `
     border-left: 0 !important;
     border-radius: 0 8px 8px 0 !important;
     background: #ffffff !important;
-    color: #64748b !important;
+    color: #3b5270 !important;
     box-shadow: 0 2px 8px rgb(15 23 42 / 8%) !important;
     cursor: pointer !important;
   }
@@ -820,6 +821,59 @@ const HIDE_TOOL_CHROME_CSS = `
     color: #0f172a !important;
     font-size: 15px !important;
   }
+  .navigation-control:not(:has(> div.w-72)),
+  .operation-control:not(:has(> div.w-72)) {
+    position: fixed !important;
+    left: 24px !important;
+    z-index: 9000 !important;
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px !important;
+    min-height: 38px !important;
+    max-width: 38px !important;
+    max-height: 38px !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    border: 1px solid #dbe3ee !important;
+    border-radius: 8px !important;
+    background: #ffffff !important;
+    color: #3b5270 !important;
+    box-shadow: 0 1px 3px rgb(15 23 42 / 8%) !important;
+  }
+  .navigation-control:not(:has(> div.w-72)) {
+    top: 60px !important;
+  }
+  .operation-control:not(:has(> div.w-72)) {
+    top: 106px !important;
+  }
+  .navigation-control:not(:has(> div.w-72)) > :first-child,
+  .operation-control:not(:has(> div.w-72)) > :first-child,
+  .navigation-control:not(:has(> div.w-72)) .navigation-control-header,
+  .operation-control:not(:has(> div.w-72)) .operation-control-header {
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px !important;
+    min-height: 38px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    background: #ffffff !important;
+  }
+  .navigation-control:not(:has(> div.w-72)) .text-sm,
+  .navigation-control:not(:has(> div.w-72)) .navigation-control-expansion,
+  .operation-control:not(:has(> div.w-72)) .text-sm,
+  .operation-control:not(:has(> div.w-72)) .operation-control-expansion {
+    display: none !important;
+  }
+  .navigation-control:not(:has(> div.w-72)) i,
+  .operation-control:not(:has(> div.w-72)) i {
+    margin: 0 !important;
+    color: #3b5270 !important;
+    font-size: 15px !important;
+  }
   [data-cerebro-mini-create-toolbar="true"],
   [data-cerebro-mini-create-tool="true"] {
     display: none !important;
@@ -962,6 +1016,36 @@ const NIFI_TOOLTIP_TEXT: Record<string, string> = {
   Apply: "적용",
 };
 const NIFI_TOOLTIP_ATTRIBUTES = ["title", "aria-label", "data-tooltip", "matTooltip", "mattooltip", "tooltip", "placeholder"];
+const NIFI_PROCESSOR_EDIT_TEXT: Record<string, string> = {
+  Settings: "설정",
+  Scheduling: "스케줄링",
+  Properties: "속성",
+  Relationships: "관계",
+  Comments: "코멘트",
+  Name: "이름",
+  "Name*": "이름*",
+  Id: "ID",
+  ID: "ID",
+  Type: "타입",
+  Bundle: "번들",
+  "Penalty Duration": "패널티 지속시간",
+  "Penalty Duration*": "패널티 지속시간*",
+  "Yield Duration": "양보 지속시간",
+  "Yield Duration*": "양보 지속시간*",
+  "Bulletin Level": "알림 레벨",
+  "Bulletin Level*": "알림 레벨*",
+  "Scheduling Strategy": "스케줄링 전략",
+  "Scheduling Strategy*": "스케줄링 전략*",
+  "Concurrent Tasks": "동시 작업 수",
+  "Concurrent Tasks*": "동시 작업 수*",
+  "Run Schedule": "실행 주기",
+  "Run Schedule*": "실행 주기*",
+  Execution: "실행 대상",
+  "Execution*": "실행 대상*",
+};
+const NIFI_PROCESSOR_EDIT_TAB_TEXT = new Set(["Settings", "Scheduling", "Properties", "Relationships", "Comments"]);
+const NIFI_PROCESSOR_EDIT_CONTENT_TABS = new Set(["Settings", "설정", "Scheduling", "스케줄링"]);
+const NIFI_PROCESSOR_EDIT_TAB_SELECTOR = '[role="tab"], .mat-mdc-tab, .mat-tab-label';
 const NIFI_STATUS_TOOLTIP_ICON_TEXT: Array<[string, string]> = [
   ["fa-play", "실행 중 컴포넌트"],
   ["fa-stop", "중지된 컴포넌트"],
@@ -1086,6 +1170,20 @@ function translateNifiTooltip(value: string) {
   }
   if (/^Tasks\s*\|\s*Tim/i.test(trimmed)) {
     return "작업 수 | 시간";
+  }
+  return undefined;
+}
+
+function translateProcessorEditText(value: string, includeFieldLabels = true) {
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  const exact = NIFI_PROCESSOR_EDIT_TEXT[trimmed];
+  if (exact && (includeFieldLabels || NIFI_PROCESSOR_EDIT_TAB_TEXT.has(trimmed))) {
+    return exact;
+  }
+  const normalized = trimmed.replace(/\s*\*$/, "");
+  const normalizedExact = NIFI_PROCESSOR_EDIT_TEXT[normalized];
+  if (normalizedExact && (includeFieldLabels || NIFI_PROCESSOR_EDIT_TAB_TEXT.has(normalized))) {
+    return `${normalizedExact}${trimmed.endsWith("*") ? "*" : ""}`;
   }
   return undefined;
 }
@@ -1656,6 +1754,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
   const DocumentMutationObserver = doc.defaultView?.MutationObserver ?? MutationObserver;
   const observer = new DocumentMutationObserver((mutations) => {
     if (hasOpenNifiDialog(doc)) {
+      patchProcessorEditDialogText(doc);
       return;
     }
     for (const mutation of mutations) {
@@ -1741,12 +1840,28 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
     doc.documentElement.setAttribute(NIFI_RECENT_PANEL_ATTRIBUTE, panel);
   };
 
+  const rawPanel = (panel: RecentPanel) => {
+    if (panel === "submenu") {
+      return null;
+    }
+    return doc.querySelector<HTMLElement>(panel === "navigation" ? ".navigation-control" : ".operation-control");
+  };
+
   const setPanelOpen = (panel: RecentPanel, open: boolean) => {
     topToolbar()?.setAttribute(NIFI_TOP_TOOLBAR_EXPANDED_ATTRIBUTE, panel === "submenu" && open ? "true" : "false");
+    let matchedPanel = false;
     panels().forEach((item) => {
       const name = item.getAttribute(NIFI_PANEL_ATTRIBUTE);
+      matchedPanel = matchedPanel || name === panel;
       item.setAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE, name === panel && open ? "true" : "false");
     });
+    const raw = rawPanel(panel);
+    if (!matchedPanel && raw) {
+      const rawOpen = Boolean(raw.querySelector(":scope > div.w-72"));
+      if (rawOpen !== open) {
+        (raw.querySelector<HTMLElement>(".navigation-control-expansion, .operation-control-expansion") ?? raw).click();
+      }
+    }
     if (open) {
       setRecentPanel(panel);
     }
@@ -1755,6 +1870,10 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
   const isPanelOpen = (panel: RecentPanel) => {
     if (panel === "submenu") {
       return topToolbar()?.getAttribute(NIFI_TOP_TOOLBAR_EXPANDED_ATTRIBUTE) === "true";
+    }
+    const raw = rawPanel(panel);
+    if (raw) {
+      return Boolean(raw.querySelector(":scope > div.w-72"));
     }
     return doc.querySelector(`[${NIFI_PANEL_ATTRIBUTE}="${panel}"]`)
       ?.getAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE) === "true";
@@ -2232,6 +2351,61 @@ function findProcessorEditDialogs(doc: Document) {
   return Array.from(doc.querySelectorAll(selectors)).filter((element) => (
     isVisibleElement(element) && dialogTextMatchesProcessorEditor(element)
   ));
+}
+
+function processorEditActiveTab(dialog: Element) {
+  const selectedTab = dialog.querySelector(
+    '[role="tab"][aria-selected="true"], .mat-mdc-tab.mdc-tab--active, .mat-tab-label-active',
+  );
+  return selectedTab ? elementText(selectedTab) : "";
+}
+
+function processorEditAllowsFieldTranslation(dialog: Element) {
+  const activeTab = processorEditActiveTab(dialog);
+  return !activeTab || NIFI_PROCESSOR_EDIT_CONTENT_TABS.has(activeTab);
+}
+
+function isProcessorEditTabLabel(element: Element | null) {
+  return Boolean(element?.closest(NIFI_PROCESSOR_EDIT_TAB_SELECTOR));
+}
+
+function patchProcessorEditDialogText(doc: Document) {
+  findProcessorEditDialogs(doc).forEach((dialog) => {
+    const allowFieldTranslation = processorEditAllowsFieldTranslation(dialog);
+    dialog.querySelectorAll(NIFI_TOOLTIP_ATTRIBUTES.map((name) => `[${name}]`).join(", ")).forEach((element) => {
+      NIFI_TOOLTIP_ATTRIBUTES.forEach((attributeName) => {
+        const value = element.getAttribute(attributeName);
+        const translated = value
+          ? translateProcessorEditText(value, allowFieldTranslation || isProcessorEditTabLabel(element))
+          : undefined;
+        if (translated && translated !== value) {
+          element.setAttribute(attributeName, translated);
+        }
+      });
+    });
+
+    const walker = doc.createTreeWalker(dialog, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => {
+        const parent = node.parentElement;
+        const tagName = parent?.tagName.toLowerCase();
+        return tagName === "script" || tagName === "style" || tagName === "textarea"
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    for (let current = walker.nextNode(); current; current = walker.nextNode()) {
+      const node = current as Text;
+      const value = node.nodeValue ?? "";
+      const trimmed = value.trim();
+      if (!trimmed || trimmed.length > 80 || trimmed.includes("\n")) {
+        continue;
+      }
+      const translated = translateProcessorEditText(trimmed, allowFieldTranslation || isProcessorEditTabLabel(node.parentElement));
+      if (translated) {
+        node.nodeValue = value.replace(trimmed, translated);
+      }
+    }
+  });
 }
 
 function restoreLockDisabledState(element: Element) {
@@ -2737,6 +2911,24 @@ function formatDateTime(value?: string | null) {
   return `${date} ${hour}:${minute}`;
 }
 
+function formatDurationText(seconds?: number | null) {
+  if (seconds == null || Number.isNaN(seconds)) {
+    return null;
+  }
+  const rounded = Math.max(0, Math.round(seconds));
+  if (rounded < 60) {
+    return `${rounded}초`;
+  }
+  const minutes = Math.floor(rounded / 60);
+  const rest = rounded % 60;
+  if (minutes < 60) {
+    return rest === 0 ? `${minutes}분` : `${minutes}분 ${rest}초`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const hourRest = minutes % 60;
+  return hourRest === 0 ? `${hours}시간` : `${hours}시간 ${hourRest}분`;
+}
+
 function statusText(job: EtlJobResponse | null, node: NifiProcessGroupTreeNode | null) {
   if (node?.jobStatus) {
     return jobStatusText(node.jobStatus);
@@ -2812,6 +3004,13 @@ interface StoredEtlAiAssistantCache {
   question: string;
 }
 
+interface AiJobReport {
+  summary: string;
+  composition: string[];
+  current: string[];
+  change: Array<[string, string]>;
+}
+
 function etlAiAssistantCacheKey(selectedGroupId: string) {
   return `${ETL_AI_ASSISTANT_CACHE_PREFIX}:${selectedGroupId}`;
 }
@@ -2855,6 +3054,39 @@ function saveEtlAiAssistantCache(storageKey: string, cache: StoredEtlAiAssistant
   } catch {
     // 대화 캐시는 보조 기능이라 저장 실패가 질문 흐름을 막지 않는다.
   }
+}
+
+function downloadMarkdownFile(title: string, suffix: string, body: string) {
+  const blob = new Blob([body], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${fileSafeName(title, "etl_ai")}${suffix}.md`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildJobReportMarkdown(report: AiJobReport) {
+  return [
+    "## 한 줄 요약",
+    "",
+    safeMarkdown(report.summary),
+    "",
+    "## 구성",
+    "",
+    ...report.composition.map((line) => `- ${safeMarkdown(line)}`),
+    "",
+    "## 지금 상태",
+    "",
+    ...report.current.map((line) => `- ${safeMarkdown(line)}`),
+    "",
+    "## 등록 및 변경",
+    "",
+    ...report.change.map(([label, value]) => `- ${safeMarkdown(label)}: ${safeMarkdown(value)}`),
+    "",
+  ];
 }
 
 function addedFileStorageKey(jobId: string | number | null | undefined, inputDirectory: string | null | undefined) {
@@ -3123,6 +3355,111 @@ function workflowScheduleText(workflows: RelatedWorkflow[]) {
     .filter((workflow) => workflow.published && !!workflow.scheduleCron?.trim())
     .map((workflow) => cronToKoreanText(workflow.scheduleCron)));
   return schedules.length > 0 ? schedules.join(", ") : "없음";
+}
+
+function jobLoadKinds(steps: EtlJobStepView[]) {
+  return uniqueValues(steps.map((step) => {
+    const text = `${step.stepName} ${step.stepType ?? ""} ${step.statementType ?? ""} ${step.sqlText ?? ""}`.toLowerCase();
+    if (text.includes("truncate") || text.includes("initial")) {
+      return "초기적재";
+    }
+    if (text.includes("update") || text.includes("upsert") || text.includes("merge") || text.includes("increment")) {
+      return "증분적재";
+    }
+    if (text.includes("insert")) {
+      return "일반적재";
+    }
+    return "";
+  })).filter(Boolean);
+}
+
+function readableLoadType(loadKinds: string[]) {
+  return loadKinds.length > 0 ? loadKinds.join(", ") : "일반적재";
+}
+
+function firstUsefulText(...values: Array<string | null | undefined>) {
+  return values.find((value) => value && value.trim() && value.trim() !== "-")?.trim() ?? null;
+}
+
+function readableSourceDb(sourceText: string) {
+  const firstPart = sourceText.split("/")[0]?.trim();
+  return firstUsefulText(firstPart) ?? "소스 DB";
+}
+
+function readableTableText(value: string, fallback: string) {
+  const parts = value.split("/").map((part) => part.trim()).filter(Boolean);
+  return firstUsefulText(parts.at(-1), value) ?? fallback;
+}
+
+function processorFlowDescription(steps: EtlJobStepView[]) {
+  const sorted = sortProcessorsByPosition(steps);
+  if (sorted.length === 0) {
+    return "현재 프로세서 상세 구성이 아직 동기화되지 않았습니다.";
+  }
+  const names = sorted
+    .map((step) => step.stepName || shortProcessorType(step.stepType))
+    .filter((name) => name && name !== "-")
+    .slice(0, 4);
+  if (names.length >= 2) {
+    const suffix = sorted.length > names.length ? " 등의 단계" : " 단계";
+    return `이 Job은 ${names.join(" → ")}${suffix}를 거쳐 데이터를 처리합니다.`;
+  }
+  return `이 Job은 ${sorted.length}개 Processor로 구성되어 있으며, 소스 데이터를 읽어 대상 저장소로 적재하는 흐름입니다.`;
+}
+
+function isSuccessfulRun(run: EtlJobRunResponse) {
+  const status = run.status.toUpperCase();
+  return status.includes("SUCCESS") || status.includes("COMPLETED") || status === "DONE";
+}
+
+function isFailedRun(run: EtlJobRunResponse) {
+  const status = run.status.toUpperCase();
+  return status.includes("FAIL") || run.failedStepCount > 0;
+}
+
+function recentFiveDayRuns(runs: EtlJobRunResponse[]) {
+  const from = shiftedDate(-4);
+  from.setHours(0, 0, 0, 0);
+  return runs.filter((run) => {
+    const parsed = new Date(run.startedAt);
+    return !Number.isNaN(parsed.getTime()) && parsed >= from;
+  });
+}
+
+function sortRunsLatestFirst(runs: EtlJobRunResponse[]) {
+  return runs.slice().sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+}
+
+function consecutiveSuccessfulRunCount(runs: EtlJobRunResponse[]) {
+  let count = 0;
+  for (const run of sortRunsLatestFirst(runs)) {
+    if (!isSuccessfulRun(run) || isFailedRun(run)) {
+      break;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+function aiRunSummaryText(runs: EtlJobRunResponse[]) {
+  const recentRuns = recentFiveDayRuns(sortRunsLatestFirst(runs));
+  if (recentRuns.length === 0) {
+    return "최근 5일 기준 실행 이력 정보가 아직 충분하지 않습니다.";
+  }
+  const successCount = recentRuns.filter((run) => isSuccessfulRun(run) && !isFailedRun(run)).length;
+  const failureCount = recentRuns.filter(isFailedRun).length;
+  const streak = consecutiveSuccessfulRunCount(runs);
+  if (failureCount === 0 && streak > 1) {
+    return `최근 5일 기준 ${successCount}회 실행되었고, 최근 ${streak}회 연속 성공했습니다.`;
+  }
+  return `최근 5일 기준 ${successCount}회 성공, ${failureCount}회 실패했습니다.`;
+}
+
+function aiDurationSummaryText(latestRun: EtlJobRunResponse | null) {
+  const duration = formatDurationText(latestRun?.durationSeconds);
+  return duration
+    ? `최근 실행 기준 약 ${duration} 내외로 소요되었습니다.`
+    : "최근 실행 기준 소요 시간 정보가 아직 없습니다.";
 }
 
 function sortProcessorsByPosition(steps: EtlJobStepView[]) {
@@ -3813,7 +4150,7 @@ export function EtlJobSummary({ jobId, nifiPgId, onNavigate }: {
     ? fileSourceText(inputDirectory, loadTodayAddedFiles(addedFileStorageKey(job.id, inputDirectory)))
     : sourceTargetText(firstStep, "source");
   const targetText = sourceTargetText(lastTerminalProcessor(steps, links), "target");
-  const latestRun = runs[0] ?? null;
+  const latestRun = sortRunsLatestFirst(runs)[0] ?? null;
   const lastRunDate = formatDateOnly(latestRun?.endedAt ?? latestRun?.startedAt ?? job.lastSyncedAt);
 
   return (
@@ -3898,7 +4235,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const groupJobs = jobs.filter((entry) => selectedGroupIds.has(entry.nifiPgId));
   const groupJobIdsKey = groupJobs.map((entry) => entry.id).join(",");
   const primaryJob = job ?? groupJobs[0] ?? null;
-  const latestRun = runs[0] ?? null;
+  const latestRun = useMemo(() => sortRunsLatestFirst(runs)[0] ?? null, [runs]);
   const airflowDags = uniqueValues(groupJobs.map((entry) => entry.airflowDagId));
   const isLoading = jobsLoading || detailLoading;
 
@@ -4048,34 +4385,63 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
       ? `Group : ${titleName}`
       : titleName;
   const aiAssistantAvailable = aiAssistantEnabled && !!selectedGroupId;
-  const defaultAiFacts = useMemo(() => {
+  const groupJobBriefs = useMemo(() => {
+    const detailByJobId = new Map(details.map((entry) => [entry.job.id, entry]));
+    return groupJobs
+      .slice()
+      .sort((a, b) => b.stepCount - a.stepCount || a.jobName.localeCompare(b.jobName))
+      .slice(0, 5)
+      .map((entry) => {
+        const detail = detailByJobId.get(entry.id);
+        const steps = detail?.steps ?? [];
+        const links = detail?.links ?? [];
+        const source = sourceTargetText(firstStartProcessor(steps, links), "source");
+        const target = sourceTargetText(lastTerminalProcessor(steps, links), "target");
+        const status = statusText(entry, findTreeNode(tree, entry.nifiPgId)?.node ?? null);
+        const dagText = entry.airflowDagId ? `Airflow DAG ${entry.airflowDagId}와 연결된 job입니다.` : "연결된 Airflow DAG 정보는 아직 없습니다.";
+        const flowText = source !== "-" || target !== "-"
+          ? `소스 ${source}에서 타깃 ${target}으로 데이터를 넘기는 흐름입니다.`
+          : `${entry.stepCount}개 프로세서로 구성된 ETL 흐름이며, 상세 소스/타깃은 프로세서 설정을 기준으로 확인합니다.`;
+        return {
+          id: entry.id,
+          name: entry.jobName,
+          line1: flowText,
+          line2: `${dagText} 현재 상태는 ${status}이고, 프로세서는 ${entry.stepCount}개입니다.`,
+        };
+      });
+  }, [details, groupJobs, tree]);
+  const defaultAiReport = useMemo<AiJobReport | null>(() => {
     if (!displayJob) {
-      return [];
+      return null;
     }
-    const loadKinds = uniqueValues(jobSteps.map((step) => {
-      const text = `${step.stepName} ${step.stepType ?? ""} ${step.statementType ?? ""}`.toLowerCase();
-      if (text.includes("truncate") || text.includes("initial")) {
-        return "초기적재";
-      }
-      if (text.includes("update") || text.includes("upsert") || text.includes("merge") || text.includes("increment")) {
-        return "증분적재";
-      }
-      if (text.includes("insert")) {
-        return "일반적재";
-      }
-      return "";
-    })).filter(Boolean);
-
-    return [
-      ["JOB", displayJob.jobName],
-      ["적재 유형", loadKinds.length > 0 ? loadKinds.join(", ") : "-"],
-      ["스케줄", dagSchedule],
-      ["생성일자", formatDateTime(displayJob.firstSeenAt)],
-      ["작성자", displayNode?.createdBy ?? "-"],
-      ["수정/동기화", formatDateTime(displayJob.lastSyncedAt)],
-      ["Processor", `${displayJob.stepCount}개`],
-    ];
-  }, [dagSchedule, displayJob, displayNode?.createdBy, jobSteps]);
+    const loadType = readableLoadType(jobLoadKinds(jobSteps));
+    const sourceDb = readableSourceDb(sourceText);
+    const sourceTable = readableTableText(sourceText, "확인된 소스 테이블");
+    const targetTable = readableTableText(targetText, "확인된 적재 테이블");
+    const scheduleText = dagSchedule === "없음"
+      ? "자체 스케줄은 없습니다. 스케줄은 워크플로우에서 등록해야 합니다."
+      : `워크플로우 스케줄 기준으로 ${dagSchedule} 실행됩니다.`;
+    const author = displayNode?.createdBy ?? "확인되지 않은 사용자";
+    return {
+      summary: `${sourceDb}의 ${sourceTable} 데이터를 ${targetTable}로 적재하는 ${loadType} ETL FLOW입니다.`,
+      composition: [
+        `적재유형: ${loadType} 방식으로 동작합니다. 소스테이블은 ${sourceTable}, 적재테이블은 ${targetTable}입니다.`,
+        `스케줄: ${scheduleText}`,
+        `설명: ${processorFlowDescription(jobSteps)}`,
+        `생성일자는 ${formatDateTime(displayJob.firstSeenAt)}이며, 작성자는 ${author}입니다.`,
+      ],
+      current: [
+        `최근 실행: ${aiRunSummaryText(runs)}`,
+        `실행 소요 시간: ${aiDurationSummaryText(latestRun)}`,
+        `등록일자는 ${formatDateTime(displayJob.firstSeenAt)}이고 최근 수정은 ${formatDateTime(displayJob.lastSyncedAt)}에 했습니다.`,
+      ],
+      change: [
+        ["등록자", author],
+        ["등록 시각", formatDateTime(displayJob.firstSeenAt)],
+        ["최종 수정", formatDateTime(displayJob.lastSyncedAt)],
+      ],
+    };
+  }, [dagSchedule, displayJob, displayNode?.createdBy, jobSteps, latestRun, runs, sourceText, targetText]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4262,6 +4628,53 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     }
   };
 
+  const handleAiMarkdownSave = () => {
+    const lines = [
+      `# ${titleName} AI 어시스턴트`,
+      "",
+      "- 대상: ETL 관리 어시스턴트",
+      `- 경로: ${safeMarkdown(displayPath)}`,
+      `- 모델: ${safeMarkdown(aiProviderName ?? "선택된 GPT")}`,
+      `- 저장 시각: ${new Date().toLocaleString()}`,
+      "",
+      ...(defaultAiReport
+        ? buildJobReportMarkdown(defaultAiReport)
+        : [
+          "## 현재 프로세스 그룹",
+          "",
+          safeMarkdown(displayPath),
+          "",
+        ]),
+      ...(groupJobBriefs.length > 0 && !defaultAiReport
+        ? [
+          "## 이 그룹의 Job 상위 5개",
+          "",
+          ...groupJobBriefs.flatMap((item) => [
+            `### ${safeMarkdown(item.name)}`,
+            "",
+            safeMarkdown(item.line1),
+            "",
+            safeMarkdown(item.line2),
+            "",
+          ]),
+        ]
+        : []),
+      "## 대화",
+      "",
+      ...(aiMessages.length > 0
+        ? aiMessages.flatMap((entry) => [
+          `### ${entry.role === "user" ? "질문" : "답변"}`,
+          "",
+          safeMarkdown(entry.content || (entry.role === "assistant" && aiLoading ? "답변 중입니다." : "")),
+          "",
+        ])
+        : ["아직 대화가 없습니다.", ""]),
+      ...(aiError ? ["## 오류", "", safeMarkdown(aiError), ""] : []),
+    ];
+    downloadMarkdownFile(`${titleName} AI 어시스턴트`, "_AI_어시스턴트", lines.join("\n"));
+    message.success("Markdown 파일을 저장했습니다.");
+  };
+
   return (
     <>
       <aside
@@ -4438,39 +4851,83 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
           <section className="nifi-ai-panel" role="tabpanel" aria-label="AI 어시스턴트">
             <div className="nifi-ai-summary">
               <strong>{aiProviderName ?? "선택된 GPT"}</strong>
-              <Button size="small" loading={aiPreviewLoading} onClick={handleAiPreview}>
-                프롬프트 편집
-              </Button>
+              <span className="nifi-ai-summary-actions">
+                <Button size="small" loading={aiPreviewLoading} onClick={handleAiPreview}>
+                  프롬프트 편집
+                </Button>
+                <Button size="small" onClick={handleAiMarkdownSave}>
+                  MD 저장하기
+                </Button>
+              </span>
             </div>
             {aiError ? (
               <Alert className="nifi-ai-alert" type="error" showIcon message={aiError} />
             ) : null}
             <div className="nifi-ai-conversation">
-              {aiMessages.length === 0 && isJobGroup && displayJob ? (
-                <div className="nifi-ai-empty">
-                  <strong>현재 JOB 기본 정보</strong>
-                  <dl className="nifi-ai-default-info">
-                    {defaultAiFacts.map(([label, value]) => (
-                      <div key={label}>
-                        <dt>{label}</dt>
-                        <dd>{value}</dd>
-                      </div>
-                    ))}
-                  </dl>
+              {isJobGroup && displayJob && defaultAiReport ? (
+                <div className="nifi-ai-empty nifi-ai-job-report nifi-ai-pinned-context">
+                  <section>
+                    <strong>한 줄 요약</strong>
+                    <p>{defaultAiReport.summary}</p>
+                  </section>
+                  <section>
+                    <strong>구성</strong>
+                    <ul>
+                      {defaultAiReport.composition.map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  </section>
+                  <section>
+                    <strong>지금 상태</strong>
+                    <ul>
+                      {defaultAiReport.current.map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  </section>
+                  <section>
+                    <strong>등록 및 변경</strong>
+                    <dl className="nifi-ai-report-meta">
+                      {defaultAiReport.change.map(([label, value]) => (
+                        <div key={label}>
+                          <dt>{label}</dt>
+                          <dd>{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
                 </div>
-              ) : aiMessages.length === 0 ? (
+              ) : null}
+              {aiMessages.length === 0 && !defaultAiReport && groupJobBriefs.length > 0 ? (
+                <div className="nifi-ai-empty">
+                  <strong>이 그룹의 Job 상위 5개</strong>
+                  <span>{displayPath}</span>
+                  <ol className="nifi-ai-job-brief-list">
+                    {groupJobBriefs.map((item) => (
+                      <li key={item.id}>
+                        <b>{item.name}</b>
+                        <span>{item.line1}</span>
+                        <span>{item.line2}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
+              {aiMessages.length === 0 && !defaultAiReport && groupJobBriefs.length === 0 ? (
                 <div className="nifi-ai-empty">
                   <strong>현재 프로세스 그룹</strong>
                   <span>{displayPath}</span>
                 </div>
-              ) : (
+              ) : null}
+              {aiMessages.length > 0 ? (
                 aiMessages.map((entry, index) => (
                   <div key={`${entry.role}-${index}`} className={`nifi-ai-message ${entry.role}`}>
                     <span>{entry.role === "user" ? "나" : "AI"}</span>
                     <p>{entry.role === "assistant" ? renderAssistantText(entry.content) : entry.content}</p>
                   </div>
                 ))
-              )}
+              ) : null}
               {aiLoading ? (
                 <div className="nifi-ai-loading">
                   <Spin size="small" />
