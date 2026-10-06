@@ -10737,12 +10737,6 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   line-height: 1.6;
 }
 
-.gpt-chat-tool-mode {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 400;
-}
-
 /*
  * ===== 대시보드: 브라우저 배율을 올렸을 때(2026-10-05 요청) =====
  * 이 화면은 «한 화면에 고정, 페이지는 스크롤 없음»이 기본이다. 배율을 올리면 보이는 영역이 좁아지는데,
