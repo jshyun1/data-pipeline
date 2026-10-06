@@ -15,13 +15,17 @@ import com.company.pipeline.pipeline.PipelineDefinition;
 import com.company.pipeline.pipeline.PipelineDefinitionRepository;
 import com.company.pipeline.pipeline.PipelineGroup;
 import com.company.pipeline.pipeline.PipelineGroupRepository;
+import com.company.pipeline.pipeline.PipelineMetadataArchive;
+import com.company.pipeline.pipeline.PipelineMetadataArchiveRepository;
 import com.company.pipeline.pipeline.PipelineRuntimeStatusService;
 import com.company.pipeline.pipeline.dto.PipelineRuntimeStatusResponse;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,13 +59,15 @@ public class CdcPipelineContextCollector implements LlmContextCollector {
     private final PipelineRuntimeStatusService runtimeStatusService;
     private final KafkaConnectClient kafkaConnectClient;
     private final RealtimePipelineMetricService metricService;
+    private final PipelineMetadataArchiveRepository archiveRepository;
 
     public CdcPipelineContextCollector(PipelineDefinitionRepository pipelineRepository, PipelineGroupRepository groupRepository,
                                        PipelineConnectorRepository connectorRepository,
                                        PipelineCommandHistoryRepository commandHistoryRepository,
                                        PipelineRuntimeStatusService runtimeStatusService,
                                        KafkaConnectClient kafkaConnectClient,
-                                       RealtimePipelineMetricService metricService) {
+                                       RealtimePipelineMetricService metricService,
+                                       PipelineMetadataArchiveRepository archiveRepository) {
         this.pipelineRepository = pipelineRepository;
         this.groupRepository = groupRepository;
         this.connectorRepository = connectorRepository;
@@ -69,6 +75,7 @@ public class CdcPipelineContextCollector implements LlmContextCollector {
         this.runtimeStatusService = runtimeStatusService;
         this.kafkaConnectClient = kafkaConnectClient;
         this.metricService = metricService;
+        this.archiveRepository = archiveRepository;
     }
 
     @Override
@@ -85,13 +92,20 @@ public class CdcPipelineContextCollector implements LlmContextCollector {
         } catch (NumberFormatException ex) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "파이프라인 id 형식이 올바르지 않습니다: " + rawId);
         }
-        PipelineDefinition pipeline = pipelineRepository.findById(pipelineId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.LLM_TARGET_NOT_FOUND,
-                        "CDC 파이프라인을 찾을 수 없습니다: " + pipelineId));
+        LlmContext context = new LlmContext();
+        String error = ContextText.errorText(errorText);
+        context.add("화면에 표시된 오류 내용", error, LlmContext.PRIORITY_ERROR);
+
+        // CDC 로그 · 제어 명령 이력은 파이프라인을 지운 뒤에도 남는다. 지운 파이프라인도 해석할 수 있어야 한다(2026-10-06 - ETL ·
+        // 워크플로우와 같이 «찾을 수 없음»으로 막혔다). 파이프라인은 행째 지우므로 지울 때 남긴 보관 메타(이름 · 소스 · 타깃)와
+        // 명령 이력을 붙이고, 보관 메타도 없으면(30일 보존정리 뒤) 오류 내용과 명령 이력만으로 해석한다.
+        Optional<PipelineDefinition> found = pipelineRepository.findById(pipelineId);
+        if (found.isEmpty()) {
+            return deleted(pipelineId, error, context);
+        }
+        PipelineDefinition pipeline = found.get();
         List<PipelineConnector> connectors = connectorRepository.findByPipelineId(pipelineId);
 
-        LlmContext context = new LlmContext();
-        context.add("화면에 표시된 오류 내용", ContextText.errorText(errorText), LlmContext.PRIORITY_ERROR);
         context.add("CDC 파이프라인", identity(pipeline), LlmContext.PRIORITY_IDENTITY);
         context.add("실행 상태", runtime(pipelineId), LlmContext.PRIORITY_IDENTITY);
         context.add("배포된 커넥터", connectorList(connectors), LlmContext.PRIORITY_IDENTITY);
@@ -99,6 +113,29 @@ public class CdcPipelineContextCollector implements LlmContextCollector {
         context.add("커넥터 태스크 오류 추적", connectorTraces(connectors), LlmContext.PRIORITY_DETAIL);
         context.add("최근 제어 명령 (최신순)", recentCommands(pipelineId), LlmContext.PRIORITY_HISTORY);
         return new CollectedTarget(String.valueOf(pipelineId), pipeline.getName(), context);
+    }
+
+    private CollectedTarget deleted(long pipelineId, String error, LlmContext context) {
+        Optional<PipelineMetadataArchive> archive = archiveRepository.findById(pipelineId);
+        if (archive.isEmpty() && error == null) {
+            throw new BusinessException(ErrorCode.LLM_TARGET_NOT_FOUND, "CDC 파이프라인을 찾을 수 없습니다: " + pipelineId);
+        }
+        String ref = "pipelineId " + pipelineId;
+        context.add("CDC 파이프라인", archive.map(CdcPipelineContextCollector::deletedIdentity)
+                .orElse("이 로그의 파이프라인 정보가 남아 있지 않습니다(" + ref + "). 화면의 오류 내용과 명령 이력만으로 분석하십시오."),
+                LlmContext.PRIORITY_IDENTITY);
+        context.add("최근 제어 명령 (최신순)", recentCommands(pipelineId), LlmContext.PRIORITY_HISTORY);
+        return new CollectedTarget(String.valueOf(pipelineId), archive.map(PipelineMetadataArchive::getName).orElse(ref), context);
+    }
+
+    private static String deletedIdentity(PipelineMetadataArchive a) {
+        return "이름: " + a.getName()
+                + "\n상태: 삭제된 파이프라인(" + (a.getArchivedAt() == null ? "-"
+                        : ContextText.time(a.getArchivedAt().atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime()))
+                + " 삭제) - 커넥터 · 설정 · 실행 상태는 남아 있지 않고, 아래는 지울 때 남긴 정보입니다"
+                + "\n유형: " + ContextText.orDash(a.getPipelineType())
+                + "\n소스: " + ContextText.orDash(a.getSourcePath())
+                + "\n타깃: " + ContextText.orDash(a.getTargetPath());
     }
 
     private String identity(PipelineDefinition p) {

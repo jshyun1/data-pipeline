@@ -362,13 +362,6 @@ export function DashboardPage() {
     placeholderData: (previousData) => previousData,
   });
 
-  // CDC 실패 상세에 «어느 파이프라인인지»를 적으려면 커넥터 이름만으로는 부족하다(이름에 id 만 들어 있다).
-  const pipelinesQuery = useQuery({
-    queryKey: ["dashboard-pipelines"],
-    queryFn: listPipelines,
-    staleTime: 60_000,
-  });
-
   const kafkaConnectorsQuery = useQuery({
     queryKey: ["dashboard-kafka-connectors"],
     queryFn: async () => summarizeKafkaConnectors(await listKafkaConnectorsWithStatus()),
@@ -549,11 +542,9 @@ export function DashboardPage() {
    * 흐름이라 두 화면이 같은 것을 세어야 한다.
    */
   const cdcFailedItems: FailureDetailItem[] = useMemo(() => {
-    const pipelines = pipelinesQuery.data ?? [];
+    // 지워진 파이프라인도 해석한다(2026-10-06) - 서버가 지울 때 남긴 정보 · 명령 이력과 오류 내용으로 해석한다.
     const gptTarget = (pipelineId: number) =>
-      pipelines.some((item) => item.id === pipelineId)
-        ? { targetType: "CDC_PIPELINE" as const, target: { pipelineId: String(pipelineId) } }
-        : undefined;   // 지워진 파이프라인은 수집기가 대상을 못 찾는다
+      ({ targetType: "CDC_PIPELINE" as const, target: { pipelineId: String(pipelineId) } });
 
     const events: FailureDetailItem[] = (cdcEventLogsQuery.data ?? [])
       .filter((row) => row.result === "FAILED")
@@ -586,7 +577,7 @@ export function DashboardPage() {
       }));
 
     return [...events, ...processing].sort((a, b) => (b.datetime ?? "").localeCompare(a.datetime ?? ""));
-  }, [cdcEventLogsQuery.data, cdcProcessingLogsQuery.data, pipelinesQuery.data]);
+  }, [cdcEventLogsQuery.data, cdcProcessingLogsQuery.data]);
 
 
   /**

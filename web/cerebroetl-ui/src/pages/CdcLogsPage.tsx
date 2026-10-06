@@ -184,7 +184,8 @@ function CdcLogDetailModal({ row, pipelineAlive, onClose }: {
   // 열자마자 GPT 해석, 그 아래 로그(워크플로우 창의 «실패 원인» 상자 모양). 구분 · 시각 줄은 뺐다.
   const gptEnabled = useGptEnabled();
   const [analysisOpen, setAnalysisOpen] = useState(true);
-  const analyzable = Boolean(row) && row?.status === "FAILED" && Boolean(row?.pipelineId) && pipelineAlive;
+  // 지운 파이프라인의 실패도 해석한다(2026-10-06) - 서버가 지울 때 남긴 이름 · 소스 · 타깃과 명령 이력, 오류 내용으로 해석한다.
+  const analyzable = Boolean(row) && row?.status === "FAILED" && Boolean(row?.pipelineId);
   return (
     <Modal
       open={Boolean(row)}
@@ -214,7 +215,7 @@ function CdcLogDetailModal({ row, pipelineAlive, onClose }: {
           )}
           {gptEnabled && row.status === "FAILED" && !pipelineAlive && (
             <div className="failure-log-note">
-              이 파이프라인은 삭제돼 GPT 해석을 할 수 없습니다(해석에 필요한 설정 · 상태를 더 읽을 수 없습니다).
+              이 파이프라인은 삭제됐습니다. 커넥터 · 실행 상태 없이 지울 때 남긴 정보와 오류 내용으로 해석합니다.
             </div>
           )}
           {row.status === "FAILED" ? (

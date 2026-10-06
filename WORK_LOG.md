@@ -2899,3 +2899,45 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 **사고**: 처음 테스트를 스택이 다 떠 있는 채로 돌리다(11:39~12:11) 메모리 압박 95%가 됐다.
 - Airflow 3종이 재시작됐다(OOM 아님, DAG 실행 영향 없음).
 - 테스트 컨테이너를 강제 종료해 회복했고, 다시 할 때는 NiFi · kafka-connect 를 잠시 멈추고(12:13~12:18) 진행했다.
+
+## 83. 워크플로우 · CDC 실패 GPT 해석 - 지운 대상도 해석 (2026-10-06)
+
+**요청**: «워크플로우 GPT 해석도 수정해줘. CDC도 동일하면 같은 방식으로 고쳐줘» (§82 ETL 과 같은 방식).
+
+**원인**(재현: `/api/llm/chat` 직접 호출)
+- 워크플로우 로그는 Airflow 실행 기록을 그대로 보여 줘서 지운 워크플로우의 실패도 남는다(dw_pop_daily · cdc_2 · cdc 등).
+  `WorkflowTaskContextCollector` 가 살아 있는 워크플로우에서만 dag_id 를 찾아 404 «워크플로우를 찾을 수 없습니다».
+- CDC 도 같다. 파이프라인은 행째 지우므로 `CdcPipelineContextCollector` 가 404 를 냈다.
+  그래서 CDC 로그 창과 대시보드는 지운 파이프라인이면 해석 단추를 아예 숨기고 있었다(«삭제돼 GPT 해석을 할 수 없습니다»).
+  - 하지만 지울 때 남기는 보관 메타(`pipeline_metadata_archive`: 이름 · 유형 · 소스 · 타깃)와 제어 명령 이력은 남아 있다.
+
+**고친 것**
+- `WorkflowTaskContextCollector`:
+  - 지운 워크플로우도 찾고 «삭제된 워크플로우(삭제 시각)» 줄을 붙인다.
+    노드는 워크플로우만 deleted_at 이라 그대로 남아 있어 삭제 직전 설계로 설명된다.
+  - 노드가 부르는 job 이 지워졌으면 «삭제된 job» 을 붙인다.
+  - 같은 dag_id 가 여럿이면(예전 키 재사용, etl_wf_cdc = 37 · 39) 살아 있는 것, 없으면 마지막에 만든 것을 고른다.
+  - 기록이 없으면(워크플로우가 아닌 DAG 포함) DAG · 실행 · task · 단계 설명과 실패 로그만으로 해석한다.
+  - 둘 다 없으면 404.
+- `CdcPipelineContextCollector`:
+  - 지운 파이프라인은 보관 메타 + «삭제된 파이프라인» 줄 + 명령 이력으로 해석한다.
+  - 보관 메타도 없으면(30일 보존정리 뒤) 오류 내용 + 명령 이력으로 해석한다.
+  - 둘 다 없으면 404.
+- 화면:
+  - `CdcLogsPage`: 지운 파이프라인도 해석하고, 안내 문구를 «지울 때 남긴 정보와 오류 내용으로 해석합니다»로 바꿨다.
+  - `DashboardPage`: CDC 실패 상세도 지운 파이프라인을 해석한다. 이 판정에만 쓰던 파이프라인 목록 조회는 지웠다.
+- `WorkflowContextCollector`(워크플로우 전체 · 속성창) · `WorkflowNodeContextCollector`(캔버스 노드)는 그대로 뒀다.
+  살아 있는 워크플로우를 열어야 부르는 질문 탭이라, 지운 대상이면 404 사유가 맞다.
+
+**확인**
+- 테스트: `llm.*` 15개 파일 실패 0. 새로 넣은 것은 워크플로우 4건(`WorkflowTaskContextCollectorTest`) · CDC 3건.
+- 화면: 타입 검사 · oxlint 통과.
+- 실제 요청(pipeline-api · cerebroetl-ui 재빌드 뒤):
+  - 지운 dw_pop_daily 실패 task → 해석 성공
+  - etl_wf_cdc(지운 것 둘) → 성공
+  - 살아 있는 cdc_imp → 성공
+  - 없는 DAG + 실패 로그 → 성공
+  - 없는 DAG + 로그 없음 → 404
+  - 지운 CDC 16 → 성공. 보관된 타깃 cdc_landing.e2e_dash_tgt · 명령 이력 RUNTIME_MONITOR 를 근거로 씀
+- CDC 로그 화면(2026-09-21, e2e-dash 실패 줄): 창을 열자 GPT 해석이 바로 나오고 안내 문구도 바뀐 것을 확인했다.
+- 테스트와 빌드는 NiFi · kafka-connect 를 잠시 멈추고 돌렸다. 실행 중 DAG 0 이었고 다른 세션에 알렸다.
