@@ -35,6 +35,32 @@ class CompletionDetectorTest {
     }
 
     @Test
+    void progressReportsRowsSoFar_onlyWhenChanged_andStopsAfterCompletion() {
+        // 2026-10-06: 실행 중 «지금까지 적재 건수» - 로그 화면이 실시간으로 보여 준다.
+        tick(0, 0, 0, 100L, 0);
+        tick(2_000, 1, 5, 100L, 3);
+        assertTrue(detector.progress().isEmpty());              // 시작했지만 아직 0건
+        tick(4_000, 1, 2, 150L, 6);
+        List<CompletionDetector.Progress> first = detector.progress();
+        assertEquals(1, first.size());
+        assertEquals(50L, first.get(0).rows());
+        tick(6_000, 1, 2, 150L, 7);
+        assertTrue(detector.progress().isEmpty());              // 같은 값은 다시 보내지 않는다
+        tick(8_000, 0, 0, 243L, 7);
+        assertEquals(143L, detector.progress().get(0).rows());
+        tick(10_000, 0, 0, 243L, 7);
+        tick(11_500, 0, 0, 243L, 7);                             // 완료
+        assertTrue(detector.progress().isEmpty());              // 끝난 실행은 진행을 보내지 않는다
+    }
+
+    @Test
+    void progressIsNotReportedWithoutLoadCounter() {
+        tick(0, 0, 0, null, 0);
+        tick(2_000, 1, 1, null, 2);
+        assertTrue(detector.progress().isEmpty());
+    }
+
+    @Test
     void shortRunBetweenTicks_isCaughtByCounterAndInvocations() {
         tick(0, 0, 0, 10L, 0);
         assertTrue(tick(2_000, 0, 0, 53L, 4).isEmpty());        // 판정 사이에 시작해 끝났다

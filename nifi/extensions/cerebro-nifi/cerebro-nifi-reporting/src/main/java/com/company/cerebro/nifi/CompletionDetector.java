@@ -32,6 +32,10 @@ final class CompletionDetector {
                       Long baselineLoad, Long finalLoad) {
     }
 
+    /** 실행 중 진행 - 이번 실행에서 지금까지 적재한 건수(2026-10-06, 로그 화면 실시간 표시용). */
+    record Progress(String groupId, long rows) {
+    }
+
     /** 이번 판정에서 «실행 시작»으로 본 그룹과 그 이유(로그용). */
     final List<String> startedThisTick = new ArrayList<>();
 
@@ -44,6 +48,8 @@ final class CompletionDetector {
         Long baselineLoad;
         /** 직전 판정 시각. 활동을 이번에 처음 봤으면 실제 시작은 그 사이 어딘가다 - 시작 시각을 이것으로 잡는다. */
         long lastTickAt = -1L;
+        /** 지난번 진행 알림으로 보낸 건수. 같은 값은 다시 보내지 않는다. */
+        Long reportedRows;
         final Set<String> errors = new LinkedHashSet<>();
     }
 
@@ -124,7 +130,27 @@ final class CompletionDetector {
         return done;
     }
 
+    /**
+     * 실행 중인 그룹의 «지금까지 적재 건수» 중 지난번 보낸 값과 달라진 것({@link #tick} 뒤에 부른다, 2026-10-06).
+     * 적재 카운터가 없는 그룹과 아직 0건인 그룹은 보내지 않는다 - 최종 건수는 완료 알림이 확정한다.
+     */
+    List<Progress> progress() {
+        List<Progress> out = new ArrayList<>();
+        states.forEach((groupId, state) -> {
+            if (!state.inRun || state.lastLoad == null) {
+                return;
+            }
+            long rows = rowsSince(state.baselineLoad, state.lastLoad);
+            if (rows > 0 && (state.reportedRows == null || rows != state.reportedRows)) {
+                state.reportedRows = rows;
+                out.add(new Progress(groupId, rows));
+            }
+        });
+        return out;
+    }
+
     private static void startRun(State state, long startedAtMillis, Long baselineLoad) {
+        state.reportedRows = null;
         state.inRun = true;
         state.runStartedAt = startedAtMillis;
         state.lastActivityAt = startedAtMillis;
@@ -133,16 +159,17 @@ final class CompletionDetector {
     }
 
     private static Completion finish(String groupId, State state, Long loadNow, long nowMillis) {
-        Long rows = null;
-        if (loadNow != null) {
-            long base = state.baselineLoad == null ? 0L : state.baselineLoad;
-            // NiFi 가 재시작되면 카운터가 0 부터 다시 오른다 - 그땐 현재값이 곧 이번분이다.
-            rows = loadNow >= base ? loadNow - base : loadNow;
-        }
+        Long rows = loadNow == null ? null : rowsSince(state.baselineLoad, loadNow);
         Completion completion = new Completion(groupId, rows, List.copyOf(state.errors), state.runStartedAt, state.lastActivityAt,
                 state.baselineLoad, loadNow);
         state.inRun = false;
         state.errors.clear();
         return completion;
+    }
+
+    /** 실행 시작 때 카운터(기준)부터 지금까지 늘어난 만큼. NiFi 가 재시작되면 카운터가 0 부터 다시 오른다 - 그땐 현재값이 곧 이번분이다. */
+    private static long rowsSince(Long baselineLoad, long loadNow) {
+        long base = baselineLoad == null ? 0L : baselineLoad;
+        return loadNow >= base ? loadNow - base : loadNow;
     }
 }

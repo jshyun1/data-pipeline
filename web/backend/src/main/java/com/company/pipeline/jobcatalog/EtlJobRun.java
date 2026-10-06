@@ -118,6 +118,21 @@ public class EtlJobRun {
         this.updatedAt = LocalDateTime.now();
     }
 
+    /**
+     * 실행 중 «지금까지 적재 건수»(NiFi 완료 감시가 2초 판정마다 보낸다, 2026-10-06). 열린 실행에만 적는다 -
+     * 닫힐 때는 {@link #completeBy} 가 최종 건수로 덮는다. 활동이 있었다는 뜻이라 마지막 관측 시각도 민다.
+     */
+    public void reportProgress(long rows, LocalDateTime at) {
+        if (this.endedAt != null) {
+            return;
+        }
+        this.rowsProcessed = rows;
+        if (at.isAfter(this.lastSeenAt)) {
+            this.lastSeenAt = at;
+        }
+        this.updatedAt = at;
+    }
+
     /** 스텝 구간이 새로 열릴 때마다 1 증가. */
     public void addStepRun() {
         this.stepRunCount++;

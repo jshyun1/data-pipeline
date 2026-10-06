@@ -79,4 +79,35 @@ class JobRunLedgerServiceTest {
 
         verify(runRepository, org.mockito.Mockito.atLeastOnce()).save(any());
     }
+
+    @Test
+    void progressIsWrittenToTheOpenRunOnly() {
+        // 2026-10-06: NiFi 완료 감시가 실행 중 «지금까지 적재 건수»를 보낸다 - 로그 화면이 실시간으로 읽는다.
+        EtlJob job = mock(EtlJob.class);
+        when(job.getId()).thenReturn(34L);
+        when(jobRepository.findByNifiPgId(PG)).thenReturn(Optional.of(job));
+        EtlJobRun open = new EtlJobRun(34L, LocalDateTime.now().minusSeconds(10));
+        when(runRepository.findByJobIdAndEndedAtIsNull(34L)).thenReturn(Optional.of(open));
+
+        service.progressByPg(PG, 12_000L);
+        assertThat(open.getRowsProcessed()).isEqualTo(12_000L);
+
+        open.completeBy(EtlJobRun.SOURCE_CALLBACK, EtlJobRun.STATUS_SUCCESS, 30_000L, null, LocalDateTime.now());
+        open.reportProgress(31_000L, LocalDateTime.now());   // 늦게 온 진행 알림은 닫힌 실행을 바꾸지 않는다
+        assertThat(open.getRowsProcessed()).isEqualTo(30_000L);
+    }
+
+    @Test
+    void progressForAnUnknownGroupOrWithoutAnOpenRun_isIgnored() {
+        when(jobRepository.findByNifiPgId("unknown")).thenReturn(Optional.empty());
+        service.progressByPg("unknown", 5L);
+
+        EtlJob job = mock(EtlJob.class);
+        when(job.getId()).thenReturn(34L);
+        when(jobRepository.findByNifiPgId(PG)).thenReturn(Optional.of(job));
+        when(runRepository.findByJobIdAndEndedAtIsNull(34L)).thenReturn(Optional.empty());
+        service.progressByPg(PG, 5L);
+
+        verify(runRepository, never()).save(any());
+    }
 }

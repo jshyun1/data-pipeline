@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -50,6 +51,16 @@ public class JobRunLedgerController {
         return ApiResponse.success(ledgerService.watchedGroupIds());
     }
 
+    /**
+     * 워크플로우 실행 한 번(Airflow dag run id)의 job 실행들 - 로그 화면이 실행 중인 job 의 «지금까지 적재 건수»를 읽는다(2026-10-06).
+     * 끝난 job 의 건수는 지금처럼 Airflow 작업 로그에서 읽는다.
+     */
+    @GetMapping("/by-dag-run")
+    @RequirePermission(system = SystemCode.NIFI)
+    public ApiResponse<List<RunView>> byDagRun(@RequestParam String dagRunId) {
+        return ApiResponse.success(ledgerService.runsOfDagRun(dagRunId).stream().map(RunView::from).toList());
+    }
+
     /** Airflow sensor가 완료를 확인하려고 폴링한다. */
     @GetMapping("/{runToken}")
     @RequirePermission(system = SystemCode.NIFI)
@@ -82,6 +93,15 @@ public class JobRunLedgerController {
         return ApiResponse.success(null);
     }
 
+    /** NiFi 완료 감시의 진행 알림(2026-10-06) - 실행 중 «지금까지 적재 건수». 열린 실행이 없으면 아무것도 하지 않는다. */
+    @PostMapping("/by-pg/{nifiPgId}/progress")
+    public ApiResponse<Void> progressByPg(@PathVariable String nifiPgId, @RequestBody ProgressRequest request) {
+        if (request != null && request.rows() != null && request.rows() >= 0) {
+            ledgerService.progressByPg(nifiPgId, request.rows());
+        }
+        return ApiResponse.success(null);
+    }
+
     /** NiFi 실패 콜백(플랜 B-1). 이걸 받으면 Airflow sensor가 태스크를 즉시 실패시킨다. */
     @PostMapping("/by-pg/{nifiPgId}/fail")
     public ApiResponse<Void> failByPg(@PathVariable String nifiPgId,
@@ -99,6 +119,10 @@ public class JobRunLedgerController {
     public record ObserveRequest(Long rows) {
     }
 
+    /** @param rows 이번 실행에서 지금까지 적재한 건수 */
+    public record ProgressRequest(Long rows) {
+    }
+
     /**
      * @param startedAt · endedAt NiFi 완료 감시가 본 실제 실행 시각(epoch ms, 선택). 있으면 원장의 시작 · 끝을 이것으로 맞춘다.
      */
@@ -112,15 +136,18 @@ public class JobRunLedgerController {
         }
     }
 
-    /** {@code completionSource}가 화면에서 "확정 / 추정"을 가르는 근거다. */
+    /**
+     * {@code completionSource}가 화면에서 "확정 / 추정"을 가르는 근거다. {@code nodeKey} 는 로그 화면이 job 줄과 짝짓는 데 쓴다.
+     * 열린 실행(endedAt 없음)의 {@code rowsProcessed} 는 «지금까지 적재 건수»다(NiFi 완료 감시의 진행 알림).
+     */
     public record RunView(Long id, Long jobId, String runToken, String status,
                           String triggerSource, String completionSource, Long rowsProcessed,
-                          String errorMessage, LocalDateTime startedAt, LocalDateTime endedAt) {
+                          String errorMessage, LocalDateTime startedAt, LocalDateTime endedAt, String nodeKey) {
 
         static RunView from(EtlJobRun run) {
             return new RunView(run.getId(), run.getJobId(), run.getRunToken(), run.getStatus(),
                     run.getTriggerSource(), run.getCompletionSource(), run.getRowsProcessed(),
-                    run.getErrorMessage(), run.getStartedAt(), run.getEndedAt());
+                    run.getErrorMessage(), run.getStartedAt(), run.getEndedAt(), run.getNodeKey());
         }
     }
 }

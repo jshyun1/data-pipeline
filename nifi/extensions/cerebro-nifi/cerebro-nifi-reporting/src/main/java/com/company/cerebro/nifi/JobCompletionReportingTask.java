@@ -111,8 +111,13 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
     private volatile boolean watchedLoaded;
     private long watchedFetchedAt;
 
-    private record Outgoing(String path, String body, int attempt, long notBefore) {
+    /** @param droppable 진행 알림처럼 놓쳐도 되는 것 - 실패해도 다시 보내지 않고 버린다 */
+    private record Outgoing(String path, String body, int attempt, long notBefore, boolean droppable) {
     }
+
+    /** 백엔드가 진행 알림을 모르면(404 - 옛 버전) 이 시각까지 보내지 않는다. NAR 과 백엔드가 따로 반영될 때 경고가 쌓이지 않게. */
+    private volatile long progressPausedUntil;
+    private static final long PROGRESS_PAUSE_MILLIS = 10 * 60_000L;
 
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
@@ -125,6 +130,7 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
             outbox.clear();
         }
         detector = null;
+        progressPausedUntil = 0L;
         watchedLoaded = false;
         watchedFetchedAt = 0;
     }
@@ -164,6 +170,10 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
                 Set<String> errors = new java.util.LinkedHashSet<>(completion.errors());
                 errors.addAll(errorsSince(context, completion.groupId(), completion.startedAtMillis()));
                 enqueue(completion, errors.stream().limit(CompletionDetector.MAX_ERRORS).toList());
+            }
+            // 실행 중 «지금까지 적재 건수»(2026-10-06) - 로그 화면이 실시간으로 보여 준다. 바뀐 것만 보낸다.
+            if (now >= progressPausedUntil) {
+                detector.progress().forEach(this::enqueueProgress);
             }
             flush(api, token);
         } catch (RuntimeException ex) {
@@ -254,6 +264,20 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
         }
     }
 
+    /**
+     * 진행 알림을 대기열에 넣는다. 아직 못 보낸 같은 그룹의 진행 알림은 새 값으로 바꾼다 - 밀려도 최신 값 하나만 간다.
+     * 대기열이 차 있으면 버린다 - 완료 알림 자리를 뺏지 않는다.
+     */
+    private void enqueueProgress(CompletionDetector.Progress progress) {
+        String path = "/api/etl/job-runs/by-pg/" + progress.groupId() + "/progress";
+        synchronized (outbox) {
+            outbox.removeIf(item -> item.droppable() && item.path().equals(path));
+            if (outbox.size() < QUEUE_LIMIT) {
+                outbox.addLast(new Outgoing(path, "{\"rows\":" + progress.rows() + "}", 0, 0L, true));
+            }
+        }
+    }
+
     private void enqueue(CompletionDetector.Completion completion, List<String> errors) {
         boolean failed = !errors.isEmpty();
         String path = "/api/etl/job-runs/by-pg/" + completion.groupId() + (failed ? "/fail" : "/complete");
@@ -266,7 +290,7 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
             if (outbox.size() >= QUEUE_LIMIT) {
                 outbox.pollFirst();
             }
-            outbox.addLast(new Outgoing(path, body, 0, 0L));
+            outbox.addLast(new Outgoing(path, body, 0, 0L, false));
         }
         getLogger().info("job 그룹 {} 실행 {} 감지(rows={}, {}초, 적재 카운터 {}→{})", completion.groupId(), failed ? "실패" : "완료",
                 completion.rows(), (completion.endedAtMillis() - completion.startedAtMillis()) / 1000,
@@ -292,12 +316,20 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
                         }
                         outbox.pollFirst();
                     }
-                    if (!post(api, token, next)) {
+                    int status = post(api, token, next);
+                    if (next.droppable()) {
+                        if (status == 404) {
+                            progressPausedUntil = System.currentTimeMillis() + PROGRESS_PAUSE_MILLIS;
+                            getLogger().info("백엔드가 진행 알림을 받지 않습니다(HTTP 404, 옛 버전) - 10분 동안 보내지 않습니다");
+                        }
+                        continue;   // 진행 알림은 실패해도 다시 보내지 않는다 - 다음 판정이 새 값을 보낸다
+                    }
+                    if (status / 100 != 2 && status / 100 != 4) {
                         if (next.attempt() + 1 < MAX_ATTEMPTS) {
                             long backoff = Math.min(MAX_BACKOFF_MILLIS, 2_000L << next.attempt());
                             synchronized (outbox) {
                                 outbox.addFirst(new Outgoing(next.path(), next.body(), next.attempt() + 1,
-                                        System.currentTimeMillis() + backoff));
+                                        System.currentTimeMillis() + backoff, false));
                             }
                         } else {
                             getLogger().warn("job 완료 알림을 {}번 보내지 못해 버립니다: {}", MAX_ATTEMPTS, next.path());
@@ -313,8 +345,8 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
         });
     }
 
-    /** @return 보냈거나(2xx) 다시 보내도 소용없으면(4xx) true, 다시 보내 볼 만하면 false */
-    private boolean post(String api, String token, Outgoing item) {
+    /** @return HTTP 상태 코드. 보내지 못했으면(연결 실패 · 시간 초과) -1. 2xx 는 보냄, 4xx 는 다시 보내도 소용없음. */
+    private int post(String api, String token, Outgoing item) {
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(api + item.path()))
                     .timeout(Duration.ofSeconds(3))
@@ -324,16 +356,15 @@ public class JobCompletionReportingTask extends AbstractReportingTask {
                 builder.header("X-Service-Token", token);
             }
             int status = http.send(builder.build(), HttpResponse.BodyHandlers.discarding()).statusCode();
-            if (status / 100 == 4) {
+            if (status / 100 == 4 && !item.droppable()) {
                 getLogger().warn("job 완료 알림이 거절됐습니다(HTTP {}): {}", status, item.path());
-                return true;
             }
-            return status / 100 == 2;
+            return status;
         } catch (Exception ex) {
             if (ex instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            return false;
+            return -1;
         }
     }
 

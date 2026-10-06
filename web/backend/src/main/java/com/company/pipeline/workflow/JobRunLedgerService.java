@@ -150,6 +150,30 @@ public class JobRunLedgerService {
         log.info("잡 실행 콜백 - jobId={} runId={} failed={} rows={}", jobId, run.getId(), failed, rows);
     }
 
+    /**
+     * NiFi 완료 감시가 실행 중에 보내는 «지금까지 적재 건수»(2026-10-06). 열린 실행에만 적고, 없거나 모르는 그룹이면 넘어간다 -
+     * 진행 알림은 놓쳐도 되는 정보라 오류로 만들지 않는다(완료 알림이 최종 건수를 확정한다).
+     * 2초마다 올 수 있어 job 은 전체 목록이 아니라 그룹 id 로 바로 찾는다.
+     */
+    @Transactional
+    public void progressByPg(String nifiPgId, long rows) {
+        Optional<EtlJob> job = jobRepository.findByNifiPgId(nifiPgId).filter(found -> found.getDeletedAt() == null);
+        if (job.isEmpty()) {
+            return;
+        }
+        lockJob(jdbc, job.get().getId());
+        runRepository.findByJobIdAndEndedAtIsNull(job.get().getId()).ifPresent(run -> {
+            run.reportProgress(rows, LocalDateTime.now());
+            runRepository.save(run);
+        });
+    }
+
+    /** 워크플로우 실행 한 번이 연 job 실행들(열린 것 · 닫힌 것 모두). 로그 화면이 진행 중 적재 건수를 읽는다. */
+    @Transactional(readOnly = true)
+    public List<EtlJobRun> runsOfDagRun(String dagRunId) {
+        return runRepository.findByAirflowDagRunIdOrderByStartedAtAsc(dagRunId);
+    }
+
     /** 유휴 관측으로 끝났음을 기록한다(추정). 콜백이 이미 닫았으면 덮어쓰지 않는다. */
     @Transactional
     public void completeObserved(String runToken, Long rows) {
