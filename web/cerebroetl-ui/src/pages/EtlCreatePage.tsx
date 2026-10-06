@@ -1,5 +1,4 @@
 import {
-  CheckOutlined,
   CloseOutlined,
   DownOutlined,
   EditOutlined,
@@ -9,7 +8,7 @@ import {
   UpOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
-import { Button, Input, message, Modal, Radio, Select, Tag } from "antd";
+import { Button, Descriptions, Input, message, Modal, Radio, Result, Select, Tag } from "antd";
 import type { DragEvent, KeyboardEvent, ReactNode, UIEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -2937,41 +2936,30 @@ function CompletionView({
   onOpenDag: () => void;
 }) {
   return (
-    <div className="etl-completion-stack">
-      <section className="etl-review-box">
-        <h3>검토</h3>
-        <div className="etl-terminal-panel">
-          <p>아래 리소스가 생성됩니다.</p>
-          <dl>
-            <div>
-              <dt>프로세스 그룹</dt>
-              <dd>1개 ({summary.processGroupPath})</dd>
-            </div>
-            <div>
-              <dt>프로세서</dt>
-              <dd>{summary.processorCount}개</dd>
-            </div>
-            <div>
-              <dt>흐름</dt>
-              <dd>{summaryFlowLabel(summary)}</dd>
-            </div>
-            <div>
-              <dt>Airflow 작업</dt>
-              <dd>1개</dd>
-            </div>
-          </dl>
-        </div>
-      </section>
-
-      <section className="etl-review-box">
-        <h3>완료</h3>
-        <div className="etl-done-panel">
-          <CheckOutlined />
-          <span>생성되었습니다.</span>
-          <button type="button" onClick={onOpenCanvas}>캔버스에서 보기</button>
-          <button type="button" onClick={onOpenDag}>DAG 보기</button>
-        </div>
-      </section>
+    <div className="std-card std-card-body etl-completion-card">
+      <Result
+        status="success"
+        title="ETL 템플릿 그룹 생성 완료"
+        subTitle="아래 리소스가 생성되었습니다."
+        extra={[
+          <Button type="primary" key="canvas" onClick={onOpenCanvas}>캔버스에서 보기</Button>,
+          <Button key="dag" onClick={onOpenDag}>DAG 보기</Button>,
+        ]}
+      />
+      <Descriptions bordered column={1} size="middle" className="etl-completion-summary">
+        <Descriptions.Item label="프로세스 그룹">
+          1개 ({summary.processGroupPath})
+        </Descriptions.Item>
+        <Descriptions.Item label="프로세서">
+          {summary.processorCount}개
+        </Descriptions.Item>
+        <Descriptions.Item label="흐름">
+          {summaryFlowLabel(summary)}
+        </Descriptions.Item>
+        <Descriptions.Item label="Airflow 작업">
+          1개
+        </Descriptions.Item>
+      </Descriptions>
     </div>
   );
 }
@@ -3290,11 +3278,9 @@ export function EtlCreatePage() {
       if (!processGroupId) {
         throw new Error("missing process group id");
       }
-      try {
-        await syncEtlJobs();
-      } catch {
+      void syncEtlJobs().catch(() => {
         message.warning("생성은 완료됐지만 ETL Job 상세 동기화가 지연되고 있습니다.");
-      }
+      });
       setCompletionSummary({
         processGroupId,
         processGroupPath: `${basicInfo.parentGroupPath || basicInfo.parentGroupId} / ${basicInfo.jobName.trim()}`,

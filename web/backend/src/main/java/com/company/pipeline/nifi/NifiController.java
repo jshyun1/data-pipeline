@@ -135,7 +135,7 @@ public class NifiController {
         NifiProcessGroupResponse response = nifiClient.createInitialDbToDbFlow(request);
         processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
                 request.comments(), user);
-        processGroupTreeService.refreshAfterMutation();
+        processGroupTreeService.invalidateAfterMutation();
         return ApiResponse.success(response);
     }
 
@@ -152,7 +152,7 @@ public class NifiController {
         NifiProcessGroupResponse response = nifiClient.createFileLoadFlow(request);
         processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
                 request.comments(), user);
-        processGroupTreeService.refreshAfterMutation();
+        processGroupTreeService.invalidateAfterMutation();
         return ApiResponse.success(response);
     }
 
@@ -164,7 +164,7 @@ public class NifiController {
         NifiProcessGroupResponse response = nifiClient.createHttpLoadFlow(request);
         processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
                 request.comments(), user);
-        processGroupTreeService.refreshAfterMutation();
+        processGroupTreeService.invalidateAfterMutation();
         return ApiResponse.success(response);
     }
 

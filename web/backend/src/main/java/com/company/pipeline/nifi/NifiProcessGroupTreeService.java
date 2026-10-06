@@ -73,6 +73,10 @@ public class NifiProcessGroupTreeService {
         }
     }
 
+    public void invalidateAfterMutation() {
+        cache.set(null);
+    }
+
     @Scheduled(fixedDelay = CACHE_TTL_MS, initialDelay = CACHE_WARMUP_DELAY_MS)
     public void warmTreeCache() {
         CachedTree cached = cache.get();

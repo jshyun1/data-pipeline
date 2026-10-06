@@ -3615,66 +3615,21 @@ button.airflow-task-name:hover {
   cursor: not-allowed;
 }
 
-.etl-completion-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 26px;
+.etl-completion-card {
+  max-width: 920px;
 }
 
-.etl-review-box h3 {
-  margin: 0 0 7px;
-  color: #293442;
-  font-size: 18px;
-  font-weight: 800;
+.etl-completion-card .ant-result {
+  padding: 22px 12px 28px;
 }
 
-.etl-terminal-panel,
-.etl-done-panel {
-  width: min(650px, 100%);
-  padding: 10px 26px;
-  border: 1px solid #8d96a1;
-  background: #ffffff;
-  color: #293442;
-  font-size: 17px;
-  letter-spacing: 0;
+.etl-completion-summary {
+  margin-top: 4px;
 }
 
-.etl-terminal-panel p {
-  margin: 0 0 18px;
-}
-
-.etl-terminal-panel dl {
-  margin: 0;
-}
-
-.etl-terminal-panel div {
-  display: grid;
-  grid-template-columns: 210px minmax(0, 1fr);
-  gap: 6px;
-}
-
-.etl-terminal-panel dt,
-.etl-terminal-panel dd {
-  margin: 0;
-}
-
-.etl-done-panel {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-}
-
-.etl-done-panel span {
-  font-weight: 800;
-}
-
-.etl-done-panel button {
-  padding: 0;
-  color: #293442;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
+.etl-completion-summary .ant-descriptions-item-label {
+  width: 180px;
+  font-weight: 700;
 }
 
 .etl-wizard-actions {
@@ -3760,14 +3715,8 @@ button.airflow-task-name:hover {
     grid-column: 1;
   }
 
-  .etl-terminal-panel div {
-    grid-template-columns: 1fr;
-    gap: 1px;
-  }
-
-  .etl-done-panel {
-    align-items: flex-start;
-    flex-direction: column;
+  .etl-completion-summary .ant-descriptions-item-label {
+    width: 120px;
   }
 }
 

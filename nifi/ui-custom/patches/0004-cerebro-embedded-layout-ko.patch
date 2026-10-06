@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca023542fa
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss
-@@ -0,0 +1,675 @@
+@@ -0,0 +1,762 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -36,18 +36,19 @@ index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca
 +    fd-header header.nifi-header {
 +        position: fixed !important;
 +        top: 14px !important;
-+        left: 16px !important;
++        left: 24px !important;
 +        z-index: 30 !important;
 +        display: flex !important;
 +        align-items: center !important;
 +        width: auto !important;
-+        height: auto !important;
-+        padding: 4px 6px !important;
++        height: 38px !important;
++        padding: 3px 7px !important;
 +        background: rgba(255, 255, 255, 0.98) !important;
 +        border: 1px solid #cbd5e1 !important;
 +        border-radius: 8px !important;
 +        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08) !important;
 +        overflow: visible !important;
++        transition: transform 180ms ease, opacity 160ms ease !important;
 +
 +        > flow-status {
 +            display: none !important;
@@ -249,10 +250,62 @@ index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca
 +        }
 +    }
 +
++    &:not(.cerebro-submenu-open) fd-header header.nifi-header {
++        width: 38px !important;
++        min-width: 38px !important;
++        max-width: 38px !important;
++        padding: 0 !important;
++        overflow: hidden !important;
++    }
++
++    &:not(.cerebro-submenu-open) fd-header header.nifi-header .cerebro-toolbar-divider,
++    &:not(.cerebro-submenu-open) fd-header header.nifi-header new-canvas-item {
++        display: none !important;
++    }
++
++    &:not(.cerebro-submenu-open) fd-header header.nifi-header .cerebro-refresh {
++        width: 38px !important;
++        min-width: 38px !important;
++        height: 38px !important;
++        border: 0 !important;
++    }
++
++    .cerebro-recent-panel-toggle {
++        position: fixed !important;
++        left: 0 !important;
++        top: 14px !important;
++        z-index: 31 !important;
++        display: inline-flex !important;
++        align-items: center !important;
++        justify-content: center !important;
++        width: 18px !important;
++        height: 38px !important;
++        padding: 0 !important;
++        border: 1px solid #dbe3ee !important;
++        border-left: 0 !important;
++        border-radius: 0 8px 8px 0 !important;
++        background: #ffffff !important;
++        color: #64748b !important;
++        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08) !important;
++        cursor: pointer !important;
++
++        &:hover {
++            background: #f8fafc !important;
++            color: #0f172a !important;
++        }
++
++        &::before {
++            content: '«';
++            font-size: 17px;
++            font-weight: 700;
++            line-height: 1;
++        }
++    }
++
 +    /* ---------------- 2. 탐색 · 작업 창 (디자인 .canvas-nav-window / .canvas-operate-window) ---------------- */
 +
 +    div.graph-controls {
-+        left: 16px !important;
++        left: 24px !important;
 +        top: 62px !important;
 +        z-index: 25 !important;
 +        gap: 10px !important;
@@ -268,6 +321,41 @@ index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca
 +        border: 1px solid #cbd5e1 !important;
 +        border-radius: 8px !important;
 +        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08) !important;
++    }
++
++    div.navigation-control:has(.fa-plus-square-o),
++    div.operation-control:has(.fa-plus-square-o) {
++        width: 38px !important;
++        height: 38px !important;
++        min-width: 38px !important;
++        min-height: 38px !important;
++        max-width: 38px !important;
++        max-height: 38px !important;
++        cursor: pointer !important;
++    }
++
++    div.navigation-control:has(.fa-plus-square-o) > :not(:first-child),
++    div.operation-control:has(.fa-plus-square-o) > :not(:first-child) {
++        display: none !important;
++    }
++
++    div.navigation-control:has(.fa-plus-square-o) .navigation-control-header,
++    div.operation-control:has(.fa-plus-square-o) .operation-control-header {
++        width: 38px !important;
++        height: 38px !important;
++        min-width: 38px !important;
++        min-height: 38px !important;
++        justify-content: center !important;
++        padding: 0 !important;
++        border: 0 !important;
++        background: #ffffff !important;
++    }
++
++    div.navigation-control:has(.fa-plus-square-o) .navigation-control-header .text-sm,
++    div.navigation-control:has(.fa-plus-square-o) .navigation-control-expansion,
++    div.operation-control:has(.fa-plus-square-o) .operation-control-header .text-sm,
++    div.operation-control:has(.fa-plus-square-o) .operation-control-expansion {
++        display: none !important;
 +    }
 +
 +    .navigation-control-header,
@@ -506,10 +594,9 @@ index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca
 +    /* ---------------- 3. 경로 (디자인 .canvas-breadcrumb-bar) ---------------- */
 +
 +    fd-footer {
-+        position: fixed !important;
-+        left: 16px !important;
-+        bottom: 16px !important;
-+        z-index: 20 !important;
++        display: none !important;
++        visibility: hidden !important;
++        pointer-events: none !important;
 +
 +        .breadcrumb-container {
 +            padding: 5px 14px !important;
@@ -967,7 +1054,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..01b0da2ed8ca6ce651d668c6b38feff9aa213a62
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ui.ts
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,96 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -979,11 +1066,88 @@ index 0000000000000000000000000000000000000000..01b0da2ed8ca6ce651d668c6b38feff9
 +import { isEmbeddedInCerebro } from './cerebro-embed';
 +import { startCerebroKoreanText } from './cerebro-ko';
 +
++type RecentPanel = 'submenu' | 'navigation' | 'operation';
++
++function installRecentPanelToggle(): void {
++    const root = document.documentElement;
++    root.classList.add('cerebro-submenu-open');
++    root.dataset['cerebroRecentPanel'] = 'submenu';
++
++    const clickExpansion = (panel: RecentPanel): void => {
++        const selector = panel === 'navigation'
++            ? '.navigation-control .navigation-control-expansion'
++            : '.operation-control .operation-control-expansion';
++        (document.querySelector(selector) as HTMLElement | null)?.click();
++    };
++
++    const isOpen = (panel: RecentPanel): boolean => {
++        if (panel === 'submenu') {
++            return root.classList.contains('cerebro-submenu-open');
++        }
++        const control = document.querySelector(
++            panel === 'navigation' ? '.navigation-control' : '.operation-control'
++        );
++        return Boolean(control && !control.querySelector('.fa-plus-square-o'));
++    };
++
++    const setOpen = (panel: RecentPanel, open: boolean): void => {
++        if (panel === 'submenu') {
++            root.classList.toggle('cerebro-submenu-open', open);
++        } else if (isOpen(panel) !== open) {
++            clickExpansion(panel);
++        }
++        if (open) {
++            root.dataset['cerebroRecentPanel'] = panel;
++        }
++    };
++
++    const installButton = (): void => {
++        if (document.querySelector('.cerebro-recent-panel-toggle')) {
++            return;
++        }
++        const button = document.createElement('button');
++        button.type = 'button';
++        button.className = 'cerebro-recent-panel-toggle';
++        button.title = '최근에 연 패널 열기/닫기';
++        button.setAttribute('aria-label', '최근에 연 패널 열기/닫기');
++        button.addEventListener('click', (event) => {
++            const recent = (root.dataset['cerebroRecentPanel'] as RecentPanel | undefined) ?? 'submenu';
++            setOpen(recent, !isOpen(recent));
++            event.preventDefault();
++            event.stopPropagation();
++        });
++        document.body.appendChild(button);
++    };
++
++    document.addEventListener('click', (event) => {
++        const target = event.target instanceof Element ? event.target : null;
++        if (target?.closest('fd-header header.nifi-header')) {
++            root.dataset['cerebroRecentPanel'] = 'submenu';
++            if (!root.classList.contains('cerebro-submenu-open')) {
++                root.classList.add('cerebro-submenu-open');
++                event.preventDefault();
++                event.stopPropagation();
++            }
++        } else if (target?.closest('.navigation-control')) {
++            root.dataset['cerebroRecentPanel'] = 'navigation';
++        } else if (target?.closest('.operation-control')) {
++            root.dataset['cerebroRecentPanel'] = 'operation';
++        }
++    }, true);
++
++    if (document.body) {
++        installButton();
++    } else {
++        document.addEventListener('DOMContentLoaded', installButton, { once: true });
++    }
++}
++
 +export function initCerebroUi(): void {
 +    const root = document.documentElement;
 +    root.setAttribute('data-cerebro-nifi-ui', '1');
 +    if (isEmbeddedInCerebro()) {
 +        root.classList.add('cerebro-embedded');
++        installRecentPanelToggle();
 +    }
 +    startCerebroKoreanText();
 +}

@@ -72,6 +72,9 @@ const NIFI_PANEL_EXPANDED_ATTRIBUTE = "data-cerebro-nifi-panel-expanded";
 const NIFI_PANEL_BOUND_ATTRIBUTE = "data-cerebro-nifi-panel-bound";
 const NIFI_AUTO_OPEN_MENU_ATTRIBUTE = "data-cerebro-auto-open-menu";
 const NIFI_TOP_TOOLBAR_ATTRIBUTE = "data-cerebro-top-toolbar";
+const NIFI_TOP_TOOLBAR_EXPANDED_ATTRIBUTE = "data-cerebro-top-toolbar-expanded";
+const NIFI_RECENT_PANEL_ATTRIBUTE = "data-cerebro-recent-panel";
+const NIFI_RECENT_PANEL_TOGGLE_ID = "cerebro-recent-panel-toggle";
 const NIFI_TOOL_HIDDEN_ATTRIBUTE = "data-cerebro-tool-hidden";
 const NIFI_TOOL_ALLOWED_ATTRIBUTE = "data-cerebro-tool-allowed";
 const NIFI_TOOL_ICON_ATTRIBUTE = "data-cerebro-tool-icon";
@@ -314,43 +317,50 @@ const HIDE_TOOL_CHROME_CSS = `
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] {
     position: fixed !important;
-    left: 14px !important;
-    bottom: 14px !important;
+    left: 24px !important;
+    top: 14px !important;
+    bottom: auto !important;
     transform: none !important;
-    /* 캔버스 쪽 패널이 9100 보다 위에 있어, 막대 안에 그려지는 안내 글자가 가려졌다(2026-10-02 요청).
-       막대를 그 위로 올린다 - 왼쪽 아래 구석의 작은 칸이라 다른 조작을 가리지 않는다. */
     z-index: 100000 !important;
-    width: 42px !important;
-    max-width: 42px !important;
+    width: auto !important;
+    max-width: calc(100vw - 96px) !important;
     min-height: 0 !important;
-    height: auto !important;
+    height: 38px !important;
     display: flex !important;
-    flex-direction: column !important;
-    padding: 6px 5px !important;
+    flex-direction: row !important;
+    padding: 3px 7px !important;
     justify-content: flex-start !important;
     align-items: center !important;
-    gap: 6px !important;
+    gap: 5px !important;
     background: #ffffff !important;
     background-color: #ffffff !important;
     border: 1px solid #dbe3ee !important;
     border-radius: 9px !important;
     box-shadow: 0 2px 8px rgb(15 23 42 / 9%) !important;
     overflow: visible !important;
+    transition: transform 180ms ease, opacity 160ms ease !important;
+  }
+  [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"]:not([${NIFI_TOP_TOOLBAR_EXPANDED_ATTRIBUTE}="true"]) {
+    width: 38px !important;
+    min-width: 38px !important;
+    max-width: 38px !important;
+    padding: 0 !important;
+    overflow: hidden !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] > :not([${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]):not(:has([${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"])) {
     display: none !important;
   }
   [${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"] > :has([${NIFI_TOOL_ALLOWED_ATTRIBUTE}="true"]) {
-    width: 30px !important;
-    max-width: 30px !important;
+    width: auto !important;
+    max-width: none !important;
     height: auto !important;
     min-width: 0 !important;
     min-height: 0 !important;
     display: flex !important;
-    flex-direction: column !important;
+    flex-direction: row !important;
     align-items: center !important;
     justify-content: flex-start !important;
-    gap: 6px !important;
+    gap: 5px !important;
     flex-wrap: nowrap !important;
     margin: 0 !important;
     padding: 0 !important;
@@ -460,6 +470,37 @@ const HIDE_TOOL_CHROME_CSS = `
   [${NIFI_MENU_BUTTON_ATTRIBUTE}="true"] svg {
     transform: scale(0.9) !important;
     transform-origin: center !important;
+  }
+  #${NIFI_RECENT_PANEL_TOGGLE_ID} {
+    position: fixed !important;
+    left: 0 !important;
+    top: 14px !important;
+    z-index: 100001 !important;
+    width: 18px !important;
+    height: 38px !important;
+    min-width: 18px !important;
+    min-height: 38px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border: 1px solid #dbe3ee !important;
+    border-left: 0 !important;
+    border-radius: 0 8px 8px 0 !important;
+    background: #ffffff !important;
+    color: #64748b !important;
+    box-shadow: 0 2px 8px rgb(15 23 42 / 8%) !important;
+    cursor: pointer !important;
+  }
+  #${NIFI_RECENT_PANEL_TOGGLE_ID}:hover {
+    background: #f8fafc !important;
+    color: #0f172a !important;
+  }
+  #${NIFI_RECENT_PANEL_TOGGLE_ID}::before {
+    content: "«" !important;
+    font-size: 17px !important;
+    font-weight: 700 !important;
+    line-height: 1 !important;
   }
   [${NIFI_BREADCRUMB_ATTRIBUTE}="true"] {
     display: none !important;
@@ -726,32 +767,58 @@ const HIDE_TOOL_CHROME_CSS = `
     cursor: move !important;
   }
   [${NIFI_PANEL_ATTRIBUTE}="navigation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) {
-    left: 0 !important;
-    top: 72px !important;
+    left: 24px !important;
+    top: 60px !important;
     right: auto !important;
     bottom: auto !important;
   }
   [${NIFI_PANEL_ATTRIBUTE}="operation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) {
-    left: 0 !important;
-    top: 116px !important;
+    left: 24px !important;
+    top: 106px !important;
     right: auto !important;
     bottom: auto !important;
   }
   [${NIFI_PANEL_ATTRIBUTE}="navigation"][${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"] {
-    top: 72px !important;
+    top: 60px !important;
     right: auto !important;
     bottom: auto !important;
-    left: 0 !important;
+    left: 24px !important;
   }
   [${NIFI_PANEL_ATTRIBUTE}="operation"][${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"] {
-    left: 0 !important;
-    top: 304px !important;
+    left: 24px !important;
+    top: 106px !important;
     right: auto !important;
     bottom: auto !important;
   }
   [${NIFI_PANEL_ATTRIBUTE}="navigation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) > :not(:first-child),
   [${NIFI_PANEL_ATTRIBUTE}="operation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) > :not(:first-child) {
     display: none !important;
+  }
+  [${NIFI_PANEL_ATTRIBUTE}="navigation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) > :first-child,
+  [${NIFI_PANEL_ATTRIBUTE}="operation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) > :first-child {
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px !important;
+    min-height: 38px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    border: 0 !important;
+  }
+  [${NIFI_PANEL_ATTRIBUTE}="navigation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) > :first-child :not(i):not(svg):not(path):not([class*="fa"]):not([class*="icon"]),
+  [${NIFI_PANEL_ATTRIBUTE}="operation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) > :first-child :not(i):not(svg):not(path):not([class*="fa"]):not([class*="icon"]) {
+    display: none !important;
+  }
+  [${NIFI_PANEL_ATTRIBUTE}="navigation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) i,
+  [${NIFI_PANEL_ATTRIBUTE}="navigation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) svg,
+  [${NIFI_PANEL_ATTRIBUTE}="operation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) i,
+  [${NIFI_PANEL_ATTRIBUTE}="operation"]:not([${NIFI_PANEL_EXPANDED_ATTRIBUTE}="true"]) svg {
+    margin: 0 !important;
+    color: #0f172a !important;
+    font-size: 15px !important;
   }
   [data-cerebro-mini-create-toolbar="true"],
   [data-cerebro-mini-create-tool="true"] {
@@ -1410,6 +1477,10 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
       const nearTop = rect.top >= -4 && rect.top <= 80;
       if (nearTop && rect.width >= 160 && rect.height > 0 && rect.height <= 96 && titleCount >= 2) {
         current.setAttribute(NIFI_TOP_TOOLBAR_ATTRIBUTE, "true");
+        if (!current.hasAttribute(NIFI_TOP_TOOLBAR_EXPANDED_ATTRIBUTE)) {
+          current.setAttribute(NIFI_TOP_TOOLBAR_EXPANDED_ATTRIBUTE, "true");
+          doc.documentElement.setAttribute(NIFI_RECENT_PANEL_ATTRIBUTE, "submenu");
+        }
       }
       current = current.parentElement;
     }
@@ -1454,7 +1525,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
   };
 
   const patchCanvasBreadcrumb = () => {
-    const candidates = Array.from(doc.querySelectorAll("nav, ol, ul, div, span"))
+    const candidates = Array.from(doc.querySelectorAll("nav, ol, ul, div, span, a, button"))
       .filter((element) => {
         if (element.getAttribute(NIFI_BREADCRUMB_ATTRIBUTE) === "true") {
           return true;
@@ -1469,8 +1540,14 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
         }
         const className = elementClassName(element).toLowerCase();
         const aria = (element.getAttribute("aria-label") ?? "").toLowerCase();
+        const viewportHeight = doc.defaultView?.innerHeight ?? window.innerHeight;
+        const isBottomRootPill = rect.left >= 0
+          && rect.left <= 420
+          && rect.bottom >= viewportHeight - 72
+          && (text === "Root" || text === "ETL Root");
         return className.includes("breadcrumb")
           || aria.includes("breadcrumb")
+          || isBottomRootPill
           || text === "Root"
           || text === "ETL Root"
           || text.startsWith("Root /")
@@ -1487,9 +1564,18 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
       return;
     }
     candidate.setAttribute(NIFI_BREADCRUMB_ATTRIBUTE, "true");
+    candidate.setAttribute("aria-hidden", "true");
+    candidate.setAttribute("hidden", "true");
+    if ("style" in candidate) {
+      (candidate as HTMLElement).style.setProperty("display", "none", "important");
+    }
     const breadcrumbContainer = candidate.parentElement;
     if (breadcrumbContainer && breadcrumbContainer !== doc.body) {
       breadcrumbContainer.setAttribute(NIFI_BREADCRUMB_CONTAINER_ATTRIBUTE, "true");
+      breadcrumbContainer.setAttribute("aria-hidden", "true");
+      if ("style" in breadcrumbContainer) {
+        (breadcrumbContainer as HTMLElement).style.setProperty("display", "none", "important");
+      }
     }
     if ((candidate.textContent ?? "").trim() === "Root") {
       candidate.textContent = "ETL Root";
@@ -1644,6 +1730,67 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
     return;
   }
 
+  type RecentPanel = "submenu" | "navigation" | "operation";
+
+  const panels = () => Array.from(doc.querySelectorAll<HTMLElement>(`[${NIFI_PANEL_ATTRIBUTE}]`));
+  const topToolbar = () => doc.querySelector<HTMLElement>(`[${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"]`);
+  const recentPanel = (): RecentPanel =>
+    (doc.documentElement.getAttribute(NIFI_RECENT_PANEL_ATTRIBUTE) as RecentPanel | null) ?? "submenu";
+
+  const setRecentPanel = (panel: RecentPanel) => {
+    doc.documentElement.setAttribute(NIFI_RECENT_PANEL_ATTRIBUTE, panel);
+  };
+
+  const setPanelOpen = (panel: RecentPanel, open: boolean) => {
+    topToolbar()?.setAttribute(NIFI_TOP_TOOLBAR_EXPANDED_ATTRIBUTE, panel === "submenu" && open ? "true" : "false");
+    panels().forEach((item) => {
+      const name = item.getAttribute(NIFI_PANEL_ATTRIBUTE);
+      item.setAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE, name === panel && open ? "true" : "false");
+    });
+    if (open) {
+      setRecentPanel(panel);
+    }
+  };
+
+  const isPanelOpen = (panel: RecentPanel) => {
+    if (panel === "submenu") {
+      return topToolbar()?.getAttribute(NIFI_TOP_TOOLBAR_EXPANDED_ATTRIBUTE) === "true";
+    }
+    return doc.querySelector(`[${NIFI_PANEL_ATTRIBUTE}="${panel}"]`)
+      ?.getAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE) === "true";
+  };
+
+  const installRecentPanelToggle = () => {
+    if (doc.getElementById(NIFI_RECENT_PANEL_TOGGLE_ID)) {
+      return;
+    }
+    const button = doc.createElement("button");
+    button.id = NIFI_RECENT_PANEL_TOGGLE_ID;
+    button.type = "button";
+    button.title = "최근에 연 패널 열기/닫기";
+    button.setAttribute("aria-label", "최근에 연 패널 열기/닫기");
+    button.addEventListener("click", (event) => {
+      const target = recentPanel();
+      setPanelOpen(target, !isPanelOpen(target));
+      event.preventDefault();
+      event.stopPropagation();
+    }, true);
+    doc.body.appendChild(button);
+
+    doc.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const toolbar = target?.closest(`[${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"]`);
+      if (toolbar) {
+        setRecentPanel("submenu");
+        if (toolbar.getAttribute(NIFI_TOP_TOOLBAR_EXPANDED_ATTRIBUTE) !== "true") {
+          setPanelOpen("submenu", true);
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }
+    }, true);
+  };
+
   const bindPanelBehavior = (panel: HTMLElement) => {
     if (panel.getAttribute(NIFI_PANEL_BOUND_ATTRIBUTE) === "true") {
       return;
@@ -1687,11 +1834,9 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
       doc.removeEventListener("mousemove", move, true);
       doc.removeEventListener("mouseup", stop, true);
       if (!wasMoved) {
-        const panels = Array.from(doc.querySelectorAll(`[${NIFI_PANEL_ATTRIBUTE}]`));
         const isExpanded = panel.getAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE) === "true";
-        panels.forEach((item) => {
-          item.setAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE, item === panel && !isExpanded ? "true" : "false");
-        });
+        const panelName = panel.getAttribute(NIFI_PANEL_ATTRIBUTE) as RecentPanel;
+        setPanelOpen(panelName, !isExpanded);
       }
     };
 
@@ -1765,6 +1910,7 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
     if (hasOpenNifiDialog(doc)) {
       return;
     }
+    installRecentPanelToggle();
     markPanel("navigation");
     markPanel("operation");
   };
