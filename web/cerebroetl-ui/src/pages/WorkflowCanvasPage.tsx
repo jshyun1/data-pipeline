@@ -116,6 +116,12 @@ const CONDITION_COLOR: Record<string, string> = {
   ALWAYS: "#0ea5e9",
 };
 
+/**
+ * 캔버스 «전체 보기» 여백 · 확대 상한. 처음 열면 노드가 코앞에 있는 것처럼 크게 잡혀 부담스러웠다 -
+ * 한 화면에 전체가 여유 있게 들어오도록 한다. 처음 열 때 · 워크플로우를 바꿔 열 때 · [전체 보기] · [정렬]이 같이 쓴다.
+ */
+const FIT_VIEW_OPTIONS = { padding: 0.35, maxZoom: 0.85 };
+
 /** 노드 키는 TaskGroup id가 되므로 Airflow가 받아들이는 문자만 남긴다. */
 const normalizeKeyPart = (raw: string) =>
   raw.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
@@ -272,6 +278,9 @@ export function WorkflowCanvasPage() {
     setDraftName("");
   }, [workflowId, setNodes, setEdges]);
 
+  /** 마지막으로 화면을 가운데로 맞춘 워크플로우. 아래 반영에서 «워크플로우가 바뀌었을 때만» 맞추는 데 쓴다. */
+  const fittedWorkflowRef = useRef<number>(undefined);
+
   // 아직 손대지 않았을 때만(dirty=false) 반영한다.
   useEffect(() => {
     const detail = workflowQuery.data;
@@ -322,7 +331,16 @@ export function WorkflowCanvasPage() {
     // 같은 규칙으로 펴되, 자동 정렬은 편집이 아니므로 dirty 는 건드리지 않는다.
     setNodes(layoutHorizontally(loadedNodes, loadedEdges));
     setEdges(loadedEdges);
-  }, [workflowQuery.data, dirty, setNodes, setEdges]);
+    // 다른 워크플로우로 바꿔 열 때마다 가운데로 맞춘다(2026-10-06). ReactFlow 의 fitView 속성은 캔버스가 처음 만들어질 때
+    // 한 번만 맞춘다 - 처음 여는 워크플로우는 «불러오는 중» 화면을 거치며 캔버스가 새로 만들어져 맞춰졌지만, 한 번 열었던
+    // 워크플로우는 받아 둔 데이터로 바로 그려져 직전 워크플로우의 화면 위치에 놓였다(왼쪽 · 위로 수백 px 치우침).
+    // 워크플로우가 바뀐 첫 반영 때만 맞춘다 - 저장 뒤 다시 받기 · 편집 중에는 보던 자리를 그대로 둔다.
+    // fitView 는 노드 크기를 잰 뒤에 맞춘다(@xyflow/react 12.5+). 첫 마운트처럼 flow 가 아직 없으면 fitView 속성이 맡는다.
+    if (fittedWorkflowRef.current !== workflowId) {
+      fittedWorkflowRef.current = workflowId;
+      flow?.fitView(FIT_VIEW_OPTIONS);
+    }
+  }, [workflowQuery.data, dirty, setNodes, setEdges, flow, workflowId]);
 
   const markDirty = useCallback(() => setDirty(true), []);
 
@@ -471,7 +489,7 @@ export function WorkflowCanvasPage() {
   const alignHorizontally = useCallback(() => {
     setNodes((current) => layoutHorizontally(current, edges));
     markDirty();
-    window.setTimeout(() => flow?.fitView({ padding: 0.35, maxZoom: 0.85, duration: 250 }), 80);
+    window.setTimeout(() => flow?.fitView({ ...FIT_VIEW_OPTIONS, duration: 250 }), 80);
   }, [setNodes, edges, markDirty, flow]);
 
   /**
@@ -1100,9 +1118,7 @@ export function WorkflowCanvasPage() {
               }}
               className="wf-flow"
               fitView
-              // 처음 열면 노드가 코앞에 있는 것처럼 크게 잡혀 부담스러웠다.
-              // 한 화면에 전체가 여유 있게 들어오도록 확대 상한과 여백을 준다.
-              fitViewOptions={{ padding: 0.35, maxZoom: 0.85 }}
+              fitViewOptions={FIT_VIEW_OPTIONS}
               minZoom={0.15}
               nodeTypes={NODE_TYPES}
               onInit={(instance) => setFlow(instance)}
@@ -1129,7 +1145,7 @@ export function WorkflowCanvasPage() {
                   <MinusOutlined />
                 </ControlButton>
                 <ControlButton title="전체 보기" aria-label="전체 보기"
-                               onClick={() => flow?.fitView({ padding: 0.35, maxZoom: 0.85 })}>
+                               onClick={() => flow?.fitView(FIT_VIEW_OPTIONS)}>
                   <ExpandOutlined />
                 </ControlButton>
                 <ControlButton title={interactive ? "편집 잠금" : "편집 잠금 해제"}
