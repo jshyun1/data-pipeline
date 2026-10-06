@@ -5674,6 +5674,11 @@ button.alert-compact-trigger.is-clear:hover {
   user-select: none;
 }
 
+.is-resizing-console-panel .console-side,
+.is-resizing-console-panel .side-dock {
+  transition: none !important;
+}
+
 .console-frame {
   width: 100%;
   height: 100%;
