@@ -1046,6 +1046,7 @@ const NIFI_PROCESSOR_EDIT_TEXT: Record<string, string> = {
 const NIFI_PROCESSOR_EDIT_TAB_TEXT = new Set(["Settings", "Scheduling", "Properties", "Relationships", "Comments"]);
 const NIFI_PROCESSOR_EDIT_CONTENT_TABS = new Set(["Settings", "설정", "Scheduling", "스케줄링"]);
 const NIFI_PROCESSOR_EDIT_TAB_SELECTOR = '[role="tab"], .mat-mdc-tab, .mat-tab-label';
+const HIDDEN_NIFI_CONTEXT_MENU_ITEMS = new Set(["About", "정보", "Appearance", "화면 표시", "Animations", "애니메이션"]);
 const NIFI_STATUS_TOOLTIP_ICON_TEXT: Array<[string, string]> = [
   ["fa-play", "실행 중 컴포넌트"],
   ["fa-stop", "중지된 컴포넌트"],
@@ -1692,6 +1693,22 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     }
   };
 
+  const patchContextMenuItemVisibility = (element: Element) => {
+    const text = elementText(element);
+    if (!HIDDEN_NIFI_CONTEXT_MENU_ITEMS.has(text)) {
+      return;
+    }
+    const item = element.closest<HTMLElement>(
+      '[role="menuitem"], .mat-mdc-menu-item, .mat-menu-item, button, a, li',
+    );
+    if (!item || !isVisibleElement(item)) {
+      return;
+    }
+    item.setAttribute("aria-hidden", "true");
+    item.setAttribute("hidden", "true");
+    item.style.setProperty("display", "none", "important");
+  };
+
   const patchStatusTooltipText = (element: Element) => {
     const classNames = elementClassName(element).split(/\s+/);
     const translated = NIFI_STATUS_TOOLTIP_ICON_TEXT.find(([iconClass]) => classNames.includes(iconClass))?.[1];
@@ -1726,6 +1743,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     patchStatusTooltipText(element);
     patchStatusBarVisibility(element);
     patchCanvasToolVisibility(element);
+    patchContextMenuItemVisibility(element);
   };
 
   const patchDocument = () => {
@@ -1741,6 +1759,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     });
     doc.querySelectorAll(".fa-refresh, .fa-play, .fa-stop, .fa-warning, .icon-enable-false, .fa-check").forEach(patchStatusBarVisibility);
     doc.querySelectorAll(NIFI_MENU_ICON_CLASSES.map((className) => `.${className}`).join(", ")).forEach(patchCanvasToolVisibility);
+    doc.querySelectorAll('[role="menuitem"], .mat-mdc-menu-item, .mat-menu-item, button, a, li').forEach(patchContextMenuItemVisibility);
     patchCanvasBreadcrumb();
   };
 
@@ -3378,7 +3397,14 @@ function readableLoadType(loadKinds: string[]) {
 }
 
 function firstUsefulText(...values: Array<string | null | undefined>) {
-  return values.find((value) => value && value.trim() && value.trim() !== "-")?.trim() ?? null;
+  const value = values.find((entry): entry is string => {
+    if (typeof entry !== "string") {
+      return false;
+    }
+    const trimmed = entry.trim();
+    return Boolean(trimmed) && trimmed !== "-";
+  });
+  return value?.trim() ?? null;
 }
 
 function readableSourceDb(sourceText: string) {
@@ -3600,7 +3626,7 @@ function sourceTargetText(step: EtlJobStepView | null, kind: "source" | "target"
   return [databaseType, schema, table].filter(Boolean).join(" / ") || "-";
 }
 
-function shortProcessorType(type?: string) {
+function shortProcessorType(type?: string | null) {
   if (!type) {
     return "-";
   }
