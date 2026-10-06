@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { message, Modal } from "antd";
+import { listJobRunsOfDagRun } from "../../api/etlJobs";
 import {
   getAirflowTaskLog,
   listAirflowTaskInstances,
@@ -9,38 +10,66 @@ import {
   type AirflowTaskInstance,
 } from "../../api/platform";
 import { groupJobs, jobKeyOf } from "./logV2Data";
+import { hasLiveTasks, isLiveRun, LIVE_REFRESH_MS } from "./logV2Live";
 
 /**
  * 한 실행의 task 목록과(성공 task 의) 로그. 목록 행·상세 창·타임라인이 같은 캐시 키를 써서 한 번만 받는다.
  * 적재 건수는 성공 task 로그에서 읽는다 - 기존 화면과 같은 방식이다.
+ *
+ * <p>실행 중이면(2026-10-06) task 를 3초마다 받고, 아직 끝나지 않은 job 의 «지금까지 적재 건수»를 실행 원장에서 읽어
+ * {@code progress}(노드 키 → 건수)로 준다 - NiFi 완료 감시가 실행 중에 2초 판정마다 원장에 적는다. 다 끝나면 화면 주기로 돌아간다.
  */
 export function useRunTasks(
   dagId: string | undefined,
   runId: string | undefined,
-  { enabled, refreshSeconds, withLogs = true }: { enabled: boolean; refreshSeconds: number; withLogs?: boolean },
+  { enabled, refreshSeconds, withLogs = true, runState }:
+    { enabled: boolean; refreshSeconds: number; withLogs?: boolean; runState?: string },
 ) {
   const tasksQuery = useQuery({
     queryKey: ["logv2-tasks", dagId, runId],
     queryFn: () => listAirflowTaskInstances(dagId!, runId!),
     enabled: enabled && Boolean(dagId && runId),
-    refetchInterval: refreshSeconds * 1000,
+    refetchInterval: (query) =>
+      isLiveRun(runState) && hasLiveTasks(query.state.data) ? LIVE_REFRESH_MS : refreshSeconds * 1000,
   });
   const tasks = tasksQuery.data;
+  const live = Boolean(tasks) && isLiveRun(runState) && hasLiveTasks(tasks);
+  // 로그는 성공한 task 마다 한 번만 받는다 - 같은 시도의 로그는 바뀌지 않는다. 예전에는 task 하나가 끝날 때마다 끝난 task
+  // 전부의 로그를 다시 받았다(job 5개짜리 실행이면 수십 번). 실행 중 갱신을 빠르게 하면서 그 부담까지 늘지 않게 했다.
   const completed = (tasks ?? []).filter((task) => task.state === "success");
-  const signature = completed.map((task) => `${task.task_id}:${task.try_number}`).join(",");
-  const logsQuery = useQuery({
-    queryKey: ["logv2-task-logs", dagId, runId, signature],
-    queryFn: async () => Object.fromEntries(await Promise.all(completed.map(async (task): Promise<[string, string]> => [
-      task.task_id,
-      await getAirflowTaskLog(dagId!, runId!, task.task_id, task.try_number || 1).catch(() => ""),
-    ]))) as Record<string, string>,
-    enabled: enabled && withLogs && Boolean(dagId && runId && completed.length),
-    staleTime: Infinity,
+  const logQueries = useQueries({
+    queries: completed.map((task) => ({
+      queryKey: ["logv2-task-log", dagId, runId, task.task_id, task.try_number || 1],
+      queryFn: () => getAirflowTaskLog(dagId!, runId!, task.task_id, task.try_number || 1).catch(() => ""),
+      enabled: enabled && withLogs && Boolean(dagId && runId),
+      staleTime: Infinity,
+    })),
+  });
+  const ledgerQuery = useQuery({
+    queryKey: ["logv2-ledger", runId],
+    queryFn: () => listJobRunsOfDagRun(runId!),
+    enabled: enabled && withLogs && live && Boolean(runId),
+    refetchInterval: LIVE_REFRESH_MS,
   });
   const jobs = tasks ? groupJobs(tasks) : undefined;
-  // 성공 task 가 하나도 없으면 읽을 로그가 없다 - «불러오는 중»으로 남지 않게 빈 객체로 둔다.
-  const logs = completed.length ? logsQuery.data : tasks ? {} : undefined;
-  return { tasksQuery, tasks, jobs, logs };
+  // 받은 로그만 담는다. 아직 못 받은 task 는 빠져 있고, 화면은 그 칸을 «…»로 둔다.
+  const logs: Record<string, string> | undefined = tasks
+    ? Object.fromEntries(completed.flatMap((task, index) => {
+      const log = logQueries[index]?.data;
+      return log == null ? [] : [[task.task_id, log] as [string, string]];
+    }))
+    : undefined;
+  const ledger = ledgerQuery.data;
+  const progress = useMemo(() => {
+    const out: Record<string, number> = {};
+    if (!live) return out;
+    // 한 노드가 재시도로 여러 번 열렸으면 마지막 것(시작 순 정렬)이 남는다.
+    (ledger ?? []).forEach((run) => {
+      if (run.nodeKey && run.rowsProcessed != null) out[run.nodeKey] = run.rowsProcessed;
+    });
+    return out;
+  }, [ledger, live]);
+  return { tasksQuery, tasks, jobs, logs, progress };
 }
 
 /**

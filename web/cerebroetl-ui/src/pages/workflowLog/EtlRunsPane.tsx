@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, DatePicker, Space, Spin } from "antd";
 import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
-import { listAllAirflowDagRuns, type AirflowDagRun } from "../../api/platform";
+import { listActiveAirflowDagRuns, listAllAirflowDagRuns, type AirflowDagRun } from "../../api/platform";
 import type { WorkflowSummary } from "../../api/workflows";
 import { TaskFailureLogModal, type FailureLogTarget } from "../../components/TaskFailureLogModal";
 import { activeDayPresetByDate, type DayPreset } from "../../components/dayPreset";
@@ -19,6 +19,7 @@ import {
   type Selection,
 } from "../workflowLogV2/logV2Data";
 import { GridHead, RunBody, RunRow, type GridCtx } from "../workflowLogV2/LogV2Grid";
+import { ACTIVE_RUNS_IDLE_MS, ACTIVE_RUNS_KEY, LIVE_REFRESH_MS } from "../workflowLogV2/logV2Live";
 
 
 function toggleIn(set: Set<string>, key: string) {
@@ -102,18 +103,57 @@ export function EtlRunsPane({
     refetchInterval: rangeIncludesNow ? refreshSeconds * 1000 : false,
   });
 
+  /*
+   * 대기 · 실행 중인 실행만 가볍게 받는다(2026-10-06 요청 - 수동 실행이 15~20초 뒤에야 보였다).
+   * 있으면 3초, 없으면 5초마다 받는다(결과가 비면 100바이트 남짓). 기간 내 실행 전체(최대 5,000건)는 화면 주기 그대로 두고, 실행이 끝나
+   * 이 목록에서 빠지는 순간에만 한 번 더 받는다. 실행을 건 화면은 이 키를 무효화해 바로 다시 받게 한다(refreshRunsAfterTrigger).
+   */
+  const activeRunsQuery = useQuery({
+    queryKey: ACTIVE_RUNS_KEY,
+    queryFn: listActiveAirflowDagRuns,
+    enabled: rangeIncludesNow,
+    refetchInterval: (query) => (query.state.data?.length ? LIVE_REFRESH_MS : ACTIVE_RUNS_IDLE_MS),
+  });
+  const activeRuns = rangeIncludesNow ? activeRunsQuery.data : undefined;
+  const activeKey = (activeRuns ?? []).map((run) => `${run.dag_id}|${run.dag_run_id}`).sort().join(",");
+  const previousActiveKey = useRef<string | undefined>(undefined);
+  const refetchPeriodRuns = periodRunsQuery.refetch;
+  useEffect(() => {
+    const before = previousActiveKey.current;
+    previousActiveKey.current = activeKey;
+    if (!before) return;
+    const stillActive = new Set(activeKey ? activeKey.split(",") : []);
+    if (before.split(",").some((key) => !stillActive.has(key))) void refetchPeriodRuns();
+  }, [activeKey, refetchPeriodRuns]);
+
+  /** 기간 목록에 대기 · 실행 중 목록을 덮어쓴 것 - 도는 실행의 상태는 3초 전 것, 방금 건(아직 시작 전) 실행도 들어간다. */
+  const periodRuns = useMemo(() => {
+    const merged = new Map<string, AirflowDagRun>();
+    (periodRunsQuery.data ?? []).forEach((run) => merged.set(`${run.dag_id}|${run.dag_run_id}`, run));
+    (activeRuns ?? []).forEach((run) => {
+      const key = `${run.dag_id}|${run.dag_run_id}`;
+      const at = runAt(run);
+      if (merged.has(key) || (at && !dayjs(at).isBefore(rangeFrom) && !dayjs(at).isAfter(rangeTo))) {
+        merged.set(key, { ...merged.get(key), ...run });
+      }
+    });
+    return [...merged.values()];
+    // rangeFrom · rangeTo 는 rangeKey 로 대신한다(렌더마다 새 dayjs 객체라 그대로 넣으면 매번 다시 계산된다).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodRunsQuery.data, activeRuns, rangeKey]);
+
   const dagsById = useMemo(() => new Map(dags.map((dag) => [dag.dag_id, dag] as const)), [dags]);
   const runsById = useMemo(() => {
     const map = new Map<string, AirflowDagRun[]>();
     const seen = new Set<string>();
-    [...(periodRunsQuery.data ?? []), ...dashboardRuns].forEach((run) => {
+    [...periodRuns, ...dashboardRuns].forEach((run) => {
       const key = `${run.dag_id}|${run.dag_run_id}`;
       if (seen.has(key)) return;
       seen.add(key);
       map.set(run.dag_run_id, [...(map.get(run.dag_run_id) ?? []), run]);
     });
     return map;
-  }, [periodRunsQuery.data, dashboardRuns]);
+  }, [periodRuns, dashboardRuns]);
 
   const findChildRun = (parentDagId: string, parentRunId: string, nodeKey: string) => {
     const candidates = runsById.get(childRunIdOf(parentRunId, nodeKey)) ?? [];
@@ -127,7 +167,6 @@ export function EtlRunsPane({
 
   const topRuns = useMemo(() => {
     const scope = new Set(scopeKey ? scopeKey.split(",") : []);
-    const periodRuns = periodRunsQuery.data ?? [];
     const periodById = new Map<string, AirflowDagRun[]>();
     periodRuns.forEach((run) => periodById.set(run.dag_run_id, [...(periodById.get(run.dag_run_id) ?? []), run]));
     return periodRuns
@@ -140,7 +179,7 @@ export function EtlRunsPane({
           .some((candidate) => candidate.dag_id && candidate.dag_id !== run.dag_id && scope.has(candidate.dag_id));
       })
       .sort((a, b) => dayjs(runAt(b) ?? 0).valueOf() - dayjs(runAt(a) ?? 0).valueOf());
-  }, [periodRunsQuery.data, scopeKey]);
+  }, [periodRuns, scopeKey]);
 
   /**
    * 실행 차수 - 그날 이 워크플로우의 몇 번째 실행인지다(2026-09-21 요청).
@@ -346,7 +385,7 @@ export function EtlRunsPane({
                   <GridHead />
                   <tbody>
                     <RunBody key={`${selectedRun.dag_id}|${selectedRun.dag_run_id}`} dagId={selectedRun.dag_id ?? ""}
-                             runId={selectedRun.dag_run_id} depth={0} ctx={historyCtx}
+                             runId={selectedRun.dag_run_id} runState={selectedRun.state} depth={0} ctx={historyCtx}
                              scale={durationSeconds(historyStarted, selectedRun.end_date ?? (selectedRun.state === "running" ? dayjs().toISOString() : undefined))} />
                   </tbody>
                 </table>

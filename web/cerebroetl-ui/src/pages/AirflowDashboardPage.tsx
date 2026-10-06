@@ -48,6 +48,7 @@ import { useAuth } from "../auth/AuthContext";
 import { WfIcon, WorkflowPageHeader, type WfIconName } from "../components/WorkflowPageHeader";
 import { cerebroBrandTheme } from "../theme/cerebro";
 import { TaskFailureLogModal, type FailureLogTarget } from "../components/TaskFailureLogModal";
+import { refreshRunsAfterTrigger } from "./workflowLogV2/logV2Live";
 import { GptChatPanel } from "../components/gpt/GptChatPanel";
 import { useGptEnabled } from "../components/gpt/useGptEnabled";
 import { EtlRunsPane } from "./workflowLog/EtlRunsPane";
@@ -1864,6 +1865,7 @@ function ExecutionSettingsModal({
 }) {
   const [action, setAction] = useState<ExecutionAction | undefined>("start");
   const [nodeChoices, setNodeChoices] = useState<Record<string, CdcNodeChoice>>({});
+  const queryClient = useQueryClient();
   const [triggering, setTriggering] = useState(false);
   // 표 필터(2026-10-02 요청) - 파이프라인 이름 · 현재 상태. «전체 적용»은 걸러진(보이는) 줄에만 적용한다.
   const [nameFilter, setNameFilter] = useState("");
@@ -1917,6 +1919,8 @@ function ExecutionSettingsModal({
         await triggerAirflowDag(dag.dag_id, { action });
         message.success(`${displayName(dag)} ${options.find((option) => option.value === action)?.label} 요청을 전송했습니다.`);
       }
+      // 로그 화면이 다음 주기를 기다리지 않고 방금 건 실행을 바로 받는다(2026-10-06).
+      refreshRunsAfterTrigger(queryClient);
       onClose();
       onExecuted();
     } catch (error) {

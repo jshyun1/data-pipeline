@@ -88,6 +88,7 @@ import {
   type WorkflowDetail,
   type WorkflowSummary,
 } from "../api/workflows";
+import { refreshRunsAfterTrigger } from "./workflowLogV2/logV2Live";
 
 // 워크플로우 캔버스. ETL(NiFi)에서 만들어 둔 job을 끌어와 실행 순서를 그린다.
 //
@@ -213,7 +214,10 @@ export function WorkflowCanvasPage() {
     mutationFn: async (dagId: string) => {
       await triggerAirflowDag(dagId, {});
     },
-    onSuccess: () => message.success("실행을 요청했습니다. 진행 상황은 로그 화면에서 볼 수 있습니다."),
+    onSuccess: () => {
+      message.success("실행을 요청했습니다. 진행 상황은 로그 화면에서 볼 수 있습니다.");
+      refreshRunsAfterTrigger(queryClient);   // 로그 화면으로 가면 방금 건 실행이 바로 보인다(2026-10-06)
+    },
     onError: (error: Error) => message.error(`실행하지 못했습니다: ${error.message}`),
   });
 
