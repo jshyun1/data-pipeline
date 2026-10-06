@@ -5306,8 +5306,8 @@ export function ConsoleFramePage({
             <button
               type="button"
               className="console-resize-handle"
-              aria-label="상세 패널 너비 조절"
-              title="상세 패널 너비 조절"
+              aria-label="속성 패널 너비 조절"
+              title="속성 패널 너비 조절"
               onMouseDown={startDetailPanelResize}
             />
           ) : null}
