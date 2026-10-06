@@ -76,7 +76,7 @@ export function GptErrorAnalysis({ targetType, target, errorText, onClose, headi
           {" · "}개인정보 마스킹 {masked ? "켜짐" : "꺼짐"}
         </span>
         <span className="gpt-analysis-actions">
-          <Button type="link" size="small" onClick={() => void chat.openPreview()}>프롬프트</Button>
+          <Button type="link" size="small" onClick={() => void chat.openPreview()}>프롬프트 편집</Button>
           <Button size="small" onClick={saveMarkdown}>MD 저장하기</Button>
           {chat.busy
             ? <Button size="small" onClick={chat.stop}>중지</Button>

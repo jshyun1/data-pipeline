@@ -46,7 +46,9 @@ export function useSideDock(side: "left" | "right", defaultWidth: number, minWid
     collapsed,
     toggle: () => setCollapsed((current) => !current),
     width,
-    column: `${collapsed ? COLLAPSED_WIDTH : width}px`,
+    // 브라우저 배율을 올리면 보이는 폭이 좁아진다 - 그때는 끌어 둔 폭 대신 화면 몫(26vw)까지만 쓴다.
+    // 그러지 않으면 양옆 패널이 가운데를 밀어내 화면 밖으로 넘친다(2026-10-05 요청).
+    column: collapsed ? `${COLLAPSED_WIDTH}px` : `min(${width}px, 26vw)`,
     startResize,
   };
 }

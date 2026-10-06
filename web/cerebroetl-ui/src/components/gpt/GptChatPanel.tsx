@@ -65,8 +65,8 @@ export function GptChatPanel({ targetType, target, draft }: GptChatPanelProps) {
   // 전송될 정보 보기) → 대화 칸(남은 높이를 다 씀) → 둥근 보내기 버튼이 붙은 입력칸. 보내는 정보 · 대화 규칙은 그대로다.
   return (
     <section className="nifi-ai-panel gpt-chat" aria-label="AI 어시스턴트">
-      {/* 윗줄은 왼쪽 GPT 이름 · 오른쪽 «전송 정보» 버튼만(2026-09-18 요청). 대상 안내 · 배치/마스킹 · 저장 안 된 변경 안내 문구는 뺐다 -
-          보내는 내용은 «전송 정보» 창이 그대로 보여 준다. */}
+      {/* 윗줄은 왼쪽 GPT 이름 · 오른쪽 «프롬프트 편집» 버튼만(2026-09-18 요청, 이름은 2026-10-05 변경).
+          대상 안내 · 배치/마스킹 · 저장 안 된 변경 안내 문구는 뺐다 - 보내는 내용은 그 창이 그대로 보여 주고 고칠 수도 있다. */}
       <div className="nifi-ai-summary gpt-chat-head">
         <strong>
           {providerName ?? "선택된 GPT"}
@@ -80,7 +80,7 @@ export function GptChatPanel({ targetType, target, draft }: GptChatPanelProps) {
           )}
         </strong>
         <span className="gpt-chat-head-actions">
-          <Button size="small" onClick={() => void chat.openPreview()}>전송 정보</Button>
+          <Button size="small" onClick={() => void chat.openPreview()}>프롬프트 편집</Button>
           <Button size="small" onClick={saveMarkdown} disabled={chat.turns.length === 0}>MD 저장하기</Button>
         </span>
       </div>

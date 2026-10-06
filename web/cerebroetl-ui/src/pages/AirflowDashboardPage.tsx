@@ -2333,7 +2333,7 @@ export function AirflowDashboardPage() {
           </section>
           {/* 양옆 패널은 ETL 관리 화면처럼 접고 너비를 끌어 바꾼다(2026-09-18 요청). 가운데 열이 남은 폭을 가져간다. */}
           <div className="airflow-dashboard-workspace"
-               style={{ gridTemplateColumns: `${treeDock.column} minmax(480px, 1fr) ${propertyDock.column}` }}>
+               style={{ gridTemplateColumns: `${treeDock.column} minmax(0, 1fr) ${propertyDock.column}` }}>
             <SideDock side="left" dock={treeDock} label="트리 패널">
             <BusinessTree dags={filteredDags} workflows={workflowsQuery.data ?? []}
                           pipelines={pipelines} connectionNames={connectionNames} selectedPipelineId={selectedPipelineId}

@@ -10742,3 +10742,149 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   font-size: 12px;
   font-weight: 400;
 }
+
+/*
+ * ===== 대시보드: 브라우저 배율을 올렸을 때(2026-10-05 요청) =====
+ * 이 화면은 «한 화면에 고정, 페이지는 스크롤 없음»이 기본이다. 배율을 올리면 보이는 영역이 좁아지는데,
+ * 그 상태로 칸을 억지로 눌러 담으면 카드 내용이 서로 겹쳐 보인다(요약 카드 위로 자원 카드가 올라오던 문제).
+ * 그래서 세로가 일정 아래로 내려가면 칸마다 최소 높이를 지키고, 모자란 만큼은 페이지가 세로로 스크롤되게 한다.
+ */
+@media (max-height: 860px) {
+  .dashboard-page {
+    height: auto;
+    min-height: calc(100vh - var(--app-offset));
+    overflow: visible;
+  }
+
+  .dashboard-body {
+    grid-template-rows: auto;
+    overflow: visible;
+  }
+
+  /* 칸이 읽을 수 있는 높이 아래로 눌리지 않게 한다. */
+  .dashboard-summary-card.ant-card {
+    min-height: 168px;
+  }
+
+  .dashboard-stats-grid {
+    grid-template-rows: none;
+    grid-auto-rows: minmax(240px, auto);
+  }
+
+  .dashboard-infra-column {
+    height: auto;
+    overflow: visible;
+  }
+
+  .infra-tile.ant-card {
+    min-height: 118px;
+  }
+}
+
+/* 세로로도 가로로도 좁아지면(배율 175% 이상) 자원 칸을 한 줄에 셋이 아니라 내용대로 쌓는다. */
+@media (max-height: 700px) and (max-width: 1280px) {
+  .dashboard-infra-column {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+}
+
+/* 배율을 올려 폭이 좁아지면 가운데 목록이 제 폭을 지키고 표는 그 안에서 가로로 스크롤한다(2026-10-05 요청). */
+@media (max-width: 1200px) {
+  .airflow-dashboard-workspace > .airflow-jobs-panel {
+    overflow-x: auto;
+  }
+}
+
+/* 현황 띠(CDC · ETL 카드): 폭이 좁아지면 한 줄에 억지로 넣지 말고 아래로 접어 내린다(2026-10-05 요청). */
+@media (max-width: 1200px) {
+  .airflow-business-status {
+    flex-wrap: wrap;
+  }
+
+  .airflow-business-card {
+    flex: 1 1 340px;
+  }
+}
+
+@media (max-width: 1000px) {
+  .airflow-business-metrics {
+    flex-wrap: wrap;
+  }
+
+  .airflow-business-metric {
+    flex: 1 1 72px;
+  }
+}
+
+/* 로그 화면은 최소 폭 1080px 로 못박혀 있다 - 배율을 올려 그보다 좁아지면 화면 밖으로 밀려나므로 그때는 푼다. */
+@media (max-width: 1200px) {
+  .airflow-dashboard-page {
+    min-width: 0;
+  }
+}
+
+/* ETL 관리 AI 패널의 [프롬프트 편집] 창 안내 줄 - 다른 화면의 같은 창과 같은 모양. */
+.nifi-ai-preview-note {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 답변의 구분 제목 앞에 ■ 를 단다(번호 대신, 2026-10-05 요청). 속성창 AI 어시스턴트 · 로그 GPT 해석 공통. */
+.gpt-analysis-heading::before {
+  content: "■";
+  margin-right: 6px;
+  color: #0f172a;
+  font-size: 9px;
+  vertical-align: 2px;
+}
+
+/* 캔버스 우클릭 메뉴(워크플로우 실행, 2026-10-05 요청). */
+.wf-pane-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+}
+
+.wf-pane-menu {
+  position: fixed;
+  z-index: 1201;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 10px 25px -4px rgb(15 23 42 / 18%);
+}
+
+.wf-pane-menu-item {
+  width: 100%;
+  padding: 8px 12px;
+  display: block;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #334155;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wf-pane-menu-item:hover:not(:disabled) {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.wf-pane-menu-item:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.wf-pane-menu-note {
+  padding: 2px 12px 6px;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.5;
+}

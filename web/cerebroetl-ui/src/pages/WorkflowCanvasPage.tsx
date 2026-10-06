@@ -47,7 +47,7 @@ import {
 import { useAuth } from "../auth/AuthContext";
 import { setLeaveGuard } from "../utils/navigationGuard";
 import { listEtlJobs, syncEtlJobs, type EtlJobResponse } from "../api/etlJobs";
-import { getNifiProcessGroupTree, type NifiProcessGroupTreeNode } from "../api/platform";
+import { getNifiProcessGroupTree, triggerAirflowDag, type NifiProcessGroupTreeNode } from "../api/platform";
 import { listPipelineRuntimeStatuses, listPipelines } from "../api/pipelines";
 import { renderRuntimeStatus, sourceLabel, targetLabel } from "../utils/cdcPresentation";
 import { listPipelineGroups, type PipelineGroupResponse } from "../api/pipelineGroups";
@@ -193,6 +193,23 @@ export function WorkflowCanvasPage() {
   // 노드 속성창의 [속성] [GPT] 탭. 선택된 LLM 이 없으면 탭 없이 속성만 보인다(설계 5-1).
   const gptEnabled = useGptEnabled();
   const [nodePanelTab, setNodePanelTab] = useState<"props" | "gpt">("props");
+  /** 캔버스 우클릭 메뉴 자리(화면 좌표). 2026-10-05 요청 - 여기서 워크플로우를 실행한다. */
+  const [paneMenu, setPaneMenu] = useState<{ x: number; y: number }>();
+
+  /**
+   * 캔버스 우클릭 → «워크플로우 실행»(2026-10-05 요청).
+   *
+   * <p>게시된 워크플로우만 실행할 수 있다 - 게시 전에는 Airflow 에 DAG 자체가 없다.
+   * CDC 워크플로우는 어떤 지시(시작 · 중지 · 재시작 · 배포)를 보낼지 골라야 해서 여기서는 받지 않고
+   * 로그 화면의 «실행 설정»으로 안내한다.
+   */
+  const runMutation = useMutation({
+    mutationFn: async (dagId: string) => {
+      await triggerAirflowDag(dagId, {});
+    },
+    onSuccess: () => message.success("실행을 요청했습니다. 진행 상황은 로그 화면에서 볼 수 있습니다."),
+    onError: (error: Error) => message.error(`실행하지 못했습니다: ${error.message}`),
+  });
 
   /** 캔버스를 떠나기 전 확인. 저장 안 한 변경을 말없이 버리지 않는다. */
   const askLeave = () => new Promise<boolean>((resolve) => {
@@ -1075,7 +1092,12 @@ export function WorkflowCanvasPage() {
                 }
               }}
               onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedNodeId(undefined); }}
-              onPaneClick={() => { setSelectedNodeId(undefined); setSelectedEdgeId(undefined); }}
+              onPaneClick={() => { setSelectedNodeId(undefined); setSelectedEdgeId(undefined); setPaneMenu(undefined); }}
+              onMoveStart={() => setPaneMenu(undefined)}
+              onPaneContextMenu={(event) => {
+                event.preventDefault();
+                setPaneMenu({ x: event.clientX, y: event.clientY });
+              }}
               className="wf-flow"
               fitView
               // 처음 열면 노드가 코앞에 있는 것처럼 크게 잡혀 부담스러웠다.
@@ -1120,6 +1142,40 @@ export function WorkflowCanvasPage() {
               {/* 캔버스 위 «메모» 상자는 뺐다(2026-09-03) - 속성창에 같은 메모 칸이 있어
                   두 곳에 같은 것이 떠 있었고, 캔버스 좌상단을 늘 가리고 있었다. */}
             </ReactFlow>
+            {paneMenu && (() => {
+              // 실행할 수 있는 조건: 게시됨 + Airflow 쓰기 권한. CDC 워크플로우는 지시를 골라야 해서 여기서 하지 않는다.
+              const reason = isDraft || !detail.published ? "게시해야 실행할 수 있습니다"
+                : !canPublish ? "Airflow 쓰기 권한이 없습니다"
+                : isCdcWorkflow ? "CDC 워크플로우는 로그 화면의 «실행 설정»에서 지시를 골라 실행합니다"
+                : undefined;
+              return (
+                <>
+                  {/* 바깥을 누르면 닫힌다. */}
+                  <div className="wf-pane-menu-backdrop" onClick={() => setPaneMenu(undefined)}
+                       onContextMenu={(event) => { event.preventDefault(); setPaneMenu(undefined); }} />
+                  <div className="wf-pane-menu" style={{ left: paneMenu.x, top: paneMenu.y }} role="menu">
+                    <button type="button" className="wf-pane-menu-item" role="menuitem"
+                            disabled={Boolean(reason) || runMutation.isPending}
+                            title={reason}
+                            onClick={() => {
+                              setPaneMenu(undefined);
+                              Modal.confirm({
+                                title: `${detail.name} 워크플로우를 지금 실행할까요?`,
+                                content: dirty || detail.dirty
+                                  ? "게시본 기준으로 실행됩니다 - 캔버스의 저장·게시하지 않은 변경은 반영되지 않습니다."
+                                  : "게시본 기준으로 한 번 실행합니다.",
+                                okText: "실행",
+                                cancelText: "취소",
+                                onOk: () => runMutation.mutate(detail.dagId),
+                              });
+                            }}>
+                      워크플로우 실행
+                    </button>
+                    {reason && <div className="wf-pane-menu-note">{reason}</div>}
+                  </div>
+                </>
+              );
+            })()}
           </div>
 
           {/* 우: 속성 - 워크플로우 전체 / 선택 노드.

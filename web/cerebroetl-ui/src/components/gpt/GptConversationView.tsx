@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Spin } from "antd";
+import type { TextAreaRef } from "antd/es/input/TextArea";
 import { ArrowUpOutlined } from "@ant-design/icons";
 import { DEPLOYMENT_LABEL, type LlmCompacted } from "../../api/llm";
 import type { GptPreviewState, GptTurn } from "./useGptConversation";
@@ -19,6 +20,48 @@ const HEADING_ALIAS: Partial<Record<GptAnswerHeading, GptAnswerHeading>> = { "�
 export const ERROR_ANALYSIS_HEADINGS: GptAnswerHeading[] = ["원인", "조치 방법", "확인할 것"];
 export const ERROR_ANALYSIS_HEADING_LABELS: GptAnswerHeadingLabels = { "조치 방법": "조치방법", "확인할 것": "확인할것" };
 export type GptAnswerHeadingLabels = Partial<Record<GptAnswerHeading, string>>;
+
+/**
+ * 서버 지시문이 정해 둔 구분 이름들. 모델이 번호 없이 이 이름만 적어도 구분으로 본다
+ * (속성창 요약: 한 줄 요약 · 구성 · 지금 상태 / 로그 분석: 원인 · 조치 방법 · 확인할 것).
+ */
+const KNOWN_SECTIONS = [
+  ...HEADINGS, "한 줄 요약", "구성", "지금 상태", "요약", "기본정보", "스케줄", "실행 방식", "참고", "다음 단계",
+];
+
+/**
+ * 한 줄이 «구분 제목»인지 본다(2026-10-05 요청). 제목이면 번호 · 꾸밈 기호를 뺀 이름을 돌려준다.
+ *
+ * <p>«1. 원인» 처럼 번호가 붙은 제목은 번호를 떼고, «1. PostgreSQL 에 접속해 …» 같은 절차 문장은
+ * 제목으로 보지 않는다 - 제목은 짧고 문장부호로 끝나지 않는다.
+ */
+function sectionTitleOf(raw: string): string | null {
+  const line = raw.trim();
+  if (!line || line.startsWith("-") || line.startsWith("·")) {
+    return null;
+  }
+  const plain = (text: string) => text.replace(/\*\*/g, "").replace(/\s*:$/, "").trim();
+  const md = /^#{1,6}\s*(.+)$/.exec(line);
+  if (md) {
+    return plain(md[1]);
+  }
+  const bold = /^\*\*(.+?)\*\*\s*:?$/.exec(line);
+  if (bold) {
+    return plain(bold[1]);
+  }
+  const numbered = /^\(?\d+\)?\s*[.)]?\s+(.+)$/.exec(line);
+  const body = numbered ? plain(numbered[1]) : plain(line);
+  if (KNOWN_SECTIONS.includes(body)) {
+    return body;
+  }
+  if (numbered) {
+    // 번호가 붙은 줄은 «구성» 안의 목록(«1. COM001M (job)»)인 경우가 대부분이다 - 정해진 구분 이름일 때만
+    // 제목으로 본다(2026-10-05 확인). 예전에는 짧기만 하면 제목으로 봐서 목록 첫 줄에만 ■ 가 붙었다.
+    return null;
+  }
+  // 번호도 기호도 없는 짧은 단독 줄(«구성:» 같은 것). 문장 · 코드 이름이 든 줄은 제외한다.
+  return body.length <= 14 && !/[.!?]$/.test(body) && !/[,·`()]/.test(body) && /:$/.test(line) ? body : null;
+}
 
 export function renderAssistantText(text: string) {
   return text
@@ -63,13 +106,13 @@ function AnswerText({ text, headings, headingLabels }: {
     }
     return (
       <div className="gpt-analysis-answer">
-        {headings.filter((heading) => sectionLines.has(heading)).map((heading, order) => {
+        {headings.filter((heading) => sectionLines.has(heading)).map((heading) => {
           const body = sectionLines.get(heading) ?? [];
-          // 제목은 «1. 원인»처럼 번호를 붙이고, 그 안의 번호 목록은 «(1)»로 바꿔 한 칸 들여 쓴다(2026-10-02 요청) -
-          // 제목 번호와 항목 번호가 같은 «1.» 모양이면 어디가 제목인지 헷갈린다.
+          // 제목 앞에는 ■ 를 붙이고(번호 대신, 2026-10-05 요청) 본문은 한 칸 들여 쓴다.
+          // 본문 안의 번호 목록은 «(1)» 로 바꾼다 - 제목과 항목이 같은 «1.» 모양이면 헷갈린다(2026-10-02).
           return (
             <div key={heading}>
-              <div className="gpt-analysis-heading">{`${order + 1}. ${headingLabels?.[heading] ?? heading}`}</div>
+              <div className="gpt-analysis-heading">{headingLabels?.[heading] ?? heading}</div>
               {body.length > 0
                 ? body.map((line, index) => {
                   const text = line.replace(/\*\*/g, "").replace(/^#+\s*/, "");
@@ -91,15 +134,24 @@ function AnswerText({ text, headings, headingLabels }: {
       </div>
     );
   }
+  // 형식이 정해지지 않은 답(속성창 요약 · 추가 질문)도 같은 모양으로 그린다:
+  // 구분 제목은 ■ 를 달고, 그 아래 줄은 한 칸 들여 쓴다(2026-10-05 요청).
+  let inSection = false;
   return (
     <div className="gpt-analysis-answer">
       {lines.map((line, index) => {
-        const heading = HEADING_PATTERN.exec(line);
-        if (heading) {
-          return <div key={index} className="gpt-analysis-heading">{heading[1]}</div>;
+        const title = sectionTitleOf(line);
+        if (title) {
+          inSection = true;
+          return <div key={index} className="gpt-analysis-heading">{title}</div>;
         }
         // 마크다운 강조·제목 기호는 글자로 보이면 거슬려 걷어 낸다. 목록 번호는 그대로 둔다.
-        return <div key={index} className="gpt-analysis-line">{renderAssistantText(line.replace(/\*\*/g, "").replace(/^#+\s*/, "")) || " "}</div>;
+        const text = renderAssistantText(line.replace(/\*\*/g, "").replace(/^#+\s*/, "")) || " ";
+        return (
+          <div key={index} className={inSection ? "gpt-analysis-line gpt-analysis-indent" : "gpt-analysis-line"}>
+            {text}
+          </div>
+        );
       })}
     </div>
   );
@@ -170,6 +222,28 @@ export function GptAskBox({ busy, placeholder, onSend, variant = "inline" }: {
   variant?: "inline" | "composer";
 }) {
   const [question, setQuestion] = useState("");
+  /*
+   * 창 · 탭을 열면 커서를 질문칸에 둔다(2026-10-05 요청).
+   * 답이 흐르는 동안에는 칸이 꺼져(disabled) 커서가 빠지므로, 답이 끝나 다시 쓸 수 있게 될 때 넣는다.
+   * 다른 곳(검색칸 · 다른 입력칸)에 커서가 있으면 그대로 둔다 - 쓰던 자리를 뺏지 않는다.
+   */
+  const boxRef = useRef<HTMLTextAreaElement>(null);
+  const antdBoxRef = useRef<TextAreaRef>(null);
+  useEffect(() => {
+    if (busy) {
+      return;
+    }
+    // 탭 · 단추를 눌러 들어오면 그 단추에 커서가 남는다 - 그런 자리는 넘겨받고,
+    // 다른 입력칸에 글을 쓰고 있을 때만 그대로 둔다.
+    const active = document.activeElement as HTMLElement | null;
+    const typingElsewhere = Boolean(active)
+      && (active!.tagName === "INPUT" || active!.tagName === "TEXTAREA" || active!.isContentEditable);
+    if (typingElsewhere) {
+      return;
+    }
+    (boxRef.current ?? antdBoxRef.current)?.focus();
+  }, [busy]);
+
   const send = async () => {
     const text = question.trim();
     if (!text || busy) return;
@@ -181,6 +255,7 @@ export function GptAskBox({ busy, placeholder, onSend, variant = "inline" }: {
     return (
       <div className="nifi-ai-composer">
         <textarea
+          ref={boxRef}
           rows={3}
           value={question}
           maxLength={4000}
@@ -211,6 +286,7 @@ export function GptAskBox({ busy, placeholder, onSend, variant = "inline" }: {
   return (
     <div className="gpt-analysis-ask">
       <Input.TextArea
+        ref={antdBoxRef}
         value={question}
         onChange={(event) => setQuestion(event.target.value)}
         onPressEnter={(event) => {

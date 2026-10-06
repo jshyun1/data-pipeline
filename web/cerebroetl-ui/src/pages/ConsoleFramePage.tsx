@@ -10,7 +10,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type SyntheticEvent,
 } from "react";
-import { Alert, Button, Modal, Result, Spin, message } from "antd";
+import { Alert, Button, Input, Modal, Result, Spin, message } from "antd";
 import {
   ArrowUpOutlined,
   DoubleLeftOutlined,
@@ -3718,6 +3718,10 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiPreviewLoading, setAiPreviewLoading] = useState(false);
   const [aiPreview, setAiPreview] = useState<LlmContextPreview | null>(null);
+  /** [프롬프트 편집] 창에서 고친 대상 정보. 있으면 다음 질문부터 서버가 모은 것 대신 이것을 보낸다(2026-10-05 요청). */
+  const [aiContextOverride, setAiContextOverride] = useState<string>();
+  /** 그 창에서 고치는 중인 글. 창을 열 때 지금 보낼 내용으로 채운다. */
+  const [aiPromptDraft, setAiPromptDraft] = useState("");
   const [jobs, setJobs] = useState<EtlJobResponse[]>([]);
   const [details, setDetails] = useState<EtlJobDetailResponse[]>([]);
   const [runs, setRuns] = useState<EtlJobRunResponse[]>([]);
@@ -4058,6 +4062,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     } as Record<string, string>,
     question,
     history: aiMessages.filter((entry) => entry.content.trim().length > 0),
+    contextOverride: aiContextOverride ?? null,
   });
 
   const handleAiSubmit = async () => {
@@ -4101,10 +4106,11 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     setAiPreviewLoading(true);
     setAiError(null);
     try {
-      const preview = await previewLlmContext(buildAiRequest(aiQuestion.trim() || "전송 정보 미리보기"));
+      const preview = await previewLlmContext(buildAiRequest(aiQuestion.trim() || "프롬프트 미리보기"));
       setAiPreview(preview);
+      setAiPromptDraft(preview.text ?? "");
     } catch (ex) {
-      setAiError(ex instanceof Error ? ex.message : "전송 정보를 불러오지 못했습니다.");
+      setAiError(ex instanceof Error ? ex.message : "프롬프트를 불러오지 못했습니다.");
     } finally {
       setAiPreviewLoading(false);
     }
@@ -4287,7 +4293,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
             <div className="nifi-ai-summary">
               <strong>{aiProviderName ?? "선택된 GPT"}</strong>
               <Button size="small" loading={aiPreviewLoading} onClick={handleAiPreview}>
-                전송될 정보 보기
+                프롬프트 편집
               </Button>
             </div>
             {aiError ? (
@@ -4354,11 +4360,23 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
       </aside>
 
       <Modal
-        title="전송될 정보"
+        title="프롬프트"
         open={aiPreview !== null}
-        footer={null}
-        width={720}
+        width={860}
         onCancel={() => setAiPreview(null)}
+        footer={
+          <>
+            {aiContextOverride && (
+              <Button onClick={() => { setAiContextOverride(undefined); setAiPreview(null); }}>원래대로</Button>
+            )}
+            <Button type="primary"
+                    onClick={() => {
+                      setAiContextOverride(aiPromptDraft.trim() ? aiPromptDraft : undefined);
+                      setAiPreview(null);
+                    }}>적용</Button>
+            <Button onClick={() => setAiPreview(null)}>닫기</Button>
+          </>
+        }
       >
         {aiPreview ? (
           <div className="nifi-ai-preview">
@@ -4376,7 +4394,14 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
                 <dd>{aiPreview.masked ? "켜짐" : "꺼짐"}</dd>
               </div>
             </dl>
-            <pre>{aiPreview.text}</pre>
+            {/* 다른 화면의 [프롬프트 편집] 창과 같다 - 고쳐서 «적용»하면 다음 질문부터 이 내용을 보낸다. */}
+            <Input.TextArea className="gpt-analysis-preview-edit" value={aiPromptDraft}
+                            autoSize={{ minRows: 12, maxRows: 24 }} aria-label="프롬프트 내용"
+                            onChange={(event) => setAiPromptDraft(event.target.value)} />
+            <div className="nifi-ai-preview-note">
+              이 프롬프트와 함께 역할 지시문과 이번 창의 대화가 전송됩니다. 고친 내용은 «적용»을 누르면 다음 질문부터 쓰입니다.
+              {aiContextOverride ? " (지금은 고친 내용을 쓰고 있습니다)" : ""}
+            </div>
           </div>
         ) : null}
       </Modal>
