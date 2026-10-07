@@ -1,6 +1,10 @@
 spring:
   application:
     name: pipeline-backend
+  servlet:
+    multipart:
+      max-file-size: 1024MB
+      max-request-size: 1100MB
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/pipeline_meta}
     username: ${SPRING_DATASOURCE_USERNAME:pipeline_app}
