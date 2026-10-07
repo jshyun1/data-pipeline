@@ -72,7 +72,7 @@ public record NifiFlowResponse(ProcessGroupFlowEntity processGroupFlow) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record ConnectionEntity(String id, ConnectionComponent component) {
+    public record ConnectionEntity(String id, Revision revision, ConnectionComponent component) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

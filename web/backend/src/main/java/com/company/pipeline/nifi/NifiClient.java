@@ -57,6 +57,9 @@ public class NifiClient {
     private static final String ORACLE_DRIVER_LOCATION = "/opt/nifi/nifi-current/drivers/ojdbc11-23.26.2.0.0.jar";
     private static final String MYSQL_DRIVER_CLASS = "com.mysql.cj.jdbc.Driver";
     private static final String MYSQL_DRIVER_LOCATION = "/opt/nifi/nifi-current/drivers/mysql-connector-j-8.4.0.jar";
+    private static final String EXECUTE_GROOVY_SCRIPT_TYPE = "org.apache.nifi.processors.groovyx.ExecuteGroovyScript";
+    private static final String EXECUTE_GROOVY_SCRIPT_BUNDLE_ARTIFACT = "nifi-groovyx-nar";
+    private static final String EXECUTE_GROOVY_SCRIPT_BUNDLE_VERSION = "2.2.0";
     private static final String INITIAL_TEMPLATE_GROUP_NAME = "Initial";
     private static final String TRUNCATE_TEMPLATE_GROUP_NAME = "truncate_initial";
     private static final String TEMPLATE_GROUP_NAME = "Template";
@@ -120,14 +123,21 @@ public class NifiClient {
             "put-db-record-update-keys",
             "Update Keys"
     );
-    private static final List<String> PUT_SQL_DBCP_KEYS = List.of(
-            "JDBC Connection Pool",
-            "JDBC Connection Pooling Service",
-            "putsql-connection-pool"
+    private static final List<String> GROOVY_SCRIPT_BODY_KEYS = List.of(
+            "groovyx-script-body",
+            "Script Body"
     );
-    private static final List<String> PUT_SQL_STATEMENT_KEYS = List.of(
-            "SQL Statement",
-            "putsql-sql-statement"
+    private static final List<String> GROOVY_FAILURE_STRATEGY_KEYS = List.of(
+            "groovyx-failure-strategy",
+            "Failure Strategy"
+    );
+    private static final List<String> FETCH_FILE_COMPLETION_STRATEGY_KEYS = List.of(
+            "Completion Strategy",
+            "completion-strategy"
+    );
+    private static final List<String> FETCH_FILE_MOVE_DESTINATION_KEYS = List.of(
+            "Move Destination Directory",
+            "move-destination-directory"
     );
     private static final List<String> TRUNCATE_DBCP_KEYS = List.of(
             "JDBC Connection Pool",
@@ -1128,17 +1138,48 @@ public class NifiClient {
                 ? List.of()
                 : flow.processGroupFlow().flow().processors();
         NifiFlowResponse.ProcessorEntity listFile = findProcessor(processors, "ListFile");
-        NifiFlowResponse.ProcessorEntity putSql = findProcessor(processors, "PutSQL");
+        NifiFlowResponse.ProcessorEntity fetchFile = findOptionalProcessor(processors, "FetchFile");
+        NifiFlowResponse.ProcessorEntity putSql = findOptionalProcessor(processors, "PutSQL");
         NifiFlowResponse.ProcessorEntity putRecord = findProcessor(processors, "PutDatabaseRecord");
 
         Map<String, String> listFileProperties = mergedProperties(listFile);
         putProperty(listFileProperties, LIST_FILE_INPUT_DIRECTORY_KEYS, inputDirectory);
         updateProcessorProperties(token, listFile, listFileProperties);
 
-        Map<String, String> putSqlProperties = mergedProperties(putSql);
-        putProperty(putSqlProperties, PUT_SQL_DBCP_KEYS, request.targetServiceId().trim());
-        putProperty(putSqlProperties, PUT_SQL_STATEMENT_KEYS, unstructuredMetadataInsertSql(request));
-        updateProcessorProperties(token, putSql, putSqlProperties);
+        if (fetchFile != null) {
+            Map<String, String> fetchFileProperties = mergedProperties(fetchFile);
+            putProperty(fetchFileProperties, FETCH_FILE_COMPLETION_STRATEGY_KEYS, "None");
+            putProperty(fetchFileProperties, FETCH_FILE_MOVE_DESTINATION_KEYS, null);
+            updateProcessorProperties(token, fetchFile, fetchFileProperties);
+        }
+
+        NifiFlowResponse.ProcessorEntity insertSmallMediaAsset =
+                findOptionalProcessorByName(processors, "insert-small-media-asset");
+        if (insertSmallMediaAsset == null) {
+            if (putSql == null) {
+                throw new NifiClientException(
+                        "복제된 Unstructured 그룹에서 PutSQL 또는 insert-small-media-asset 프로세서를 찾지 못했습니다.",
+                        null);
+            }
+            insertSmallMediaAsset = createExecuteGroovyScriptProcessor(
+                    token,
+                    groupId,
+                    "insert-small-media-asset",
+                    request.targetServiceId().trim(),
+                    unstructuredSmallMediaInsertScript(request),
+                    positionNear(putSql, -220, 0)
+            );
+        } else {
+            configureExecuteGroovyScriptProcessor(
+                    token,
+                    insertSmallMediaAsset,
+                    request.targetServiceId().trim(),
+                    unstructuredSmallMediaInsertScript(request)
+            );
+        }
+        if (putSql != null) {
+            replacePutSqlWithGroovy(token, groupId, putSql, insertSmallMediaAsset);
+        }
 
         Map<String, String> putRecordProperties = mergedProperties(putRecord);
         putProperty(putRecordProperties, PUT_DBCP_KEYS, request.targetServiceId().trim());
@@ -1148,11 +1189,77 @@ public class NifiClient {
         updateProcessorProperties(token, putRecord, putRecordProperties);
     }
 
-    private String unstructuredMetadataInsertSql(NifiUnstructuredLoadCreateRequest request) {
+    private String unstructuredSmallMediaInsertScript(NifiUnstructuredLoadCreateRequest request) {
+        String table = sqlIdentifier(request.targetSchema(), "스키마") + "."
+                + sqlIdentifier(request.targetTable(), "테이블");
         return """
-                INSERT INTO %s.%s (file_name, file_path, byte_size, created_at)
-                VALUES ('${filename}', '${absolute.path}${filename}', ${file.size}, CURRENT_TIMESTAMP)
-                """.formatted(request.targetSchema().trim(), request.targetTable().trim()).trim();
+                def TABLE = '%s'
+
+                def attr = { ff, names ->
+                    for (name in names) {
+                        def value = ff.getAttribute(name)
+                        if (value != null && value.trim()) {
+                            return value
+                        }
+                    }
+                    return null
+                }
+
+                def ff = session.get()
+                if (!ff) return
+
+                def sql = \"\"\"
+                    INSERT INTO ${TABLE} (
+                        asset_uuid,
+                        original_filename,
+                        mime_type,
+                        file_size,
+                        content_sha256,
+                        raw_metadata,
+                        storage_type,
+                        content,
+                        storage_bucket,
+                        storage_key,
+                        ingest_timestamp
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                \"\"\".stripIndent().trim()
+
+                def conn = CTL.mediaDb.getConnection()
+                try {
+                    def ps = conn.prepareStatement(sql)
+                    try {
+                        ff.read { stream ->
+                            ps.setString(1, ff.getAttribute('uuid'))
+                            ps.setString(2, attr(ff, ['original.filename', 'filename']))
+                            ps.setString(3, attr(ff, ['mime.type', 'mime.type.detected']) ?: 'application/octet-stream')
+                            ps.setLong(4, ff.getSize())
+                            ps.setString(5, attr(ff, ['sha256', 'content_sha256', 'hash.value', 'SHA-256']))
+                            ps.setString(6, attr(ff, ['raw_metadata', 'metadata', 'media.metadata', 'executestrcommand.result']))
+                            ps.setString(7, 'DB_BLOB')
+                            ps.setBinaryStream(8, stream, ff.getSize())
+                            ps.setNull(9, java.sql.Types.VARCHAR)
+                            ps.setNull(10, java.sql.Types.VARCHAR)
+                            ps.setLong(11, System.currentTimeMillis())
+                            ps.executeUpdate()
+                        }
+                    } finally {
+                        ps.close()
+                    }
+                } finally {
+                    conn.close()
+                }
+
+                session.adjustCounter('INSERT updates performed', 1, false)
+                REL_SUCCESS << ff
+                """.formatted(table).trim();
+    }
+
+    private String sqlIdentifier(String value, String label) {
+        String trimmed = nullToBlank(value).trim();
+        if (!trimmed.matches("[A-Za-z][A-Za-z0-9_$#]*")) {
+            throw new NifiClientException("비정형 적재 대상 %s명이 올바르지 않습니다: %s".formatted(label, trimmed), null);
+        }
+        return trimmed;
     }
 
     private String queryRecordSql(List<String> columns) {
@@ -1388,10 +1495,20 @@ public class NifiClient {
 
     private void updateProcessorProperties(String token, NifiFlowResponse.ProcessorEntity processor,
             Map<String, String> properties) {
+        updateProcessorConfig(token, processor, properties, null);
+    }
+
+    private void updateProcessorConfig(String token, NifiFlowResponse.ProcessorEntity processor,
+            Map<String, String> properties, List<String> autoTerminatedRelationships) {
         String processorId = componentId(processor);
         Map<String, Object> component = new LinkedHashMap<>();
         component.put("id", processorId);
-        component.put("config", Map.of("properties", properties));
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("properties", properties);
+        if (autoTerminatedRelationships != null) {
+            config.put("autoTerminatedRelationships", autoTerminatedRelationships);
+        }
+        component.put("config", config);
         Map<String, Object> body = Map.of(
                 "revision", Map.of(
                         "clientId", UUID.randomUUID().toString(),
@@ -1411,6 +1528,232 @@ public class NifiClient {
         } catch (RestClientException ex) {
             throw new NifiClientException("NiFi 프로세서 설정 수정 실패: " + ex.getMessage(), ex);
         }
+    }
+
+    private void configureExecuteGroovyScriptProcessor(String token, NifiFlowResponse.ProcessorEntity processor,
+            String dbcpServiceId, String scriptBody) {
+        Map<String, String> properties = mergedProperties(processor);
+        properties.put("CTL.mediaDb", dbcpServiceId);
+        putProperty(properties, GROOVY_FAILURE_STRATEGY_KEYS, "transfer to failure");
+        putProperty(properties, GROOVY_SCRIPT_BODY_KEYS, scriptBody);
+        updateProcessorProperties(token, processor, properties);
+    }
+
+    private NifiFlowResponse.ProcessorEntity createExecuteGroovyScriptProcessor(String token, String groupId,
+            String name, String dbcpServiceId, String scriptBody, NifiFlowResponse.Position position) {
+        Map<String, String> processorProperties = new LinkedHashMap<>();
+        processorProperties.put("CTL.mediaDb", dbcpServiceId);
+        processorProperties.put("groovyx-failure-strategy", "transfer to failure");
+        processorProperties.put("groovyx-script-body", scriptBody);
+
+        Map<String, Object> component = new LinkedHashMap<>();
+        component.put("name", name);
+        component.put("type", EXECUTE_GROOVY_SCRIPT_TYPE);
+        component.put("bundle", Map.of(
+                "group", POSTGRES_DBCP_BUNDLE_GROUP,
+                "artifact", EXECUTE_GROOVY_SCRIPT_BUNDLE_ARTIFACT,
+                "version", EXECUTE_GROOVY_SCRIPT_BUNDLE_VERSION
+        ));
+        component.put("position", Map.of(
+                "x", position == null || position.x() == null ? 0D : position.x(),
+                "y", position == null || position.y() == null ? 0D : position.y()
+        ));
+        component.put("config", Map.of(
+                "properties", processorProperties
+        ));
+
+        Map<String, Object> body = Map.of(
+                "revision", Map.of(
+                        "clientId", UUID.randomUUID().toString(),
+                        "version", 0
+                ),
+                "component", component
+        );
+
+        try {
+            return restClient.post()
+                    .uri("/nifi-api/process-groups/{groupId}/processors", groupId)
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .body(NifiFlowResponse.ProcessorEntity.class);
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi ExecuteGroovyScript 프로세서 생성 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    private void replacePutSqlWithGroovy(String token, String groupId,
+            NifiFlowResponse.ProcessorEntity putSql, NifiFlowResponse.ProcessorEntity groovy) {
+        NifiFlowResponse flow = getFlow(groupId);
+        List<NifiFlowResponse.ConnectionEntity> connections = flow == null
+                || flow.processGroupFlow() == null
+                || flow.processGroupFlow().flow() == null
+                || flow.processGroupFlow().flow().connections() == null
+                ? List.of()
+                : flow.processGroupFlow().flow().connections();
+
+        String putSqlId = componentId(putSql);
+        String groovyId = componentId(groovy);
+        NifiFlowResponse.ConnectionEntity incoming = connections.stream()
+                .filter(connection -> connection.component() != null)
+                .filter(connection -> connection.component().destination() != null)
+                .filter(connection -> putSqlId.equals(connection.component().destination().id()))
+                .findFirst()
+                .orElse(null);
+        if (incoming == null) {
+            return;
+        }
+
+        updateConnectionDestination(token, groupId, incoming, groovyId, "PROCESSOR");
+
+        List<NifiFlowResponse.ConnectionEntity> outgoing = connections.stream()
+                .filter(connection -> connection.component() != null)
+                .filter(connection -> connection.component().source() != null)
+                .filter(connection -> putSqlId.equals(connection.component().source().id()))
+                .toList();
+
+        boolean successConnected = false;
+        boolean failureConnected = false;
+        for (NifiFlowResponse.ConnectionEntity connection : outgoing) {
+            List<String> relationships = connection.component().selectedRelationships() == null
+                    ? List.of()
+                    : connection.component().selectedRelationships().stream()
+                    .filter(relationship -> "success".equals(relationship) || "failure".equals(relationship))
+                    .distinct()
+                    .toList();
+            if (relationships.isEmpty() || connection.component().destination() == null) {
+                continue;
+            }
+            createConnection(token, groupId, groovyId, "PROCESSOR",
+                    connection.component().destination().id(), connection.component().destination().type(), relationships);
+            successConnected = successConnected || relationships.contains("success");
+            failureConnected = failureConnected || relationships.contains("failure");
+        }
+
+        List<String> autoTerminated = new java.util.ArrayList<>();
+        if (!successConnected) {
+            autoTerminated.add("success");
+        }
+        if (!failureConnected) {
+            autoTerminated.add("failure");
+        }
+        if (!autoTerminated.isEmpty()) {
+            NifiFlowResponse.ProcessorEntity refreshedGroovy = findProcessorById(groupId, groovyId);
+            updateProcessorConfig(token, refreshedGroovy, mergedProperties(refreshedGroovy), autoTerminated);
+        }
+    }
+
+    private void updateConnectionDestination(String token, String groupId, NifiFlowResponse.ConnectionEntity connection,
+            String destinationId, String destinationType) {
+        NifiFlowResponse.ConnectionComponent component = connection.component();
+        String connectionId = StringUtils.hasText(component.id()) ? component.id() : connection.id();
+        List<String> selectedRelationships = component.selectedRelationships() == null
+                ? List.of()
+                : component.selectedRelationships();
+        Map<String, Object> body = Map.of(
+                "revision", Map.of(
+                        "clientId", UUID.randomUUID().toString(),
+                        "version", revisionVersion(connection.revision())
+                ),
+                "component", Map.of(
+                        "id", connectionId,
+                        "source", endpointBody(component.source(), groupId),
+                        "destination", Map.of(
+                                "id", destinationId,
+                                "groupId", groupId,
+                                "type", destinationType
+                        ),
+                        "selectedRelationships", selectedRelationships
+                )
+        );
+
+        try {
+            restClient.put()
+                    .uri("/nifi-api/connections/{id}", connectionId)
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 연결 대상 수정 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    private void createConnection(String token, String groupId, String sourceId, String sourceType,
+            String destinationId, String destinationType, List<String> relationships) {
+        Map<String, Object> component = new LinkedHashMap<>();
+        component.put("source", Map.of(
+                "id", sourceId,
+                "groupId", groupId,
+                "type", sourceType
+        ));
+        component.put("destination", Map.of(
+                "id", destinationId,
+                "groupId", groupId,
+                "type", destinationType
+        ));
+        component.put("selectedRelationships", relationships);
+
+        Map<String, Object> body = Map.of(
+                "revision", Map.of(
+                        "clientId", UUID.randomUUID().toString(),
+                        "version", 0
+                ),
+                "component", component
+        );
+
+        try {
+            restClient.post()
+                    .uri("/nifi-api/process-groups/{groupId}/connections", groupId)
+                    .header("Authorization", "Bearer " + token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientException ex) {
+            throw new NifiClientException("NiFi 연결 생성 실패: " + ex.getMessage(), ex);
+        }
+    }
+
+    private Map<String, Object> endpointBody(NifiFlowResponse.ConnectionEndpoint endpoint, String groupId) {
+        if (endpoint == null) {
+            throw new NifiClientException("NiFi 연결 endpoint 정보가 비어 있습니다.", null);
+        }
+        return Map.of(
+                "id", endpoint.id(),
+                "groupId", groupId,
+                "type", endpoint.type()
+        );
+    }
+
+    private NifiFlowResponse.Position positionNear(NifiFlowResponse.ProcessorEntity processor, double deltaX,
+            double deltaY) {
+        NifiFlowResponse.Position base = processor == null || processor.component() == null
+                ? null
+                : processor.component().position();
+        if (base == null) {
+            return new NifiFlowResponse.Position(0D, 0D);
+        }
+        return new NifiFlowResponse.Position(
+                (base.x() == null ? 0D : base.x()) + deltaX,
+                (base.y() == null ? 0D : base.y()) + deltaY
+        );
+    }
+
+    private NifiFlowResponse.ProcessorEntity findProcessorById(String groupId, String processorId) {
+        NifiFlowResponse flow = getFlow(groupId);
+        List<NifiFlowResponse.ProcessorEntity> processors = flow == null
+                || flow.processGroupFlow() == null
+                || flow.processGroupFlow().flow() == null
+                || flow.processGroupFlow().flow().processors() == null
+                ? List.of()
+                : flow.processGroupFlow().flow().processors();
+        return processors.stream()
+                .filter(processor -> processorId.equals(componentId(processor)))
+                .findFirst()
+                .orElseThrow(() -> new NifiClientException("NiFi 프로세서 조회 실패: " + processorId, null));
     }
 
     @SuppressWarnings("unchecked")
