@@ -6686,6 +6686,13 @@ button.alert-compact-trigger.is-clear:hover {
   gap: 7px;
 }
 
+.nifi-ai-report-box {
+  padding: 9px 10px;
+  border: 1px solid #dbe4ee;
+  border-radius: 4px;
+  background: #f8fafc;
+}
+
 .nifi-ai-job-report strong {
   margin-bottom: 0;
 }
@@ -6700,12 +6707,21 @@ button.alert-compact-trigger.is-clear:hover {
   display: grid;
   gap: 6px;
   margin: 0;
-  padding-left: 16px;
+  padding-left: 14px;
+  list-style: none;
 }
 
 .nifi-ai-job-report li {
-  padding-left: 2px;
+  position: relative;
+  padding-left: 10px;
   overflow-wrap: anywhere;
+}
+
+.nifi-ai-job-report li::before {
+  content: "-";
+  position: absolute;
+  left: 0;
+  color: #334155;
 }
 
 .nifi-ai-report-meta {

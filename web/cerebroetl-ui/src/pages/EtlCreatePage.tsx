@@ -25,17 +25,14 @@ import {
   createHttpLoadFlow,
   createUnstructuredLoadFlow,
   getNifiProcessGroupTree,
-  listAirflowDagCatalog,
   listRootNifiControllerServices,
-  refreshNifiProcessGroupTree,
-  syncAirflowDagCatalog,
   testHttpApi,
   uploadFileLoadFiles,
   type NifiProcessGroupEntity,
   type NifiControllerServiceEntity,
   type NifiProcessGroupTreeNode,
 } from "../api/platform";
-import { listEtlJobs, syncEtlJobs } from "../api/etlJobs";
+import { syncEtlJobs } from "../api/etlJobs";
 import { validateCalciteSql } from "../api/formulaHelp";
 import type { ConnectionResponse } from "../types/connection";
 import { useNavigate } from "react-router-dom";
@@ -165,9 +162,7 @@ interface CompletionSummary {
   processorCount: number;
   loadMode: LoadMode;
   etlType: EtlType;
-  canvasReady: boolean;
   dagId?: string | null;
-  dagReady: boolean;
 }
 
 interface EtlCreateDraft {
@@ -296,14 +291,6 @@ function flattenProcessGroups(
     { id: node.id, label: nextPath.join(" / ") },
     ...node.children.flatMap((child) => flattenProcessGroups(child, nextPath)),
   ];
-}
-
-function processGroupTreeIncludes(node: NifiProcessGroupTreeNode, processGroupId: string): boolean {
-  return node.id === processGroupId || node.children.some((child) => processGroupTreeIncludes(child, processGroupId));
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function toControllerServiceOption(service: NifiControllerServiceEntity): ControllerServiceOption | null {
@@ -2945,6 +2932,10 @@ function summaryFlowLabel(summary: CompletionSummary) {
   return flowLabel(summary.loadMode);
 }
 
+function etlDagId(processGroupId: string) {
+  return processGroupId.length >= 8 ? `nifi_pipeline_${processGroupId.slice(0, 8)}_control` : null;
+}
+
 function CompletionView({
   summary,
   onOpenCanvas,
@@ -2954,8 +2945,6 @@ function CompletionView({
   onOpenCanvas: () => void;
   onOpenDag: () => void;
 }) {
-  const canvasLabel = summary.canvasReady ? "캔버스에서 보기" : "캔버스에서 보기 (ETL 관리 준비 중)";
-  const dagLabel = summary.dagReady ? "DAG 보기" : "DAG 보기 (Airflow 준비 중)";
   return (
     <div className="std-card std-card-body etl-completion-card">
       <Result
@@ -2963,11 +2952,11 @@ function CompletionView({
         title="ETL 템플릿 그룹 생성 완료"
         subTitle="아래 리소스가 생성되었습니다."
         extra={[
-          <Button type="primary" key="canvas" disabled={!summary.canvasReady} onClick={onOpenCanvas}>
-            {canvasLabel}
+          <Button type="primary" key="canvas" onClick={onOpenCanvas}>
+            캔버스에서 보기
           </Button>,
-          <Button key="dag" disabled={!summary.dagReady} onClick={onOpenDag}>
-            {dagLabel}
+          <Button key="dag" onClick={onOpenDag}>
+            DAG 보기
           </Button>,
         ]}
       />
@@ -2982,7 +2971,7 @@ function CompletionView({
           {summaryFlowLabel(summary)}
         </Descriptions.Item>
         <Descriptions.Item label="Airflow 작업">
-          {summary.dagId ? `1개 (${summary.dagId})` : "1개 (준비 중)"}
+          {summary.dagId ? `1개 (${summary.dagId})` : "1개"}
         </Descriptions.Item>
       </Descriptions>
     </div>
@@ -3122,63 +3111,6 @@ export function EtlCreatePage() {
     targetColumns,
     truncateSql,
   ]);
-
-  useEffect(() => {
-    if (!completed || !completionSummary || (completionSummary.canvasReady && completionSummary.dagReady)) {
-      return;
-    }
-    let cancelled = false;
-    const processGroupId = completionSummary.processGroupId;
-
-    const updateReadiness = (next: Pick<CompletionSummary, "canvasReady" | "dagId" | "dagReady">) => {
-      if (cancelled) {
-        return;
-      }
-      setCompletionSummary((previous) => {
-        if (!previous || previous.processGroupId !== processGroupId) {
-          return previous;
-        }
-        return { ...previous, ...next };
-      });
-    };
-
-    const checkReadiness = async () => {
-      let canvasReady = completionSummary.canvasReady;
-      let dagId = completionSummary.dagId ?? null;
-      let dagReady = completionSummary.dagReady;
-
-      for (let attempt = 0; attempt < 30 && !cancelled && (!canvasReady || !dagReady); attempt += 1) {
-        const treeResult = await refreshNifiProcessGroupTree()
-          .then((tree) => processGroupTreeIncludes(tree, processGroupId))
-          .catch(() => false);
-        canvasReady = canvasReady || treeResult;
-
-        await syncEtlJobs().catch(() => undefined);
-        const mirroredJob = await listEtlJobs()
-          .then((jobs) => jobs.find((job) => job.nifiPgId === processGroupId) ?? null)
-          .catch(() => null);
-        dagId = dagId ?? mirroredJob?.airflowDagId ?? null;
-
-        if (dagId) {
-          await syncAirflowDagCatalog().catch(() => undefined);
-          const catalogHasDag = await listAirflowDagCatalog()
-            .then((catalog) => catalog.some((entry) => entry.dagId === dagId))
-            .catch(() => false);
-          dagReady = dagReady || catalogHasDag;
-        }
-
-        updateReadiness({ canvasReady, dagId, dagReady });
-        if (!canvasReady || !dagReady) {
-          await sleep(2000);
-        }
-      }
-    };
-
-    void checkReadiness();
-    return () => {
-      cancelled = true;
-    };
-  }, [completed, completionSummary?.processGroupId]);
 
   useEffect(() => {
     if (isHttpLoad) {
@@ -3396,9 +3328,7 @@ export function EtlCreatePage() {
         processorCount: createdGroup.processorCount ?? 0,
         loadMode: isFileLoad || isUnstructuredLoad ? "INSERT" : isHttpLoad ? (loadMode === "UPSERT" ? "UPSERT" : "INSERT") : loadMode,
         etlType,
-        canvasReady: false,
-        dagId: null,
-        dagReady: false,
+        dagId: etlDagId(processGroupId),
       });
       message.success("ETL 템플릿 그룹을 복제하고 설정을 반영했습니다.");
       clearEtlCreateDraft();
@@ -3530,7 +3460,7 @@ export function EtlCreatePage() {
         <CompletionView
           summary={completionSummary}
           onOpenCanvas={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(completionSummary.processGroupId)}`)}
-          onOpenDag={() => navigate(`/airflow/manage?dagId=${encodeURIComponent(completionSummary.dagId ?? "")}`)}
+          onOpenDag={() => navigate("/airflow/manage")}
         />
       ) : (
         <>

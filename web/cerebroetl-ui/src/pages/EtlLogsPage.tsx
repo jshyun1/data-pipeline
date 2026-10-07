@@ -192,7 +192,7 @@ export function EtlLogsPage() {
   const [searchParams] = useSearchParams();
   const initialFrom = searchParams.get("from");
   const initialTo = searchParams.get("to");
-  const defaultDate = dayjs().subtract(1, "day");
+  const defaultDate = dayjs();
   const initialRange: [Dayjs, Dayjs] = [
     initialFrom ? dayjs(initialFrom) : defaultDate,
     initialTo ? dayjs(initialTo) : defaultDate,

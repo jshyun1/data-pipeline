@@ -4896,11 +4896,11 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
             <div className="nifi-ai-conversation">
               {isJobGroup && displayJob && defaultAiReport ? (
                 <div className="nifi-ai-empty nifi-ai-job-report nifi-ai-pinned-context">
-                  <section>
+                  <section className="nifi-ai-report-box">
                     <strong>한 줄 요약</strong>
                     <p>{defaultAiReport.summary}</p>
                   </section>
-                  <section>
+                  <section className="nifi-ai-report-box">
                     <strong>구성</strong>
                     <ul>
                       {defaultAiReport.composition.map((line) => (
@@ -4908,7 +4908,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
                       ))}
                     </ul>
                   </section>
-                  <section>
+                  <section className="nifi-ai-report-box">
                     <strong>지금 상태</strong>
                     <ul>
                       {defaultAiReport.current.map((line) => (
