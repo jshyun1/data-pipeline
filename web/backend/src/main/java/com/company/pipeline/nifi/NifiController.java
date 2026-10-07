@@ -418,7 +418,7 @@ public class NifiController {
             throw new NifiClientException("파일 적재 입력 경로가 올바르지 않습니다: " + nifiDirectory, null);
         }
 
-        String relative;
+        String relative = "";
         if (nifiRoot.equals(trimmed)) {
             relative = "";
         } else if (trimmed.startsWith(nifiRoot + "/")) {
