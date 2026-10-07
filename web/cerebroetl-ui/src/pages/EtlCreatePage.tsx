@@ -23,6 +23,7 @@ import {
   createInitialDbToDbFlow,
   createFileLoadFlow,
   createHttpLoadFlow,
+  createUnstructuredLoadFlow,
   getNifiProcessGroupTree,
   listRootNifiControllerServices,
   testHttpApi,
@@ -82,7 +83,6 @@ const TYPE_OPTIONS = [
     value: "UNSTRUCTURED",
     title: "비정형 전송",
     description: "이미지, 문서를 받아 저장",
-    disabled: true,
   },
 ] satisfies Array<{ value: EtlType; title: string; description: string; disabled?: boolean }>;
 
@@ -1118,21 +1118,23 @@ function stepSummary(step: WizardStepId, options: {
 function CreateStepper({
   activeStep,
   completedSteps,
+  steps = WIZARD_STEPS,
   onStepClick,
 }: {
   activeStep: WizardStepId;
   completedSteps: WizardStepId[];
+  steps?: ReadonlyArray<(typeof WIZARD_STEPS)[number]>;
   onStepClick: (step: WizardStepId) => void;
 }) {
-  const activeIndex = stepIndex(activeStep);
-  const progressWidth = `${(Math.max(0, activeIndex) / Math.max(1, WIZARD_STEPS.length - 1)) * 100}%`;
+  const activeIndex = steps.findIndex((item) => item.id === activeStep);
+  const progressWidth = `${(Math.max(0, activeIndex) / Math.max(1, steps.length - 1)) * 100}%`;
 
   return (
     <div className="etl-stepper-wrap">
       <div className="etl-stepper">
         <div className="etl-stepper-line" />
         <div className="etl-stepper-progress" style={{ width: progressWidth }} />
-        {WIZARD_STEPS.map((step) => {
+        {steps.map((step) => {
           const state = stepState(step.id, activeStep, completedSteps);
           return (
             <button
@@ -2923,7 +2925,13 @@ function flowLabel(loadMode: LoadMode) {
 }
 
 function summaryFlowLabel(summary: CompletionSummary) {
-  return summary.etlType === "FILE_LOAD" ? "file > query record > insert" : flowLabel(summary.loadMode);
+  if (summary.etlType === "FILE_LOAD") {
+    return "file > query record > insert";
+  }
+  if (summary.etlType === "UNSTRUCTURED") {
+    return "unstructured file > put sql > record load";
+  }
+  return flowLabel(summary.loadMode);
 }
 
 function CompletionView({
@@ -3027,16 +3035,25 @@ export function EtlCreatePage() {
 
   const isFileLoad = etlType === "FILE_LOAD";
   const isHttpLoad = etlType === "HTTP";
+  const isUnstructuredLoad = etlType === "UNSTRUCTURED";
+  const visibleWizardSteps = isUnstructuredLoad ? WIZARD_STEPS.slice(0, 3) : WIZARD_STEPS;
+
+  useEffect(() => {
+    if (isUnstructuredLoad && (activeStep === "query" || activeStep === "target")) {
+      setActiveStep("connection");
+    }
+  }, [activeStep, isUnstructuredLoad]);
+
   const selectedSourceTablesForQueryRecord = useMemo(
     () => isHttpLoad ? HTTP_SELECTED_TABLES : commaSeparatedValues(connectionInfo.sourceTable),
     [connectionInfo.sourceTable, isHttpLoad],
   );
-  const canCompleteConnection = (isFileLoad || isHttpLoad || !!connectionInfo.sourceServiceId) &&
+  const canCompleteConnection = (isFileLoad || isHttpLoad || isUnstructuredLoad || !!connectionInfo.sourceServiceId) &&
     (!isHttpLoad || (!!connectionInfo.apiUrl.trim() && httpTestPassed)) &&
     !!connectionInfo.targetServiceId &&
     !!connectionInfo.targetSchema.trim() &&
-    (isFileLoad || isHttpLoad || !!connectionInfo.sourceSchema.trim()) &&
-    (isFileLoad || isHttpLoad || !!connectionInfo.sourceTable.trim()) &&
+    (isFileLoad || isHttpLoad || isUnstructuredLoad || !!connectionInfo.sourceSchema.trim()) &&
+    (isFileLoad || isHttpLoad || isUnstructuredLoad || !!connectionInfo.sourceTable.trim()) &&
     !!connectionInfo.targetTable.trim();
 
   useEffect(() => {
@@ -3101,6 +3118,13 @@ export function EtlCreatePage() {
     if (isFileLoad) {
       return;
     }
+    if (isUnstructuredLoad) {
+      setSourceColumns([]);
+      setLoadSqlColumns([]);
+      setColumnMappings([]);
+      setQueryRecordSql("");
+      return;
+    }
     if (targetColumns.length > 0) {
       setColumnMappings((previousMappings) => {
         if (preserveRestoredSqlRef.current && previousMappings.length > 0) {
@@ -3136,6 +3160,7 @@ export function EtlCreatePage() {
     connectionInfo.targetTable,
     isHttpLoad,
     isFileLoad,
+    isUnstructuredLoad,
     loadMode,
     selectedSourceTablesForQueryRecord,
     sourceColumns,
@@ -3192,7 +3217,7 @@ export function EtlCreatePage() {
       return;
     }
     if (
-      (!isFileLoad && !isHttpLoad && (!connectionInfo.sourceServiceId ||
+      (!isFileLoad && !isHttpLoad && !isUnstructuredLoad && (!connectionInfo.sourceServiceId ||
         !connectionInfo.sourceSchema.trim() ||
         !connectionInfo.sourceTable.trim())) ||
       !connectionInfo.targetServiceId ||
@@ -3203,11 +3228,11 @@ export function EtlCreatePage() {
       moveStep("connection");
       return;
     }
-    if (!isFileLoad && !isHttpLoad && (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()) {
+    if (!isFileLoad && !isHttpLoad && !isUnstructuredLoad && (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()) {
       message.warning("적재로직 SQL문을 입력해야 합니다.");
       return;
     }
-    if (!isFileLoad && loadMode === "UPSERT" && !targetPrimaryKeys.trim()) {
+    if (!isFileLoad && !isUnstructuredLoad && loadMode === "UPSERT" && !targetPrimaryKeys.trim()) {
       message.warning("타깃 테이블의 Primary Key를 찾지 못했습니다.");
       return;
     }
@@ -3252,6 +3277,16 @@ export function EtlCreatePage() {
           queryRecordSql: queryRecordSql.trim() || undefined,
           primaryKeys: loadMode === "UPSERT" ? targetPrimaryKeys : undefined,
         });
+      } else if (isUnstructuredLoad) {
+        createdGroup = await createUnstructuredLoadFlow({
+          jobName: basicInfo.jobName.trim(),
+          parentGroupId: basicInfo.parentGroupId,
+          comments: basicInfo.comments.trim(),
+          targetServiceId: connectionInfo.targetServiceId,
+          targetDatabaseType: connectionInfo.targetDatabaseType,
+          targetSchema: connectionInfo.targetSchema.trim(),
+          targetTable: connectionInfo.targetTable.trim(),
+        });
       } else {
         createdGroup = await createInitialDbToDbFlow({
           jobName: basicInfo.jobName.trim(),
@@ -3285,14 +3320,15 @@ export function EtlCreatePage() {
         processGroupId,
         processGroupPath: `${basicInfo.parentGroupPath || basicInfo.parentGroupId} / ${basicInfo.jobName.trim()}`,
         processorCount: createdGroup.processorCount ?? 0,
-        loadMode: isFileLoad ? "INSERT" : isHttpLoad ? (loadMode === "UPSERT" ? "UPSERT" : "INSERT") : loadMode,
+        loadMode: isFileLoad || isUnstructuredLoad ? "INSERT" : isHttpLoad ? (loadMode === "UPSERT" ? "UPSERT" : "INSERT") : loadMode,
         etlType,
       });
       message.success("ETL 템플릿 그룹을 복제하고 설정을 반영했습니다.");
       clearEtlCreateDraft();
-      setCompletedSteps((previous) => previous.includes("target") ? previous : [...previous, "target"]);
+      const finalStep = isUnstructuredLoad ? "connection" : "target";
+      setCompletedSteps((previous) => previous.includes(finalStep) ? previous : [...previous, finalStep]);
       setCompleted(true);
-      setActiveStep("target");
+      setActiveStep(finalStep);
     } catch (ex) {
       message.error(ex instanceof Error ? ex.message : "오류가 발생하였습니다. 관리자에게 문의 하십시오.");
     } finally {
@@ -3424,6 +3460,7 @@ export function EtlCreatePage() {
           <CreateStepper
             activeStep={activeStep}
             completedSteps={completedSteps}
+            steps={visibleWizardSteps}
             onStepClick={setActiveStep}
           />
 
@@ -3464,71 +3501,81 @@ export function EtlCreatePage() {
                   <button type="button" className="btn-step-prev" onClick={() => setActiveStep("basic")}>이전</button>
                 </div>
                 <div className="actions-right">
-                  <button
-                    type="button"
-                    className="btn-step-next"
-                    disabled={!canCompleteConnection}
-                    onClick={() => completeAndOpen("connection", "query")}
-                  >
-                    다음
-                  </button>
-                </div>
-              </div>
-            </WizardStepCard>
-
-            <WizardStepCard
-              step="query"
-              title="적재쿼리"
-              activeStep={activeStep}
-              completedSteps={completedSteps}
-              summary={stepSummary("query", summaryOptions)}
-              onOpen={setActiveStep}
-            >
-              {content.query}
-              <div className="step-actions-bar">
-                <div className="actions-left">
-                  <button type="button" className="btn-step-prev" onClick={() => setActiveStep("connection")}>이전</button>
-                </div>
-                <div className="actions-right">
-                  <button
-                    type="button"
-                    className="btn-step-next"
-                    disabled={!isFileLoad && !isHttpLoad && (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()}
-                    onClick={completeQueryStep}
-                  >
-                    다음
-                  </button>
-                </div>
-              </div>
-            </WizardStepCard>
-
-            <WizardStepCard
-              step="target"
-              title="컬럼매핑"
-              activeStep={activeStep}
-              completedSteps={completedSteps}
-              summary={stepSummary("target", summaryOptions)}
-              onOpen={setActiveStep}
-            >
-              {content.target}
-              <div className="step-actions-bar">
-                <div className="actions-left">
-                  <button type="button" className="btn-step-prev" onClick={() => setActiveStep("query")}>이전</button>
-                </div>
-                <div className="actions-right">
                   <Button
                     className="btn-step-next"
-                    loading={isCreating}
-                    disabled={!isFileLoad && !isHttpLoad && (
-                      (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()
-                    )}
-                    onClick={completeWizard}
+                    loading={isUnstructuredLoad && isCreating}
+                    disabled={!canCompleteConnection}
+                    onClick={() => {
+                      if (isUnstructuredLoad) {
+                        void completeWizard();
+                        return;
+                      }
+                      completeAndOpen("connection", "query");
+                    }}
                   >
-                    완료
+                    {isUnstructuredLoad ? "완료" : "다음"}
                   </Button>
                 </div>
               </div>
             </WizardStepCard>
+
+            {!isUnstructuredLoad ? (
+              <>
+                <WizardStepCard
+                  step="query"
+                  title="적재쿼리"
+                  activeStep={activeStep}
+                  completedSteps={completedSteps}
+                  summary={stepSummary("query", summaryOptions)}
+                  onOpen={setActiveStep}
+                >
+                  {content.query}
+                  <div className="step-actions-bar">
+                    <div className="actions-left">
+                      <button type="button" className="btn-step-prev" onClick={() => setActiveStep("connection")}>이전</button>
+                    </div>
+                    <div className="actions-right">
+                      <button
+                        type="button"
+                        className="btn-step-next"
+                        disabled={!isFileLoad && !isHttpLoad && (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()}
+                        onClick={completeQueryStep}
+                      >
+                        다음
+                      </button>
+                    </div>
+                  </div>
+                </WizardStepCard>
+
+                <WizardStepCard
+                  step="target"
+                  title="컬럼매핑"
+                  activeStep={activeStep}
+                  completedSteps={completedSteps}
+                  summary={stepSummary("target", summaryOptions)}
+                  onOpen={setActiveStep}
+                >
+                  {content.target}
+                  <div className="step-actions-bar">
+                    <div className="actions-left">
+                      <button type="button" className="btn-step-prev" onClick={() => setActiveStep("query")}>이전</button>
+                    </div>
+                    <div className="actions-right">
+                      <Button
+                        className="btn-step-next"
+                        loading={isCreating}
+                        disabled={!isFileLoad && !isHttpLoad && (
+                          (loadMode === "INSERT" || loadMode === "UPSERT") && !loadSql.trim()
+                        )}
+                        onClick={completeWizard}
+                      >
+                        완료
+                      </Button>
+                    </div>
+                  </div>
+                </WizardStepCard>
+              </>
+            ) : null}
           </div>
         </>
       )}

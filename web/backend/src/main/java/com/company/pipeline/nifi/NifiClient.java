@@ -14,6 +14,7 @@ import com.company.pipeline.nifi.dto.NifiParameterContextSaveRequest;
 import com.company.pipeline.nifi.dto.NifiProcessGroupEntity;
 import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
 import com.company.pipeline.nifi.dto.NifiProcessorDetailResponse;
+import com.company.pipeline.nifi.dto.NifiUnstructuredLoadCreateRequest;
 import java.net.http.HttpClient;
 import java.time.Clock;
 import java.time.Duration;
@@ -62,6 +63,7 @@ public class NifiClient {
     private static final String INCREMENTAL_TEMPLATE_GROUP_NAME = "Incremental";
     private static final String FILE_TEMPLATE_GROUP_NAME = "File";
     private static final String HTTP_TEMPLATE_GROUP_NAME = "HTTP";
+    private static final String UNSTRUCTURED_TEMPLATE_GROUP_NAME = "Unstructured";
     private static final String HTTP_JOLT_SPEC = """
             [
               {
@@ -117,6 +119,15 @@ public class NifiClient {
     private static final List<String> PUT_UPDATE_KEYS = List.of(
             "put-db-record-update-keys",
             "Update Keys"
+    );
+    private static final List<String> PUT_SQL_DBCP_KEYS = List.of(
+            "JDBC Connection Pool",
+            "JDBC Connection Pooling Service",
+            "putsql-connection-pool"
+    );
+    private static final List<String> PUT_SQL_STATEMENT_KEYS = List.of(
+            "SQL Statement",
+            "putsql-sql-statement"
     );
     private static final List<String> TRUNCATE_DBCP_KEYS = List.of(
             "JDBC Connection Pool",
@@ -341,6 +352,42 @@ public class NifiClient {
                     findChildProcessGroupById(request.parentGroupId().trim(), createdGroupId);
             updateProcessGroup(token, createdGroup, request.jobName().trim(), nullToBlank(request.comments()));
             updateHttpLoadProcessors(token, createdGroupId, request, loadMode);
+            return new NifiProcessGroupResponse(
+                    createdGroupId,
+                    request.jobName().trim(),
+                    request.parentGroupId().trim(),
+                    directProcessorCount(createdGroupId)
+            );
+        } finally {
+            deleteSnippetQuietly(token, snippetId);
+        }
+    }
+
+    public NifiProcessGroupResponse createUnstructuredLoadFlow(NifiUnstructuredLoadCreateRequest request,
+            String inputDirectory) {
+        String token = getToken();
+        TemplateSelection templateSelection = unstructuredTemplateSelection();
+        String snippetId = createProcessGroupSnippet(
+                token,
+                templateSelection.parentGroupId(),
+                templateSelection.templateGroupId(),
+                templateSelection.templateGroupVersion()
+        );
+
+        try {
+            Set<String> existingChildGroupIds = childProcessGroupIds(request.parentGroupId().trim());
+            String createdGroupId = instantiateSnippet(token, request.parentGroupId().trim(), snippetId);
+            if (!StringUtils.hasText(createdGroupId)) {
+                createdGroupId = findNewChildProcessGroupId(request.parentGroupId().trim(), existingChildGroupIds);
+            }
+            if (!StringUtils.hasText(createdGroupId)) {
+                throw new NifiClientException("NiFi 비정형 그룹 복제 응답에서 새 그룹 ID를 찾지 못했습니다.", null);
+            }
+
+            NifiFlowResponse.ProcessGroupEntity createdGroup =
+                    findChildProcessGroupById(request.parentGroupId().trim(), createdGroupId);
+            updateProcessGroup(token, createdGroup, request.jobName().trim(), nullToBlank(request.comments()));
+            updateUnstructuredLoadProcessors(token, createdGroupId, request, inputDirectory);
             return new NifiProcessGroupResponse(
                     createdGroupId,
                     request.jobName().trim(),
@@ -986,6 +1033,17 @@ public class NifiClient {
         );
     }
 
+    private TemplateSelection unstructuredTemplateSelection() {
+        NifiFlowResponse.ProcessGroupEntity templateGroup = findChildProcessGroup(ROOT_GROUP_ID, TEMPLATE_GROUP_NAME);
+        NifiFlowResponse.ProcessGroupEntity unstructuredGroup =
+                findChildProcessGroup(componentId(templateGroup), UNSTRUCTURED_TEMPLATE_GROUP_NAME);
+        return new TemplateSelection(
+                componentId(templateGroup),
+                componentId(unstructuredGroup),
+                revisionVersion(unstructuredGroup.revision())
+        );
+    }
+
     private void updateHttpLoadProcessors(String token, String groupId,
             NifiHttpLoadCreateRequest request, String statementType) {
         NifiFlowResponse flow = getFlow(groupId);
@@ -1058,6 +1116,43 @@ public class NifiClient {
         putProperty(putProperties, PUT_SCHEMA_KEYS, request.targetSchema().trim());
         putProperty(putProperties, PUT_TABLE_KEYS, request.targetTable().trim());
         updateProcessorProperties(token, put, putProperties);
+    }
+
+    private void updateUnstructuredLoadProcessors(String token, String groupId,
+            NifiUnstructuredLoadCreateRequest request, String inputDirectory) {
+        NifiFlowResponse flow = getFlow(groupId);
+        List<NifiFlowResponse.ProcessorEntity> processors = flow == null
+                || flow.processGroupFlow() == null
+                || flow.processGroupFlow().flow() == null
+                || flow.processGroupFlow().flow().processors() == null
+                ? List.of()
+                : flow.processGroupFlow().flow().processors();
+        NifiFlowResponse.ProcessorEntity listFile = findProcessor(processors, "ListFile");
+        NifiFlowResponse.ProcessorEntity putSql = findProcessor(processors, "PutSQL");
+        NifiFlowResponse.ProcessorEntity putRecord = findProcessor(processors, "PutDatabaseRecord");
+
+        Map<String, String> listFileProperties = mergedProperties(listFile);
+        putProperty(listFileProperties, LIST_FILE_INPUT_DIRECTORY_KEYS, inputDirectory);
+        updateProcessorProperties(token, listFile, listFileProperties);
+
+        Map<String, String> putSqlProperties = mergedProperties(putSql);
+        putProperty(putSqlProperties, PUT_SQL_DBCP_KEYS, request.targetServiceId().trim());
+        putProperty(putSqlProperties, PUT_SQL_STATEMENT_KEYS, unstructuredMetadataInsertSql(request));
+        updateProcessorProperties(token, putSql, putSqlProperties);
+
+        Map<String, String> putRecordProperties = mergedProperties(putRecord);
+        putProperty(putRecordProperties, PUT_DBCP_KEYS, request.targetServiceId().trim());
+        putProperty(putRecordProperties, PUT_DATABASE_TYPE_KEYS, request.targetDatabaseType().trim());
+        putProperty(putRecordProperties, PUT_SCHEMA_KEYS, request.targetSchema().trim());
+        putProperty(putRecordProperties, PUT_TABLE_KEYS, request.targetTable().trim());
+        updateProcessorProperties(token, putRecord, putRecordProperties);
+    }
+
+    private String unstructuredMetadataInsertSql(NifiUnstructuredLoadCreateRequest request) {
+        return """
+                INSERT INTO %s.%s (file_name, file_path, byte_size, created_at)
+                VALUES ('${filename}', '${absolute.path}${filename}', ${file.size}, CURRENT_TIMESTAMP)
+                """.formatted(request.targetSchema().trim(), request.targetTable().trim()).trim();
     }
 
     private String queryRecordSql(List<String> columns) {

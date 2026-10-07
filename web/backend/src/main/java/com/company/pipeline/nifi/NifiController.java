@@ -26,6 +26,7 @@ import com.company.pipeline.nifi.dto.NifiProcessGroupCreateRequest;
 import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
 import com.company.pipeline.nifi.dto.NifiProcessorDetailResponse;
 import com.company.pipeline.nifi.dto.NifiProcessorRunResponse;
+import com.company.pipeline.nifi.dto.NifiUnstructuredLoadCreateRequest;
 import com.company.pipeline.user.AppUser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
@@ -81,6 +82,8 @@ public class NifiController {
 
     private static final Path FILE_LOAD_SERVER_ROOT = Path.of("/opt/etl_repo/file");
     private static final String FILE_LOAD_NIFI_ROOT = "/opt/nifi/file";
+    private static final Path UNSTRUCTURED_SERVER_ROOT = Path.of("/opt/etl_repo/unstructed");
+    private static final String UNSTRUCTURED_NIFI_ROOT = "/opt/etl_repo/unstructed";
     private static final Set<PosixFilePermission> FILE_LOAD_DIRECTORY_PERMISSIONS =
             PosixFilePermissions.fromString("rwxrwxrwx");
     private static final Set<PosixFilePermission> FILE_LOAD_FILE_PERMISSIONS =
@@ -162,6 +165,35 @@ public class NifiController {
             @AuthenticationPrincipal AppUser user
     ) {
         NifiProcessGroupResponse response = nifiClient.createHttpLoadFlow(request);
+        processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
+                request.comments(), user);
+        processGroupTreeService.invalidateAfterMutation();
+        return ApiResponse.success(response);
+    }
+
+    @PostMapping("/etl/unstructured-load")
+    public ApiResponse<NifiProcessGroupResponse> createUnstructuredLoadFlow(
+            @Valid @RequestBody NifiUnstructuredLoadCreateRequest request,
+            @AuthenticationPrincipal AppUser user
+    ) {
+        String actor = user == null || !hasText(user.getUserId()) ? "anonymous" : user.getUserId();
+        String folderName = safePathPart(actor) + "_" + safePathPart(request.jobName());
+        if (!hasText(folderName.replace("_", ""))) {
+            throw new NifiClientException("작업명을 입력하세요.", null);
+        }
+        Path targetDir = UNSTRUCTURED_SERVER_ROOT.resolve(folderName).normalize();
+        if (!targetDir.startsWith(UNSTRUCTURED_SERVER_ROOT)) {
+            throw new NifiClientException("비정형 전송 경로가 올바르지 않습니다.", null);
+        }
+        try {
+            ensureFileLoadDirectory(targetDir);
+            ensureFileLoadDirectory(targetDir.resolve("archive"));
+        } catch (IOException ex) {
+            throw new NifiClientException("비정형 전송 작업 경로 준비 실패: " + ex.getMessage(), ex);
+        }
+
+        String inputDirectory = UNSTRUCTURED_NIFI_ROOT + "/" + folderName + "/";
+        NifiProcessGroupResponse response = nifiClient.createUnstructuredLoadFlow(request, inputDirectory);
         processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
                 request.comments(), user);
         processGroupTreeService.invalidateAfterMutation();

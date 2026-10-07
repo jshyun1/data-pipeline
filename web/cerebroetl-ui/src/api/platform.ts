@@ -572,6 +572,19 @@ export async function createHttpLoadFlow(payload: {
   return unwrap(res.data);
 }
 
+export async function createUnstructuredLoadFlow(payload: {
+  jobName: string;
+  parentGroupId: string;
+  comments?: string;
+  targetServiceId: string;
+  targetDatabaseType: string;
+  targetSchema: string;
+  targetTable: string;
+}): Promise<NifiProcessGroupEntity> {
+  const res = await apiClient.post<ApiResponse<NifiProcessGroupEntity>>("/nifi/etl/unstructured-load", payload);
+  return unwrap(res.data);
+}
+
 export async function testHttpApi(payload: {
   httpMethod: "GET" | "POST";
   testType: "JSON_API" | "FILE_DOWNLOAD";
