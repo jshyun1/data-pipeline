@@ -4404,10 +4404,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const directGroupingGroups = isGroupingGroup
     ? (displayNode?.children ?? []).filter((entry) => entry.groupType === "GROUPING")
     : [];
-  const directJobGroups = isGroupingGroup
-    ? (displayNode?.children ?? []).filter((entry) => entry.groupType === "JOB")
-    : [];
-  const showGroupingOnlyJobStatus = directGroupingGroups.length > 0 && directJobGroups.length === 0;
+  const showGroupingJobStatus = directGroupingGroups.length > 0;
   const lastRunDate = formatDateOnly(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
   const logKeyword = detailLogKeyword(displayJob, displayNode);
   const addedFilesStorageKey = addedFileStorageKey(displayJob?.id, inputDirectory);
@@ -4788,7 +4785,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
               </dl>
             </section>
 
-            {showGroupingOnlyJobStatus ? (
+            {showGroupingJobStatus ? (
               <section className="nifi-detail-section">
                 <h3>JOB 상태</h3>
                 <div className="nifi-direct-status-list">
