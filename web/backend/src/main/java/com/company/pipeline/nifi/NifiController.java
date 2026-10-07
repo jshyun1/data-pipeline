@@ -406,16 +406,26 @@ public class NifiController {
             throw new NifiClientException("파일 적재 입력 경로가 비어 있습니다.", null);
         }
         String trimmed = nifiDirectory.trim();
-        String relative;
-        if (FILE_LOAD_NIFI_ROOT.equals(trimmed)) {
-            relative = "";
-        } else if (trimmed.startsWith(FILE_LOAD_NIFI_ROOT + "/")) {
-            relative = trimmed.substring((FILE_LOAD_NIFI_ROOT + "/").length());
+        Path serverRoot;
+        String nifiRoot;
+        if (FILE_LOAD_NIFI_ROOT.equals(trimmed) || trimmed.startsWith(FILE_LOAD_NIFI_ROOT + "/")) {
+            serverRoot = FILE_LOAD_SERVER_ROOT;
+            nifiRoot = FILE_LOAD_NIFI_ROOT;
+        } else if (UNSTRUCTURED_NIFI_ROOT.equals(trimmed) || trimmed.startsWith(UNSTRUCTURED_NIFI_ROOT + "/")) {
+            serverRoot = UNSTRUCTURED_SERVER_ROOT;
+            nifiRoot = UNSTRUCTURED_NIFI_ROOT;
         } else {
             throw new NifiClientException("파일 적재 입력 경로가 올바르지 않습니다: " + nifiDirectory, null);
         }
-        Path serverDirectory = FILE_LOAD_SERVER_ROOT.resolve(relative).normalize();
-        if (!serverDirectory.startsWith(FILE_LOAD_SERVER_ROOT)) {
+
+        String relative;
+        if (nifiRoot.equals(trimmed)) {
+            relative = "";
+        } else if (trimmed.startsWith(nifiRoot + "/")) {
+            relative = trimmed.substring((nifiRoot + "/").length());
+        }
+        Path serverDirectory = serverRoot.resolve(relative).normalize();
+        if (!serverDirectory.startsWith(serverRoot)) {
             throw new NifiClientException("파일 적재 입력 경로가 올바르지 않습니다: " + nifiDirectory, null);
         }
         return serverDirectory;
