@@ -5536,6 +5536,16 @@ button.alert-compact-trigger.is-clear:hover {
   gap: 10px;
 }
 
+.console-page--with-panels {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.console-page--with-panels > .console-side,
+.console-page--with-panels > .console-frame-shell {
+  min-width: 0;
+}
+
 .console-frame-shell {
   min-width: 0;
   min-height: 0;
@@ -7289,6 +7299,10 @@ button.alert-compact-trigger.is-clear:hover {
     flex-wrap: wrap;
   }
 
+  .console-page--with-panels {
+    display: flex;
+  }
+
   .console-side-left {
     order: 1;
   }
@@ -7332,6 +7346,10 @@ button.alert-compact-trigger.is-clear:hover {
 
   .console-page {
     flex-direction: column;
+  }
+
+  .console-page--with-panels {
+    display: flex;
   }
 
   .console-side-left {

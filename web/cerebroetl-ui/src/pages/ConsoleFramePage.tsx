@@ -5256,8 +5256,14 @@ export function ConsoleFramePage({
     window.addEventListener("mouseup", handleMouseUp);
   };
 
+  const consolePageStyle: CSSProperties | undefined = showProcessGroupTree
+    ? {
+      gridTemplateColumns: `${isTreePanelCollapsed ? "30px" : "min(250px, 16vw)"} minmax(0, 1fr) ${isDetailPanelCollapsed ? "30px" : `${detailPanelWidth}px`}`,
+    }
+    : undefined;
+
   return (
-    <div className="console-page">
+    <div className={`console-page${showProcessGroupTree ? " console-page--with-panels" : ""}`} style={consolePageStyle}>
       {showProcessGroupTree ? (
         <div className={`console-side console-side-left${isTreePanelCollapsed ? " collapsed" : ""}`}>
           <button
@@ -5305,7 +5311,6 @@ export function ConsoleFramePage({
       {showProcessGroupTree ? (
         <div
           className={`console-side console-side-right${isDetailPanelCollapsed ? " collapsed" : ""}`}
-          style={isDetailPanelCollapsed ? undefined : { width: detailPanelWidth, flexBasis: detailPanelWidth }}
         >
           {!isDetailPanelCollapsed ? (
             <button
