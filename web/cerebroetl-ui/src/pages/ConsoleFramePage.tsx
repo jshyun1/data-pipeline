@@ -4721,7 +4721,6 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
           </div>
         </div>
 
-        {isLoading ? <div className="nifi-detail-message">불러오는 중</div> : null}
         {!isLoading && error ? <div className="nifi-detail-message error">조회 실패</div> : null}
 
         <div className="nifi-detail-tabs" role="tablist" aria-label="상세 패널 탭">
