@@ -43,6 +43,12 @@ ARG PYTHON_DOTENV_VERSION=1.0.1
 
 USER root
 
+# 비정형 오디오/비디오 적재 플로우의 ExecuteStreamCommand가 ffprobe로 미디어 메타데이터를 확인한다.
+# ffprobe는 Debian ffmpeg 패키지에 포함된다.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
 # ExecuteStreamCommand에서 실행하는 온톨로지 Python 적재 스크립트 의존성
 # apache/nifi 기반 이미지의 Python은 Debian의 externally-managed 환경이라
 # 컨테이너 이미지 빌드 안에서만 시스템 Python 설치 우회를 명시한다.
