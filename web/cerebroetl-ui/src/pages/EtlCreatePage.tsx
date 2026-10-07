@@ -47,6 +47,7 @@ const WIZARD_STEPS = [
 
 type WizardStepId = (typeof WIZARD_STEPS)[number]["id"];
 type EtlType = "DB_TO_DB" | "FILE_LOAD" | "HTTP" | "UNSTRUCTURED";
+type EtlTypeOption = { value: EtlType; title: string; description: string; disabled?: boolean };
 type LoadMode = "INSERT" | "TRUNCATE" | "UPSERT";
 type FileExtension = "csv" | "excel" | "log" | "json";
 type NifiDatabaseType = "Generic" | "Oracle 12+" | "PostgreSQL" | "MySQL" | "MS SQL 2012+";
@@ -63,7 +64,7 @@ const STEP_NUMBER: Record<WizardStepId, number> = {
   target: 5,
 };
 
-const TYPE_OPTIONS = [
+const TYPE_OPTIONS: EtlTypeOption[] = [
   {
     value: "DB_TO_DB",
     title: "DB -> DB 적재",
@@ -84,7 +85,7 @@ const TYPE_OPTIONS = [
     title: "비정형 전송",
     description: "이미지, 문서를 받아 저장",
   },
-] satisfies Array<{ value: EtlType; title: string; description: string; disabled?: boolean }>;
+];
 
 const FILE_EXTENSION_OPTIONS: Array<{ value: FileExtension; label: string; disabled?: boolean }> = [
   { value: "csv", label: "csv" },
@@ -1074,10 +1075,6 @@ function defaultUpdateWhereExpression(databaseType: NifiDatabaseType) {
 
 function defaultTruncateSql(targetSchema: string, targetTable: string) {
   return `TRUNCATE TABLE ${targetSchema.trim()}.${targetTable.trim()}`;
-}
-
-function stepIndex(step: WizardStepId) {
-  return WIZARD_STEPS.findIndex((item) => item.id === step);
 }
 
 function stepState(step: WizardStepId, activeStep: WizardStepId, completedSteps: WizardStepId[]) {
