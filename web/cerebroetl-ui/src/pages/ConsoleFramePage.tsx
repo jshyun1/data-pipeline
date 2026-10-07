@@ -4245,6 +4245,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const [addedFiles, setAddedFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const addFileInputRef = useRef<HTMLInputElement | null>(null);
+  const aiConversationEndRef = useRef<HTMLDivElement | null>(null);
   const aiCacheRestoringRef = useRef(false);
 
   const selected = useMemo(() => findTreeNode(tree, activeGroupId), [activeGroupId, tree]);
@@ -4303,6 +4304,13 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     }
     saveEtlAiAssistantCache(aiCacheKey, { messages: aiMessages, question: aiQuestion });
   }, [aiCacheKey, aiMessages, aiQuestion]);
+
+  useEffect(() => {
+    if (activeTab !== "ai" || (aiMessages.length === 0 && !aiLoading)) {
+      return;
+    }
+    aiConversationEndRef.current?.scrollIntoView({ block: "end" });
+  }, [activeTab, aiMessages, aiLoading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4960,6 +4968,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
                   <span>답변을 생성하는 중</span>
                 </div>
               ) : null}
+              <div ref={aiConversationEndRef} className="nifi-ai-conversation-end" aria-hidden="true" />
             </div>
             <div className="nifi-ai-composer">
               <textarea

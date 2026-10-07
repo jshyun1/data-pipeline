@@ -6674,14 +6674,11 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 .nifi-ai-pinned-context {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  margin: -12px -12px 3px;
-  padding: 12px;
-  border-bottom: 1px solid #e2e8f0;
+  margin: 0 0 3px;
+  padding: 10px 11px;
+  border: 1px solid #dbe4ee;
+  border-radius: 6px;
   background: #ffffff;
-  box-shadow: 0 6px 10px rgb(255 255 255 / 88%);
 }
 
 .nifi-ai-job-report section {
@@ -6798,6 +6795,10 @@ button.alert-compact-trigger.is-clear:hover {
   gap: 7px;
   color: #64748b;
   font-size: 12px;
+}
+
+.nifi-ai-conversation-end {
+  min-height: 1px;
 }
 
 .nifi-ai-composer {
