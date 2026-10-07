@@ -11,6 +11,7 @@ import {
   formatAt,
   groupJobs,
   jobOutcome,
+  jobProgress,
   loadCountOf,
   runAt,
   runTypeLabel,
@@ -78,23 +79,38 @@ function DurCell({ seconds, text, scale }: { seconds: number; text: string; scal
   );
 }
 
-/** 실행 한 건의 적재 합계·재시도 합계. job 을 다 받기 전에는 «…», job 이 없는 실행(하위 호출만 있는 상위)은 «-». */
-function runTotals(jobs?: JobGroup[], logs?: Record<string, string>) {
-  if (!jobs) return { result: "-", retry: "-" };
+/**
+ * 실행 한 건의 적재 합계·재시도 합계. job 을 다 받기 전에는 «…», job 이 없는 실행(하위 호출만 있는 상위)은 «-».
+ * 실행 중이면 끝난 job 의 건수에 도는 job 의 «지금까지 적재 건수»를 더하고 {@code live} 로 알린다(2026-10-06).
+ */
+function runTotals(jobs?: JobGroup[], logs?: Record<string, string>, progress?: Record<string, number>) {
+  if (!jobs) return { result: "-", retry: "-", live: false };
   const retry = `${jobs.reduce((sum, job) => sum + job.retryCount, 0)}회`;
-  const loadJobs = jobs.filter((job) => job.kind === "job" && job.state === "success");
-  if (!loadJobs.length) return { result: "-", retry };
-  if (!logs) return { result: "…", retry };
-  let total = 0;
-  let known = false;
-  for (const job of loadJobs) {
-    const value = countValue(jobOutcome(job, logs));
+  const doneJobs = jobs.filter((job) => job.kind === "job" && job.state === "success");
+  const liveRows = jobs.map((job) => jobProgress(job, progress)).filter((rows): rows is number => rows != null);
+  if (!doneJobs.length && !liveRows.length) return { result: "-", retry, live: false };
+  const outcomes = doneJobs.map((job) => jobOutcome(job, logs, progress));
+  if (!logs || outcomes.includes("…")) return { result: "…", retry, live: false };
+  let total = liveRows.reduce((sum, rows) => sum + rows, 0);
+  let known = liveRows.length > 0;
+  for (const outcome of outcomes) {
+    const value = countValue(outcome);
     if (value != null) {
       total += value;
       known = true;
     }
   }
-  return { result: known ? `${total.toLocaleString()}행` : "-", retry };
+  return { result: known ? `${total.toLocaleString()}행` : "-", retry, live: liveRows.length > 0 };
+}
+
+/** 적재 건수 칸 - 실행 중이면 «· 진행 중»을 덧붙인다. */
+function RowsText({ text, live, muted = false }: { text: string; live: boolean; muted?: boolean }) {
+  return (
+    <>
+      <span className={muted ? "lv2-muted" : "lv2-num"}>{text}</span>
+      {live && <span className="lv2-muted lv2-live"> · 진행 중</span>}
+    </>
+  );
 }
 
 /**
@@ -119,8 +135,9 @@ export function RunRow({ run, ctx, scale, showDate, expandable = true, ordinal, 
   const key = selectionKey(sel);
   const expanded = expandable && ctx.expanded.has(key);
   const selected = ctx.selectedKey === key;
-  const { jobs, logs } = useRunTasks(dagId, run.dag_run_id, { enabled: expanded || selected, refreshSeconds: ctx.refreshSeconds });
-  const totals = runTotals(jobs, logs);
+  const { jobs, logs, progress } = useRunTasks(dagId, run.dag_run_id,
+    { enabled: expanded || selected, refreshSeconds: ctx.refreshSeconds, runState: run.state });
+  const totals = runTotals(jobs, logs, progress);
   const name = dag ? displayName(dag) : dagId;
   const started = runAt(run);
   const end = run.end_date ?? (run.state === "running" ? dayjs().toISOString() : undefined);
@@ -146,18 +163,28 @@ export function RunRow({ run, ctx, scale, showDate, expandable = true, ordinal, 
         <td className="lv2-num">{formatAt(run.end_date)}</td>
         <td><DurCell seconds={durationSeconds(started, end)} text={duration(started, run.end_date ?? end)} scale={scale} /></td>
         {/* 실패한 실행도 «로그» 단추 없이 적재 합계만 적는다(2026-10-02 요청) - 실패 로그는 아래 상세 실행이력의 job 줄에서 연다. */}
-        <td><span className="lv2-num">{totals.result}</span></td>
+        <td><RowsText text={totals.result} live={totals.live} /></td>
         <td className="lv2-num">{totals.retry}</td>
         <td className="lv2-muted">{runTypeLabel(run)}</td>
       </tr>
-      {expanded && <RunBody dagId={dagId} runId={run.dag_run_id} depth={1} ctx={ctx} scale={durationSeconds(started, end)} />}
+      {expanded && <RunBody dagId={dagId} runId={run.dag_run_id} runState={run.state} depth={1} ctx={ctx}
+                            scale={durationSeconds(started, end)} />}
     </>
   );
 }
 
 /** 실행 하나의 job 줄들. 하위 워크플로우 호출 job 은 펼치면 그 하위 실행의 job 들이 한 칸 더 들여 나온다. */
-export function RunBody({ dagId, runId, depth, ctx, scale }: { dagId: string; runId: string; depth: number; ctx: GridCtx; scale: number }) {
-  const { tasksQuery, tasks, jobs, logs } = useRunTasks(dagId, runId, { enabled: true, refreshSeconds: ctx.refreshSeconds });
+export function RunBody({ dagId, runId, runState, depth, ctx, scale }: {
+  dagId: string;
+  runId: string;
+  /** 실행 상태(끝났는지). 실행 중이면 3초마다 받고 진행 건수를 보여 준다. */
+  runState?: string;
+  depth: number;
+  ctx: GridCtx;
+  scale: number;
+}) {
+  const { tasksQuery, tasks, jobs, logs, progress } = useRunTasks(dagId, runId,
+    { enabled: true, refreshSeconds: ctx.refreshSeconds, runState });
   const { busyKey, rerun } = useRerun(dagId, runId, tasks, () => tasksQuery.refetch());
   const pad = { paddingLeft: depth * 20 };
   if (tasksQuery.isLoading) {
@@ -171,14 +198,14 @@ export function RunBody({ dagId, runId, depth, ctx, scale }: { dagId: string; ru
     <>
       {jobs.map((job, index) => (
         <JobRow key={job.key} dagId={dagId} runId={runId} job={job} index={index} depth={depth} ctx={ctx}
-                logs={logs} scale={jobScale} busyKey={busyKey} rerun={rerun} />
+                logs={logs} progress={progress} scale={jobScale} busyKey={busyKey} rerun={rerun} />
       ))}
     </>
   );
 }
 
 function JobRow({
-  dagId, runId, job, index, depth, ctx, logs, scale, busyKey, rerun,
+  dagId, runId, job, index, depth, ctx, logs, progress, scale, busyKey, rerun,
 }: {
   dagId: string;
   runId: string;
@@ -187,6 +214,7 @@ function JobRow({
   depth: number;
   ctx: GridCtx;
   logs?: Record<string, string>;
+  progress?: Record<string, number>;
   scale: number;
   busyKey?: string;
   rerun: (jobKey: string, taskIds: string[], withDownstream: boolean) => Promise<void>;
@@ -207,7 +235,8 @@ function JobRow({
     : job.kind === "cdc" ? "CDC 지시"
     : job.kind === "marker" ? "표시 노드"
     : "워크플로우 종단";
-  const outcome = jobOutcome(job, logs);
+  const outcome = jobOutcome(job, logs, progress);
+  const inProgress = jobProgress(job, progress) != null;
   const logTarget: FailureLogTarget = {
     title: `${no} ${job.key}`,
     dagId,
@@ -241,7 +270,7 @@ function JobRow({
                     onClick={(event) => { event.stopPropagation(); ctx.openLog(logTarget); }}>로그</button>
           ) : job.kind === "call" && child ? (
             <CallResult child={child} ctx={ctx} />
-          ) : <span className={job.state === "upstream_failed" ? "lv2-muted" : "lv2-num"}>{outcome}</span>}
+          ) : <RowsText text={outcome} live={inProgress} muted={job.state === "upstream_failed"} />}
         </td>
         <td className="lv2-num">{job.retryCount}회</td>
         <td className="lv2-muted">{child ? runTypeLabel(child) : "-"}</td>
@@ -263,7 +292,7 @@ function JobRow({
       {expanded && job.kind === "job" && job.steps.map((step) => {
         const stepSel: Selection = { kind: "step", dagId, runId, taskId: step.task_id };
         const stepKey = selectionKey(stepSel);
-        const stepOutcome = step.state === "success" ? (logs ? loadCountOf(logs[step.task_id]) : "…")
+        const stepOutcome = step.state === "success" ? (logs && step.task_id in logs ? loadCountOf(logs[step.task_id]) : "…")
           : step.state === "upstream_failed" ? "선행 작업 실패로 미실행" : "-";
         return (
           <tr key={step.task_id} className={`lv2-r k-step f-${step.state ?? "none"}${ctx.selectedKey === stepKey ? " sel" : ""}`}
@@ -291,7 +320,7 @@ function JobRow({
         );
       })}
       {expanded && job.kind === "call" && child?.dag_id && (
-        <RunBody dagId={child.dag_id} runId={child.dag_run_id} depth={depth + 1} ctx={ctx}
+        <RunBody dagId={child.dag_id} runId={child.dag_run_id} runState={child.state} depth={depth + 1} ctx={ctx}
                  scale={durationSeconds(runAt(child), child.end_date)} />
       )}
     </>
@@ -299,8 +328,10 @@ function JobRow({
 }
 
 function CallResult({ child, ctx }: { child: AirflowDagRun; ctx: GridCtx }) {
-  const { jobs, logs } = useRunTasks(child.dag_id, child.dag_run_id, { enabled: true, refreshSeconds: ctx.refreshSeconds });
-  return <span className="lv2-num">{runTotals(jobs, logs).result}</span>;
+  const { jobs, logs, progress } = useRunTasks(child.dag_id, child.dag_run_id,
+    { enabled: true, refreshSeconds: ctx.refreshSeconds, runState: child.state });
+  const totals = runTotals(jobs, logs, progress);
+  return <RowsText text={totals.result} live={totals.live} />;
 }
 
 /* ================================================================== 타임라인 */

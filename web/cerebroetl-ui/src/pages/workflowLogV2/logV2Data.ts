@@ -49,7 +49,8 @@ export const REFRESH_OPTIONS = [
 export type StatusMetric = "all" | "running" | "success" | "failed" | "waiting" | "new";
 
 export function runAt(run?: AirflowDagRun) {
-  return run?.start_date ?? run?.execution_date;
+  // 아직 대기 중(queued)이면 시작 시각이 없다 - 대기열에 들어간 시각으로 적는다.
+  return run?.start_date ?? run?.queued_at ?? run?.run_after ?? run?.execution_date;
 }
 
 export function latestRunToday(runs: AirflowDagRun[], today: Dayjs = dayjs().startOf("day")) {
@@ -256,6 +257,9 @@ export function rollUpState(steps: AirflowTaskInstance[]) {
   if (states.some(isActiveState)) return "running";
   if (states.includes("upstream_failed")) return "upstream_failed";
   if (states.length && states.every((state) => state === "success")) return "success";
+  // 시작한 단계와 아직 차례가 안 온 단계(상태 없음)가 섞여 있으면 아직 도는 중이다. 예전에는 «완료 대기»가 성공하고
+  // «정지»가 아직 대기열에 오르기 전 순간을 «성공»으로 봤다 - 3초 갱신에서 «성공 → 실행 중 → 성공»으로 흔들렸다(2026-10-06).
+  if (states.some((state) => !state) && states.some(Boolean)) return "running";
   return states.find(Boolean) ?? undefined;
 }
 
@@ -331,14 +335,28 @@ export function countValue(text: string) {
   return match ? Number(match[1].replace(/,/g, "")) : undefined;
 }
 
-/** job 의 «적재 / 결과» 문구. 실패는 로그 버튼을 그리므로 빈 문자열. */
-export function jobOutcome(job: JobGroup, logs?: Record<string, string>) {
+/**
+ * job 의 «적재 / 결과» 문구. 실패는 로그 버튼을 그리므로 빈 문자열.
+ * 아직 끝나지 않은 job 은 실행 원장의 «지금까지 적재 건수»({@code progress}, 노드 키 → 건수)가 있으면 그것을 적는다(2026-10-06).
+ */
+export function jobOutcome(job: JobGroup, logs?: Record<string, string>, progress?: Record<string, number>) {
   if (job.state === "failed") return "";
   if (job.state === "upstream_failed") return "선행 작업 실패로 미실행";
   if (job.kind === "cdc") return job.state === "success" ? "지시 보냄" : "-";
-  if (job.state !== "success" || job.kind !== "job") return "-";
+  if (job.kind !== "job") return "-";
+  if (job.state !== "success") {
+    const rows = jobProgress(job, progress);
+    return rows != null ? `${rows.toLocaleString()}행` : "-";
+  }
   const counted = job.steps.find((step) => step.task_id.endsWith(".await")) ?? job.steps.at(-1)!;
-  return logs ? loadCountOf(logs[counted.task_id]) : "…";
+  return logs && counted.task_id in logs ? loadCountOf(logs[counted.task_id]) : "…";
+}
+
+/** 아직 끝나지 않은 job 의 «지금까지 적재 건수». 끝났거나 모르면 undefined. */
+export function jobProgress(job: JobGroup, progress?: Record<string, number>) {
+  return job.kind === "job" && job.state !== "success" && job.state !== "failed" && job.state !== "upstream_failed"
+    ? progress?.[job.key]
+    : undefined;
 }
 
 export function formatAt(value?: string, pattern = "HH:mm:ss") {

@@ -96,6 +96,9 @@ export interface AirflowDagRun {
   start_date?: string;
   end_date?: string;
   execution_date?: string;
+  /** 대기열에 들어간 시각(Airflow 3). 아직 시작 전(queued)인 실행은 start_date 가 비어 있어 이것으로 시각을 적는다. */
+  queued_at?: string;
+  run_after?: string;
   conf?: Record<string, unknown>;
 }
 
@@ -365,6 +368,20 @@ export async function listAirflowDagRuns(
       },
     },
   );
+  return res.data.dag_runs ?? [];
+}
+
+/**
+ * 지금 대기 · 실행 중인 실행만(모든 DAG). 워크플로우 로그 화면이 실행 중일 때 3초마다 부른다(2026-10-06) -
+ * 기간 내 실행 전체(최대 5,000건)를 다시 받지 않고 바뀌는 것만 본다. 대기(queued) 실행은 시작 시각이 비어 있어
+ * 기간(start_date) 조회에는 안 잡히는데, 이 조회로 방금 건 실행이 바로 보인다.
+ */
+export async function listActiveAirflowDagRuns(): Promise<AirflowDagRun[]> {
+  const res = await axios.get<{ dag_runs?: AirflowDagRun[] }>(`${AIRFLOW_API_BASE}/dags/~/dagRuns`, {
+    params: { state: ["queued", "running"], limit: 100 },
+    // Airflow 는 state=queued&state=running 모양을 받는다(axios 기본 state[]=… 는 못 읽는다).
+    paramsSerializer: { indexes: null },
+  });
   return res.data.dag_runs ?? [];
 }
 

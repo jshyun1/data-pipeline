@@ -108,3 +108,24 @@ export async function syncEtlJobs(): Promise<EtlJobSyncResult> {
   const res = await apiClient.post<ApiResponse<EtlJobSyncResult>>("/etl/jobs/sync");
   return unwrap(res.data);
 }
+
+/**
+ * 실행 원장의 job 실행 한 건. 열린 실행(endedAt 없음)의 rowsProcessed 는 «지금까지 적재 건수»다 -
+ * NiFi 완료 감시가 실행 중에 2초 판정마다 바뀐 값을 보낸다(2026-10-06).
+ */
+export interface JobRunLedgerView {
+  id: number;
+  jobId: number;
+  status: string;
+  completionSource?: string | null;
+  rowsProcessed?: number | null;
+  startedAt: string;
+  endedAt?: string | null;
+  nodeKey?: string | null;
+}
+
+/** 워크플로우 실행 한 번(Airflow dag run)이 연 job 실행들. 로그 화면이 실행 중인 job 의 진행 건수를 읽는다. */
+export async function listJobRunsOfDagRun(dagRunId: string): Promise<JobRunLedgerView[]> {
+  const res = await apiClient.get<ApiResponse<JobRunLedgerView[]>>("/etl/job-runs/by-dag-run", { params: { dagRunId } });
+  return unwrap(res.data);
+}

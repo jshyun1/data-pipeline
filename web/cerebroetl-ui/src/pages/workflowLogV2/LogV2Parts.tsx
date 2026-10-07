@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, message, Modal, Radio, Spin } from "antd";
 import { Link } from "react-router-dom";
 import dayjs from "dayjs";
@@ -22,6 +22,7 @@ import {
   stepName,
   type DashboardDag,
 } from "./logV2Data";
+import { refreshRunsAfterTrigger } from "./logV2Live";
 
 export function StateBadge({ state }: { state?: string }) {
   return <span className={`lv2-badge lv2-badge--${stateTone(state)}`}>{stateLabel(state)}</span>;
@@ -84,6 +85,7 @@ export function ExecutionSettingsModal({
   onExecuted: () => void;
 }) {
   const [action, setAction] = useState<ExecutionAction | undefined>("start");
+  const queryClient = useQueryClient();
   const [triggering, setTriggering] = useState(false);
   // 감시 센서까지 가는 동작(start/monitor)의 실행이 살아 있으면 이미 감시 중이다.
   const watching = runs.some((run) => run.state === "running"
@@ -115,6 +117,7 @@ export function ExecutionSettingsModal({
     try {
       await triggerAirflowDag(dag.dag_id, { action });
       message.success(`${displayName(dag)} ${options.find((option) => option.value === action)?.label} 요청을 전송했습니다.`);
+      refreshRunsAfterTrigger(queryClient);   // 로그 화면이 방금 건 실행을 바로 받는다(2026-10-06)
       onClose();
       onExecuted();
     } catch (error) {

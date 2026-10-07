@@ -59,8 +59,6 @@ export function useGptConversation({ agentType, targetType, target, errorText: s
   const [meta, setMeta] = useState<LlmContextPreview>();
   const [failure, setFailure] = useState<string>();
   const [busy, setBusy] = useState(false);
-  /** 마지막 답에 도구 호출(조회)을 썼는지. 서버가 toolMode 로 알려 준다(모르면 undefined). */
-  const [toolMode, setToolMode] = useState<boolean>();
   const [preview, setPreview] = useState<GptPreviewState>({ open: false, loading: false });
   /**
    * [프롬프트] 창에서 고친 대상 정보(2026-10-02 요청). 있으면 이 창의 다음 요청부터 서버가 모은 것 대신 이것을 보낸다.
@@ -114,7 +112,6 @@ export function useGptConversation({ agentType, targetType, target, errorText: s
             }
           },
           onDelta: (text) => updateLast((turn) => ({ ...turn, content: turn.content + text })),
-          onToolMode: setToolMode,
           onTool: (tool) => updateLast((turn) => ({ ...turn, toolSteps: [...(turn.toolSteps ?? []), tool.label] })),
           onError: (error) => setFailure(error.message),
         },
@@ -177,7 +174,6 @@ export function useGptConversation({ agentType, targetType, target, errorText: s
     summarizedUpto,
     compacted,
     meta,
-    toolMode,
     failure,
     busy,
     preview,

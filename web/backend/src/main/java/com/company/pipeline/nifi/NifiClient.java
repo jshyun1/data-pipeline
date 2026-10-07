@@ -15,6 +15,7 @@ import com.company.pipeline.nifi.dto.NifiProcessGroupEntity;
 import com.company.pipeline.nifi.dto.NifiProcessGroupResponse;
 import com.company.pipeline.nifi.dto.NifiProcessorDetailResponse;
 import java.net.http.HttpClient;
+import java.time.Clock;
 import java.time.Duration;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
@@ -152,9 +153,12 @@ public class NifiClient {
 
     private final RestClient restClient;
     private final NifiProperties properties;
+    /** 받아 둔 접근 토큰(2026-10-06). 예전에는 호출마다 새로 받아 NiFi CPU 를 태웠다 - {@link NifiTokenCache}. */
+    private final NifiTokenCache tokens;
 
     public NifiClient(NifiProperties properties) {
         this.properties = properties;
+        this.tokens = new NifiTokenCache(this::issueToken, Clock.systemUTC());
         // 외부 클라이언트 타임아웃 규약(설계서 3-2): connect 2s / read 5s.
         // root status recursive 응답이 무거워 read 3s는 위험하므로 5s로 둔다.
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(insecureHttpClient());
@@ -162,6 +166,8 @@ public class NifiClient {
         this.restClient = RestClient.builder()
                 .baseUrl(properties.baseUrl())
                 .requestFactory(requestFactory)
+                // 받아 둔 토큰이 거절(401)되면 새로 받아 한 번만 다시 보낸다.
+                .requestInterceptor(new NifiAuthRetryInterceptor(tokens))
                 .build();
     }
 
@@ -1594,7 +1600,12 @@ public class NifiClient {
         }
     }
 
+    /** 받아 둔 토큰을 준다. 없거나 만료가 가까우면 그때만 새로 받는다({@link NifiTokenCache}). */
     private String getToken() {
+        return tokens.get();
+    }
+
+    private String issueToken() {
         if (!StringUtils.hasText(properties.username()) || !StringUtils.hasText(properties.password())) {
             throw new NifiClientException("NiFi 서비스 계정 정보가 설정되지 않았습니다.", null);
         }

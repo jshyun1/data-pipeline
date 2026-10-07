@@ -69,15 +69,9 @@ export function GptChatPanel({ targetType, target, draft }: GptChatPanelProps) {
           대상 안내 · 배치/마스킹 · 저장 안 된 변경 안내 문구는 뺐다 - 보내는 내용은 그 창이 그대로 보여 주고 고칠 수도 있다. */}
       <div className="nifi-ai-summary gpt-chat-head">
         <strong>
+          {/* «· 도구 조회 사용/미사용» 표시는 뺐다(2026-10-06 요청). 바로 앞 답의 사용 여부라서 탭을 열 때의 요약
+              (도구 없이 답함)에는 설정이 «사용»이어도 «미사용»으로 보여 헷갈렸다. 실제 조회는 답 위 «🔎 … 조회» 줄이 보여 준다. */}
           {providerName ?? "선택된 GPT"}
-          {/* 도구 호출(조회) 사용 여부(2026-10-02). 쓰지 못하는 모델이면 질문 속 이름으로 찾은 대상 상세만으로 답한다. */}
-          {chat.toolMode !== undefined && (
-            <span className="gpt-chat-tool-mode" title={chat.toolMode
-              ? "질문에 필요하면 job · CDC 파이프라인 · 워크플로우를 직접 조회해서 답합니다"
-              : "이 모델은 도구 조회를 쓰지 않습니다 - 질문에 나온 이름으로 찾은 대상의 상세를 붙여 답합니다"}>
-              {chat.toolMode ? " · 도구 조회 사용" : " · 도구 조회 미사용"}
-            </span>
-          )}
         </strong>
         <span className="gpt-chat-head-actions">
           <Button size="small" onClick={() => void chat.openPreview()}>프롬프트 편집</Button>
