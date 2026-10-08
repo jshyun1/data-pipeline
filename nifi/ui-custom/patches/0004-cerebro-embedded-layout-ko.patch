@@ -1168,7 +1168,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..01b0da2ed8ca6ce651d668c6b38feff9aa213a62
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ui.ts
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,284 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -1181,6 +1181,217 @@ index 0000000000000000000000000000000000000000..01b0da2ed8ca6ce651d668c6b38feff9
 +import { startCerebroKoreanText } from './cerebro-ko';
 +
 +type RecentPanel = 'submenu' | 'navigation' | 'operation';
++const SVG_NS = 'http://www.w3.org/2000/svg';
++const PROCESS_GROUP_CARD_ATTRIBUTE = 'data-cerebro-process-group-card';
++
++function svgElement(tagName: string): SVGElement {
++    return document.createElementNS(SVG_NS, tagName);
++}
++
++function numericAttribute(element: Element, name: string): number | null {
++    const value = element.getAttribute(name);
++    if (!value) {
++        return null;
++    }
++    const parsed = Number.parseFloat(value);
++    return Number.isFinite(parsed) ? parsed : null;
++}
++
++function textCenterY(element: Element): number {
++    const y = numericAttribute(element, 'y');
++    if (y !== null) {
++        return y;
++    }
++    const box = (element as SVGGraphicsElement).getBBox?.();
++    return box ? box.y + box.height / 2 : 0;
++}
++
++function normalizeMetricLabel(value: string): 'queued' | 'in' | 'readWrite' | 'out' | null {
++    const normalized = value.replace(/\s+/g, ' ').trim().toLowerCase();
++    if (normalized === 'queued' || normalized === '대기') {
++        return 'queued';
++    }
++    if (normalized === 'in' || normalized.startsWith('in ')) {
++        return 'in';
++    }
++    if (normalized.includes('read') || normalized.includes('write') || normalized.includes('읽기') || normalized.includes('쓰기')) {
++        return 'readWrite';
++    }
++    if (normalized === 'out' || normalized.startsWith('out ')) {
++        return 'out';
++    }
++    return null;
++}
++
++function processGroupMetricRows(group: Element): Array<{ key: string; y: number }> {
++    const rowByKey = new Map<string, number>();
++    group.querySelectorAll('text').forEach((text) => {
++        const key = normalizeMetricLabel(text.textContent ?? '');
++        if (key && !rowByKey.has(key)) {
++            rowByKey.set(key, textCenterY(text));
++        }
++    });
++    return ['queued', 'in', 'readWrite', 'out']
++        .map((key) => ({ key, y: rowByKey.get(key) }))
++        .filter((row): row is { key: string; y: number } => typeof row.y === 'number')
++        .sort((a, b) => a.y - b.y);
++}
++
++function processGroupHeaderHeight(group: Element, box: DOMRect): number {
++    const header = group.querySelector('rect.process-group-banner, rect.remote-process-group-banner, rect.component-header, rect.header');
++    const height = header ? numericAttribute(header, 'height') : null;
++    return Math.max(24, Math.min(42, height ?? Math.round(box.height * 0.19)));
++}
++
++function createRect(x: number, y: number, width: number, height: number, fill: string, stroke = 'none'): SVGRectElement {
++    const rect = svgElement('rect') as SVGRectElement;
++    rect.setAttribute('x', x.toFixed(1));
++    rect.setAttribute('y', y.toFixed(1));
++    rect.setAttribute('width', Math.max(0, width).toFixed(1));
++    rect.setAttribute('height', Math.max(0, height).toFixed(1));
++    rect.setAttribute('fill', fill);
++    rect.setAttribute('stroke', stroke);
++    rect.setAttribute('shape-rendering', 'crispEdges');
++    return rect;
++}
++
++function createLine(x1: number, y1: number, x2: number, y2: number): SVGLineElement {
++    const line = svgElement('line') as SVGLineElement;
++    line.setAttribute('x1', x1.toFixed(1));
++    line.setAttribute('y1', y1.toFixed(1));
++    line.setAttribute('x2', x2.toFixed(1));
++    line.setAttribute('y2', y2.toFixed(1));
++    line.setAttribute('stroke', '#edf2f7');
++    line.setAttribute('stroke-width', '1');
++    line.setAttribute('shape-rendering', 'crispEdges');
++    return line;
++}
++
++function decorateMetricTimeBadges(group: Element, layer: SVGGElement): void {
++    group.querySelectorAll('text.stats-info, text.refresh-interval, text.status-history').forEach((text) => {
++        const value = (text.textContent ?? '').trim();
++        if (!/\b\d+\s*(min|sec|s|m)\b/i.test(value)) {
++            return;
++        }
++        const textBox = (text as SVGGraphicsElement).getBBox?.();
++        if (!textBox) {
++            return;
++        }
++        const badge = createRect(textBox.x - 5, textBox.y - 2, textBox.width + 10, textBox.height + 4, '#f1f5f9', '#e2e8f0');
++        badge.setAttribute('rx', '4');
++        layer.appendChild(badge);
++    });
++}
++
++function alignMetricText(group: Element, rows: Array<{ key: string; y: number }>, x: number, width: number, labelColumnWidth: number): void {
++    group.querySelectorAll('text').forEach((text) => {
++        const centerY = textCenterY(text);
++        const row = rows.find((item) => Math.abs(item.y - centerY) <= 10);
++        if (!row) {
++            return;
++        }
++        const label = normalizeMetricLabel(text.textContent ?? '');
++        const isTimeBadge = /\b\d+\s*(min|sec|s|m)\b/i.test((text.textContent ?? '').trim());
++        text.setAttribute('dominant-baseline', 'middle');
++        text.setAttribute('y', row.y.toFixed(1));
++        if (label) {
++            text.setAttribute('x', (x + 12).toFixed(1));
++            text.setAttribute('text-anchor', 'start');
++            return;
++        }
++        if (isTimeBadge) {
++            text.setAttribute('x', (x + width - 12).toFixed(1));
++            text.setAttribute('text-anchor', 'end');
++            return;
++        }
++        text.setAttribute('x', (x + labelColumnWidth + 12).toFixed(1));
++        text.setAttribute('text-anchor', 'start');
++    });
++}
++
++function decorateProcessGroupCard(group: Element): void {
++    const svgGroup = group as SVGGraphicsElement;
++    if (typeof svgGroup.getBBox !== 'function') {
++        return;
++    }
++    group.querySelectorAll(`[${PROCESS_GROUP_CARD_ATTRIBUTE}="true"]`).forEach((element) => element.remove());
++    let box: DOMRect;
++    try {
++        box = svgGroup.getBBox();
++    } catch {
++        return;
++    }
++    if (!box.width || !box.height || box.width < 120 || box.height < 80) {
++        return;
++    }
++
++    const layer = svgElement('g') as SVGGElement;
++    layer.setAttribute(PROCESS_GROUP_CARD_ATTRIBUTE, 'true');
++    layer.setAttribute('pointer-events', 'none');
++
++    const x = box.x;
++    const y = box.y;
++    const width = box.width;
++    const height = box.height;
++    const headerHeight = processGroupHeaderHeight(group, box);
++    const footerHeight = Math.min(20, Math.max(14, height * 0.12));
++    const rows = processGroupMetricRows(group);
++
++    const body = createRect(x + 0.5, y + headerHeight, width - 1, Math.max(0, height - headerHeight - footerHeight), '#ffffff', 'none');
++    layer.appendChild(body);
++
++    rows.forEach((row, index) => {
++        const nextY = rows[index + 1]?.y;
++        const previousY = rows[index - 1]?.y;
++        const top = Math.max(
++            y + headerHeight,
++            previousY === undefined ? row.y - 12 : (previousY + row.y) / 2
++        );
++        const bottom = Math.min(
++            y + height - footerHeight,
++            nextY === undefined ? row.y + 12 : (row.y + nextY) / 2
++        );
++        const fill = index % 2 === 0 ? '#ffffff' : '#fbfdff';
++        layer.appendChild(createRect(x + 0.5, top, width - 1, Math.max(18, bottom - top), fill));
++        layer.appendChild(createLine(x + 0.5, bottom, x + width - 0.5, bottom));
++    });
++
++    if (rows.length > 0) {
++        const labelColumnWidth = Math.min(96, Math.max(72, width * 0.31));
++        layer.appendChild(createLine(x + labelColumnWidth, y + headerHeight, x + labelColumnWidth, y + height - footerHeight));
++        alignMetricText(group, rows, x, width, labelColumnWidth);
++    }
++
++    const footer = createRect(x + 0.5, y + height - footerHeight, width - 1, footerHeight - 0.5, '#f8fafc', '#f1f5f9');
++    layer.appendChild(footer);
++    decorateMetricTimeBadges(group, layer);
++    group.insertBefore(layer, group.querySelector('text'));
++}
++
++function installProcessGroupCardLayout(): void {
++    let frameId: number | null = null;
++    let observer: MutationObserver | null = null;
++    const observe = (): void => {
++        observer?.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
++    };
++    const decorate = (): void => {
++        frameId = null;
++        observer?.disconnect();
++        document
++            .querySelectorAll('svg.canvas-svg g.process-group, svg.canvas-svg g.component.process-group')
++            .forEach(decorateProcessGroupCard);
++        observe();
++    };
++    const schedule = (): void => {
++        if (frameId !== null) {
++            return;
++        }
++        frameId = window.requestAnimationFrame(decorate);
++    };
++    observer = new MutationObserver(schedule);
++    observe();
++    schedule();
++}
 +
 +function installRecentPanelToggle(): void {
 +    const root = document.documentElement;
@@ -1265,6 +1476,7 @@ index 0000000000000000000000000000000000000000..01b0da2ed8ca6ce651d668c6b38feff9
 +    if (isEmbeddedInCerebro()) {
 +        root.classList.add('cerebro-embedded');
 +        installRecentPanelToggle();
++        installProcessGroupCardLayout();
 +    }
 +    startCerebroKoreanText();
 +}
