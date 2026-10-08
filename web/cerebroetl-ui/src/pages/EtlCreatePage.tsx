@@ -595,33 +595,13 @@ function stripSourceAliases(value: string, selectedTables: string[]) {
   }, value);
 }
 
-function mappingExpression(mapping: ColumnMapping) {
-  return mapping.logic.trim() || mapping.sourceColumn.trim();
-}
-
-function targetColumnHasDefault(targetColumns: ColumnMetadataResponse[], targetColumnName: string) {
-  return targetColumns.some((targetColumn) =>
-    normalizeName(targetColumn.name) === normalizeName(targetColumnName) && !!targetColumn.hasDefaultValue,
-  );
-}
-
-function isDefaultBackedEmptyMapping(mapping: ColumnMapping, targetColumns: ColumnMetadataResponse[]) {
-  return !mappingExpression(mapping) && targetColumnHasDefault(targetColumns, mapping.targetColumn);
-}
-
-function effectiveColumnMappings(mappings: ColumnMapping[], targetColumns: ColumnMetadataResponse[]) {
-  return mappings.filter((mapping) => !isDefaultBackedEmptyMapping(mapping, targetColumns));
-}
-
 function buildQueryRecordSql(
   mappings: ColumnMapping[],
   selectedTables: string[],
-  targetColumns: ColumnMetadataResponse[] = [],
 ) {
-  const effectiveMappings = effectiveColumnMappings(mappings, targetColumns);
-  const projections = effectiveMappings.map((mapping, index) => {
+  const projections = mappings.map((mapping, index) => {
     const expression = stripSourceAliases(
-      mappingExpression(mapping) || "NULL",
+      mapping.logic.trim() || mapping.sourceColumn || "NULL",
       selectedTables,
     );
     const prefix = index === 0 ? "" : ",";
@@ -824,8 +804,8 @@ function buildMappingValidationInterpretation(result: MappingValidationDialog) {
   } else if (result.warningCount > 0) {
     lines.push(`문법 오류는 없지만 적재 전에 확인할 경고 ${result.warningCount}건이 있습니다.`);
   }
-  if (!result.calciteMessage.startsWith("SQL 문법 검사: 성공")) {
-    lines.push("처리 로직 SQL이 올바른 SQL 문법으로 해석되지 않습니다. 괄호, 함수명, AS 별칭, 쉼표 위치를 확인하세요.");
+  if (!result.calciteMessage.startsWith("Calcite 문법 검사: 성공")) {
+    lines.push("처리 로직 SQL이 Calcite 문법으로 해석되지 않습니다. 괄호, 함수명, AS 별칭, 쉼표 위치를 확인하세요.");
   }
   const missingMapping = result.issues.some((issue) => issue.message.includes("매핑이 없습니다") || issue.message.includes("비어 있습니다"));
   if (missingMapping) {
@@ -875,7 +855,7 @@ function validateMappingConsistency(
 
   targetColumns.forEach((targetColumn) => {
     const mappings = mappingsByTarget.get(normalizeName(targetColumn.name)) ?? [];
-    if (mappings.length === 0 && !targetColumn.hasDefaultValue) {
+    if (mappings.length === 0) {
       issues.push({ severity: "error", message: `타깃 컬럼 ${targetColumn.name}의 매핑이 없습니다.` });
     }
     if (mappings.length > 1) {
@@ -884,15 +864,12 @@ function validateMappingConsistency(
   });
   columnMappings.forEach((mapping) => {
     const targetColumn = targetColumnByName.get(normalizeName(mapping.targetColumn));
-    const expression = mappingExpression(mapping);
+    const expression = mapping.logic.trim() || mapping.sourceColumn.trim();
     if (!targetColumn) {
       issues.push({ severity: "error", message: `타깃 컬럼 ${mapping.targetColumn}은 현재 타깃 테이블에 없습니다.` });
       return;
     }
     if (!expression) {
-      if (targetColumn.hasDefaultValue) {
-        return;
-      }
       issues.push({ severity: "error", message: `타깃 컬럼 ${mapping.targetColumn}의 처리 로직이 비어 있습니다.` });
       return;
     }
@@ -2386,7 +2363,7 @@ function TargetStep({
 
   const applyColumnMappings = (nextMappings: ColumnMapping[]) => {
     onColumnMappingsChange(nextMappings);
-    onQueryRecordSqlChange(buildQueryRecordSql(nextMappings, selectedSourceTables, targetColumns));
+    onQueryRecordSqlChange(buildQueryRecordSql(nextMappings, selectedSourceTables));
   };
 
   const updateMapping = (mappingId: string, updates: Partial<ColumnMapping>) => {
@@ -2552,20 +2529,15 @@ function TargetStep({
     }
     setValidatingCalcite(true);
     try {
-      const logicDraft = { ...editingMapping, logic: editingLogic };
-      if (isDefaultBackedEmptyMapping(logicDraft, targetColumns)) {
-        message.success("기본값 컬럼은 매핑 없이 적재됩니다.");
-        return;
-      }
-      const sql = buildQueryRecordSql([logicDraft], selectedSourceTables, targetColumns);
+      const sql = buildQueryRecordSql([{ ...editingMapping, logic: editingLogic }], selectedSourceTables);
       const result = await validateCalciteSql(sql);
       if (result.success) {
-        message.success(`유효성 체크 성공 (${result.latencyMs}ms)`);
+        message.success(`Calcite 문법 검증 성공 (${result.latencyMs}ms)`);
       } else {
-        message.error(result.message || "유효성 체크에 실패했습니다.");
+        message.error(result.message || "Calcite 문법 검증에 실패했습니다.");
       }
     } catch (ex) {
-      message.error(ex instanceof Error ? ex.message : "유효성 체크에 실패했습니다.");
+      message.error(ex instanceof Error ? ex.message : "Calcite 문법 검증에 실패했습니다.");
     } finally {
       setValidatingCalcite(false);
     }
@@ -2574,10 +2546,8 @@ function TargetStep({
   const validateAllMappings = async () => {
     setValidatingCalcite(true);
     try {
-      const effectiveMappings = effectiveColumnMappings(columnMappings, targetColumns);
-      const calciteResult = effectiveMappings.length > 0
-        ? await validateCalciteSql(buildQueryRecordSql(effectiveMappings, selectedSourceTables, targetColumns))
-        : { success: true, latencyMs: 0, message: "SQL 문법 검사를 생략했습니다.", testedAt: new Date().toISOString() };
+      const querySql = buildQueryRecordSql(columnMappings, selectedSourceTables);
+      const calciteResult = await validateCalciteSql(querySql);
       const consistencyIssues = validateMappingConsistency(
         columnMappings,
         sourceColumns,
@@ -2587,28 +2557,28 @@ function TargetStep({
       const issues: MappingValidationIssue[] = [
         ...(calciteResult.success
           ? []
-          : [{ severity: "error" as const, message: `SQL 문법 검사 실패: ${calciteResult.message}` }]),
+          : [{ severity: "error" as const, message: `Calcite 문법 검사 실패: ${calciteResult.message}` }]),
         ...consistencyIssues,
       ];
       const errorCount = issues.filter((issue) => issue.severity === "error").length;
       const warningCount = issues.filter((issue) => issue.severity === "warning").length;
       if (issues.length === 0) {
         Modal.success({
-          title: "유효성 체크 성공",
-          content: `SQL 문법 검사와 매핑 정합성 검사를 통과했습니다. (${calciteResult.latencyMs}ms)`,
+          title: "Calcite/정합성 체크 성공",
+          content: `Calcite 문법 검사와 매핑 정합성 검사를 통과했습니다. (${calciteResult.latencyMs}ms)`,
         });
       } else {
         setMappingValidationDialog({
           errorCount,
           warningCount,
           calciteMessage: calciteResult.success
-            ? `SQL 문법 검사: 성공 (${calciteResult.latencyMs}ms)`
-            : `SQL 문법 검사: 실패 - ${calciteResult.message}`,
+            ? `Calcite 문법 검사: 성공 (${calciteResult.latencyMs}ms)`
+            : `Calcite 문법 검사: 실패 - ${calciteResult.message}`,
           issues,
         });
       }
     } catch (ex) {
-      message.error(ex instanceof Error ? ex.message : "유효성 체크에 실패했습니다.");
+      message.error(ex instanceof Error ? ex.message : "Calcite/정합성 체크에 실패했습니다.");
     } finally {
       setValidatingCalcite(false);
     }
@@ -2637,7 +2607,7 @@ function TargetStep({
             loading={validatingCalcite}
             disabled={columnMappings.length === 0}
           >
-            유효성 체크
+            Calcite 체크
           </Button>
         </div>
           {selectedSourceTables.length > 1 ? (
@@ -2860,7 +2830,7 @@ function TargetStep({
               ? editingMapping.sourceColumn
               : "예: NVL(column_name, 'N')"}
           />
-          <small>* SQL 문법에 따라 작성해야합니다.</small>
+          <small>* Apache Calcite SQL 문법에 따라 작성해야합니다.</small>
           <div className="etl-logic-modal-actions">
             <Button size="small" onClick={validateCurrentLogic} loading={validatingCalcite}>
               유효성 체크
@@ -3164,14 +3134,14 @@ export function EtlCreatePage() {
     if (targetColumns.length > 0) {
       setColumnMappings((previousMappings) => {
         if (preserveRestoredSqlRef.current && previousMappings.length > 0) {
-          setQueryRecordSql(buildQueryRecordSql(previousMappings, selectedSourceTablesForQueryRecord, targetColumns));
+          setQueryRecordSql(buildQueryRecordSql(previousMappings, selectedSourceTablesForQueryRecord));
           return previousMappings;
         }
         const nextMappings = buildDefaultColumnMappings(targetColumns, sourceColumns, previousMappings);
         if (!preserveRestoredSqlRef.current) {
           setLoadSql(formatLoadSqlIndent(buildMappedLoadSql(connectionInfo, sourceColumns, targetColumns, loadMode)));
         }
-        setQueryRecordSql(buildQueryRecordSql(nextMappings, selectedSourceTablesForQueryRecord, targetColumns));
+        setQueryRecordSql(buildQueryRecordSql(nextMappings, selectedSourceTablesForQueryRecord));
         return nextMappings;
       });
       return;
@@ -3209,7 +3179,7 @@ export function EtlCreatePage() {
     }
     setColumnMappings((previousMappings) => {
       const nextMappings = buildDefaultColumnMappings(targetColumns, HTTP_SOURCE_COLUMNS, previousMappings);
-      setQueryRecordSql(buildQueryRecordSql(nextMappings, HTTP_SELECTED_TABLES, targetColumns));
+      setQueryRecordSql(buildQueryRecordSql(nextMappings, HTTP_SELECTED_TABLES));
       return nextMappings;
     });
   }, [isHttpLoad, targetColumns]);
@@ -3219,7 +3189,7 @@ export function EtlCreatePage() {
       setLoadSqlColumns([]);
       setColumnMappings((previousMappings) => {
         const nextMappings = buildDefaultColumnMappings(targetColumns, HTTP_SOURCE_COLUMNS, previousMappings);
-        setQueryRecordSql(buildQueryRecordSql(nextMappings, HTTP_SELECTED_TABLES, targetColumns));
+        setQueryRecordSql(buildQueryRecordSql(nextMappings, HTTP_SELECTED_TABLES));
         return nextMappings;
       });
       completeAndOpen("query", "target");
@@ -3230,7 +3200,7 @@ export function EtlCreatePage() {
     setLoadSqlColumns(extractedColumns);
     setColumnMappings((previousMappings) => {
       const nextMappings = buildDefaultColumnMappings(targetColumns, nextSourceColumns, previousMappings);
-      setQueryRecordSql(buildQueryRecordSql(nextMappings, commaSeparatedValues(connectionInfo.sourceTable), targetColumns));
+      setQueryRecordSql(buildQueryRecordSql(nextMappings, commaSeparatedValues(connectionInfo.sourceTable)));
       return nextMappings;
     });
     completeAndOpen("query", "target");

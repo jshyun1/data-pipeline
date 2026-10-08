@@ -15,11 +15,11 @@ public class CalciteSqlValidationService {
         LocalDateTime testedAt = LocalDateTime.now();
         String normalized = normalize(sql);
         if (normalized.isBlank()) {
-            return response(false, testedAt, started, "SQL을 입력하세요.");
+            return response(false, testedAt, started, "Calcite SQL을 입력하세요.");
         }
         try {
             SqlParser.create(normalized).parseQuery();
-            return response(true, testedAt, started, "SQL 문법 검증에 성공했습니다.");
+            return response(true, testedAt, started, "Calcite 문법 검증에 성공했습니다.");
         } catch (SqlParseException ex) {
             return response(false, testedAt, started, ex.getMessage());
         } catch (Exception ex) {

@@ -72,5 +72,3 @@ deploy/cerebro-certs/cerebro-proxy.crt
 
 # Claude Code 개인 설정(권한 허용 규칙 등) — 커밋하지 않는다
 .claude/settings.local.json
-
-/CEREBRO_ETL_UI_DESIGN_20261008
