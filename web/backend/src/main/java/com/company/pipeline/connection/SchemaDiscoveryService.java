@@ -117,8 +117,9 @@ public class SchemaDiscoveryService {
                                 java.sql.Types.NCHAR, java.sql.Types.NVARCHAR, java.sql.Types.LONGNVARCHAR -> true;
                         default -> false;
                     };
+                    boolean hasDefaultValue = rs.getString("COLUMN_DEF") != null;
                     columns.add(new ColumnMetadataResponse(name, rs.getString("TYPE_NAME"),
-                            primaryKeys.contains(name.toLowerCase()), maskable));
+                            primaryKeys.contains(name.toLowerCase()), maskable, hasDefaultValue));
                 }
             }
             return columns;
