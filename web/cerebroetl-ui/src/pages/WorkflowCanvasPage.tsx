@@ -783,9 +783,19 @@ export function WorkflowCanvasPage() {
     };
   });
   const subWorkflowHierarchy = buildWorkflowHierarchy(allWorkflows);
-  const subWorkflowTree = toSubWorkflowNodes(subWorkflowHierarchy);
+  // 최상단 한 칸을 씌워 ETL(«ETL Root») · CDC(«CDC Root») 구역과 같은 꼴로 둔다(2026-10-08 요청).
+  const subWorkflowNodes = toSubWorkflowNodes(subWorkflowHierarchy);
+  const subWorkflowTree: PaletteTreeNode[] = subWorkflowNodes.length === 0 ? [] : [{
+    key: "wf:all",
+    icon: "folder",
+    label: "Workflow Root",
+    title: "Workflow Root",
+    badge: subWorkflowNodes.length,
+    children: subWorkflowNodes,
+  }];
   // 최상단은 펼쳐 둔다(= 하위 워크플로우까지 바로 보인다).
-  const subWorkflowOpenKeys = subWorkflowTree.map((node) => node.key);
+  // 최상단과 그 바로 아래 가지는 펼친 채로 연다(최상단 한 칸을 씌우기 전과 같은 모습).
+  const subWorkflowOpenKeys = ["wf:all", ...subWorkflowNodes.map((node) => node.key)];
 
   /**
    * CDC 팔레트. CDC 관리 화면과 같은 계층으로 그린다.
@@ -852,8 +862,8 @@ export function WorkflowCanvasPage() {
     return [{
       key: "cdc:all",
       icon: "folder",
-      label: "전체 파이프라인",
-      title: "전체 파이프라인",
+      label: "CDC Root",
+      title: "CDC Root",
       badge: pipelines.length,
       children: [...roots.map((root) => root.node), ...ungrouped],
     }];

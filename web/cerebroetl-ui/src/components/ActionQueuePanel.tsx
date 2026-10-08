@@ -203,7 +203,6 @@ export function ActionQueuePanel() {
             </>
           )}
         </span>
-        <span className="alert-view-btn">상세보기 ▾</span>
       </button>
 
       <Modal

@@ -181,9 +181,39 @@ function WorkflowTreeView({
     );
   };
 
+  // 최상단 한 칸(«Workflow Root»)은 ETL(«ETL Root») · CDC(«CDC Root») 트리와 같은 꼴로 두려고 더했다(2026-10-08 요청).
+  // 목록 자체가 아니라 트리의 뿌리이므로 고르는 대상이 아니고, 접기 · 펼치기만 한다.
+  const [rootOpen, setRootOpen] = useState(true);
+  const total = (function count(list: WorkflowTreeItem[]): number {
+    return list.reduce((sum, item) => sum + 1 + count(item.children), 0);
+  })(items);
   return (
     <div role="tree" aria-label="워크플로우 계층" className="tree-root">
-      {items.map(renderNode)}
+      <div className="tree-node" role="treeitem" aria-expanded={rootOpen} aria-selected={false}>
+        <div className="tree-item-row" tabIndex={0}
+             onClick={() => setRootOpen((open) => !open)}
+             onKeyDown={(event) => {
+               if (event.key === "Enter" || event.key === " ") {
+                 event.preventDefault();
+                 setRootOpen((open) => !open);
+               }
+             }}>
+          <button type="button" className={`tree-toggle-arrow${rootOpen ? " open" : ""}`}
+                  aria-label={rootOpen ? "전체 접기" : "전체 펼치기"}
+                  onClick={(event) => { event.stopPropagation(); setRootOpen((open) => !open); }}
+                  onKeyDown={(event) => event.stopPropagation()}>
+            ▶
+          </button>
+          <WfIcon name="folder" size={15} className="tree-node-icon" />
+          <span className="tree-node-label">Workflow Root</span>
+          <span className="tree-node-badge" title="워크플로우 수">{total}</span>
+        </div>
+        {rootOpen && (
+          <div className="tree-sub-group" role="group">
+            {items.map(renderNode)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
