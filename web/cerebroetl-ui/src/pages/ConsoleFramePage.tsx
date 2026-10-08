@@ -92,8 +92,6 @@ const NIFI_LOCK_READONLY_BEFORE_ATTRIBUTE = "data-cerebro-lock-readonly-before";
 const NIFI_LOCK_DIALOG_ATTRIBUTE = "data-cerebro-readonly-lock-dialog";
 const NIFI_MINI_TOOLBAR_ID = "cerebro-nifi-mini-toolbar";
 const LEGACY_NIFI_MINI_CREATE_TOOLBAR_CLEANUP_ATTRIBUTE = "data-cerebro-mini-create-toolbar-cleanup";
-const NIFI_PROCESS_GROUP_CARD_ATTRIBUTE = "data-cerebro-process-group-card";
-const NIFI_PROCESS_GROUP_CARD_LAYOUT_ATTRIBUTE = "data-cerebro-process-group-card-layout";
 const NIFI_PROCESSOR_LOCK_HEARTBEAT_MS = 20_000;
 const NIFI_DETAIL_PANEL_DEFAULT_WIDTH = 285;
 const NIFI_DETAIL_PANEL_MIN_WIDTH = 235;
@@ -1264,238 +1262,6 @@ function hideToolChrome(frame: HTMLIFrameElement) {
     // 문서가 아직 교체 중이면 다음 iframe load에서 다시 시도한다.
     return false;
   }
-}
-
-function svgElement(doc: Document, tagName: string) {
-  return doc.createElementNS("http://www.w3.org/2000/svg", tagName);
-}
-
-function numericAttribute(element: Element, name: string) {
-  const value = element.getAttribute(name);
-  if (!value) {
-    return null;
-  }
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function svgTextCenterY(element: Element) {
-  const y = numericAttribute(element, "y");
-  if (y !== null) {
-    return y;
-  }
-  const box = (element as SVGGraphicsElement).getBBox?.();
-  return box ? box.y + box.height / 2 : 0;
-}
-
-function normalizeProcessGroupMetricLabel(value: string) {
-  const normalized = value.replace(/\s+/g, " ").trim().toLowerCase();
-  if (normalized === "queued" || normalized === "대기") {
-    return "queued";
-  }
-  if (normalized === "in" || normalized.startsWith("in ")) {
-    return "in";
-  }
-  if (
-    normalized.includes("read") ||
-    normalized.includes("write") ||
-    normalized.includes("읽기") ||
-    normalized.includes("쓰기")
-  ) {
-    return "readWrite";
-  }
-  if (normalized === "out" || normalized.startsWith("out ")) {
-    return "out";
-  }
-  return null;
-}
-
-function processGroupMetricRows(group: Element) {
-  const rowByKey = new Map<string, number>();
-  group.querySelectorAll("text").forEach((text) => {
-    const key = normalizeProcessGroupMetricLabel(text.textContent ?? "");
-    if (key && !rowByKey.has(key)) {
-      rowByKey.set(key, svgTextCenterY(text));
-    }
-  });
-  return ["queued", "in", "readWrite", "out"]
-    .map((key) => ({ key, y: rowByKey.get(key) }))
-    .filter((row): row is { key: string; y: number } => typeof row.y === "number")
-    .sort((a, b) => a.y - b.y);
-}
-
-function processGroupHeaderHeight(group: Element, box: DOMRect) {
-  const header = group.querySelector(
-    "rect.process-group-banner, rect.remote-process-group-banner, rect.component-header, rect.header",
-  );
-  const height = header ? numericAttribute(header, "height") : null;
-  return Math.max(24, Math.min(42, height ?? Math.round(box.height * 0.19)));
-}
-
-function createProcessGroupCardRect(
-  doc: Document,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  fill: string,
-  stroke = "none",
-) {
-  const rect = svgElement(doc, "rect");
-  rect.setAttribute("x", x.toFixed(1));
-  rect.setAttribute("y", y.toFixed(1));
-  rect.setAttribute("width", Math.max(0, width).toFixed(1));
-  rect.setAttribute("height", Math.max(0, height).toFixed(1));
-  rect.setAttribute("fill", fill);
-  rect.setAttribute("stroke", stroke);
-  rect.setAttribute("shape-rendering", "crispEdges");
-  return rect;
-}
-
-function createProcessGroupCardLine(doc: Document, x1: number, y1: number, x2: number, y2: number) {
-  const line = svgElement(doc, "line");
-  line.setAttribute("x1", x1.toFixed(1));
-  line.setAttribute("y1", y1.toFixed(1));
-  line.setAttribute("x2", x2.toFixed(1));
-  line.setAttribute("y2", y2.toFixed(1));
-  line.setAttribute("stroke", "#edf2f7");
-  line.setAttribute("stroke-width", "1");
-  line.setAttribute("shape-rendering", "crispEdges");
-  return line;
-}
-
-function decorateProcessGroupMetricTimeBadges(group: Element, layer: SVGGElement, doc: Document) {
-  group.querySelectorAll("text.stats-info, text.refresh-interval, text.status-history").forEach((text) => {
-    const value = (text.textContent ?? "").trim();
-    if (!/\b\d+\s*(min|sec|s|m)\b/i.test(value)) {
-      return;
-    }
-    const textBox = (text as SVGGraphicsElement).getBBox?.();
-    if (!textBox) {
-      return;
-    }
-    const badge = createProcessGroupCardRect(doc, textBox.x - 5, textBox.y - 2, textBox.width + 10, textBox.height + 4, "#f1f5f9", "#e2e8f0");
-    badge.setAttribute("rx", "4");
-    layer.appendChild(badge);
-  });
-}
-
-function alignProcessGroupMetricText(group: Element, rows: Array<{ key: string; y: number }>, x: number, width: number, labelColumnWidth: number) {
-  group.querySelectorAll("text").forEach((text) => {
-    const centerY = svgTextCenterY(text);
-    const row = rows.find((item) => Math.abs(item.y - centerY) <= 10);
-    if (!row) {
-      return;
-    }
-    const label = normalizeProcessGroupMetricLabel(text.textContent ?? "");
-    const isTimeBadge = /\b\d+\s*(min|sec|s|m)\b/i.test((text.textContent ?? "").trim());
-    text.setAttribute("dominant-baseline", "middle");
-    text.setAttribute("y", row.y.toFixed(1));
-    if (label) {
-      text.setAttribute("x", (x + 12).toFixed(1));
-      text.setAttribute("text-anchor", "start");
-      return;
-    }
-    if (isTimeBadge) {
-      text.setAttribute("x", (x + width - 12).toFixed(1));
-      text.setAttribute("text-anchor", "end");
-      return;
-    }
-    text.setAttribute("x", (x + labelColumnWidth + 12).toFixed(1));
-    text.setAttribute("text-anchor", "start");
-  });
-}
-
-function decorateProcessGroupCard(group: Element, doc: Document) {
-  const svgGroup = group as SVGGraphicsElement;
-  if (typeof svgGroup.getBBox !== "function") {
-    return;
-  }
-  group.querySelectorAll(`[${NIFI_PROCESS_GROUP_CARD_ATTRIBUTE}="true"]`).forEach((element) => element.remove());
-  let box: DOMRect;
-  try {
-    box = svgGroup.getBBox();
-  } catch {
-    return;
-  }
-  if (!box.width || !box.height || box.width < 120 || box.height < 80) {
-    return;
-  }
-
-  const layer = svgElement(doc, "g") as SVGGElement;
-  layer.setAttribute(NIFI_PROCESS_GROUP_CARD_ATTRIBUTE, "true");
-  layer.setAttribute("pointer-events", "none");
-
-  const x = box.x;
-  const y = box.y;
-  const width = box.width;
-  const height = box.height;
-  const headerHeight = processGroupHeaderHeight(group, box);
-  const footerHeight = Math.min(20, Math.max(14, height * 0.12));
-  const rows = processGroupMetricRows(group);
-
-  layer.appendChild(createProcessGroupCardRect(doc, x + 0.5, y + headerHeight, width - 1, Math.max(0, height - headerHeight - footerHeight), "#ffffff"));
-
-  rows.forEach((row, index) => {
-    const nextY = rows[index + 1]?.y;
-    const previousY = rows[index - 1]?.y;
-    const top = Math.max(y + headerHeight, previousY === undefined ? row.y - 12 : (previousY + row.y) / 2);
-    const bottom = Math.min(y + height - footerHeight, nextY === undefined ? row.y + 12 : (row.y + nextY) / 2);
-    layer.appendChild(createProcessGroupCardRect(doc, x + 0.5, top, width - 1, Math.max(18, bottom - top), index % 2 === 0 ? "#ffffff" : "#fbfdff"));
-    layer.appendChild(createProcessGroupCardLine(doc, x + 0.5, bottom, x + width - 0.5, bottom));
-  });
-
-  if (rows.length > 0) {
-    const labelColumnWidth = Math.min(96, Math.max(72, width * 0.31));
-    layer.appendChild(createProcessGroupCardLine(doc, x + labelColumnWidth, y + headerHeight, x + labelColumnWidth, y + height - footerHeight));
-    alignProcessGroupMetricText(group, rows, x, width, labelColumnWidth);
-  }
-
-  layer.appendChild(createProcessGroupCardRect(doc, x + 0.5, y + height - footerHeight, width - 1, footerHeight - 0.5, "#f8fafc", "#f1f5f9"));
-  decorateProcessGroupMetricTimeBadges(group, layer, doc);
-  group.insertBefore(layer, group.querySelector("text"));
-}
-
-function installProcessGroupCardLayout(frame: HTMLIFrameElement) {
-  const doc = iframeDocument(frame);
-  if (!doc) {
-    return;
-  }
-  const frameWindow = doc.defaultView;
-  const Observer = frameWindow?.MutationObserver ?? MutationObserver;
-  let observer: MutationObserver | null = null;
-  const observe = () => {
-    observer?.observe(doc.documentElement, { childList: true, subtree: true, characterData: true });
-  };
-  const run = () => {
-    observer?.disconnect();
-    doc
-      .querySelectorAll("svg.canvas-svg g.process-group, svg.canvas-svg g.component.process-group")
-      .forEach((group) => decorateProcessGroupCard(group, doc));
-    observe();
-  };
-  run();
-  if (doc.documentElement.getAttribute(NIFI_PROCESS_GROUP_CARD_LAYOUT_ATTRIBUTE) === "true") {
-    return;
-  }
-  doc.documentElement.setAttribute(NIFI_PROCESS_GROUP_CARD_LAYOUT_ATTRIBUTE, "true");
-  let frameId: number | null = null;
-  observer = new Observer(() => {
-    if (frameId !== null) {
-      return;
-    }
-    frameId = (frameWindow ?? window).requestAnimationFrame(() => {
-      frameId = null;
-      run();
-    });
-  });
-  observe();
-  frameWindow?.addEventListener("beforeunload", () => {
-    if (frameId !== null) {
-      frameWindow.cancelAnimationFrame(frameId);
-    }
-    observer?.disconnect();
-  }, { once: true });
 }
 
 function cleanupLegacyNifiMiniCreateToolbars(frame: HTMLIFrameElement) {
@@ -5354,7 +5120,6 @@ export function ConsoleFramePage({
         hideToolChrome(frame);
         patchKoreanTooltips(frame);
         installNifiPanelLayout(frame);
-        installProcessGroupCardLayout(frame);
       }
       setFrameChromeReady(true);
     }, 1500);
@@ -5443,7 +5208,6 @@ export function ConsoleFramePage({
       chromeHidden = hideToolChrome(frame);
       patchKoreanTooltips(frame);
       installNifiPanelLayout(frame);
-      installProcessGroupCardLayout(frame);
     }
     installProcessorEditReadonlyGuard(frame, processorEditLockFrameState);
     clickNifiMenuItem(frame, nifiAutoOpenMenuTitles);
@@ -5463,7 +5227,6 @@ export function ConsoleFramePage({
           hideToolChrome(frame);
           patchKoreanTooltips(frame);
           installNifiPanelLayout(frame);
-          installProcessGroupCardLayout(frame);
           setFrameChromeReady(true);
         }
       }, chromeHidden ? 450 : 650);

@@ -82,7 +82,13 @@ export async function checkCdcTableReadiness(connectionId: number, schema: strin
   return unwrap(res.data);
 }
 
-export interface ColumnMetadataResponse { name: string; dataType: string; primaryKey: boolean; maskable: boolean }
+export interface ColumnMetadataResponse {
+  name: string;
+  dataType: string;
+  primaryKey: boolean;
+  maskable: boolean;
+  hasDefaultValue?: boolean;
+}
 
 export async function listConnectionColumns(connectionId: number, schema: string, table: string): Promise<ColumnMetadataResponse[]> {
   const res = await apiClient.get<ApiResponse<ColumnMetadataResponse[]>>(`/connections/${connectionId}/columns`, {
