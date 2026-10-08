@@ -4894,67 +4894,84 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
               <Alert className="nifi-ai-alert" type="error" showIcon message={aiError} />
             ) : null}
             <div className="nifi-ai-conversation">
+              {defaultAiReport || (aiMessages.length === 0 && groupJobBriefs.length > 0) || (aiMessages.length === 0 && groupJobBriefs.length === 0) ? (
+                <div className="nifi-ai-message user nifi-ai-opening-message">
+                  <span>나</span>
+                  <div className="nifi-ai-bubble">etl 정보 요약해줘</div>
+                </div>
+              ) : null}
               {isJobGroup && displayJob && defaultAiReport ? (
-                <div className="nifi-ai-empty nifi-ai-job-report nifi-ai-pinned-context">
-                  <section>
-                    <strong>한 줄 요약</strong>
-                    <p>{defaultAiReport.summary}</p>
-                  </section>
-                  <section>
-                    <strong>구성</strong>
-                    <ul>
-                      {defaultAiReport.composition.map((line) => (
-                        <li key={line}>{line}</li>
-                      ))}
-                    </ul>
-                  </section>
-                  <section>
-                    <strong>지금 상태</strong>
-                    <ul>
-                      {defaultAiReport.current.map((line) => (
-                        <li key={line}>{line}</li>
-                      ))}
-                    </ul>
-                  </section>
-                  <section>
-                    <strong>등록 및 변경</strong>
-                    <dl className="nifi-ai-report-meta">
-                      {defaultAiReport.change.map(([label, value]) => (
-                        <div key={label}>
-                          <dt>{label}</dt>
-                          <dd>{value}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </section>
+                <div className="nifi-ai-message assistant nifi-ai-opening-message">
+                  <span>AI</span>
+                  <div className="nifi-ai-bubble nifi-ai-job-report">
+                    <section>
+                      <strong>한 줄 요약</strong>
+                      <p>{defaultAiReport.summary}</p>
+                    </section>
+                    <section>
+                      <strong>구성</strong>
+                      <ul>
+                        {defaultAiReport.composition.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
+                    </section>
+                    <section>
+                      <strong>지금 상태</strong>
+                      <ul>
+                        {defaultAiReport.current.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
+                    </section>
+                    <section>
+                      <strong>등록 및 변경</strong>
+                      <dl className="nifi-ai-report-meta">
+                        {defaultAiReport.change.map(([label, value]) => (
+                          <div key={label}>
+                            <dt>{label}</dt>
+                            <dd>{value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </section>
+                  </div>
                 </div>
               ) : null}
               {aiMessages.length === 0 && !defaultAiReport && groupJobBriefs.length > 0 ? (
-                <div className="nifi-ai-empty">
-                  <strong>이 그룹의 Job 상위 5개</strong>
-                  <span>{displayPath}</span>
-                  <ol className="nifi-ai-job-brief-list">
-                    {groupJobBriefs.map((item) => (
-                      <li key={item.id}>
-                        <b>{item.name}</b>
-                        <span>{item.line1}</span>
-                        <span>{item.line2}</span>
-                      </li>
-                    ))}
-                  </ol>
+                <div className="nifi-ai-message assistant nifi-ai-opening-message">
+                  <span>AI</span>
+                  <div className="nifi-ai-bubble nifi-ai-empty">
+                    <strong>이 그룹의 Job 상위 5개</strong>
+                    <span>{displayPath}</span>
+                    <ol className="nifi-ai-job-brief-list">
+                      {groupJobBriefs.map((item) => (
+                        <li key={item.id}>
+                          <b>{item.name}</b>
+                          <span>{item.line1}</span>
+                          <span>{item.line2}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
                 </div>
               ) : null}
               {aiMessages.length === 0 && !defaultAiReport && groupJobBriefs.length === 0 ? (
-                <div className="nifi-ai-empty">
-                  <strong>현재 프로세스 그룹</strong>
-                  <span>{displayPath}</span>
+                <div className="nifi-ai-message assistant nifi-ai-opening-message">
+                  <span>AI</span>
+                  <div className="nifi-ai-bubble nifi-ai-empty">
+                    <strong>현재 프로세스 그룹</strong>
+                    <span>{displayPath}</span>
+                  </div>
                 </div>
               ) : null}
               {aiMessages.length > 0 ? (
                 aiMessages.map((entry, index) => (
                   <div key={`${entry.role}-${index}`} className={`nifi-ai-message ${entry.role}`}>
                     <span>{entry.role === "user" ? "나" : "AI"}</span>
-                    <p>{entry.role === "assistant" ? renderAssistantText(entry.content) : entry.content}</p>
+                    <div className="nifi-ai-bubble">
+                      {entry.role === "assistant" ? renderAssistantText(entry.content) : entry.content}
+                    </div>
                   </div>
                 ))
               ) : null}

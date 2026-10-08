@@ -6665,7 +6665,7 @@ button.alert-compact-trigger.is-clear:hover {
 
 .nifi-ai-job-report {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   color: #334155;
 }
 
@@ -6703,6 +6703,8 @@ button.alert-compact-trigger.is-clear:hover {
 .nifi-ai-job-report p {
   margin: 0 0 0 12px;
   color: #111827;
+  font-size: 12.5px;
+  line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
@@ -6717,6 +6719,9 @@ button.alert-compact-trigger.is-clear:hover {
 .nifi-ai-job-report li {
   position: relative;
   padding-left: 10px;
+  color: #111827;
+  font-size: 12.5px;
+  line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
@@ -6784,13 +6789,17 @@ button.alert-compact-trigger.is-clear:hover {
   max-width: 100%;
 }
 
+.nifi-ai-opening-message {
+  margin-bottom: 0;
+}
+
 .nifi-ai-message span {
   color: #64748b;
   font-size: 11px;
   font-weight: 700;
 }
 
-.nifi-ai-message p {
+.nifi-ai-message .nifi-ai-bubble {
   margin: 0;
   padding: 8px 10px;
   border: 1px solid #e2e8f0;
@@ -6803,9 +6812,14 @@ button.alert-compact-trigger.is-clear:hover {
   white-space: pre-wrap;
 }
 
-.nifi-ai-message.user p {
+.nifi-ai-message.user .nifi-ai-bubble {
   border-color: #ccfbf1;
   background: #f0fdfa;
+}
+
+.nifi-ai-message.assistant .nifi-ai-job-report,
+.nifi-ai-message.assistant .nifi-ai-empty {
+  white-space: normal;
 }
 
 .nifi-ai-loading {
