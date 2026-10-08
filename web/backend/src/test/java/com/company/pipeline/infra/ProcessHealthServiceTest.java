@@ -97,7 +97,7 @@ class ProcessHealthServiceTest {
         var response = service.collect();
 
         assertThat(group(response.groups(), "CDC").status()).isEqualTo(ProcessStatus.DOWN);
-        assertThat(item(response.groups(), "CDC", "Kafka Broker").detail()).isEqualTo("kafka:9092");
+        assertThat(item(response.groups(), "CDC", "CDC Broker").detail()).isEqualTo("kafka:9092");
         assertThat(group(response.groups(), "NIFI").status()).isEqualTo(ProcessStatus.UP);
         assertThat(group(response.groups(), "AIRFLOW").status()).isEqualTo(ProcessStatus.UP);
     }
@@ -108,7 +108,7 @@ class ProcessHealthServiceTest {
 
         var response = service.collect();
 
-        assertThat(item(response.groups(), "CDC", "Kafka Connect Worker").status()).isEqualTo(ProcessStatus.DOWN);
+        assertThat(item(response.groups(), "CDC", "CDC Connect Worker").status()).isEqualTo(ProcessStatus.DOWN);
         assertThat(item(response.groups(), "CDC", "Source Connector (Debezium)").status())
                 .isEqualTo(ProcessStatus.UNKNOWN);
         assertThat(item(response.groups(), "CDC", "Sink Connector (JDBC)").status()).isEqualTo(ProcessStatus.UNKNOWN);
@@ -150,8 +150,8 @@ class ProcessHealthServiceTest {
 
         var response = service.collect();
 
-        assertThat(item(response.groups(), "NIFI", "NiFi 서비스").status()).isEqualTo(ProcessStatus.DOWN);
-        assertThat(item(response.groups(), "NIFI", "NiFi 플로우 처리").status()).isEqualTo(ProcessStatus.UNKNOWN);
+        assertThat(item(response.groups(), "NIFI", "ETL 서비스").status()).isEqualTo(ProcessStatus.DOWN);
+        assertThat(item(response.groups(), "NIFI", "ETL 플로우 처리").status()).isEqualTo(ProcessStatus.UNKNOWN);
     }
 
     @Test
@@ -164,7 +164,7 @@ class ProcessHealthServiceTest {
 
         var response = service.collect();
 
-        ProcessItem flow = item(response.groups(), "NIFI", "NiFi 플로우 처리");
+        ProcessItem flow = item(response.groups(), "NIFI", "ETL 플로우 처리");
         assertThat(flow.status()).isEqualTo(ProcessStatus.DEGRADED);
         assertThat(flow.detail()).contains("최근 오류 1건");
     }
@@ -331,6 +331,6 @@ class ProcessHealthServiceTest {
 
         assertThat(item(response.groups(), "CDC", "Source Connector (Debezium)").detail())
                 .isEqualTo("등록된 커넥터 없음");
-        assertThat(item(response.groups(), "CDC", "Kafka Connect Worker").status()).isEqualTo(ProcessStatus.UP);
+        assertThat(item(response.groups(), "CDC", "CDC Connect Worker").status()).isEqualTo(ProcessStatus.UP);
     }
 }

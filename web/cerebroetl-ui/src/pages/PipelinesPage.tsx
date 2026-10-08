@@ -307,7 +307,8 @@ export function PipelinesPage() {
     const ungrouped = (byGroup.get(null) ?? []).map(pipelineNode);
     return {
       key: "all",
-      label: "전체 파이프라인",
+      // 최상단 이름은 ETL 트리(«ETL Root»)와 같은 꼴로 맞췄다(2026-10-08 요청).
+      label: "CDC Root",
       kind: "root",
       count: (pipelines ?? []).length,
       children: [...rootGroups, ...ungrouped],

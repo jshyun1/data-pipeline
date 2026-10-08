@@ -4151,20 +4151,6 @@ button.alert-compact-trigger.is-clear:hover {
   gap: 6px;
 }
 
-.alert-view-btn {
-  padding-left: 6px;
-  border-left: 1px solid #fecaca;
-  color: #dc2626;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.alert-compact-trigger.is-clear .alert-view-btn {
-  border-left-color: #bbf7d0;
-  color: #15803d;
-}
-
 .pill-badge {
   padding: 2px 9px;
   display: inline-flex;

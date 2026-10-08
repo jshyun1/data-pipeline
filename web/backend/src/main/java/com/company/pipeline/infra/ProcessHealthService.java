@@ -34,7 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 /**
- * 대시보드 인프라 구역의 "주요 프로세스 현황". CDC/NiFi/Airflow 각각에서 떠 있어야 하는
+ * 대시보드 인프라 구역의 "주요 프로세스 현황". CDC/ETL/Workflow 각각에서 떠 있어야 하는
  * 구성요소를 직접 물어본다.
  *
  * <p>한 축이 죽어도 나머지 축은 그대로 보여야 하므로 모든 조회는 개별적으로 감싸고,
@@ -89,7 +89,7 @@ public class ProcessHealthService {
 
         boolean brokerHealthy = kafkaBrokerHealthChecker.isHealthy();
         items.add(new ProcessItem(
-                "Kafka Broker",
+                "CDC Broker",
                 brokerHealthy ? ProcessStatus.UP : ProcessStatus.DOWN,
                 kafkaBrokerProperties.bootstrapServers()));
 
@@ -100,7 +100,7 @@ public class ProcessHealthService {
             log.debug("Kafka Connect 워커 조회 실패: {}", ex.getMessage());
         }
         items.add(new ProcessItem(
-                "Kafka Connect Worker",
+                "CDC Connect Worker",
                 workerInfo != null ? ProcessStatus.UP : ProcessStatus.DOWN,
                 workerInfo != null ? "버전 " + workerInfo.version() : "REST 응답 없음"));
 
@@ -195,12 +195,12 @@ public class ProcessHealthService {
         }
 
         if (flow == null) {
-            items.add(new ProcessItem("NiFi 서비스", ProcessStatus.DOWN, "REST 응답 없음"));
-            items.add(new ProcessItem("NiFi 플로우 처리", ProcessStatus.UNKNOWN, "NiFi 응답 없음"));
+            items.add(new ProcessItem("ETL 서비스", ProcessStatus.DOWN, "REST 응답 없음"));
+            items.add(new ProcessItem("ETL 플로우 처리", ProcessStatus.UNKNOWN, "ETL 응답 없음"));
         } else {
             FlowCounts counts = countFlow(flow);
             items.add(new ProcessItem(
-                    "NiFi 서비스",
+                    "ETL 서비스",
                     ProcessStatus.UP,
                     "프로세스 그룹 %d · 프로세서 %d".formatted(counts.groups(), counts.processors())));
 
@@ -210,7 +210,7 @@ public class ProcessHealthService {
                     : errorBulletins > 0 ? ProcessStatus.DEGRADED : ProcessStatus.UP;
             String flowDetail = "활성 스레드 %d".formatted(counts.activeThreads())
                     + (errorBulletins == null ? " · 오류 확인 불가" : " · 최근 오류 %d건".formatted(errorBulletins));
-            items.add(new ProcessItem("NiFi 플로우 처리", flowStatus, flowDetail));
+            items.add(new ProcessItem("ETL 플로우 처리", flowStatus, flowDetail));
         }
 
         items.add(loadCollectorItem());
@@ -312,7 +312,7 @@ public class ProcessHealthService {
     private ProcessGroup airflowGroup() {
         Optional<AirflowHealthResponse> health = airflowHealthClient.getHealth();
         if (health.isEmpty()) {
-            return ProcessGroup.of("AIRFLOW", "Airflow", List.of(
+            return ProcessGroup.of("AIRFLOW", "Workflow", List.of(
                     new ProcessItem("API 서버", ProcessStatus.DOWN, "health 응답 없음"),
                     new ProcessItem("스케줄러", ProcessStatus.UNKNOWN, "API 서버 응답 없음"),
                     new ProcessItem("DAG 프로세서", ProcessStatus.UNKNOWN, "API 서버 응답 없음")));
@@ -336,7 +336,7 @@ public class ProcessHealthService {
                     response.triggerer().latestHeartbeat()));
         }
 
-        return ProcessGroup.of("AIRFLOW", "Airflow", items);
+        return ProcessGroup.of("AIRFLOW", "Workflow", items);
     }
 
     private ProcessItem componentItem(String name, String status, String heartbeat) {

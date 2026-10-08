@@ -958,11 +958,12 @@ function LogCreateWizard({ modeSwitch }: { modeSwitch: ReactNode }) {
 
 export function CdcCreatePage() {
   const [activeTab, setActiveTab] = useState("cdc");
-  // 디자인 작업물 cdc-create.html: 탭 대신 윗 카드 왼쪽의 모드 버튼으로 CDC 생성 ↔ 로그파일 생성을 바꾼다.
+  // 디자인 작업물 cdc-create.html: 탭 대신 윗 카드 왼쪽의 모드 버튼으로 두 종류를 바꾼다
+  // (이름은 하는 일로: «DB → DB 적재» · «로그파일 적재», 2026-10-08 요청).
   // 예전 탭(destroyInactiveTabPane)과 같이 바꾸면 다른 쪽 위저드는 내려가고 입력값도 비워진다.
   const modeSwitch = (
     <div className="std-mode-switch" role="tablist" aria-label="생성 종류">
-      {([["cdc", "grid", "CDC 생성"], ["log", "doc", "로그파일 생성"]] as const).map(([key, icon, text]) => (
+      {([["cdc", "grid", "DB → DB 적재"], ["log", "doc", "로그파일 적재"]] as const).map(([key, icon, text]) => (
         <button key={key} type="button" role="tab" aria-selected={activeTab === key}
                 className={activeTab === key ? "is-active" : undefined} onClick={() => setActiveTab(key)}>
           <WfIcon name={icon} size={14} />
@@ -972,7 +973,7 @@ export function CdcCreatePage() {
     </div>
   );
   return (
-    <StdPage menu="cdc" title={activeTab === "cdc" ? "CDC 생성" : "로그파일 생성"} icon="database" className="cdc-create-page">
+    <StdPage menu="cdc" title={activeTab === "cdc" ? "DB → DB 적재" : "로그파일 적재"} icon="database" className="cdc-create-page">
       {activeTab === "cdc" ? <CdcCreateWizard modeSwitch={modeSwitch} /> : <LogCreateWizard modeSwitch={modeSwitch} />}
     </StdPage>
   );
