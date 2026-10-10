@@ -3205,3 +3205,32 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
   - 상태줄은 원래 배치(running x 86), 이름 폭은 300 그대로다.
 - 확인하지 못한 것: 실행 중 스레드 · 알림 · 주석 · «제한/P» 가 뜬 상태는 로컬에서 만들지 않아 화면으로 보지 못했다. 좌표와 선택자만 확인했다.
 - MSA 반영은 아직이다. NiFi 이미지를 다시 빌드해야 하고, 컨트롤러 서비스 저장 · 복원을 같이 해야 한다.
+
+## 92. ETL 관리 우측 속성창 - 끌어서 폭 조절이 멈추던 문제 (2026-10-10)
+
+**요청**
+- ETL 관리 화면 우측 속성창의 왼쪽 세로선을 끌어 폭을 바꾸는 기능이 제대로 동작하지 않는다.
+- 워크플로우 로그 화면의 속성창은 같은 기능이 정상이다.
+
+**원인**
+- 두 화면의 끌기 코드는 같다. 손잡이 mousedown 에서 window 에 mousemove · mouseup 을 건다(ETL 관리는 `startDetailPanelResize`, 워크플로우 로그는 `useSideDock`).
+- 다른 점은 ETL 관리 가운데에 NiFi 화면(iframe)이 있다는 것이다.
+- 실제 마우스로 빨리 끌면, 커서가 손잡이보다 앞서 iframe 위로 넘어간다. 그러면 mousemove · mouseup 이 iframe 문서로 가 버린다.
+- Chrome 151(Playwright, 실제 Chrome 모드)에서 재현했다. 손잡이를 누르고 한 번에 300px 왼쪽(iframe 한가운데)으로 옮겼다.
+  - 부모 창 mousemove 1건, iframe 3건이었다. 폭은 285 그대로였다(끌기가 멈춘다).
+  - iframe 위에서 버튼을 놓으면 부모가 mouseup 을 못 받는다. 그래서 `is-resizing-console-panel` 이 남는다.
+  - 그 뒤 버튼 없이 마우스만 움직여도 폭이 바뀌었다(285 → 235, 끌기가 안 끝난다).
+- 4px · 20px 씩 조금씩 끄는 시험은 손잡이가 커서를 따라와서 통과한다. 10/6 의 손잡이 폭 넓히기(831395c «etl 관리 패널 너비 조절_v1»)로는 이 문제가 풀리지 않는다.
+- 워크플로우 로그 화면은 iframe 이 없어서 문제가 없었다.
+
+**수정**(`web/cerebroetl-ui/src/index.css`)
+- `.is-resizing-console-panel .console-frame { pointer-events: none; }` 를 넣었다.
+- 끄는 동안(body 에 그 class 가 있는 동안)만 iframe 이 마우스를 받지 않는다. 그래서 이벤트가 부모 창으로 온다.
+- 놓으면 class 가 빠지고 NiFi 캔버스는 다시 마우스를 받는다.
+
+**확인(로컬, cerebroetl-ui 재빌드)**
+- 같은 시험(한 번에 300px → 더 움직임 → 놓기)
+  - 폭이 285 → 585 → 645 로 커서를 따라갔다. 부모 mousemove 4건, iframe 0건이었다.
+  - 놓은 뒤 끌기 상태가 남지 않았다. 버튼 없이 움직여도 폭은 645 그대로였다.
+- 놓은 뒤 캔버스 위에서 움직이면 iframe 이 mousemove 를 다시 받는다(`pointer-events: auto`).
+- 조금씩 끄는 기존 시험(넓히기 285→485, 좁히기 485→365)과 워크플로우 로그 화면 끌기는 전과 같다.
