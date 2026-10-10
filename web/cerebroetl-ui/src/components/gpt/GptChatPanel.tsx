@@ -23,6 +23,7 @@ export interface GptChatPanelProps {
  * 대화에는 «무엇을 물어서 나온 답인지»가 보이게 한다.
  */
 const OPENING_ASK: Partial<Record<LlmTargetType, string>> = {
+  ETL_ASSISTANT: "ETL 정보 요약해줘",
   CDC_PIPELINE: "CDC 정보 요약해줘",
   WORKFLOW: "워크플로우 정보 요약해줘",
   WORKFLOW_DRAFT: "워크플로우 정보 요약해줘",
@@ -30,7 +31,7 @@ const OPENING_ASK: Partial<Record<LlmTargetType, string>> = {
 };
 
 /**
- * 속성창 GPT 탭(설계 5-2). CDC 파이프라인 상세 창 · 워크플로우 캔버스 노드 속성창이 같이 쓴다.
+ * 속성창 GPT 탭(설계 5-2). CDC 파이프라인 상세 창 · 워크플로우 캔버스 노드 속성창 · ETL 관리 속성창(2026-10-10)이 같이 쓴다.
  *
  * <p>대화는 저장하지 않는다 - 창을 닫거나 다른 대상을 고르면 사라진다(부모가 대상별 key 로 새로 그린다).
  * 대화가 길어지면 서버가 앞 문답을 요약해 이어 가고, 요약된 부분은 흐리게 남겨 둔다.

@@ -10451,9 +10451,11 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   background: #ffffff;
 }
 
-/* 속성창 AI 어시스턴트(GptChatPanel): 남은 높이를 다 쓰고, 대화 칸이 늘어난다 */
+/* 속성창 AI 어시스턴트(GptChatPanel): 남은 높이를 다 쓰고, 대화 칸이 늘어난다.
+ * ETL 관리 속성창(.nifi-ai-panel-host, 2026-10-10)도 같은 대화 창이다 - 감싸개는 display: contents 라 배치는 속성창이 그대로 맡는다. */
 .wf-detail-ai > .gpt-chat.nifi-ai-panel,
-.cdc-detail-shell > .gpt-chat.nifi-ai-panel {
+.cdc-detail-shell > .gpt-chat.nifi-ai-panel,
+.nifi-ai-panel-host > .gpt-chat.nifi-ai-panel {
   flex: 1 1 auto;
   min-height: 0;
   gap: 10px;

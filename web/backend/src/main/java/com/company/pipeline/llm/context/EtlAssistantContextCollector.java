@@ -1,7 +1,11 @@
 package com.company.pipeline.llm.context;
 
 import com.company.pipeline.jobcatalog.EtlJob;
+import com.company.pipeline.jobcatalog.EtlJobLink;
+import com.company.pipeline.jobcatalog.EtlJobLinkRepository;
 import com.company.pipeline.jobcatalog.EtlJobRepository;
+import com.company.pipeline.jobcatalog.EtlJobRun;
+import com.company.pipeline.jobcatalog.EtlJobRunRepository;
 import com.company.pipeline.jobcatalog.EtlJobStep;
 import com.company.pipeline.jobcatalog.EtlJobStepRepository;
 import com.company.pipeline.nifi.NifiProcessGroupMetadata;
@@ -12,6 +16,7 @@ import com.company.pipeline.workflow.EtlWorkflow;
 import com.company.pipeline.workflow.EtlWorkflowNode;
 import com.company.pipeline.workflow.EtlWorkflowNodeRepository;
 import com.company.pipeline.workflow.EtlWorkflowRepository;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -31,6 +36,10 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>JOB이 선택되면 해당 JOB만 좁게 수집한다. 일반 그룹이면 질문 의도를 규칙 기반으로 분류하고,
  * 선택 그룹 하위 트리 요약과 질문 관련 JOB 상세만 선별해 붙인다.
+ *
+ * <p>2026-10-10: 화면이 워크플로우 속성창과 같은 대화 창(탭을 열면 GPT 가 요약)으로 바뀌었다. 예전 화면 고정 보고서에 있던 값
+ * (소스 · 타깃 · 처리 흐름 · 스케줄 · 최근 5일 실행 · 소요 시간)은 {@link EtlJobFacts} 로 여기서 계산해 붙인다 - 요약 답에 같은 정보가 나오게.
+ * 질문은 화면이 target 에 넣지 않고 요청의 질문을 받는다({@link #collect(Map, String, String, String)}).
  */
 @Component
 public class EtlAssistantContextCollector implements LlmContextCollector {
@@ -41,6 +50,8 @@ public class EtlAssistantContextCollector implements LlmContextCollector {
 
     private final EtlJobRepository jobRepository;
     private final EtlJobStepRepository stepRepository;
+    private final EtlJobLinkRepository linkRepository;
+    private final EtlJobRunRepository runRepository;
     private final NifiProcessGroupMetadataRepository metadataRepository;
     private final NifiProcessGroupTreeService treeService;
     private final EtlWorkflowRepository workflowRepository;
@@ -48,6 +59,7 @@ public class EtlAssistantContextCollector implements LlmContextCollector {
     private final EtlJobContextText jobText;
 
     public EtlAssistantContextCollector(EtlJobRepository jobRepository, EtlJobStepRepository stepRepository,
+                                        EtlJobLinkRepository linkRepository, EtlJobRunRepository runRepository,
                                         NifiProcessGroupMetadataRepository metadataRepository,
                                         NifiProcessGroupTreeService treeService,
                                         EtlWorkflowRepository workflowRepository,
@@ -55,6 +67,8 @@ public class EtlAssistantContextCollector implements LlmContextCollector {
                                         EtlJobContextText jobText) {
         this.jobRepository = jobRepository;
         this.stepRepository = stepRepository;
+        this.linkRepository = linkRepository;
+        this.runRepository = runRepository;
         this.metadataRepository = metadataRepository;
         this.treeService = treeService;
         this.workflowRepository = workflowRepository;
@@ -70,6 +84,17 @@ public class EtlAssistantContextCollector implements LlmContextCollector {
     @Override
     @Transactional(readOnly = true)
     public CollectedTarget collect(Map<String, String> target, String errorText) {
+        return collectFor(target, errorText, value(target, "question"));
+    }
+
+    /** 속성창 대화: 이번 질문으로 그룹 질문 의도를 가른다(예전 화면은 target 의 question 으로 보냈다 - 그것도 받는다). */
+    @Override
+    @Transactional(readOnly = true)
+    public CollectedTarget collect(Map<String, String> target, String errorText, String draft, String question) {
+        return collectFor(target, errorText, question != null && !question.isBlank() ? question : value(target, "question"));
+    }
+
+    private CollectedTarget collectFor(Map<String, String> target, String errorText, String question) {
         String selectedType = value(target, "selectedType");
         String selectedId = value(target, "selectedId");
         String selectedName = value(target, "selectedName");
@@ -83,7 +108,7 @@ public class EtlAssistantContextCollector implements LlmContextCollector {
         if (currentJob.isPresent()) {
             collectJobContext(context, currentJob.get(), target);
         } else {
-            collectGroupContext(context, selectedId, selectedName, currentPath, value(target, "question"));
+            collectGroupContext(context, selectedId, selectedName, currentPath, question);
         }
         context.add("화면에 표시된 오류 내용", ContextText.errorText(errorText), LlmContext.PRIORITY_ERROR);
 
@@ -98,10 +123,17 @@ public class EtlAssistantContextCollector implements LlmContextCollector {
 
     private void collectJobContext(LlmContext context, EtlJob job, Map<String, String> target) {
         List<EtlJobStep> steps = stepRepository.findByJobIdAndDeletedAtIsNullOrderByStepNameAsc(job.getId());
+        List<EtlJobLink> links = linkRepository.findByJobIdAndDeletedAtIsNull(job.getId());
+        List<EtlJobRun> runs = runRepository.findTop20ByJobIdOrderByStartedAtDesc(job.getId());
         Optional<NifiProcessGroupMetadata> metadata = metadataRepository.findById(job.getNifiPgId());
-        context.add("현재 JOB 기본 정보", jobOverview(
-                        job, steps, metadata.orElse(null), value(target, "dagSchedule"), value(target, "createdBy")),
+        // 스케줄은 서버가 게시된 워크플로우에서 찾는다. 못 찾으면 화면이 보낸 값(예전 호환)을 쓴다.
+        String schedule = workflowScheduleText(collectWorkflowSchedules(Set.of(job.getId())).get(job.getId()));
+        if ("없음".equals(schedule) && value(target, "dagSchedule") != null) {
+            schedule = value(target, "dagSchedule");
+        }
+        context.add("현재 JOB 기본 정보", jobOverview(job, steps, metadata.orElse(null), schedule, value(target, "createdBy")),
                 LlmContext.PRIORITY_DETAIL);
+        context.add("현재 JOB 흐름 · 최근 실행 요약", jobFacts(job, steps, links, runs), LlmContext.PRIORITY_DETAIL);
         context.add("현재 JOB 단계", jobText.steps(job), LlmContext.PRIORITY_DETAIL);
         context.add("현재 JOB 최근 실행", jobText.recentRuns(job, null), LlmContext.PRIORITY_DETAIL);
     }
@@ -153,7 +185,9 @@ public class EtlAssistantContextCollector implements LlmContextCollector {
         lines.add("JOB ID: " + job.getId());
         lines.add("부모 그룹 ID: " + ContextText.orDash(job.getParentPgId()));
         lines.add("적재 유형: " + loadModeText(steps));
-        lines.add("스케줄: " + ContextText.orDash(dagSchedule));
+        lines.add("스케줄: " + ("없음".equals(dagSchedule) || dagSchedule == null
+                ? "없음 - ETL job 은 자체 스케줄이 없고, 워크플로우에 넣어 게시해야 실행 일정이 생긴다"
+                : dagSchedule));
         lines.add("Processor 수: " + job.getStepCount());
         lines.add("상태 카운트: 실행 " + job.getRunningCount()
                 + " / 중지 " + job.getStoppedCount()
@@ -168,6 +202,18 @@ public class EtlAssistantContextCollector implements LlmContextCollector {
         if (job.getComments() != null && !job.getComments().isBlank()) {
             lines.add("설명: " + ContextText.cut(job.getComments(), 500));
         }
+        return String.join("\n", lines);
+    }
+
+    /** 예전 화면 보고서(구성 · 지금 상태)에 있던 값 - {@link EtlJobFacts} 와 같은 규칙. */
+    private static String jobFacts(EtlJob job, List<EtlJobStep> steps, List<EtlJobLink> links, List<EtlJobRun> runs) {
+        List<String> lines = new ArrayList<>();
+        lines.add("소스: " + EtlJobFacts.source(steps, links));
+        lines.add("타깃(적재 테이블): " + EtlJobFacts.target(steps, links));
+        lines.add("처리 흐름(캔버스 위치 순): " + EtlJobFacts.flow(steps));
+        lines.add("연결된 Airflow DAG: " + ContextText.orDash(job.getAirflowDagId()));
+        lines.add("최근 실행: " + EtlJobFacts.recentRuns(runs, LocalDate.now()));
+        lines.add("최근 실행 소요 시간: " + EtlJobFacts.latestDuration(runs));
         return String.join("\n", lines);
     }
 
@@ -280,6 +326,9 @@ public class EtlAssistantContextCollector implements LlmContextCollector {
             lines.add("상태 카운트: 실행 " + job.getRunningCount()
                     + " / 중지 " + job.getStoppedCount()
                     + " / 검증실패 " + job.getInvalidCount());
+            List<EtlJobLink> links = linkRepository.findByJobIdAndDeletedAtIsNull(job.getId());
+            lines.add("소스 → 타깃: " + EtlJobFacts.source(steps, links) + " → " + EtlJobFacts.target(steps, links));
+            lines.add("Processor 수: " + job.getStepCount() + " / 연결된 Airflow DAG: " + ContextText.orDash(job.getAirflowDagId()));
             lines.add("적재 유형: " + loadModeText(steps));
             lines.add("스케줄: " + workflowScheduleText(schedulesByJobId.get(job.getId())));
             lines.add("생성일자: " + ContextText.time(job.getFirstSeenAt()));

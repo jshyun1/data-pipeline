@@ -10,9 +10,8 @@ import {
   type MouseEvent as ReactMouseEvent,
   type SyntheticEvent,
 } from "react";
-import { Alert, Button, Input, Modal, Result, Spin, message } from "antd";
+import { Alert, Button, Modal, Result, Spin, message } from "antd";
 import {
-  ArrowUpOutlined,
   DoubleLeftOutlined,
   DoubleRightOutlined,
   FileOutlined,
@@ -48,17 +47,9 @@ import {
   type NifiProcessorRun,
   type NifiProcessGroupTreeNode,
 } from "../api/platform";
-import {
-  getLlmStatus,
-  previewLlmContext,
-  streamLlmChat,
-  type LlmChatTurn,
-  type LlmContextPreview,
-} from "../api/llm";
-import { renderAssistantText } from "../components/gpt/GptConversationView";
-import { fileSafeName, safeMarkdown } from "../components/gpt/gptMarkdown";
+import { getLlmStatus } from "../api/llm";
+import { GptChatPanel } from "../components/gpt/GptChatPanel";
 import { getWorkflow, listWorkflows, type WorkflowDetail } from "../api/workflows";
-import { cronToKoreanText } from "../utils/schedulePreset";
 
 const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
 const CANVAS_SELECTION_SYNC_ATTRIBUTE = "data-cerebro-canvas-selection-sync";
@@ -2916,38 +2907,6 @@ function formatDateOnly(value?: string | null) {
   return `${year}.${month}.${day}`;
 }
 
-function formatDateTime(value?: string | null) {
-  if (!value) {
-    return "-";
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value.replace("T", " ").slice(0, 16);
-  }
-  const date = formatDateOnly(value);
-  const hour = String(parsed.getHours()).padStart(2, "0");
-  const minute = String(parsed.getMinutes()).padStart(2, "0");
-  return `${date} ${hour}:${minute}`;
-}
-
-function formatDurationText(seconds?: number | null) {
-  if (seconds == null || Number.isNaN(seconds)) {
-    return null;
-  }
-  const rounded = Math.max(0, Math.round(seconds));
-  if (rounded < 60) {
-    return `${rounded}초`;
-  }
-  const minutes = Math.floor(rounded / 60);
-  const rest = rounded % 60;
-  if (minutes < 60) {
-    return rest === 0 ? `${minutes}분` : `${minutes}분 ${rest}초`;
-  }
-  const hours = Math.floor(minutes / 60);
-  const hourRest = minutes % 60;
-  return hourRest === 0 ? `${hours}시간` : `${hours}시간 ${hourRest}분`;
-}
-
 function statusText(job: EtlJobResponse | null, node: NifiProcessGroupTreeNode | null) {
   if (node?.jobStatus) {
     return jobStatusText(node.jobStatus);
@@ -3011,101 +2970,10 @@ function localDateString(date: Date) {
 }
 
 const ADDED_FILE_STORAGE_PREFIX = "nifi-added-files";
-const ETL_AI_ASSISTANT_CACHE_PREFIX = "etl-ai-assistant-cache";
 
 interface StoredAddedFiles {
   date: string;
   files: string[];
-}
-
-interface StoredEtlAiAssistantCache {
-  messages: LlmChatTurn[];
-  question: string;
-}
-
-interface AiJobReport {
-  summary: string;
-  composition: string[];
-  current: string[];
-  change: Array<[string, string]>;
-}
-
-function etlAiAssistantCacheKey(selectedGroupId: string) {
-  return `${ETL_AI_ASSISTANT_CACHE_PREFIX}:${selectedGroupId}`;
-}
-
-function loadEtlAiAssistantCache(storageKey: string): StoredEtlAiAssistantCache {
-  if (typeof window === "undefined") {
-    return { messages: [], question: "" };
-  }
-  try {
-    const rawValue = window.sessionStorage.getItem(storageKey);
-    if (!rawValue) {
-      return { messages: [], question: "" };
-    }
-    const parsed = JSON.parse(rawValue) as Partial<StoredEtlAiAssistantCache>;
-    const messages = Array.isArray(parsed.messages)
-      ? parsed.messages.filter((turn): turn is LlmChatTurn =>
-        (turn?.role === "user" || turn?.role === "assistant") && typeof turn.content === "string",
-      )
-      : [];
-    return {
-      messages,
-      question: typeof parsed.question === "string" ? parsed.question : "",
-    };
-  } catch {
-    return { messages: [], question: "" };
-  }
-}
-
-function saveEtlAiAssistantCache(storageKey: string, cache: StoredEtlAiAssistantCache) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    const messages = cache.messages.filter((entry) => entry.content.trim().length > 0).slice(-40);
-    const question = cache.question.trim();
-    if (messages.length === 0 && !question) {
-      window.sessionStorage.removeItem(storageKey);
-      return;
-    }
-    window.sessionStorage.setItem(storageKey, JSON.stringify({ messages, question } satisfies StoredEtlAiAssistantCache));
-  } catch {
-    // 대화 캐시는 보조 기능이라 저장 실패가 질문 흐름을 막지 않는다.
-  }
-}
-
-function downloadMarkdownFile(title: string, suffix: string, body: string) {
-  const blob = new Blob([body], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `${fileSafeName(title, "etl_ai")}${suffix}.md`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-function buildJobReportMarkdown(report: AiJobReport) {
-  return [
-    "## 한 줄 요약",
-    "",
-    safeMarkdown(report.summary),
-    "",
-    "## 구성",
-    "",
-    ...report.composition.map((line) => `- ${safeMarkdown(line)}`),
-    "",
-    "## 지금 상태",
-    "",
-    ...report.current.map((line) => `- ${safeMarkdown(line)}`),
-    "",
-    "## 등록 및 변경",
-    "",
-    ...report.change.map(([label, value]) => `- ${safeMarkdown(label)}: ${safeMarkdown(value)}`),
-    "",
-  ];
 }
 
 function addedFileStorageKey(jobId: string | number | null | undefined, inputDirectory: string | null | undefined) {
@@ -3369,123 +3237,8 @@ function workflowUsesJob(workflow: WorkflowDetail, job: EtlJobResponse) {
   );
 }
 
-function workflowScheduleText(workflows: RelatedWorkflow[]) {
-  const schedules = uniqueValues(workflows
-    .filter((workflow) => workflow.published && !!workflow.scheduleCron?.trim())
-    .map((workflow) => cronToKoreanText(workflow.scheduleCron)));
-  return schedules.length > 0 ? schedules.join(", ") : "없음";
-}
-
-function jobLoadKinds(steps: EtlJobStepView[]) {
-  return uniqueValues(steps.map((step) => {
-    const text = `${step.stepName} ${step.stepType ?? ""} ${step.statementType ?? ""} ${step.sqlText ?? ""}`.toLowerCase();
-    if (text.includes("truncate") || text.includes("initial")) {
-      return "초기적재";
-    }
-    if (text.includes("update") || text.includes("upsert") || text.includes("merge") || text.includes("increment")) {
-      return "증분적재";
-    }
-    if (text.includes("insert")) {
-      return "일반적재";
-    }
-    return "";
-  })).filter(Boolean);
-}
-
-function readableLoadType(loadKinds: string[]) {
-  return loadKinds.length > 0 ? loadKinds.join(", ") : "일반적재";
-}
-
-function firstUsefulText(...values: Array<string | null | undefined>) {
-  const value = values.find((entry): entry is string => {
-    if (typeof entry !== "string") {
-      return false;
-    }
-    const trimmed = entry.trim();
-    return Boolean(trimmed) && trimmed !== "-";
-  });
-  return value?.trim() ?? null;
-}
-
-function readableSourceDb(sourceText: string) {
-  const firstPart = sourceText.split("/")[0]?.trim();
-  return firstUsefulText(firstPart) ?? "소스 DB";
-}
-
-function readableTableText(value: string, fallback: string) {
-  const parts = value.split("/").map((part) => part.trim()).filter(Boolean);
-  return firstUsefulText(parts.at(-1), value) ?? fallback;
-}
-
-function processorFlowDescription(steps: EtlJobStepView[]) {
-  const sorted = sortProcessorsByPosition(steps);
-  if (sorted.length === 0) {
-    return "현재 프로세서 상세 구성이 아직 동기화되지 않았습니다.";
-  }
-  const names = sorted
-    .map((step) => step.stepName || shortProcessorType(step.stepType))
-    .filter((name) => name && name !== "-")
-    .slice(0, 4);
-  if (names.length >= 2) {
-    const suffix = sorted.length > names.length ? " 등의 단계" : " 단계";
-    return `이 Job은 ${names.join(" → ")}${suffix}를 거쳐 데이터를 처리합니다.`;
-  }
-  return `이 Job은 ${sorted.length}개 Processor로 구성되어 있으며, 소스 데이터를 읽어 대상 저장소로 적재하는 흐름입니다.`;
-}
-
-function isSuccessfulRun(run: EtlJobRunResponse) {
-  const status = run.status.toUpperCase();
-  return status.includes("SUCCESS") || status.includes("COMPLETED") || status === "DONE";
-}
-
-function isFailedRun(run: EtlJobRunResponse) {
-  const status = run.status.toUpperCase();
-  return status.includes("FAIL") || run.failedStepCount > 0;
-}
-
-function recentFiveDayRuns(runs: EtlJobRunResponse[]) {
-  const from = shiftedDate(-4);
-  from.setHours(0, 0, 0, 0);
-  return runs.filter((run) => {
-    const parsed = new Date(run.startedAt);
-    return !Number.isNaN(parsed.getTime()) && parsed >= from;
-  });
-}
-
 function sortRunsLatestFirst(runs: EtlJobRunResponse[]) {
   return runs.slice().sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
-}
-
-function consecutiveSuccessfulRunCount(runs: EtlJobRunResponse[]) {
-  let count = 0;
-  for (const run of sortRunsLatestFirst(runs)) {
-    if (!isSuccessfulRun(run) || isFailedRun(run)) {
-      break;
-    }
-    count += 1;
-  }
-  return count;
-}
-
-function aiRunSummaryText(runs: EtlJobRunResponse[]) {
-  const recentRuns = recentFiveDayRuns(sortRunsLatestFirst(runs));
-  if (recentRuns.length === 0) {
-    return "최근 5일 기준 실행 이력 정보가 아직 충분하지 않습니다.";
-  }
-  const successCount = recentRuns.filter((run) => isSuccessfulRun(run) && !isFailedRun(run)).length;
-  const failureCount = recentRuns.filter(isFailedRun).length;
-  const streak = consecutiveSuccessfulRunCount(runs);
-  if (failureCount === 0 && streak > 1) {
-    return `최근 5일 기준 ${successCount}회 실행되었고, 최근 ${streak}회 연속 성공했습니다.`;
-  }
-  return `최근 5일 기준 ${successCount}회 성공, ${failureCount}회 실패했습니다.`;
-}
-
-function aiDurationSummaryText(latestRun: EtlJobRunResponse | null) {
-  const duration = formatDurationText(latestRun?.durationSeconds);
-  return duration
-    ? `최근 실행 기준 약 ${duration} 내외로 소요되었습니다.`
-    : "최근 실행 기준 소요 시간 정보가 아직 없습니다.";
 }
 
 function sortProcessorsByPosition(steps: EtlJobStepView[]) {
@@ -4220,17 +3973,8 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<"detail" | "ai">("detail");
   const [aiAssistantEnabled, setAiAssistantEnabled] = useState(false);
-  const [aiProviderName, setAiProviderName] = useState<string | null>(null);
-  const [aiMessages, setAiMessages] = useState<LlmChatTurn[]>([]);
-  const [aiQuestion, setAiQuestion] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [aiPreviewLoading, setAiPreviewLoading] = useState(false);
-  const [aiPreview, setAiPreview] = useState<LlmContextPreview | null>(null);
-  /** [프롬프트 편집] 창에서 고친 대상 정보. 있으면 다음 질문부터 서버가 모은 것 대신 이것을 보낸다(2026-10-05 요청). */
-  const [aiContextOverride, setAiContextOverride] = useState<string>();
-  /** 그 창에서 고치는 중인 글. 창을 열 때 지금 보낼 내용으로 채운다. */
-  const [aiPromptDraft, setAiPromptDraft] = useState("");
+  /** AI 어시스턴트 탭을 연 그룹. 상세정보 탭으로 돌아가도 이 그룹의 대화는 숨겨 둔 채 남긴다(다시 열 때 요약을 또 부르지 않게). */
+  const [aiOpenedGroupId, setAiOpenedGroupId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<EtlJobResponse[]>([]);
   const [details, setDetails] = useState<EtlJobDetailResponse[]>([]);
   const [runs, setRuns] = useState<EtlJobRunResponse[]>([]);
@@ -4245,12 +3989,9 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const [addedFiles, setAddedFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const addFileInputRef = useRef<HTMLInputElement | null>(null);
-  const aiConversationEndRef = useRef<HTMLDivElement | null>(null);
-  const aiCacheRestoringRef = useRef(false);
 
   const selected = useMemo(() => findTreeNode(tree, activeGroupId), [activeGroupId, tree]);
   const selectedGroupId = activeGroupId ?? "root";
-  const aiCacheKey = etlAiAssistantCacheKey(selectedGroupId);
   const job = jobs.find((entry) => entry.nifiPgId === selectedGroupId) ?? null;
   const selectedGroupIds = useMemo(() => {
     const ids = collectTreeIds(selected?.node ?? null);
@@ -4274,12 +4015,10 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
           return;
         }
         setAiAssistantEnabled(status.enabled);
-        setAiProviderName(status.providerName);
       })
       .catch(() => {
         if (!cancelled) {
           setAiAssistantEnabled(false);
-          setAiProviderName(null);
         }
       });
     return () => {
@@ -4288,29 +4027,10 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   }, []);
 
   useEffect(() => {
-    const cached = loadEtlAiAssistantCache(aiCacheKey);
-    aiCacheRestoringRef.current = true;
-    setAiMessages(cached.messages);
-    setAiQuestion(cached.question);
-    setAiError(null);
-    setAiPreview(null);
-    setAiLoading(false);
-  }, [aiCacheKey]);
-
-  useEffect(() => {
-    if (aiCacheRestoringRef.current) {
-      aiCacheRestoringRef.current = false;
-      return;
+    if (activeTab === "ai") {
+      setAiOpenedGroupId(selectedGroupId);
     }
-    saveEtlAiAssistantCache(aiCacheKey, { messages: aiMessages, question: aiQuestion });
-  }, [aiCacheKey, aiMessages, aiQuestion]);
-
-  useEffect(() => {
-    if (activeTab !== "ai" || (aiMessages.length === 0 && !aiLoading)) {
-      return;
-    }
-    aiConversationEndRef.current?.scrollIntoView({ block: "end" });
-  }, [activeTab, aiMessages, aiLoading]);
+  }, [activeTab, selectedGroupId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4408,7 +4128,6 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const lastRunDate = formatDateOnly(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
   const logKeyword = detailLogKeyword(displayJob, displayNode);
   const addedFilesStorageKey = addedFileStorageKey(displayJob?.id, inputDirectory);
-  const dagSchedule = useMemo(() => workflowScheduleText(relatedWorkflows), [relatedWorkflows]);
   const titleName = displayJob?.jobName ?? displayNode?.name ?? "선택 없음";
   const headerTitle = isJobGroup
     ? `Job : ${titleName}`
@@ -4416,63 +4135,26 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
       ? `Group : ${titleName}`
       : titleName;
   const aiAssistantAvailable = aiAssistantEnabled && !!selectedGroupId;
-  const groupJobBriefs = useMemo(() => {
-    const detailByJobId = new Map(details.map((entry) => [entry.job.id, entry]));
-    return groupJobs
-      .slice()
-      .sort((a, b) => b.stepCount - a.stepCount || a.jobName.localeCompare(b.jobName))
-      .slice(0, 5)
-      .map((entry) => {
-        const detail = detailByJobId.get(entry.id);
-        const steps = detail?.steps ?? [];
-        const links = detail?.links ?? [];
-        const source = sourceTargetText(firstStartProcessor(steps, links), "source");
-        const target = sourceTargetText(lastTerminalProcessor(steps, links), "target");
-        const status = statusText(entry, findTreeNode(tree, entry.nifiPgId)?.node ?? null);
-        const dagText = entry.airflowDagId ? `Airflow DAG ${entry.airflowDagId}와 연결된 job입니다.` : "연결된 Airflow DAG 정보는 아직 없습니다.";
-        const flowText = source !== "-" || target !== "-"
-          ? `소스 ${source}에서 타깃 ${target}으로 데이터를 넘기는 흐름입니다.`
-          : `${entry.stepCount}개 프로세서로 구성된 ETL 흐름이며, 상세 소스/타깃은 프로세서 설정을 기준으로 확인합니다.`;
-        return {
-          id: entry.id,
-          name: entry.jobName,
-          line1: flowText,
-          line2: `${dagText} 현재 상태는 ${status}이고, 프로세서는 ${entry.stepCount}개입니다.`,
-        };
-      });
-  }, [details, groupJobs, tree]);
-  const defaultAiReport = useMemo<AiJobReport | null>(() => {
-    if (!displayJob) {
-      return null;
-    }
-    const loadType = readableLoadType(jobLoadKinds(jobSteps));
-    const sourceDb = readableSourceDb(sourceText);
-    const sourceTable = readableTableText(sourceText, "확인된 소스 테이블");
-    const targetTable = readableTableText(targetText, "확인된 적재 테이블");
-    const scheduleText = dagSchedule === "없음"
-      ? "자체 스케줄은 없습니다. 스케줄은 워크플로우에서 등록해야 합니다."
-      : `워크플로우 스케줄 기준으로 ${dagSchedule} 실행됩니다.`;
-    const author = displayNode?.createdBy ?? "확인되지 않은 사용자";
-    return {
-      summary: `${sourceDb}의 ${sourceTable} 데이터를 ${targetTable}로 적재하는 ${loadType} ETL FLOW입니다.`,
-      composition: [
-        `적재유형: ${loadType} 방식으로 동작합니다. 소스테이블은 ${sourceTable}, 적재테이블은 ${targetTable}입니다.`,
-        `스케줄: ${scheduleText}`,
-        `설명: ${processorFlowDescription(jobSteps)}`,
-        `생성일자는 ${formatDateTime(displayJob.firstSeenAt)}이며, 작성자는 ${author}입니다.`,
-      ],
-      current: [
-        `최근 실행: ${aiRunSummaryText(runs)}`,
-        `실행 소요 시간: ${aiDurationSummaryText(latestRun)}`,
-        `등록일자는 ${formatDateTime(displayJob.firstSeenAt)}이고 최근 수정은 ${formatDateTime(displayJob.lastSyncedAt)}에 했습니다.`,
-      ],
-      change: [
-        ["등록자", author],
-        ["등록 시각", formatDateTime(displayJob.firstSeenAt)],
-        ["최종 수정", formatDateTime(displayJob.lastSyncedAt)],
-      ],
-    };
-  }, [dagSchedule, displayJob, displayNode?.createdBy, jobSteps, latestRun, runs, sourceText, targetText]);
+  /**
+   * AI 어시스턴트 대상(2026-10-10): 워크플로우 속성창과 같은 대화 창(GptChatPanel)을 쓴다 - 탭을 열면 GPT 가 요약을 쓴다.
+   * 예전에 화면이 직접 만들던 요약(한 줄 요약 · 구성 · 지금 상태 · 등록 및 변경, 그룹의 Job 상위 5개)에 있던 값은
+   * 서버(EtlAssistantContextCollector · EtlJobFacts)가 같은 규칙으로 모아 보내므로 답에 그대로 나온다. 화면은 대상 식별자만 보낸다.
+   */
+  const aiTarget = useMemo<Record<string, string>>(() => ({
+    selectedType: isJobGroup && displayJob ? "JOB" : "PROCESS_GROUP",
+    selectedId: displayJob?.nifiPgId ?? selectedGroupId,
+    selectedName: titleName,
+    currentPath: displayPath,
+    ...(displayJob ? {
+      jobId: String(displayJob.id),
+      jobGroupId: displayJob.nifiPgId,
+      createdBy: displayNode?.createdBy ?? "",
+    } : {}),
+  }), [displayJob, displayNode?.createdBy, displayPath, isJobGroup, selectedGroupId, titleName]);
+  // 대상이 바뀌면 대화를 새로 시작한다(GptChatPanel 은 처음 그릴 때 요약을 요청한다). job 목록을 받은 뒤에 그린다 - 받는 중에 그리면
+  // job 이 아닌 그룹으로 요약을 한 번 부른 뒤 다시 부르게 된다.
+  const aiPanelKey = `${selectedGroupId}:${displayJob?.id ?? ""}`;
+  const showAiPanel = aiAssistantAvailable && !jobsLoading && (activeTab === "ai" || aiOpenedGroupId === selectedGroupId);
 
   useEffect(() => {
     let cancelled = false;
@@ -4585,125 +4267,6 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     } finally {
       setIsAddingFiles(false);
     }
-  };
-
-  const buildAiRequest = (question: string) => ({
-    agentType: "JOB_ANALYSIS" as const,
-    targetType: "ETL_ASSISTANT" as const,
-    target: {
-      selectedType: isJobGroup && displayJob ? "JOB" : "PROCESS_GROUP",
-      selectedId: displayJob?.nifiPgId ?? selectedGroupId,
-      selectedName: titleName,
-      currentPath: displayPath,
-      ...(displayJob ? {
-        jobId: String(displayJob.id),
-        jobGroupId: displayJob.nifiPgId,
-        dagSchedule,
-        createdBy: displayNode?.createdBy ?? "",
-      } : {}),
-      question,
-    } as Record<string, string>,
-    question,
-    history: aiMessages.filter((entry) => entry.content.trim().length > 0),
-    contextOverride: aiContextOverride ?? null,
-  });
-
-  const handleAiSubmit = async () => {
-    const question = aiQuestion.trim();
-    if (!question) {
-      setAiError("질문을 입력하세요.");
-      return;
-    }
-    if (!aiAssistantAvailable) {
-      setAiError("AI 어시스턴트를 사용할 수 없습니다.");
-      return;
-    }
-    setAiLoading(true);
-    setAiError(null);
-    setAiMessages((prev) => [...prev, { role: "user", content: question }, { role: "assistant", content: "" }]);
-    try {
-      // 새 API 는 답변을 결과로 돌려주지 않고 onDelta 로만 흘린다. 제공자 이름은 meta 로 온다.
-      await streamLlmChat(buildAiRequest(question), {
-        onMeta: (meta) => setAiProviderName(meta.providerName),
-        onDelta: (delta) => {
-          setAiMessages((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last?.role === "assistant") {
-              next[next.length - 1] = { ...last, content: last.content + delta };
-            }
-            return next;
-          });
-        },
-      });
-      setAiQuestion("");
-    } catch (ex) {
-      setAiError(ex instanceof Error ? ex.message : "AI 어시스턴트 요청에 실패했습니다.");
-      setAiMessages((prev) => prev.filter((entry) => entry.content.trim().length > 0));
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
-  const handleAiPreview = async () => {
-    setAiPreviewLoading(true);
-    setAiError(null);
-    try {
-      const preview = await previewLlmContext(buildAiRequest(aiQuestion.trim() || "프롬프트 미리보기"));
-      setAiPreview(preview);
-      setAiPromptDraft(preview.text ?? "");
-    } catch (ex) {
-      setAiError(ex instanceof Error ? ex.message : "프롬프트를 불러오지 못했습니다.");
-    } finally {
-      setAiPreviewLoading(false);
-    }
-  };
-
-  const handleAiMarkdownSave = () => {
-    const lines = [
-      `# ${titleName} AI 어시스턴트`,
-      "",
-      "- 대상: ETL 관리 어시스턴트",
-      `- 경로: ${safeMarkdown(displayPath)}`,
-      `- 모델: ${safeMarkdown(aiProviderName ?? "선택된 GPT")}`,
-      `- 저장 시각: ${new Date().toLocaleString()}`,
-      "",
-      ...(defaultAiReport
-        ? buildJobReportMarkdown(defaultAiReport)
-        : [
-          "## 현재 프로세스 그룹",
-          "",
-          safeMarkdown(displayPath),
-          "",
-        ]),
-      ...(groupJobBriefs.length > 0 && !defaultAiReport
-        ? [
-          "## 이 그룹의 Job 상위 5개",
-          "",
-          ...groupJobBriefs.flatMap((item) => [
-            `### ${safeMarkdown(item.name)}`,
-            "",
-            safeMarkdown(item.line1),
-            "",
-            safeMarkdown(item.line2),
-            "",
-          ]),
-        ]
-        : []),
-      "## 대화",
-      "",
-      ...(aiMessages.length > 0
-        ? aiMessages.flatMap((entry) => [
-          `### ${entry.role === "user" ? "질문" : "답변"}`,
-          "",
-          safeMarkdown(entry.content || (entry.role === "assistant" && aiLoading ? "답변 중입니다." : "")),
-          "",
-        ])
-        : ["아직 대화가 없습니다.", ""]),
-      ...(aiError ? ["## 오류", "", safeMarkdown(aiError), ""] : []),
-    ];
-    downloadMarkdownFile(`${titleName} AI 어시스턴트`, "_AI_어시스턴트", lines.join("\n"));
-    message.success("Markdown 파일을 저장했습니다.");
   };
 
   return (
@@ -4877,185 +4440,16 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
               </>
             ) : null}
           </>
-        ) : (
-          <section className="nifi-ai-panel" role="tabpanel" aria-label="AI 어시스턴트">
-            <div className="nifi-ai-summary">
-              <strong>{aiProviderName ?? "선택된 GPT"}</strong>
-              <span className="nifi-ai-summary-actions">
-                <Button size="small" loading={aiPreviewLoading} onClick={handleAiPreview}>
-                  프롬프트 편집
-                </Button>
-                <Button size="small" onClick={handleAiMarkdownSave}>
-                  MD 저장하기
-                </Button>
-              </span>
-            </div>
-            {aiError ? (
-              <Alert className="nifi-ai-alert" type="error" showIcon message={aiError} />
-            ) : null}
-            <div className="nifi-ai-conversation">
-              {defaultAiReport || (aiMessages.length === 0 && groupJobBriefs.length > 0) || (aiMessages.length === 0 && groupJobBriefs.length === 0) ? (
-                <div className="nifi-ai-message user nifi-ai-opening-message">
-                  <span>나</span>
-                  <div className="nifi-ai-bubble">etl 정보 요약해줘</div>
-                </div>
-              ) : null}
-              {isJobGroup && displayJob && defaultAiReport ? (
-                <div className="nifi-ai-message assistant nifi-ai-opening-message">
-                  <span>AI</span>
-                  <div className="nifi-ai-bubble nifi-ai-job-report">
-                    <section>
-                      <strong>한 줄 요약</strong>
-                      <p>{defaultAiReport.summary}</p>
-                    </section>
-                    <section>
-                      <strong>구성</strong>
-                      <ul>
-                        {defaultAiReport.composition.map((line) => (
-                          <li key={line}>{line}</li>
-                        ))}
-                      </ul>
-                    </section>
-                    <section>
-                      <strong>지금 상태</strong>
-                      <ul>
-                        {defaultAiReport.current.map((line) => (
-                          <li key={line}>{line}</li>
-                        ))}
-                      </ul>
-                    </section>
-                    <section>
-                      <strong>등록 및 변경</strong>
-                      <dl className="nifi-ai-report-meta">
-                        {defaultAiReport.change.map(([label, value]) => (
-                          <div key={label}>
-                            <dt>{label}</dt>
-                            <dd>{value}</dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </section>
-                  </div>
-                </div>
-              ) : null}
-              {aiMessages.length === 0 && !defaultAiReport && groupJobBriefs.length > 0 ? (
-                <div className="nifi-ai-message assistant nifi-ai-opening-message">
-                  <span>AI</span>
-                  <div className="nifi-ai-bubble nifi-ai-empty">
-                    <strong>이 그룹의 Job 상위 5개</strong>
-                    <span>{displayPath}</span>
-                    <ol className="nifi-ai-job-brief-list">
-                      {groupJobBriefs.map((item) => (
-                        <li key={item.id}>
-                          <b>{item.name}</b>
-                          <span>{item.line1}</span>
-                          <span>{item.line2}</span>
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
-                </div>
-              ) : null}
-              {aiMessages.length === 0 && !defaultAiReport && groupJobBriefs.length === 0 ? (
-                <div className="nifi-ai-message assistant nifi-ai-opening-message">
-                  <span>AI</span>
-                  <div className="nifi-ai-bubble nifi-ai-empty">
-                    <strong>현재 프로세스 그룹</strong>
-                    <span>{displayPath}</span>
-                  </div>
-                </div>
-              ) : null}
-              {aiMessages.length > 0 ? (
-                aiMessages.map((entry, index) => (
-                  <div key={`${entry.role}-${index}`} className={`nifi-ai-message ${entry.role}`}>
-                    <span>{entry.role === "user" ? "나" : "AI"}</span>
-                    <div className="nifi-ai-bubble">
-                      {entry.role === "assistant" ? renderAssistantText(entry.content) : entry.content}
-                    </div>
-                  </div>
-                ))
-              ) : null}
-              {aiLoading ? (
-                <div className="nifi-ai-loading">
-                  <Spin size="small" />
-                  <span>답변을 생성하는 중</span>
-                </div>
-              ) : null}
-              <div ref={aiConversationEndRef} className="nifi-ai-conversation-end" aria-hidden="true" />
-            </div>
-            <div className="nifi-ai-composer">
-              <textarea
-                rows={3}
-                value={aiQuestion}
-                placeholder="무엇이든 질문하세요"
-                aria-label="AI 어시스턴트 질문"
-                onChange={(event) => setAiQuestion(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                    void handleAiSubmit();
-                  }
-                }}
-              />
-              <Button
-                className="nifi-ai-send-button"
-                shape="circle"
-                icon={<ArrowUpOutlined />}
-                loading={aiLoading}
-                aria-label="보내기"
-                title="보내기"
-                onClick={handleAiSubmit}
-              />
-            </div>
-          </section>
-        )}
-      </aside>
-
-      <Modal
-        title="프롬프트"
-        open={aiPreview !== null}
-        width={860}
-        onCancel={() => setAiPreview(null)}
-        footer={
-          <>
-            {aiContextOverride && (
-              <Button onClick={() => { setAiContextOverride(undefined); setAiPreview(null); }}>원래대로</Button>
-            )}
-            <Button type="primary"
-                    onClick={() => {
-                      setAiContextOverride(aiPromptDraft.trim() ? aiPromptDraft : undefined);
-                      setAiPreview(null);
-                    }}>적용</Button>
-            <Button onClick={() => setAiPreview(null)}>닫기</Button>
-          </>
-        }
-      >
-        {aiPreview ? (
-          <div className="nifi-ai-preview">
-            <dl>
-              <div>
-                <dt>대상</dt>
-                <dd>{aiPreview.targetLabel}</dd>
-              </div>
-              <div>
-                <dt>GPT</dt>
-                <dd>{aiPreview.providerName}</dd>
-              </div>
-              <div>
-                <dt>마스킹</dt>
-                <dd>{aiPreview.masked ? "켜짐" : "꺼짐"}</dd>
-              </div>
-            </dl>
-            {/* 다른 화면의 [프롬프트 편집] 창과 같다 - 고쳐서 «적용»하면 다음 질문부터 이 내용을 보낸다. */}
-            <Input.TextArea className="gpt-analysis-preview-edit" value={aiPromptDraft}
-                            autoSize={{ minRows: 12, maxRows: 24 }} aria-label="프롬프트 내용"
-                            onChange={(event) => setAiPromptDraft(event.target.value)} />
-            <div className="nifi-ai-preview-note">
-              이 프롬프트와 함께 역할 지시문과 이번 창의 대화가 전송됩니다. 고친 내용은 «적용»을 누르면 다음 질문부터 쓰입니다.
-              {aiContextOverride ? " (지금은 고친 내용을 쓰고 있습니다)" : ""}
-            </div>
+        ) : null}
+        {/* AI 어시스턴트: 워크플로우 속성창과 같은 대화 창(2026-10-10 요청) - 윗줄(GPT 이름 · 프롬프트 편집 · MD 저장하기),
+            탭을 열면 «ETL 정보 요약해줘» 요약을 GPT 가 쓰고(«답변을 준비하고 있습니다.»), 이어서 묻는다.
+            상세정보 탭으로 돌아가도 같은 그룹이면 숨겨 둔 채 대화를 남긴다(display: contents 로 감싸 배치는 그대로). */}
+        {showAiPanel ? (
+          <div className="nifi-ai-panel-host" style={{ display: activeTab === "ai" ? "contents" : "none" }}>
+            <GptChatPanel key={aiPanelKey} targetType="ETL_ASSISTANT" target={aiTarget} />
           </div>
         ) : null}
-      </Modal>
+      </aside>
 
       <Modal
         title="연관 워크플로우"

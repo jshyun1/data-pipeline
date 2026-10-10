@@ -27,6 +27,14 @@ public interface LlmContextCollector {
     }
 
     /**
+     * 속성창 대화 요청용 - 이번 질문까지 받는다. 질문에 따라 모을 범위를 고르는 수집기(ETL_ASSISTANT 의 그룹 질문 의도)만 쓴다.
+     * 탭을 연 첫 요약 요청 · [프롬프트 편집] 미리보기는 질문이 없다(null).
+     */
+    default CollectedTarget collect(Map<String, String> target, String errorText, String draft, String question) {
+        return collect(target, errorText, draft);
+    }
+
+    /**
      * @param targetId 호출 기록에 남길 식별자(짧게)
      * @param label    화면에 보여 줄 대상 이름
      */

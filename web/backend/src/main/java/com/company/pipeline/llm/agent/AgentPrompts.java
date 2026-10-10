@@ -9,6 +9,8 @@ final class AgentPrompts {
               stop_pg 는 성패와 관계없이 ETL 처리를 멈춘다. 하위 워크플로우 노드는 하위 DAG 를 실행하고 끝날 때까지 기다린다.
               상위 워크플로우가 있는 워크플로우는 자체 스케줄이 돌지 않고 상위가 부를 때만 실행된다.
             - ETL job: 실제 SQL 추출·적재는 ETL 그룹의 단계(프로세서)가 수행한다. ETL 오류는 알림으로 올라온다.
+              워크플로우가 실행할 때만 start_pg 로 켜고 끝나면 stop_pg 로 멈추므로, 실행 중이 아닐 때 job · 단계가 «중지»인 것은 정상이다
+              (중지라서 스케줄이 안 도는 것이 아니다).
             - CDC: Debezium 소스 커넥터가 DB 변경을 Kafka topic 으로 보내고, JDBC 싱크 커넥터가 타깃 DB 에 반영한다(Kafka Connect).
             """;
 

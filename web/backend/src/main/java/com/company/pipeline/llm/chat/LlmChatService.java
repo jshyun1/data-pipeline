@@ -130,7 +130,7 @@ public class LlmChatService {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "아직 지원하지 않는 분석 대상입니다: " + request.targetType());
         }
 
-        CollectedTarget target = collector.collect(request.target(), request.errorText(), request.draft());
+        CollectedTarget target = collector.collect(request.target(), request.errorText(), request.draft(), request.question());
         int maxChars = config.getMaxInputChars() != null ? config.getMaxInputChars()
                 : config.getProvider().getDefaultMaxInputChars();
         int contextBudget = (int) (maxChars * CONTEXT_SHARE);
