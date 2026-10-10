@@ -480,13 +480,9 @@ export function DashboardPage() {
   const showAirflowInitialLoading = airflowHistoryQuery.isLoading && !airflowHistoryQuery.data;
 
   const nifiRunning = nifiJobs.filter((job) => job.status === "RUNNING").length;
-  // «지금 Invalid 인 그룹» - 실행 실패가 아니라 설정 미완성이다. 오류 건수와 섞지 않고 카드 안쪽 지표로만 쓴다.
-  const nifiInvalidNow = nifiJobs.filter((job) => job.status === "FAILED").length;
   const nifiStopped = nifiJobs.filter((job) => job.status === "STOPPED").length;
 
   // 카드에 쓰는 «장애 N건»은 조회 기간의 실패 건수다(아래 cdcFailedItems 와 같은 것).
-  // 커넥터의 현재 FAILED 개수(kafkaConnectorsFailedNow)는 카드 안쪽 지표로만 쓴다.
-  const kafkaConnectorsFailedNow = kafkaConnectors.filter((job) => job.status === "FAILED").length;
   const kafkaPaused = kafkaConnectors.filter((job) => job.status === "PAUSED").length;
 
   const nifiLoadDaily = useMemo(
@@ -812,11 +808,7 @@ export function DashboardPage() {
               <MetricRow label="해소 예상" value={cdcRecovery.text} warn={cdcRecovery.warn} />
               <MetricRow label="처리율" value={`${kafkaThroughput.toFixed(1)} rows/s`} />
               <MetricRow label="일시정지" value={String(kafkaPaused)} warn={kafkaPaused > 0} />
-              {/* 지금 커넥터가 FAILED 인 수. 조회 기간의 «실패 건수»와 다른 값이라 따로 둔다(2026-09-28). */}
-              {kafkaConnectorsFailedNow > 0 ? (
-                <MetricRow label="커넥터 실패(현재)" value={String(kafkaConnectorsFailedNow)} warn
-                           hint="지금 이 순간 FAILED 인 커넥터 수 - 조회 기간의 실패 건수와는 다르다" />
-              ) : null}
+              {/* «커넥터 실패(현재)» 칸은 뺐다(2026-10-11 요청). 실패는 아래 «실패 N건» · CDC 로그 · 알림이 보여 준다. */}
               {connectorDriftCount > 0 ? (
                 <MetricRow label="커넥터 불일치" value={String(connectorDriftCount)} warn />
               ) : null}
@@ -874,11 +866,7 @@ export function DashboardPage() {
               />
               <MetricRow label="실행" value={String(nifiRunning)} />
               <MetricRow label="중지" value={String(nifiStopped)} warn={nifiStopped > 0} />
-              {/* 설정이 덜 된 그룹. 실행 실패가 아니라 «지금 돌 수 없는 상태»라 오류 건수와 따로 둔다(2026-09-28). */}
-              {nifiInvalidNow > 0 ? (
-                <MetricRow label="설정 확인 필요" value={String(nifiInvalidNow)} warn
-                           hint="프로세서가 Invalid 인 그룹 수 - 실행 실패가 아니라 설정이 덜 된 상태" />
-              ) : null}
+              {/* «설정 확인 필요» 칸은 뺐다(2026-10-11 요청). */}
             </div>
           </div>
 
