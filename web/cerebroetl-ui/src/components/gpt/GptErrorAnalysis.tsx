@@ -75,12 +75,12 @@ export function GptErrorAnalysis({ targetType, target, errorText, onClose, headi
           {providerName ?? "-"}{deployment ? ` (${DEPLOYMENT_LABEL[deployment]})` : ""}
           {" · "}개인정보 마스킹 {masked ? "켜짐" : "꺼짐"}
         </span>
+        {/* 단추 셋은 같은 모양(2026-10-11 요청 - «프롬프트 편집»이 글자 링크라 따로 놀았다). «중지»는 뺐다 -
+            답이 오는 중에도 «닫기»가 그대로 있고, 닫으면 흐르던 요청은 끊긴다(useGptConversation 정리). */}
         <span className="gpt-analysis-actions">
-          <Button type="link" size="small" onClick={() => void chat.openPreview()}>프롬프트 편집</Button>
+          <Button size="small" onClick={() => void chat.openPreview()}>프롬프트 편집</Button>
           <Button size="small" onClick={saveMarkdown}>MD 저장하기</Button>
-          {chat.busy
-            ? <Button size="small" onClick={chat.stop}>중지</Button>
-            : <Button size="small" onClick={onClose}>닫기</Button>}
+          <Button size="small" onClick={onClose}>닫기</Button>
         </span>
       </div>
       {chat.meta?.truncated && (
