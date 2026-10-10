@@ -67,8 +67,10 @@ interface UnifiedCdcLogRow {
   kindLabel: string;
   startedAt: string;
   endedAt?: string | null;
-  durationSeconds?: number | null;
   processedCount?: number | null;
+  /** 처리 줄만: 그날 0시부터의 누적 처리 건수 · Sink 가 아직 처리하지 않은 메시지 수(추정). 명령 줄은 없다. */
+  dailyProcessedCount?: number | null;
+  consumerLag?: number | null;
   path: string;
   message?: string | null;
   processing?: CdcProcessingLogEntry;
@@ -104,23 +106,6 @@ function compareDate(a?: string | null, b?: string | null) {
 
 function compareNumber(a?: number | null, b?: number | null) {
   return (a ?? -1) - (b ?? -1);
-}
-
-/** 733초를 "12분 13초"처럼. */
-function formatDuration(seconds?: number | null) {
-  if (seconds == null) {
-    return "-";
-  }
-  if (seconds < 60) {
-    return `${seconds}초`;
-  }
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  if (minutes < 60) {
-    return rest === 0 ? `${minutes}분` : `${minutes}분 ${rest}초`;
-  }
-  const hours = Math.floor(minutes / 60);
-  return `${hours}시간 ${minutes % 60}분`;
 }
 
 /** GPT 에 넘길 «화면에 보이는 오류»: 줄의 구분·시각·상태와 메시지. 커넥터 오류 추적·파이프라인 구성은 서버가 붙인다. */
@@ -244,6 +229,8 @@ function CdcLogDetailModal({ row, pipelineAlive, onClose }: {
 /**
  * CDC 로그. ETL 로그 화면(EtlLogsPage)과 같은 구성이다(2026-09-13 요청) - 접히는 상태별 건수 대시보드,
  * 당일·전일·기간·검색·파이프라인 필터, 그리고 한 장의 표.
+ * 표의 열은 CDC 에 맞게 다시 골랐다(2026-10-10 요청): 상태 · 파이프라인 · 구분 · 시각 · 처리건수 · 일 누적 처리건수 ·
+ * 지연건수 · 경로. ETL 에서 온 종료 · 소요시간은 뺐고, 상세 창에만 있던 일 누적 · 지연(Lag)을 열로 꺼냈다.
  *
  * <p>예전에는 «처리 이력 / 오류·상태 이력 / 실패 데이터(DLQ)» 탭으로 나뉘어 있었다. 두 이력은 한 표로 합치고
  * (시각 역순), DLQ 는 화면에서 뺐다 - 싱크 실패 정책을 «버리고 계속»에서 «멈춤»으로 바꾸기로 해서 DLQ 는 쓰이지
@@ -328,8 +315,9 @@ export function CdcLogsPage() {
       kindLabel: "처리",
       startedAt: row.occurredAt,
       endedAt: null,
-      durationSeconds: null,
       processedCount: row.processedCount,
+      dailyProcessedCount: row.dailyProcessedCount,
+      consumerLag: row.consumerLag,
       path: pathByPipelineId.get(row.pipelineId) ?? "전체 파이프라인",
       message: row.message,
       processing: row,
@@ -343,10 +331,9 @@ export function CdcLogsPage() {
       kindLabel: COMMAND_LABEL[row.command] ?? row.command,
       startedAt: row.occurredAt,
       endedAt: row.completedAt,
-      durationSeconds: row.completedAt
-        ? Math.max(0, dayjs(row.completedAt).diff(dayjs(row.occurredAt), "second"))
-        : null,
       processedCount: null,
+      dailyProcessedCount: null,
+      consumerLag: null,
       path: pathByPipelineId.get(row.pipelineId) ?? "전체 파이프라인",
       message: row.message,
       event: row,
@@ -516,7 +503,7 @@ export function CdcLogsPage() {
             ),
           },
           {
-            title: "파이프라인명",
+            title: "파이프라인",
             dataIndex: "pipelineName",
             width: 180,
             sorter: (a, b) => compareText(a.pipelineName, b.pipelineName),
@@ -529,27 +516,13 @@ export function CdcLogsPage() {
             sorter: (a, b) => compareText(a.kindLabel, b.kindLabel),
           },
           {
-            title: "시작시간",
+            // 종료 · 소요는 뺐다(2026-10-10 요청) - 처리 줄은 1분 구간이라 뜻이 없고, 명령의 시작 ~ 종료는 상세 창 «시각»에 있다.
+            title: "시각",
             dataIndex: "startedAt",
             width: 180,
             sorter: (a, b) => compareDate(a.startedAt, b.startedAt),
             defaultSortOrder: "descend",
             render: formatDateTime,
-          },
-          {
-            title: "종료시간",
-            dataIndex: "endedAt",
-            width: 180,
-            sorter: (a, b) => compareDate(a.endedAt, b.endedAt),
-            render: formatDateTime,
-          },
-          {
-            title: "소요시간",
-            dataIndex: "durationSeconds",
-            width: 110,
-            align: "right",
-            sorter: (a, b) => compareNumber(a.durationSeconds, b.durationSeconds),
-            render: formatDuration,
           },
           {
             title: "처리건수",
@@ -559,6 +532,29 @@ export function CdcLogsPage() {
             sorter: (a, b) => compareNumber(a.processedCount, b.processedCount),
             render: (_value: number | null | undefined, row) =>
               row.status === "FAILED" ? "-" : formatCount(row.processedCount),
+          },
+          {
+            // 상세 창에만 있던 값을 열로 꺼냈다(2026-10-10 요청). 명령 줄은 값이 없어 «-».
+            title: "일 누적 처리건수",
+            dataIndex: "dailyProcessedCount",
+            width: 140,
+            align: "right",
+            sorter: (a, b) => compareNumber(a.dailyProcessedCount, b.dailyProcessedCount),
+            render: (value: number | null | undefined) => formatCount(value),
+          },
+          {
+            title: (
+              <Tooltip title="Sink 커넥터가 아직 처리하지 않은 메시지 수(추정)입니다. 시간 지연이 아니라 밀린 건수입니다.">
+                <span>지연건수</span>
+              </Tooltip>
+            ),
+            dataIndex: "consumerLag",
+            width: 110,
+            align: "right",
+            // 정렬 안내 말풍선(«Click to sort…»)이 위 설명과 겹쳐 뜨지 않게 이 열만 끈다.
+            showSorterTooltip: false,
+            sorter: (a, b) => compareNumber(a.consumerLag, b.consumerLag),
+            render: (value: number | null | undefined) => formatCount(value),
           },
           {
             title: "경로",
