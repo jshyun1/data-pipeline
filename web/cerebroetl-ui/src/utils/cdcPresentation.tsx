@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { Space, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { RealtimePipelineMetricResponse } from "../api/dashboard";
@@ -132,23 +131,14 @@ export function renderLag(metric: RealtimePipelineMetricResponse | undefined) {
 
 /**
  * CDC 파이프라인 목록 열. 이름·유형·소스→타깃·Topic·상태·지연·마지막 처리.
- * 관리 화면은 여기에 "관리" 열을 덧붙이고, 실시간 모니터링은 이대로 쓴다.
+ * CDC 관리 화면이 여기에 «소속 워크플로우» · «관리» 열을 덧붙여 쓴다.
  *
- * <p>상태 열은 화면에 따라 <b>하나만</b> 둔다.
- * <ul>
- *   <li>CDC 관리 화면: 커넥터 상태(데이터가 실제로 흐르는지)</li>
- *   <li>실시간 모니터링(workflowStatus 를 넘김): 제어 DAG 가 지금 도는지</li>
- * </ul>
- *
- * <p>둘 다 열 이름은 «상태»다 - 화면마다 하나뿐이라 수식어가 필요 없다.
- *
- * <p>예전엔 모니터링에서 둘을 나란히 보여줬는데, 상태 열이 둘이면 어느 쪽을 봐야 하는지
- * 헷갈리고 표만 넓어졌다. 커넥터 상태는 속성창의 상세보기에서 확인한다(2026-09-03 결정).
+ * <p>상태는 커넥터 상태(데이터가 실제로 흐르는지) 하나다. 예전에는 워크플로우 로그 화면의 CDC 가지가
+ * 같은 열을 쓰면서 상태 자리에 «워크플로우 실행 상태»를 넣었는데, 그 가지는 2026-10-10 에 뺐다.
  */
 export function cdcPipelineColumns(
   runtimeByPipeline: Map<number, PipelineRuntimeStatusResponse>,
   metricByPipeline: Map<number, RealtimePipelineMetricResponse>,
-  workflowStatus?: { render: (pipeline: PipelineResponse) => ReactNode },
 ): ColumnsType<PipelineResponse> {
   return [
     { title: "이름", dataIndex: "name", width: 130, sorter: (a, b) => byText(a.name, b.name) },
@@ -171,23 +161,16 @@ export function cdcPipelineColumns(
       ),
     },
     { title: "Topic", dataIndex: "topicName", width: 120, ellipsis: true, sorter: (a, b) => byText(a.topicName, b.topicName) },
-    // 상태 열은 하나. 모니터링은 워크플로우 상태를, 관리 화면은 커넥터 상태를 쓴다.
-    workflowStatus
-      ? {
-          title: "상태",
-          width: 110,
-          render: (_: unknown, row: PipelineResponse) => workflowStatus.render(row),
-        }
-      : {
-          title: "상태",
-          width: 150,
-          sorter: (a: PipelineResponse, b: PipelineResponse) => byText(
-            runtimeByPipeline.get(a.id)?.runtimeStatus ?? a.status,
-            runtimeByPipeline.get(b.id)?.runtimeStatus ?? b.status,
-          ),
-          render: (_: unknown, row: PipelineResponse) =>
-            renderRuntimeStatus(row, runtimeByPipeline.get(row.id)),
-        },
+    {
+      title: "상태",
+      width: 150,
+      sorter: (a: PipelineResponse, b: PipelineResponse) => byText(
+        runtimeByPipeline.get(a.id)?.runtimeStatus ?? a.status,
+        runtimeByPipeline.get(b.id)?.runtimeStatus ?? b.status,
+      ),
+      render: (_: unknown, row: PipelineResponse) =>
+        renderRuntimeStatus(row, runtimeByPipeline.get(row.id)),
+    },
     {
       title: "지연",
       width: 68,

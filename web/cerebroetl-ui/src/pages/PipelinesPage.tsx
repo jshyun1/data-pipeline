@@ -31,6 +31,7 @@ import { GptChatPanel } from "../components/gpt/GptChatPanel";
 import { useGptEnabled } from "../components/gpt/useGptEnabled";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { listConnections } from "../api/connections";
+import { listWorkflows, type WorkflowSummary } from "../api/workflows";
 import {
   createPipelineGroup,
   deletePipelineGroup,
@@ -167,6 +168,20 @@ export function PipelinesPage() {
     queryKey: ["connections"],
     queryFn: listConnections,
   });
+  // «소속 워크플로우» 열(2026-10-10): CDC 는 워크플로우로만 제어한다(2026-10-01) - 어느 게시된 워크플로우에도
+  // 없으면 실행할 수 없다. 예전에는 워크플로우 로그 화면의 CDC 가지만 그걸 알려 줬는데, 그 가지를 빼면서 여기로 옮겼다.
+  const { data: workflows } = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
+  const workflowsByPipeline = useMemo(() => {
+    const byPipeline = new Map<number, WorkflowSummary[]>();
+    (workflows ?? []).forEach((workflow) => {
+      new Set((workflow.cdcNodes ?? []).map((node) => node.pipelineId)).forEach((pipelineId) => {
+        if (pipelineId != null) {
+          byPipeline.set(pipelineId, [...(byPipeline.get(pipelineId) ?? []), workflow]);
+        }
+      });
+    });
+    return byPipeline;
+  }, [workflows]);
 
   // metadata-db는 RUNNING이라고 알고 있는데 실제 Kafka Connect엔 없는 커넥터가 있는지
   // 주기적으로 확인한다 - 예전에 이걸 놓쳐서 데이터가 조용히 안 들어온 적이 있었다.
@@ -579,6 +594,34 @@ export function PipelinesPage() {
             column.title === "이름"
               ? { ...column, width: 190, render: (value: string) => <strong className="cdc-manage-name">{value}</strong> }
               : column),
+          {
+            // 게시된 워크플로우 이름(누르면 워크플로우 로그에서 그 워크플로우를 연다 - 실행 설정이 거기 있다).
+            // 게시 전 워크플로우에만 있으면 «게시 전», 어디에도 없으면 «없음 · 실행 불가».
+            title: "소속 워크플로우",
+            width: 150,
+            sorter: (a, b) => (workflowsByPipeline.get(a.id)?.find((w) => w.published)?.name ?? "")
+              .localeCompare(workflowsByPipeline.get(b.id)?.find((w) => w.published)?.name ?? ""),
+            render: (_, record) => {
+              const owners = workflowsByPipeline.get(record.id) ?? [];
+              const published = owners.filter((workflow) => workflow.published);
+              if (published.length > 0) {
+                return (
+                  <Space direction="vertical" size={0}>
+                    {published.map((workflow) => (
+                      <Typography.Link key={workflow.id} title="워크플로우 로그에서 열기"
+                                       onClick={() => navigate(`/airflow/dashboard?dagId=${encodeURIComponent(workflow.dagId)}`)}>
+                        {workflow.name}
+                      </Typography.Link>
+                    ))}
+                  </Space>
+                );
+              }
+              if (owners.length > 0) {
+                return <Tag title={owners.map((workflow) => workflow.name).join(", ")}>게시 전</Tag>;
+              }
+              return <Tag color="warning" title="워크플로우에 CDC 노드로 넣고 게시해야 실행할 수 있습니다">없음 · 실행 불가</Tag>;
+            },
+          },
           {
             title: "관리",
             width: 130,

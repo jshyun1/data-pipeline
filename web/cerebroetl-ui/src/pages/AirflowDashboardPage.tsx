@@ -29,20 +29,12 @@ import {
 import { getProcessHealth, type ProcessGroup } from "../api/infra";
 import { getWorkflow, listWorkflows, type WorkflowSummary } from "../api/workflows";
 import { getAlertRulesWatching } from "../api/config";
-import { listConnections } from "../api/connections";
-import { getRealtimePipelineMetrics, type RealtimePipelineMetricResponse } from "../api/dashboard";
 import { listPipelineRuntimeStatuses, listPipelines } from "../api/pipelines";
 import type { PipelineResponse, PipelineRuntimeStatusResponse } from "../types/pipeline";
-import { loadModeLabel } from "../types/pipeline";
-import {
-  cdcPipelineColumns,
-  renderRuntimeStatus,
-  sourceLabel,
-  targetLabel,
-} from "../utils/cdcPresentation";
+import { renderRuntimeStatus } from "../utils/cdcPresentation";
 import { buildWorkflowHierarchy, type WorkflowTreeItem } from "../utils/workflowTree";
 import { getEtlJob, listEtlJobs } from "../api/etlJobs";
-import { categorizeDag, extractKafkaPipelineId, type DagCategory } from "../utils/dagHistory";
+import { categorizeDag, type DagCategory } from "../utils/dagHistory";
 import { scheduleDescription } from "../utils/schedulePreset";
 import { useAuth } from "../auth/AuthContext";
 import { WfIcon, WorkflowPageHeader, type WfIconName } from "../components/WorkflowPageHeader";
@@ -85,7 +77,9 @@ interface DashboardData {
   processGroups: ProcessGroup[];
 }
 
-const CATEGORY_ORDER: BusinessCategory[] = ["CDC", "ETL"];
+// 트리 최상단 가지. CDC 가지(연결 → 스키마 → 파이프라인)는 2026-10-10 에 뺐다 - CDC 는 ETL 가지의 CDC 워크플로우로 제어하고,
+// 파이프라인 단위 상태 · 지연은 CDC 관리 화면이 보여 준다(«소속 워크플로우» 열도 거기 있다).
+const CATEGORY_ORDER: BusinessCategory[] = ["ETL"];
 const REFRESH_OPTIONS = [
   { label: "10초", value: 10 },
   { label: "30초", value: 30 },
@@ -210,21 +204,6 @@ function categoryOf(dag: DashboardDag): DagCategory {
   return dag.business_category ?? categorizeDag(dag.dag_id);
 }
 
-/**
- * 이 파이프라인을 CDC 노드로 품은 게시된 워크플로우와 그 노드 키(첫 번째).
- *
- * CDC 는 워크플로우로만 제어한다(2026-10-01) - 파이프라인마다 있던 제어 DAG(kafka_pipeline_{id}_control)는 없다.
- * 어느 워크플로우에도 없는 파이프라인은 실행할 수 없다(워크플로우에 노드로 넣고 게시해야 한다).
- */
-function cdcHomeOf(workflows: WorkflowSummary[], pipelineId: number) {
-  for (const workflow of workflows) {
-    if (!workflow.published) continue;
-    const node = workflow.cdcNodes?.find((item) => item.pipelineId === pipelineId);
-    if (node) return { workflow, nodeKey: node.nodeKey };
-  }
-  return undefined;
-}
-
 function folderName(dag: DashboardDag) {
   if (dag.business_folder) return dag.business_folder;
   const tags = tagNames(dag);
@@ -301,8 +280,6 @@ type StatusMetric = "all" | "running" | "success" | "failed" | "waiting" | "new"
 
 /**
  * 가운데 목록이 무엇을 보여줄지. 트리에서 고르거나 상단 지표를 누르면 바뀐다.
- *
- * CDC는 파이프라인이, ETL은 워크플로우가 실행 단위라 목록의 성격이 다르다.
  * 하나의 선택값으로 묶어 두면 "지금 무엇을 보고 있는지"가 한 군데에만 있게 된다.
  */
 const STATUS_METRIC_LABEL: Record<StatusMetric, string> = {
@@ -315,14 +292,8 @@ const STATUS_METRIC_LABEL: Record<StatusMetric, string> = {
 };
 
 type ListScope =
-  | { kind: "cdc"; scope: "all" }
-  | { kind: "cdc"; scope: "connection"; connectionId: number }
-  | { kind: "cdc"; scope: "schema"; connectionId: number; schema: string }
-  | { kind: "cdc"; scope: "logfile" }
-  | { kind: "cdc"; scope: "pipeline"; pipelineId: number }
   | { kind: "dag"; dagId: string }
-  // 트리 최상단 폴더(CDC · ETL)를 누른 것. 그 가지 «안에 있는 전부»를 가운데에 편다 -
-  // CDC 는 파이프라인 전체, ETL 은 워크플로우 실행 전체다(2026-09-21 요청).
+  // 트리 최상단 폴더(ETL)를 누른 것. 그 가지 «안에 있는 전부»(워크플로우 실행 전체)를 가운데에 편다(2026-09-21 요청).
   // 예전에는 최상단만 접기/펼치기라, 전체를 보려면 «전체 파이프라인»을 따로 눌러야 했고 ETL 은 방법이 아예 없었다.
   | { kind: "category"; category: BusinessCategory }
   | { kind: "metric"; category: BusinessCategory; metric: StatusMetric };
@@ -470,9 +441,6 @@ function BusinessTree({
   search,
   onSearch,
   workflows,
-  pipelines,
-  connectionNames,
-  selectedPipelineId,
   scope,
   onScope,
   onSelect,
@@ -484,11 +452,6 @@ function BusinessTree({
   dags: DashboardDag[];
   /** 워크플로우 목록. ETL 가지는 이 상하 관계로 그린다(스케줄링 화면 트리와 같은 모양). */
   workflows: WorkflowSummary[];
-  /** CDC 가지는 CDC 관리 화면과 같은 계층(연결 → 스키마 → 파이프라인)으로 그린다. */
-  pipelines: PipelineResponse[];
-  connectionNames: Map<number, string>;
-  /** 가운데 목록에서 고른 파이프라인. 트리 범위를 바꾸지 않고 행만 고를 수 있어 따로 받는다. */
-  selectedPipelineId?: number;
   scope?: ListScope;
   onScope: (scope: ListScope) => void;
   selectedDagId?: string;
@@ -520,23 +483,16 @@ function BusinessTree({
   /**
    * 처음 열었을 때의 트리 모양.
    *
-   * <p>기본값이 «전부 펼침»이라 들어오자마자 파이프라인·워크플로우가 다 쏟아졌다.
-   * CDC는 «전체 파이프라인», ETL은 «ETL Root»까지만 보이게 접어두고, 필요한 가지를
-   * 사용자가 펼치게 한다.
+   * <p>기본값이 «전부 펼침»이라 들어오자마자 워크플로우가 다 쏟아졌다.
+   * 최상단 워크플로우까지만 보이게 접어두고, 필요한 가지를 사용자가 펼치게 한다.
    */
   useEffect(() => {
     if (seeded.current || workflows.length === 0) {
       return;
     }
     seeded.current = true;
-    const initial = new Set<string>(["cdc:all", "cdc:logfile"]);
-    pipelines.forEach((pipeline) => {
-      if (pipeline.sourceConnectionId != null) {
-        initial.add(`cdc:connection:${pipeline.sourceConnectionId}`);
-        initial.add(`cdc:schema:${pipeline.sourceConnectionId}:${pipeline.sourceSchema ?? "스키마 없음"}`);
-      }
-    });
-    // ETL 은 최상단 워크플로우까지만 보이게 하고 하위는 접어 둔다.
+    const initial = new Set<string>();
+    // 최상단 워크플로우까지만 보이게 하고 하위는 접어 둔다.
     const collapseChildren = (items: WorkflowTreeItem[]) => {
       items.forEach((item) => {
         if (item.children.length) {
@@ -547,15 +503,13 @@ function BusinessTree({
     };
     collapseChildren(buildWorkflowHierarchy(workflows.filter((w) => w.published)));
     setCollapsedNodes(initial);
-  }, [workflows, pipelines]);
+  }, [workflows]);
   /**
    * 가운데 목록에서 고른 항목이 트리에서 보이도록 조상 가지를 편다.
    *
-   * 트리를 «전체 파이프라인 / ETL Root»까지만 펼쳐 두다 보니, 목록에서 워크플로우를 눌러도
+   * 트리를 최상단 워크플로우까지만 펼쳐 두다 보니, 목록에서 워크플로우를 눌러도
    * 왼쪽에서는 어디에 있는 것인지 보이지 않았다. 고른 항목까지의 길만 열어준다.
    */
-  const revealPipelineId = selectedPipelineId
-    ?? (scope?.kind === "cdc" && scope.scope === "pipeline" ? scope.pipelineId : undefined);
   useEffect(() => {
     const open = new Set<string>();
     if (selectedDagId) {
@@ -574,19 +528,6 @@ function BusinessTree({
         trail.forEach((id) => open.add(`wf:${id}`));
       }
     }
-    if (revealPipelineId != null) {
-      const pipeline = pipelines.find((row) => row.id === revealPipelineId);
-      if (pipeline) {
-        open.add("category:CDC");
-        open.add("cdc:all");
-        if (pipeline.pipelineType === "LOG_FILE" || pipeline.sourceConnectionId == null) {
-          open.add("cdc:logfile");
-        } else {
-          open.add(`cdc:connection:${pipeline.sourceConnectionId}`);
-          open.add(`cdc:schema:${pipeline.sourceConnectionId}:${pipeline.sourceSchema ?? "스키마 없음"}`);
-        }
-      }
-    }
     if (open.size === 0) {
       return;
     }
@@ -598,7 +539,7 @@ function BusinessTree({
       open.forEach((key) => next.delete(key));
       return next;
     });
-  }, [selectedDagId, revealPipelineId, workflows, pipelines, dags]);
+  }, [selectedDagId, workflows, dags]);
 
   const toggleNode = (node: string) => {
     setCollapsedNodes((current) => {
@@ -726,135 +667,6 @@ function BusinessTree({
   const workflowHierarchy = buildWorkflowHierarchy(publishedWorkflows);
 
   /**
-   * CDC 파이프라인 트리 항목. ETL DAG 항목과 같은 우클릭 메뉴(상세·실행 설정)를 준다.
-   *
-   * 실행 대상은 이 파이프라인을 품은 워크플로우다(2026-10-01 제어 DAG 폐지). «실행 설정»을 누르면 그 워크플로우의
-   * 실행 창이 이 파이프라인 노드만 골라 둔 채로 열린다. 어느 워크플로우에도 없으면 실행할 수 없다고 알린다.
-   */
-  const renderPipelineButton = (pipeline: PipelineResponse) => {
-    const home = cdcHomeOf(workflows, pipeline.id);
-    const homeDag = home ? dags.find((d) => d.dag_id === home.workflow.dagId) : undefined;
-    const row = treeRow({
-      active: revealPipelineId === pipeline.id,
-      icon: "file",
-      label: pipeline.name,
-      title: home ? `${pipeline.name} · 워크플로우 «${home.workflow.name}»` : `${pipeline.name} · 워크플로우에 없음(실행 불가)`,
-      arrow: { kind: "none" },
-      onClick: () => onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id }),
-    });
-    return (
-      <div key={pipeline.id} className="tree-node">
-        <Dropdown
-          trigger={["contextMenu"]}
-          menu={{
-            items: [
-              ...(homeDag ? [{ key: "detail", icon: <InfoCircleOutlined />, label: "워크플로우 상세" }] : []),
-              ...(canRun ? [{
-                key: "execution", icon: <PlayCircleOutlined />,
-                label: homeDag ? "실행 설정" : "실행 설정 (워크플로우에 없음)", disabled: !homeDag,
-              }] : []),
-            ],
-            onClick: ({ key }) => {
-              onScope({ kind: "cdc", scope: "pipeline", pipelineId: pipeline.id });
-              if (!homeDag) return;
-              if (key === "detail") onDetail(homeDag);
-              else onExecution(homeDag);
-            },
-          }}
-        >
-          {row}
-        </Dropdown>
-      </div>
-    );
-  };
-
-  /**
-   * CDC 가지. CDC 관리 화면과 같은 계층으로 그린다 - 연결 → 스키마 → 파이프라인.
-   * 예전에는 DAG(kafka_pipeline_N_control)를 평평하게 늘어놓아서 어느 원천인지 알 수 없었다.
-   */
-  const renderCdcTree = () => {
-    const byConnection = new Map<number, Map<string, PipelineResponse[]>>();
-    const logFiles: PipelineResponse[] = [];
-    const needle = search.trim().toLowerCase();
-    for (const pipeline of pipelines) {
-      const matches = !needle
-        || pipeline.name.toLowerCase().includes(needle)
-        || (pipeline.sourceTable ?? "").toLowerCase().includes(needle)
-        || (pipeline.targetTable ?? "").toLowerCase().includes(needle);
-      if (!matches) {
-        continue;
-      }
-      if (pipeline.pipelineType === "LOG_FILE" || pipeline.sourceConnectionId == null) {
-        logFiles.push(pipeline);
-        continue;
-      }
-      const schemas = byConnection.get(pipeline.sourceConnectionId) ?? new Map<string, PipelineResponse[]>();
-      const schema = pipeline.sourceSchema ?? "스키마 없음";
-      schemas.set(schema, [...(schemas.get(schema) ?? []), pipeline]);
-      byConnection.set(pipeline.sourceConnectionId, schemas);
-    }
-
-    /** 폴더 한 칸. 누르면 접기/펼치기와 함께 가운데 목록 범위가 그 폴더로 바뀐다(예전과 같음). */
-    const folder = (
-      key: string, label: string, count: number,
-      selected: boolean, onClick: () => void, children: React.ReactNode,
-    ) => {
-      const collapsed = collapsedNodes.has(rememberBranch(key));
-      return (
-        <div key={key} className="tree-node">
-          {treeRow({
-            active: selected,
-            icon: "folder",
-            label,
-            title: label,
-            arrow: { kind: "row", open: !collapsed },
-            trailing: <span className="tree-node-badge">{count}</span>,
-            onClick: () => { toggleNode(key); onClick(); },
-          })}
-          {!collapsed && <div className="tree-sub-group" role="group">{children}</div>}
-        </div>
-      );
-    };
-
-    const total = pipelines.length;
-    return folder(
-      "cdc:all", "전체 파이프라인", total,
-      scope?.kind === "cdc" && scope.scope === "all",
-      () => onScope({ kind: "cdc", scope: "all" }),
-      <>
-        {[...byConnection.entries()].map(([connectionId, schemas]) => {
-          const count = [...schemas.values()].reduce((sum, rows) => sum + rows.length, 0);
-          return folder(
-            `cdc:connection:${connectionId}`, connectionNames.get(connectionId) ?? `연결 ${connectionId}`,
-            count,
-            scope?.kind === "cdc" && scope.scope === "connection" && scope.connectionId === connectionId,
-            () => onScope({ kind: "cdc", scope: "connection", connectionId }),
-            <>
-              {[...schemas.entries()].map(([schema, rows]) => folder(
-                `cdc:schema:${connectionId}:${schema}`, schema, rows.length,
-                scope?.kind === "cdc" && scope.scope === "schema"
-                  && scope.connectionId === connectionId && scope.schema === schema,
-                () => onScope({ kind: "cdc", scope: "schema", connectionId, schema }),
-                <>
-                  {rows.map((pipeline) => renderPipelineButton(pipeline))}
-                </>,
-              ))}
-            </>,
-          );
-        })}
-        {logFiles.length > 0 && folder(
-          "cdc:logfile", "로그파일", logFiles.length,
-          scope?.kind === "cdc" && scope.scope === "logfile",
-          () => onScope({ kind: "cdc", scope: "logfile" }),
-          <>
-            {logFiles.map((pipeline) => renderPipelineButton(pipeline))}
-          </>,
-        )}
-      </>,
-    );
-  };
-
-  /**
    * 트리에 자리를 갖는 DAG. 워크플로우 계층에 올라간 것이 전부다.
    *
    * <p>여기 없는 ETL DAG(워크플로우로 아직 안 옮긴 옛 팩토리 DAG 등)는 트리 맨 아래에
@@ -933,7 +745,7 @@ function BusinessTree({
                 icon: "folder",
                 label: category,
                 arrow: { kind: "row", open: !categoryCollapsed },
-                trailing: <span className="tree-node-badge">{category === "CDC" ? pipelines.length : categoryDags.length}</span>,
+                trailing: <span className="tree-node-badge">{categoryDags.length}</span>,
                 // 누르면 «그 가지 전부»를 가운데에 편다. 접혀 있으면 함께 펼치고, 이미 보고 있는 가지를
                 // 다시 누를 때만 접는다 - 목록을 보려다 하위가 사라지지 않게 한다.
                 onClick: () => {
@@ -944,7 +756,6 @@ function BusinessTree({
               })}
               {!categoryCollapsed && (
                 <div className="tree-sub-group" role="group">
-                  {category === "CDC" && renderCdcTree()}
                   {category === "ETL" && workflowHierarchy.map((item) => renderWorkflowTree(item, categoryDags))}
                   {category === "ETL" && categoryDags
                     // 워크플로우 계층에 이미 붙은 DAG 는 여기서 또 보여주지 않는다.
@@ -1341,95 +1152,24 @@ function ScopeList({
   dags,
   runsByDag,
   waitingDagIds,
-  workflows,
-  pipelines,
-  runtimeByPipeline,
-  metricByPipeline,
   selectedDagId,
-  selectedPipelineId,
   onSelectDag,
-  onSelectPipeline,
 }: {
   scope: ListScope;
   dags: DashboardDag[];
   runsByDag: Map<string, AirflowDagRun[]>;
   waitingDagIds: Set<string>;
-  workflows: WorkflowSummary[];
-  pipelines: PipelineResponse[];
-  runtimeByPipeline: Map<number, PipelineRuntimeStatusResponse>;
-  metricByPipeline: Map<number, RealtimePipelineMetricResponse>;
   selectedDagId?: string;
-  selectedPipelineId?: number;
   onSelectDag: (dagId: string) => void;
-  onSelectPipeline: (pipelineId: number) => void;
 }) {
   const today = dayjs().startOf("day");
-
-  // CDC는 파이프라인이 실행 단위다. 트리에서 고르든 상단 지표를 누르든 같은 표를 그린다 -
-  // 예전에는 지표를 누르면 ETL과 같은 DAG 표가 나와서, 같은 대상을 두 가지 모양으로
-  // 보여주고 있었다(scope.kind만 보고 category를 안 봤다).
-  let cdcRows: PipelineResponse[] | null = null;
-  if (scope.kind === "cdc") {
-    cdcRows = pipelines.filter((pipeline) => {
-      if (scope.scope === "all") return true;
-      if (scope.scope === "logfile") return pipeline.pipelineType === "LOG_FILE" || pipeline.sourceConnectionId == null;
-      if (scope.scope === "connection") return pipeline.sourceConnectionId === scope.connectionId;
-      if (scope.scope === "schema") {
-        return pipeline.sourceConnectionId === scope.connectionId
-          && (pipeline.sourceSchema ?? "스키마 없음") === scope.schema;
-      }
-      return pipeline.id === scope.pipelineId;
-    });
-  } else if (scope.kind === "category" && scope.category === "CDC") {
-    cdcRows = pipelines;   // CDC 가지 전체 = 파이프라인 전부(«전체 파이프라인»과 같은 표)
-  } else if (scope.kind === "metric" && scope.category === "CDC") {
-    // 지표는 DAG 기준으로 세므로 걸러내기도 DAG로 하고, 그 뒤에 파이프라인으로 되돌린다.
-    // 이렇게 해야 카드 숫자와 목록 건수가 어긋나지 않는다.
-    const pipelineIds = new Set(
-      dags
-        .filter((dag) => categoryOf(dag) === "CDC"
-          && matchesMetric(scope.metric, dag, runsByDag.get(dag.dag_id) ?? [], today))
-        .map((dag) => extractKafkaPipelineId(dag.dag_id)),
-    );
-    cdcRows = pipelines.filter((pipeline) => pipelineIds.has(String(pipeline.id)));
-  }
-
-  if (cdcRows) {
-    // 파이프라인 -> 그 파이프라인을 품은 워크플로우의 최근 실행. "워크플로우 상태" 열에 쓴다(2026-10-01 제어 DAG 폐지).
-    const latestRunOfPipeline = (pipelineId: number) => {
-      const home = cdcHomeOf(workflows, pipelineId);
-      return home ? (runsByDag.get(home.workflow.dagId) ?? [])[0] : undefined;
-    };
-    return (
-      <Table<PipelineResponse>
-        rowKey="id"
-        size="small"
-        dataSource={cdcRows}
-        // 가운데 패널 폭(최소 650px)보다 넉넉히 작게 잡는다. 예전 1130 은 패널보다 넓어
-        // 처음 들어오자마자 가로 스크롤이 생겼다 - 열 폭도 함께 줄였다.
-        scroll={{ x: 860 }}
-        columns={cdcPipelineColumns(runtimeByPipeline, metricByPipeline, {
-          render: (pipeline) => {
-            const run = latestRunOfPipeline(pipeline.id);
-            return <Tag color={stateColor(run?.state)}>{stateLabel(run?.state)}</Tag>;
-          },
-        })}
-        pagination={{ pageSize: 20, hideOnSinglePage: true, showTotal: (total) => `총 ${total}건` }}
-        rowClassName={(row) => row.id === selectedPipelineId ? "airflow-row-selected" : ""}
-        onRow={(row) => ({ onClick: () => onSelectPipeline(row.id) })}
-        locale={{ emptyText: <Empty description="이 범위에 파이프라인이 없습니다." /> }}
-      />
-    );
-  }
 
   // ETL 그룹 / ETL 지표 선택 -> DAG(워크플로우) 목록
   // 당일 실행분만 본다. 오늘 안 돈 워크플로우는 «실행 없음»으로 비워 두는 편이,
   // 며칠 전 결과를 오늘 것처럼 보여주는 것보다 정확하다.
   const latestRun = (dagId: string) => latestRunToday(runsByDag.get(dagId) ?? [], today);
-  // cdc 범위는 위에서 이미 반환했으므로 여기서는 남은 세 가지만 다룬다.
   let rows: DashboardDag[] = [];
   if (scope.kind === "metric") {
-    // CDC 지표는 위에서 파이프라인 표로 처리했으므로 여기 오는 건 ETL뿐이다.
     rows = dags.filter((dag) => categoryOf(dag) === scope.category
       && matchesMetric(scope.metric, dag, runsByDag.get(dag.dag_id) ?? [], today, waitingDagIds));
   } else if (scope.kind === "dag") {
@@ -1679,8 +1419,6 @@ function WatchingRules({ target, ids }: { target: "CDC" | "ETL"; ids: Array<numb
  */
 function PropertyPanel({
   dag,
-  pipeline,
-  runtime,
   etlJobIds,
   cdcMembers,
   inline = false,
@@ -1688,8 +1426,6 @@ function PropertyPanel({
   onOpenHistory,
 }: {
   dag?: DashboardDag;
-  pipeline?: PipelineResponse;
-  runtime?: PipelineRuntimeStatusResponse;
   etlJobIds?: number[];
   /** CDC 워크플로우일 때 소속 파이프라인들. 비어 있지 않으면 «어느 것이 실패했는지» 칸을 그린다. */
   cdcMembers?: CdcMember[];
@@ -1711,47 +1447,6 @@ function PropertyPanel({
     onError: (error: unknown) =>
       message.error(`해제하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`),
   });
-  // CDC 파이프라인을 골랐을 때. CDC 관리 화면의 «기본정보»와 같은 항목을 보여준다.
-  if (!inline && pipeline) {
-    return (
-      <aside className="airflow-dashboard-panel airflow-property-panel">
-        <section>
-          <strong>기본정보</strong>
-          <dl>
-            <dt>유형</dt><dd>{pipeline.pipelineType}</dd>
-            <dt>소스</dt><dd>{sourceLabel(pipeline)}</dd>
-            <dt>타겟</dt><dd>{targetLabel(pipeline)}</dd>
-            <dt>Topic</dt><dd>{pipeline.topicName}</dd>
-            {pipeline.pipelineType === "TABLE_CDC" && <>
-              <dt>스냅샷 모드</dt>
-              <dd>{pipeline.snapshotMode === "NO_DATA" ? "기존 데이터 미적재 · 이후 CDC" : "초기 적재 후 CDC"}</dd>
-              <dt>적재 방식</dt>
-              <dd>{loadModeLabel(pipeline.loadMode, pipeline.deltaOpColumn)}</dd>
-            </>}
-            {/* 목록의 «상태»는 제어 DAG 기준이라, 여기서는 무엇의 상태인지 밝힌다. */}
-            <dt>커넥터 상태</dt><dd>{renderRuntimeStatus(pipeline, runtime)}</dd>
-            <dt>설명</dt><dd>{pipeline.description ?? "-"}</dd>
-            <dt>생성 시각</dt><dd>{pipeline.createdAt}</dd>
-            <dt>수정 시각</dt><dd>{pipeline.updatedAt}</dd>
-          </dl>
-          <div className="airflow-schedule-actions">
-            <Button type="primary" disabled={!dag || !canRun} onClick={onOpenExecution}
-              title={canRun ? undefined : "Airflow 쓰기 권한이 없습니다"}>실행 설정</Button>
-            <Button disabled={!dag} onClick={onOpenHistory}>실행 이력</Button>
-          </div>
-        </section>
-        <WatchingRules target="CDC" ids={[pipeline.id]} />
-        <section>
-          <strong>바로가기</strong>
-          <div className="airflow-resource-links">
-            {dag && <Link to={`/airflow/manage?dagId=${encodeURIComponent(dag.dag_id)}`}>상세보기</Link>}
-            <Link to="/cdc/pipelines">CDC 파이프라인</Link>
-          </div>
-        </section>
-      </aside>
-    );
-  }
-
   if (!dag) {
     return <aside className="airflow-dashboard-panel airflow-property-panel"><Empty description="작업을 선택하세요." /></aside>;
   }
@@ -1825,6 +1520,9 @@ function PropertyPanel({
         </section>
       )}
       {!inline && category === "ETL" && !isCdcWorkflowDag(dag) && <WatchingRules target="ETL" ids={etlJobIds ?? []} />}
+      {/* CDC 워크플로우는 소속 파이프라인을 감시하는 규칙을 보여 준다 - 예전 CDC 가지에서 파이프라인을 고르면 보이던 것(2026-10-10). */}
+      {!inline && isCdcWorkflowDag(dag) && (cdcMembers ?? []).length > 0
+        && <WatchingRules target="CDC" ids={(cdcMembers ?? []).map((member) => member.pipelineId)} />}
       {!inline && <section><strong>바로가기</strong><div className="airflow-resource-links"><Link to={`/airflow/manage?dagId=${encodeURIComponent(dag.dag_id)}`}>상세보기</Link>{category === "ETL" && !isCdcWorkflowDag(dag) ? <Link to={dag.nifi_process_group_id ? `/etl/manage?processGroupId=${encodeURIComponent(dag.nifi_process_group_id)}` : "/etl/manage"}>ETL 캔버스</Link> : <Link to="/cdc/pipelines">CDC 파이프라인</Link>}</div></section>}
     </aside>
   );
@@ -1848,7 +1546,6 @@ function ExecutionSettingsModal({
   workflows,
   pipelines,
   runtimeByPipeline,
-  focusPipelineId,
   onClose,
   onExecuted,
 }: {
@@ -1858,8 +1555,6 @@ function ExecutionSettingsModal({
   workflows: WorkflowSummary[];
   pipelines: PipelineResponse[];
   runtimeByPipeline: Map<number, PipelineRuntimeStatusResponse>;
-  /** 트리에서 고른 CDC 파이프라인. 있으면 그 노드에만 «시작»을 골라 둔 채로 연다. */
-  focusPipelineId?: number;
   onClose: () => void;
   onExecuted: () => void;
 }) {
@@ -1889,12 +1584,10 @@ function ExecutionSettingsModal({
     setAction("start");
     setNameFilter("");
     setStatusFilter(undefined);
-    // CDC 워크플로우: 파이프라인을 골라 들어왔으면 그 노드만 «시작», 아니면 전부 «시작»으로 연다.
-    const focusNode = focusPipelineId != null ? cdcNodes.find((n) => n.pipelineId === focusPipelineId)?.nodeKey : undefined;
-    setNodeChoices(Object.fromEntries(cdcNodes.map((n) =>
-      [n.nodeKey, focusNode ? (n.nodeKey === focusNode ? "start" : "none") : "start"] as const)));
+    // CDC 워크플로우: 전부 «시작»으로 연다. 노드마다 바꿀 수 있다(예전 CDC 가지에서 파이프라인을 골라 들어오던 길은 2026-10-10 에 없앴다).
+    setNodeChoices(Object.fromEntries(cdcNodes.map((n) => [n.nodeKey, "start"] as const)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, dag?.dag_id, focusPipelineId]);
+  }, [open, dag?.dag_id]);
 
   const options = [
     { label: "시작 (Start)", value: "start" },
@@ -2006,11 +1699,10 @@ export function AirflowDashboardPage() {
   const [refreshSeconds, setRefreshSeconds] = useState(30);
   const [selectedDagId, setSelectedDagId] = useState<string | undefined>(initialDagId);
   const [search, setSearch] = useState("");
-  // 처음 열면 무엇을 보여줄지. 마지막으로 고른 DAG가 덩그러니 뜨는 것보다
-  // "CDC 전체"에서 시작하는 편이 화면의 성격에 맞는다.
+  // 처음 열면 무엇을 보여줄지. 마지막으로 고른 DAG가 덩그러니 뜨는 것보다 «ETL 전체 워크플로우»에서 시작한다
+  // (예전에는 «CDC 전체» - CDC 가지는 2026-10-10 에 뺐다).
   const [scope, setScope] = useState<ListScope | undefined>(
-    initialDagId ? { kind: "dag", dagId: initialDagId } : { kind: "cdc", scope: "all" });
-  const [selectedPipelineId, setSelectedPipelineId] = useState<number>();
+    initialDagId ? { kind: "dag", dagId: initialDagId } : { kind: "category", category: "ETL" });
   // 옆 패널 기본 폭은 예전 격자 열과 같다(노트북 폭 220 · 280, 넓은 화면 230 · 320).
   const narrowScreen = typeof window !== "undefined" && window.innerWidth <= 1440;
   const treeDock = useSideDock("left", narrowScreen ? 220 : 230, 180, 520);
@@ -2062,17 +1754,11 @@ export function AirflowDashboardPage() {
     queryFn: () => getWorkflow(selectedWorkflowId!),
     enabled: Boolean(selectedWorkflowId),
   });
-  // CDC 가지는 CDC 관리 화면과 같은 원본을 읽는다(파이프라인·연결·커넥터 상태·지연).
+  // CDC 워크플로우의 소속 파이프라인 상태(속성창 · 실행 설정 창)는 CDC 관리 화면과 같은 원본을 읽는다.
   const pipelinesQuery = useQuery({ queryKey: ["pipelines"], queryFn: listPipelines });
-  const connectionsQuery = useQuery({ queryKey: ["connections"], queryFn: listConnections });
   const runtimeQuery = useQuery({
     queryKey: ["pipeline-runtime-statuses"],
     queryFn: listPipelineRuntimeStatuses,
-    refetchInterval: refreshSeconds * 1000,
-  });
-  const cdcMetricsQuery = useQuery({
-    queryKey: ["realtime-pipeline-metrics"],
-    queryFn: getRealtimePipelineMetrics,
     refetchInterval: refreshSeconds * 1000,
   });
   const runsByDag = useMemo(() => groupRuns(dashboardQuery.data?.runs ?? []), [dashboardQuery.data?.runs]);
@@ -2115,21 +1801,12 @@ export function AirflowDashboardPage() {
   }, [initialSyncQuery.isError]);
 
   const pipelines = pipelinesQuery.data ?? [];
-  const connectionNames = new Map((connectionsQuery.data ?? []).map((c) => [c.id, c.name] as const));
   const runtimeByPipeline = new Map((runtimeQuery.data ?? []).map((r) => [r.pipelineId, r] as const));
-  const metricByPipeline = new Map((cdcMetricsQuery.data ?? []).map((m) => [m.pipelineId, m] as const));
-  const selectedPipeline = pipelines.find((pipeline) => pipeline.id === selectedPipelineId);
-  // CDC 파이프라인은 자기를 품은 워크플로우로 실행한다(2026-10-01 제어 DAG 폐지). 속성창·이력·실행 설정이 그 DAG 를 쓴다.
-  const selectedPipelineHome = selectedPipeline ? cdcHomeOf(workflowsQuery.data ?? [], selectedPipeline.id) : undefined;
-  const pipelineDag = selectedPipelineHome
-    ? businessDags.find((dag) => dag.dag_id === selectedPipelineHome.workflow.dagId)
-    : undefined;
 
   // ETL 그룹 -> 그 그룹(하위 포함)에 속한 워크플로우 DAG id.
   /** DAG를 고른다. 같은 DAG를 다시 고르면 이력이 접힌다. */
   const selectDag = (dagId: string) => {
     setSelectedDagId(dagId);
-    setSelectedPipelineId(undefined);
     setExpandedDagId((current) => (current === dagId ? undefined : dagId));
   };
 
@@ -2139,15 +1816,6 @@ export function AirflowDashboardPage() {
     if (next?.kind !== "dag") {
       setExpandedDagId(undefined);
     }
-    if (next?.kind === "category") {
-      // 가지 전체를 보는 동안은 앞서 고른 파이프라인을 놓는다. 고른 DAG 는 비워도 위의 효과가
-      // 곧바로 첫 DAG 를 다시 고르므로 두지 않는다 - 목록에서 한 줄을 누르면 그때 따라온다.
-      setSelectedPipelineId(undefined);
-    }
-    if (next?.kind === "cdc" && next.scope === "pipeline") {
-      setSelectedPipelineId(next.pipelineId);
-      setSelectedDagId(undefined);
-    }
   };
 
   const selectedDag = businessDags.find((dag) => dag.dag_id === selectedDagId);
@@ -2155,14 +1823,8 @@ export function AirflowDashboardPage() {
   /** 가운데 목록의 제목. 지금 무엇을 보고 있는지 한 줄로 말해준다. */
   const scopeTitle = !scope
     ? (selectedDag ? displayName(selectedDag) : "선택 작업")
-    : scope.kind === "cdc"
-      ? scope.scope === "all" ? "전체 파이프라인"
-        : scope.scope === "connection" ? `${connectionNames.get(scope.connectionId) ?? "연결"} 파이프라인`
-        : scope.scope === "schema" ? `${scope.schema} 파이프라인`
-        : scope.scope === "logfile" ? "로그파일 파이프라인"
-        : selectedPipeline?.name ?? "파이프라인"
-      : scope.kind === "dag" ? (selectedDag ? displayName(selectedDag) : scope.dagId)
-      : scope.kind === "category" ? (scope.category === "CDC" ? "CDC 전체 파이프라인" : "ETL 전체 워크플로우")
+    : scope.kind === "dag" ? (selectedDag ? displayName(selectedDag) : scope.dagId)
+      : scope.kind === "category" ? "ETL 전체 워크플로우"
       : `${scope.category} · ${STATUS_METRIC_LABEL[scope.metric]}`;
 
   /** 선택한 ETL 워크플로우가 참조하는 job id들. 감시 중인 알림 규칙을 찾는 열쇠다. */
@@ -2191,7 +1853,7 @@ export function AirflowDashboardPage() {
   // 목록과 같은 기준으로 맞춘다. 목록이 «실행 없음»인데 하단에 어제 실행의 단계가
   // 펼쳐지면 둘이 어긋나 보인다.
   const selectedRunToday = latestRunToday(selectedRuns);
-  const historyDagId = selectedPipeline ? pipelineDag?.dag_id : selectedDagId;
+  const historyDagId = selectedDagId;
   const historyRuns = historyDagId ? (runsByDag.get(historyDagId) ?? []) : [];
   const showExecutionSettings = (dag: DashboardDag) => {
     setSelectedDagId(dag.dag_id);
@@ -2262,19 +1924,14 @@ export function AirflowDashboardPage() {
     return counts;
   };
 
-  /** AI 어시스턴트 대상: CDC 파이프라인(또는 그 제어 DAG) → 그 파이프라인, 워크플로우 DAG → 그 워크플로우 전체. 그 밖의 DAG 는 없음. */
-  const aiPipelineId = selectedPipeline?.id ?? Number(/^kafka_pipeline_(\d+)_control$/.exec(selectedDagId ?? "")?.[1] ?? NaN);
-  const aiTarget: { key: string; targetType: "CDC_PIPELINE" | "WORKFLOW"; target: Record<string, string> } | undefined = !gptEnabled ? undefined
-    : Number.isFinite(aiPipelineId)
-      ? { key: `cdc:${aiPipelineId}`, targetType: "CDC_PIPELINE" as const, target: { pipelineId: String(aiPipelineId) } }
-      : selectedWorkflowId
-        ? { key: `wf:${selectedWorkflowId}`, targetType: "WORKFLOW" as const, target: { workflowId: String(selectedWorkflowId) } }
-        : undefined;
-
-  const listDomain = scope?.kind === "cdc" ? "cdc"
-    : scope?.kind === "category" ? (scope.category === "CDC" ? "cdc" : "etl")
-    : scope?.kind === "metric" ? (scope.category === "CDC" ? "cdc" : "etl")
-    : selectedDag && categoryOf(selectedDag) === "CDC" ? "cdc" : "etl";
+  /**
+   * AI 어시스턴트 대상: 고른 워크플로우 전체(CDC 워크플로우 포함). 그 밖의 DAG 는 없음.
+   * 파이프라인 하나에 대해 묻는 것은 CDC 관리 화면 상세 창의 AI 어시스턴트가 맡는다(CDC 가지는 2026-10-10 에 뺐다).
+   */
+  const aiTarget: { key: string; targetType: "WORKFLOW"; target: Record<string, string> } | undefined = !gptEnabled ? undefined
+    : selectedWorkflowId
+      ? { key: `wf:${selectedWorkflowId}`, targetType: "WORKFLOW" as const, target: { workflowId: String(selectedWorkflowId) } }
+      : undefined;
 
   return (
     <ConfigProvider theme={cerebroBrandTheme}>
@@ -2340,7 +1997,6 @@ export function AirflowDashboardPage() {
                style={{ gridTemplateColumns: `${treeDock.column} minmax(0, 1fr) ${propertyDock.column}` }}>
             <SideDock side="left" dock={treeDock} label="트리 패널">
             <BusinessTree dags={filteredDags} workflows={workflowsQuery.data ?? []}
-                          pipelines={pipelines} connectionNames={connectionNames} selectedPipelineId={selectedPipelineId}
                           scope={scope} onScope={changeScope}
                           selectedDagId={selectedDagId} search={search} onSearch={setSearch}
                           onSelect={selectDag} onDetail={showDagDetail} onExecution={showExecutionSettings}
@@ -2362,32 +2018,22 @@ export function AirflowDashboardPage() {
                   workflows={workflowsQuery.data ?? []}
                   dashboardRuns={dashboardQuery.data?.runs ?? []}
                   refreshSeconds={refreshSeconds}
-                  onSelectDag={(dagId) => {
-                    setSelectedDagId(dagId);
-                    setSelectedPipelineId(undefined);
-                  }}
+                  onSelectDag={(dagId) => setSelectedDagId(dagId)}
                   sync={canRunTop ? { busy: syncBusy, onSync: () => { void synchronizeDags(); } } : undefined}
                 />
               </main>
             ) : (
-            <main className={`airflow-dashboard-panel airflow-jobs-panel airflow-jobs-panel--${listDomain}`}>
+            <main className="airflow-dashboard-panel airflow-jobs-panel airflow-jobs-panel--etl">
               <div className="airflow-jobs-heading">
                 <h3>
-                  <WfIcon name={listDomain === "cdc" ? "pulse" : "filter"} size={16} />
+                  <WfIcon name="filter" size={16} />
                   {scopeTitle}
                 </h3>
               </div>
               {scope
-                ? <ScopeList scope={scope} dags={businessDags} runsByDag={runsByDag} waitingDagIds={waitingDagIds} workflows={workflowsQuery.data ?? []} pipelines={pipelines}
-                             runtimeByPipeline={runtimeByPipeline} metricByPipeline={metricByPipeline}
+                ? <ScopeList scope={scope} dags={businessDags} runsByDag={runsByDag} waitingDagIds={waitingDagIds}
                              selectedDagId={selectedDagId}
-                             selectedPipelineId={selectedPipelineId}
-                             onSelectDag={selectDag}
-                             onSelectPipeline={(id) => {
-                               setSelectedPipelineId(id);
-                               setSelectedDagId(undefined);
-                               setExpandedDagId(undefined);
-                             }} />
+                             onSelectDag={selectDag} />
                 : <JobsTable dags={selectedDag ? [selectedDag] : []} runsByDag={runsByDag} selectedDagId={selectedDagId} refreshSeconds={refreshSeconds} onSelect={setSelectedDagId} />}
               {/* ETL은 각 task(job)이 중요하다. DAG를 고르면 최근 실행의 task를 바로 펼친다. */}
               {selectedDag && expandedDagId === selectedDag.dag_id && categoryOf(selectedDag) === "ETL" && (
@@ -2409,11 +2055,7 @@ export function AirflowDashboardPage() {
                   아래 «속성 / 이름» 이 하던 역할을 여기로 올렸으므로 그쪽에서는 지웠다 - 같은 이름을 두 번 적지 않는다. */}
               <div className="nifi-detail-header">
                 <div className="nifi-detail-title">
-                  {selectedPipeline
-                    ? `파이프라인: ${selectedPipeline.name}`
-                    : selectedDag
-                      ? `워크플로우: ${displayName(selectedDag)}`
-                      : "속성"}
+                  {selectedDag ? `워크플로우: ${displayName(selectedDag)}` : "속성"}
                 </div>
               </div>
               <div className="nifi-detail-tabs" role="tablist" aria-label="속성 패널 탭">
@@ -2435,8 +2077,7 @@ export function AirflowDashboardPage() {
                   <GptChatPanel key={aiTarget.key} targetType={aiTarget.targetType} target={aiTarget.target} />
                 </div>
               ) : (
-                <PropertyPanel dag={selectedPipeline ? pipelineDag : selectedDag} pipeline={selectedPipeline}
-                               runtime={selectedPipeline ? runtimeByPipeline.get(selectedPipeline.id) : undefined}
+                <PropertyPanel dag={selectedDag}
                                etlJobIds={etlJobIdsOfSelected}
                                cdcMembers={cdcMembersOfSelected}
                                onOpenExecution={() => setExecutionOpen(true)}
@@ -2445,15 +2086,12 @@ export function AirflowDashboardPage() {
             </div>
             </SideDock>
           </div>
-          {/* 파이프라인을 골랐으면 그 파이프라인의 제어 DAG를 넘긴다. 속성창·이력창은
-              이미 그렇게 하는데 여기만 selectedDag를 쓰고 있어서, CDC 파이프라인을 고른
-              뒤 «실행 설정»을 누르면 직전에 고른 다른 DAG가 열리고 그게 트리거됐다. */}
-          <ExecutionSettingsModal open={executionOpen} dag={selectedPipeline ? pipelineDag : selectedDag}
+          <ExecutionSettingsModal open={executionOpen} dag={selectedDag}
                                   runs={selectedDag ? runsByDag.get(selectedDag.dag_id) ?? [] : []}
                                   workflows={workflowsQuery.data ?? []} pipelines={pipelines}
-                                  runtimeByPipeline={runtimeByPipeline} focusPipelineId={selectedPipeline?.id}
+                                  runtimeByPipeline={runtimeByPipeline}
                                   onClose={() => setExecutionOpen(false)} onExecuted={() => { setHistoryOpen(true); void dashboardQuery.refetch(); }} />
-          <RunHistoryModal open={historyOpen} dag={selectedPipeline ? pipelineDag : selectedDag}
+          <RunHistoryModal open={historyOpen} dag={selectedDag}
                            runs={historyRuns} refreshSeconds={refreshSeconds} onClose={() => setHistoryOpen(false)} />
           <Modal title="DAG 상세" open={detailOpen} footer={null} onCancel={() => setDetailOpen(false)} rootClassName="cerebro-modal">
             {selectedDag && <Descriptions column={1} size="small" bordered>
