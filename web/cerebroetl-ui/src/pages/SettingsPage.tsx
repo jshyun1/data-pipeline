@@ -80,6 +80,12 @@ function hhmm(t: string | null): string {
   return t ? t.slice(0, 5) : "-";
 }
 
+/** 심각도 순위 - SEVERITIES 순서(위험 > 경고 > 정보)가 곧 높은 순이다. 모르는 값은 가장 낮게. */
+function severityRank(s?: string | null) {
+  const index = SEVERITIES.findIndex((x) => x.value === s);
+  return index < 0 ? 0 : SEVERITIES.length - index;
+}
+
 function severityTag(s: string) {
   const color = s === "CRITICAL" ? "error" : s === "WARNING" ? "warning" : "default";
   const label = SEVERITIES.find((x) => x.value === s)?.label ?? s;
@@ -349,7 +355,16 @@ function RulesTab() {
               <span>{describeCondition(r, specByCode.get(r.rule_type_code) ?? [])}</span>
             ),
           },
-          { title: "심각도", dataIndex: "severity", width: 90, sorter: (a, b) => byText(a.severity, b.severity), render: severityTag },
+          {
+            // 처음 열면 심각도 높은 순(위험 → 경고 → 정보)으로 보인다(2026-10-10 요청). 예전에는 글자 순이라
+            // 정렬하면 위험 · 정보 · 경고처럼 섞였다.
+            title: "심각도",
+            dataIndex: "severity",
+            width: 90,
+            sorter: (a, b) => severityRank(a.severity) - severityRank(b.severity),
+            defaultSortOrder: "descend",
+            render: severityTag,
+          },
           {
             title: "점검",
             width: 120,
