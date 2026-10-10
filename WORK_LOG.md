@@ -3446,3 +3446,26 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
   - 답을 기다리는 중 · 받은 뒤 모두 [프롬프트 편집 · MD 저장하기 · 닫기] 세 단추가 같은 기본 모양(테두리 #d9d9d9)이다.
   - «중지»는 없다.
 - ETL · CDC 로그는 당일 · 전일에 대상이 살아 있는 실패 건이 없어 화면으로는 못 열었다. 같은 컴포넌트라 결과는 같다.
+
+## 100. 통합 대시보드 차트가 카드 밖으로 넘치던 문제 (2026-10-11)
+
+**요청**
+- 통합 대시보드 «ETL Job Top 5» 차트가 자꾸 카드 레이아웃을 넘어서 그려진다(x축 라벨이 잘림). 확인하고 고친다.
+
+**원인**
+- 차트 카드는 `.chart-fit-shell`(flex 로 남은 높이) 안에 차트 상자를 절대배치(`position: absolute; inset: 0`)해 상자 크기 = 카드 크기로 두는 설계다.
+- 그런데 @ant-design/plots 가 그 상자에 **인라인 style `position: relative; height: inherit`** 를 붙여 CSS 를 덮고 있었다.
+- 그래서 상자 높이가 카드가 아니라 차트 자신의 캔버스로 정해졌다.
+  - 처음 그릴 때만 맞고, 그 뒤 카드가 줄면 차트가 밖으로 넘친다.
+  - 실측: 1920x1080 → 1600x900 으로 창을 줄이면 틀 169px · 캔버스 257px, 88px 넘침.
+  - 카드가 커지면 작은 채로 남는다(1600 → 1440: 틀 430 · 캔버스 219).
+- `refitAfterLayout`(chartFit.ts)의 ResizeObserver 도 이 상자를 지켜봐서 변화를 못 봤다.
+- 화면 배율 · 창 크기 · 같은 행의 다른 카드 높이 변화 때마다 생긴다.
+
+**변경**(`index.css`): `.chart-fit-shell > *` 를 `position: absolute !important; inset: 0; height: auto !important` 로 바꿨다. 인라인을 이기려면 !important 가 필요하다.
+
+**확인(로컬, cerebroetl-ui 재빌드)**
+- 대시보드 차트 카드 4개를 1920x1080 → 1600x900, 1600x1000 → 1440x800 로 바꿔 가며 쟀다.
+  - 줄일 때도 늘릴 때도 캔버스 = 틀이고, 넘침은 0 이다.
+  - 수정 전에는 +88px · -211px 이었다.
+- `.chart-fit-shell` 은 통합 대시보드(DashboardPage · JobTop5Card)만 쓴다.

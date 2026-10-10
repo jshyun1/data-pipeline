@@ -4799,9 +4799,14 @@ button.alert-compact-trigger.is-clear:hover {
   min-height: 0;
 }
 
+/* !important 인 이유(2026-10-11): @ant-design/plots 가 차트 상자에 인라인 style(position: relative; height: inherit)을 붙여
+ * 이 규칙을 덮었다. 그러면 상자 높이가 카드가 아니라 차트 자신의 캔버스로 정해져, 카드가 줄면 차트가 밖으로 넘치고
+ * (창을 1920x1080 → 1600x900 으로 줄이면 88px 넘침, ETL Job Top 5 제보) 커지면 작은 채로 남았다.
+ * refitAfterLayout 이 지켜보는 것도 이 상자라 크기 변화를 못 봤다. 인라인을 이겨야 해서 !important 다. */
 .chart-fit-shell > * {
-  position: absolute;
+  position: absolute !important;
   inset: 0;
+  height: auto !important;
 }
 
 .trend-top5-head {
