@@ -3411,3 +3411,18 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
   - NiFi 서비스 원상복구(ENABLED 6 / DISABLED 15).
   - 시험 스키마 · 로그 삭제 후 target-db 정지. 시험 알림 #196 은 ack 처리했다.
 - 다른 세션 두 곳에 시작 · 장애 시험 · 종료를 알렸다.
+
+## 98. 워크플로우 로그 트리 - 최상단 «Workflow Root» · 폴더 먼저 정렬 (2026-10-11)
+
+**요청**
+- 워크플로우 로그 화면 왼쪽 트리의 «ETL» 을 «Workflow Root» 로 바꾼다.
+- 폴더와 워크플로우가 이름순으로 섞여 보기 어렵다. 폴더를 위로, 그다음 이름순으로 정렬한다.
+
+**변경**(`AirflowDashboardPage`)
+- 최상단 가지 이름을 «Workflow Root» 로 바꿨다. CDC/ETL 관리 트리의 «CDC Root» · «ETL Root» 와 같은 꼴이고, 내부 분류 값(ETL)은 그대로다.
+- `foldersFirst`: 같은 단계에서 하위 워크플로우가 있는 것(폴더)을 위로, 그 안에서는 이름순(한글 · 숫자 자연 정렬)으로 단계마다 정렬한다.
+  - 계층 빌더(`buildWorkflowHierarchy`)는 설계 · 캔버스 화면도 쓰므로 이 화면에서만 정렬한다.
+
+**확인(로컬, cerebroetl-ui 재빌드)**
+- `tsc -b` 오류 0 이다.
+- 트리는 Workflow Root(5) › total(폴더: dz_com_daily · dz_pop_daily) › 20261007 › cdc_imp 순이다.
