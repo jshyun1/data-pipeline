@@ -280,13 +280,13 @@ export function PipelinesPage() {
       byGroup.set(groupId, [...(byGroup.get(groupId) ?? []), pipeline]);
     });
 
+    // 파이프라인 줄은 이름만 보인다(2026-10-10 요청) - 오른쪽 소스 테이블 태그(색 = 실행 상태)는 뺐다.
+    // 검색은 그대로 소스 · 타깃 테이블 · 연결 이름으로도 걸린다.
     const pipelineNode = (pipeline: PipelineResponse): PipelineTreeNode => ({
       key: `pipeline:${pipeline.id}`,
       label: pipeline.name,
       kind: "pipeline",
       count: 0,
-      table: pipeline.sourceTable ?? pipeline.targetTable ?? null,
-      statusColor: RUNTIME_STATUS_COLOR[runtimeByPipeline.get(pipeline.id)?.runtimeStatus ?? ""] ?? "default",
       children: [],
     });
 
@@ -313,7 +313,7 @@ export function PipelinesPage() {
       count: (pipelines ?? []).length,
       children: [...rootGroups, ...ungrouped],
     };
-  }, [pipelines, connections, groups, groupById, treeSearch, runtimeByPipeline]);
+  }, [pipelines, connections, groups, groupById, treeSearch]);
 
   /**
    * 트리 우클릭 메뉴.
@@ -1145,10 +1145,6 @@ interface PipelineTreeNode {
   kind: "root" | "group" | "pipeline";
   /** 뿌리·그룹 줄 배지. 그룹은 하위 그룹까지 합친 수(검색에 걸린 것만), 뿌리는 전체 수다. */
   count: number;
-  /** 파이프라인 줄 오른쪽 태그: 소스(없으면 타깃) 테이블. */
-  table?: string | null;
-  /** 파이프라인 태그 색 = 실행 상태(antd Tag color). */
-  statusColor?: string;
   children: PipelineTreeNode[];
 }
 
@@ -1236,7 +1232,7 @@ function PipelineTreeView({
       <div
         className={active ? "tree-item-row active" : "tree-item-row"}
         tabIndex={0}
-        title={node.table ? `${node.label} · ${node.table}` : node.label}
+        title={node.label}
         onClick={select}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
@@ -1261,9 +1257,7 @@ function PipelineTreeView({
         </button>
         <WfIcon name={node.kind === "pipeline" ? "file" : "folder"} size={15} className="tree-node-icon" />
         <span className="tree-node-label">{node.label}</span>
-        {node.kind === "pipeline"
-          ? (node.table ? <Tag color={node.statusColor} className="cdc-tree-table-tag">{node.table}</Tag> : null)
-          : <span className="tree-node-badge">{node.count}</span>}
+        {node.kind === "pipeline" ? null : <span className="tree-node-badge">{node.count}</span>}
       </div>
     );
     return (

@@ -8241,18 +8241,7 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 /* CDC 관리 트리(PipelinesPage) — 감싸는 칸이 .wf-tree-scroll 이라 줄 모양은 위 공통 규칙을 그대로 쓴다(2026-09-11).
-   여기엔 CDC 에만 있는 것만 둔다: 파이프라인 줄 오른쪽 테이블 태그(색 = 실행 상태)와 고른 줄 색. */
-.cdc-tree-scroll .tree-item-row .cdc-tree-table-tag {
-  flex-shrink: 0;
-  max-width: 116px;
-  margin: 0;
-  padding: 0 6px;
-  overflow: hidden;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 18px;
-}
-
+   여기엔 CDC 에만 있는 것만 둔다: 고른 줄 색. 파이프라인 줄 오른쪽 테이블 태그는 2026-10-10 요청으로 뺐다(이름만). */
 /* 고른 줄은 로그 화면 CDC 트리와 같은 파랑이다(ETL·워크플로우는 빨강). 공통 규칙보다 한 단계 구체적으로 쓴다. */
 .wf-tree-scroll.cdc-tree-scroll .tree-item-row.active {
   background: #eff6ff;
