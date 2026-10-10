@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card, ConfigProvider, DatePicker, Tooltip } from "antd";
+import { Card, ConfigProvider, DatePicker } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { ChartEmptyState } from "../components/ChartEmptyState";
@@ -41,7 +41,7 @@ import { ActionQueuePanel } from "../components/ActionQueuePanel";
 import { refitAfterLayout } from "../components/chartFit";
 import { activeDayPreset, dayPresetRange } from "../components/dayPreset";
 import { JobTop5Card } from "../components/JobTop5Card";
-import { ChangeIndicator, FlowStateNote, MetricRow, NowDivider, TimeBadge } from "../components/kpi/kpiBits";
+import { ChangeIndicator, MetricRow, NowDivider, TimeBadge } from "../components/kpi/kpiBits";
 import { formatRecovery, judgeCdcFlow } from "../components/kpi/flowState";
 
 const { RangePicker } = DatePicker;
@@ -657,14 +657,6 @@ export function DashboardPage() {
   const airflowSuccessRate =
     airflowCompleted > 0 ? Math.round((airflowHistory.successEntries.length / airflowCompleted) * 1000) / 10 : 0;
 
-  const recentAirflowRuns = [
-    ...airflowHistory.runningEntries.map((entry) => ({ ...entry, state: "RUNNING" as const })),
-    ...airflowHistory.failedEntries.map((entry) => ({ ...entry, state: "FAILED" as const })),
-    ...airflowHistory.successEntries.map((entry) => ({ ...entry, state: "SUCCESS" as const })),
-  ]
-    .sort((a, b) => new Date(b.datetime ?? 0).getTime() - new Date(a.datetime ?? 0).getTime())
-    .slice(0, 10);
-
   // 원본 5-2 "전일 대비 증감". 일별 시계열의 마지막 날과 그 전날을 비교한다.
   // 하루치밖에 없으면 previous 를 null 로 둬서 "비교 불가"로 표시한다(0%로 속이지 않는다).
   function previousDayCount(points: Array<{ count: number }>): number | null {
@@ -674,16 +666,11 @@ export function DashboardPage() {
     return points.length >= 1 ? points[points.length - 1].count : 0;
   }
 
-  // 원본 5-2 "처리율 0에 맥락 부여" + "#4 해소 예상 시간".
+  // 원본 5-2 "처리율 0에 맥락 부여" + "#4 해소 예상 시간". cdcFlow 는 아래 프로세스 헬스 패널(데이터 흐름 줄)이 쓴다.
+  // 카드 아래 상태 줄(CDC «N분째 정지 — 확인 필요» · ETL «대기 데이터가 남았는데 …» · Workflow 최근 실행 띠)은
+  // 2026-10-11 요청으로 뺐다 - 시험 · 원천 변경이 없는 시간에도 경고처럼 떠서 오히려 헷갈렸다.
   const cdcFlow = judgeCdcFlow(realtimeMetrics);
   const cdcRecovery = formatRecovery(realtimeMetrics);
-  const nifiFlowText =
-    nifiActiveThreads > 0
-      ? `실행 중 ${nifiActiveThreads}개 작업`
-      : nifiQueued > 0
-        ? "대기 데이터가 남았는데 실행 중인 작업 없음 — 확인 필요"
-        : "대기 데이터 없음 (정상)";
-  const nifiFlowTone: "ok" | "warn" = nifiActiveThreads === 0 && nifiQueued > 0 ? "warn" : "ok";
 
   const connectorDriftCount = commandSummary?.connectorDrift.length ?? 0;
 
@@ -816,7 +803,6 @@ export function DashboardPage() {
           </div>
 
           <div className="summary-card-footer">
-            <FlowStateNote tone={cdcFlow.tone} text={cdcFlow.text} />
             <div className="summary-card-links">
               {cdcFailedItems.length > 0 ? (
                 <button type="button" className="btn-kpi-danger-chip" onClick={() => setKafkaFailedOpen(true)}>
@@ -871,7 +857,6 @@ export function DashboardPage() {
           </div>
 
           <div className="summary-card-footer">
-            <FlowStateNote tone={nifiFlowTone} text={nifiFlowText} />
             <div className="summary-card-links">
               {nifiFailedItems.length > 0 ? (
                 <button type="button" className="btn-kpi-danger-chip" onClick={() => setNifiFailedOpen(true)}>
@@ -921,17 +906,6 @@ export function DashboardPage() {
           </div>
 
           <div className="summary-card-footer">
-            {/* 원본 5-2 "Airflow 스트립 의미 불명 → 툴팁" */}
-            <div className="airflow-run-strip" aria-label="최근 워크플로우 실행 상태">
-              {recentAirflowRuns.map((entry) => (
-                <Tooltip
-                  key={entry.id}
-                  title={`${entry.basicContent} · ${entry.state}${entry.datetime ? ` · ${entry.datetime}` : ""}`}
-                >
-                  <span className={`airflow-run-block airflow-run-block--${entry.state.toLowerCase()}`} />
-                </Tooltip>
-              ))}
-            </div>
             <div className="summary-card-links">
               {airflowHistory.failedEntries.length > 0 ? (
                 <button type="button" className="btn-kpi-danger-chip" onClick={() => setAirflowActiveTile("failed")}>
