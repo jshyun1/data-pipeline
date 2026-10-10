@@ -19,6 +19,7 @@ NiFi 엔진은 공식 이미지를 그대로 쓰고, **화면(nifi-frontend)만*
 | 한글 낱말(사전) · 번역 규칙 | `apps/nifi/src/app/cerebro/cerebro-ko.ts` | 0004 |
 | 공구막대 도구 아이콘(Cerebro 안, 디자인 8종) | `apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html` · `.ts` | 0004 |
 | 미니맵 상자 색 | `apps/nifi/src/app/pages/flow-designer/service/birdseye-view.service.ts` | 0004 |
+| 프로세서 제목띠 사각형(공식 화면은 투명, 색은 위 scss 가 Cerebro 안에서만) | `apps/nifi/src/app/pages/flow-designer/service/manager/processor-manager.service.ts` | 0004 |
 | 시작 때 할 일(표시 · Cerebro 안 판정 · 번역 켜기) | `apps/nifi/src/app/cerebro/cerebro-ui.ts`, `apps/nifi/src/main.ts`, `apps/nifi/src/styles.scss` | 0004 |
 | 도구 이름 · 새로고침 단추(Cerebro 안) | `apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html` · `.ts` | 0002 |
 | 상태줄 이름 · 숨김 | `.../canvas/header/flow-status/flow-status.component.html` · `.ts` | 0002 |

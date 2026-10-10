@@ -1,9 +1,9 @@
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss
 new file mode 100644
-index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca023542fa
+index 0000000000000000000000000000000000000000..d4206f268bb0c3498118158c0318199e055953c0
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss
-@@ -0,0 +1,790 @@
+@@ -0,0 +1,819 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -20,6 +20,9 @@ index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca
 + * 예전(①)에는 ConsoleFramePage 가 iframe 밖에서 비슷한 일을 했다(HIDE_TOOL_CHROME_CSS) - 그때 모양(왼쪽 아래 세로 막대)은 이 디자인으로 바뀌었다.
 + */
 +$cerebro-red: #ff3b30;
++// 제목띠: 그룹은 디자인의 딥 슬레이트(.nifi-card-header), 프로세서는 같은 계열의 청회색 - 한눈에 구분되면서 어울리게(2026-10-10 요청).
++$cerebro-group-banner: #334155;
++$cerebro-processor-banner: #36537d;
 +
 +html.cerebro-embedded {
 +    .splash {
@@ -731,7 +734,7 @@ index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca
 +        // 프로세스 그룹(디자인 .nifi-card-header / .nifi-status-bar / .nifi-metrics-table)
 +        rect.process-group-banner,
 +        rect.remote-process-group-banner {
-+            fill: #334155 !important;
++            fill: $cerebro-group-banner !important;
 +        }
 +
 +        text.process-group-name,
@@ -749,26 +752,52 @@ index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca
 +            font-weight: 600;
 +        }
 +
-+        // 프로세서(디자인 .nifi-processor-card / .proc-header)
-+        rect.processor-icon-container {
-+            fill: #f8fafc !important;
-+        }
++        // 프로세서(2026-10-10 요청): 그룹 카드처럼 위쪽 짙은 제목띠에 흰 이름, 띠 색만 다르게(청회색).
++        // 왼쪽 위 NiFi 아이콘 상자 · 아이콘은 숨기고, 실행 상태 아이콘은 띠 아래 종류 줄 앞(흰 바탕 - 상태색이 잘 보인다)으로 옮긴다.
++        // 위치는 원본 좌표(이름 x75 · 종류 x75 y32 · 묶음 x75 y45 · 상태 x55 y23)에서 옮긴 만큼만 적는다.
++        g.processor {
++            rect.processor-banner {
++                fill: $cerebro-processor-banner !important;
++            }
 +
-+        text.processor-icon {
-+            fill: #475569 !important;
-+        }
++            rect.processor-icon-container,
++            text.processor-icon {
++                display: none;
++            }
 +
-+        text.processor-name {
-+            fill: #0f172a !important;
-+            font-weight: 700;
-+        }
++            text.processor-name {
++                fill: #ffffff !important;
++                font-size: 13px;
++                font-weight: 700;
++                transform: translateX(-65px);
++            }
 +
-+        text.processor-type {
-+            fill: #64748b !important;
-+        }
++            text.run-status-icon {
++                transform: translate(-45px, 20px);
++            }
 +
-+        text.processor-bundle {
-+            fill: #94a3b8 !important;
++            text.processor-type {
++                fill: #64748b !important;
++                font-size: 11px;
++                transform: translate(-45px, 6px);
++            }
++
++            text.processor-bundle {
++                fill: #94a3b8 !important;
++                font-size: 10px;
++                transform: translate(-45px, 3px);
++            }
++
++            // «제한된 프로세서» · «주 노드 전용(P)» 표시는 띠 오른쪽(알림 아이콘 왼쪽)으로 - 원래 자리는 이름 · 종류와 겹친다.
++            circle.restricted-background,
++            text.restricted {
++                transform: translate(302px, 1px);
++            }
++
++            circle.is-primary-background,
++            text.is-primary {
++                transform: translate(250px, -23px);
++            }
 +        }
 +
 +        // 연결선 · 대기열 상자(디자인 .pipeline-connector-svg / .flow-queue-box)
@@ -796,7 +825,7 @@ index 0000000000000000000000000000000000000000..d00760d7053c01c11c2ca3a93e5278ca
 +}
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..fc721394ec2f8e02bfb3631ffbba270854da20f3
+index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00df17f161e
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
 @@ -0,0 +1,363 @@
@@ -1165,7 +1194,7 @@ index 0000000000000000000000000000000000000000..fc721394ec2f8e02bfb3631ffbba2708
 +}
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ui.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ui.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..01b0da2ed8ca6ce651d668c6b38feff9aa213a62
+index 0000000000000000000000000000000000000000..8b1bb2375e7d5b8b323ec47fc152b95d92701ad6
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ui.ts
 @@ -0,0 +1,99 @@
@@ -1293,6 +1322,28 @@ index f27e1219a947658c6215cd66e57006686c459442..eb232539da206d427147e4f982472519
  
              if (d.permissions.canRead) {
                  // use the specified color if appropriate
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/manager/processor-manager.service.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/manager/processor-manager.service.ts
+index 2f4a71002a9c5a3898c24521d985ec082da444c1..5c6a73410b09bd553271806e4dd44050cfa5c25d 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/manager/processor-manager.service.ts
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/manager/processor-manager.service.ts
+@@ -106,6 +106,17 @@ export class ProcessorManager implements OnDestroy {
+             .attr('filter', 'url(#component-drop-shadow)')
+             .attr('stroke-width', 0);
+ 
++        // Cerebro: processor title band - transparent here, colored only inside Cerebro (_cerebro-embedded.scss)
++        processor
++            .append('rect')
++            .attr('class', 'processor-banner')
++            .attr('width', function (d: any) {
++                return d.dimensions.width;
++            })
++            .attr('height', 26)
++            .attr('fill', 'none')
++            .attr('stroke', 'none');
++
+         // processor name
+         processor
+             .append('text')
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html
 index e530d7f860b4864dd877c776957538ed47f02b9d..2ab6818740dfd1b47beb0b109cf177d253fa569c 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html
