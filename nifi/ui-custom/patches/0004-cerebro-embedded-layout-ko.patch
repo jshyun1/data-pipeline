@@ -1,14 +1,15 @@
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss
 new file mode 100644
-index 0000000000000000000000000000000000000000..d4206f268bb0c3498118158c0318199e055953c0
+index 0000000000000000000000000000000000000000..563080750d46759b8f4e31fdaff264398ba11315
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss
-@@ -0,0 +1,819 @@
+@@ -0,0 +1,1178 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
 + * Cerebro «ETL 관리» 화면(iframe) 안에서의 NiFi 캔버스 모양. html.cerebro-embedded 일 때만(cerebro-ui.ts) - NiFi 에 직접 들어오면 원래 모양.
 + * 디자인: CEREBRO_ETL_UI_DESIGN_20260917 etl-manage.html · css/etl-manage.css 의 캔버스 부분(2026-10-05 적용). 값은 디자인 CSS 그대로다.
++ * 그룹 · 프로세서 상자는 20261008 판의 카드(.nifi-node-card)를 브라우저에 그린 값(글꼴 크기 · 굵기 · 색 · 칸 높이)으로 맞췄다(2026-10-10).
 + * 캔버스 바탕만 디자인(점 격자)과 달리 흰색으로 둔다(사용자 요청).
 + *
 + *   공구막대   → 왼쪽 위 가로 막대: 새로고침 | 그룹 · 원격 그룹 · 입력/출력 포트 · 퍼널 · 프로세서 · 레지스트리 가져오기 · 라벨
@@ -700,6 +701,96 @@ index 0000000000000000000000000000000000000000..d4206f268bb0c3498118158c0318199e
 +            stroke-width: 1.5px;
 +        }
 +
++        // 그룹 · 프로세서는 디자인 카드(.nifi-node-card): 둥근 모서리 8 · 그림자, 올리면 테두리 · 그림자가 짙어진다(:hover).
++        // 위로 2px 뜨는 효과(transform)는 빼었다 - SVG 에서 transform 을 CSS 로 주면 NiFi 가 정한 상자 위치를 덮어쓴다.
++        g.process-group,
++        g.processor {
++            rect.border,
++            rect.body {
++                rx: 8px;
++                ry: 8px;
++            }
++
++            rect.body {
++                filter: drop-shadow(0 4px 7px rgba(15, 23, 42, 0.06));
++            }
++
++            &:hover {
++                rect.border {
++                    stroke: #94a3b8 !important;
++                }
++
++                rect.body {
++                    filter: drop-shadow(0 6px 9px rgba(15, 23, 42, 0.1));
++                }
++            }
++
++            &.selected rect.body {
++                filter: drop-shadow(0 0 2px rgba(255, 59, 48, 0.35)) drop-shadow(0 8px 11px rgba(255, 59, 48, 0.16));
++            }
++
++            // 머리띠 아이콘 · 오른쪽 표시 · 아래 선(cerebro-canvas.ts 가 만든다 - NiFi 에 직접 들어오면 숨김)
++            g.cerebro-head-icon {
++                display: inline;
++                fill: none;
++                stroke: #94a3b8;
++                stroke-width: 2;
++                stroke-linecap: round;
++                stroke-linejoin: round;
++            }
++
++            text.cerebro-head-tag {
++                display: inline;
++                font-size: 10px;
++                fill: #94a3b8;
++                text-anchor: end;
++            }
++
++            rect.cerebro-head-line {
++                display: inline;
++                fill: #1e293b;
++            }
++
++            // 지표 표(디자인 .nifi-metrics-table): 이름 칸 바탕 · 이름 12px 굵게 · 값 12.5px · «5 min» 알약
++            rect.cerebro-th-col {
++                display: inline;
++                x: 0;
++                width: 96px;
++                fill: #fafbfc;
++            }
++
++            rect.cerebro-pill {
++                display: inline;
++                width: 36px;
++                rx: 4px;
++                ry: 4px;
++                fill: #f1f5f9;
++                stroke: #e2e8f0;
++                stroke-width: 1;
++            }
++
++            text.stats-label {
++                fill: #475569 !important;
++                font-size: 12px;
++                font-weight: 700;
++                letter-spacing: -0.2px;
++            }
++
++            text.stats-value,
++            text.stats-value tspan {
++                fill: #1e293b !important;
++                font-size: 12.5px;
++                font-weight: 500 !important;
++            }
++
++            text.stats-info {
++                fill: #64748b !important;
++                font-size: 9.5px;
++                font-weight: 600;
++                text-anchor: middle;
++            }
++        }
++
 +        g.component.selected rect.border {
 +            stroke: $cerebro-red !important;
 +            stroke-width: 2px;
@@ -731,7 +822,7 @@ index 0000000000000000000000000000000000000000..d4206f268bb0c3498118158c0318199e
 +            fill: #94a3b8 !important;
 +        }
 +
-+        // 프로세스 그룹(디자인 .nifi-card-header / .nifi-status-bar / .nifi-metrics-table)
++        // 프로세스 그룹(디자인 .nifi-card-header / .nifi-status-bar / .nifi-metrics-table / .nifi-card-footer)
 +        rect.process-group-banner,
 +        rect.remote-process-group-banner {
 +            fill: $cerebro-group-banner !important;
@@ -752,12 +843,186 @@ index 0000000000000000000000000000000000000000..d4206f268bb0c3498118158c0318199e
 +            font-weight: 600;
 +        }
 +
-+        // 프로세서(2026-10-10 요청): 그룹 카드처럼 위쪽 짙은 제목띠에 흰 이름, 띠 색만 다르게(청회색).
-+        // 왼쪽 위 NiFi 아이콘 상자 · 아이콘은 숨기고, 실행 상태 아이콘은 띠 아래 종류 줄 앞(흰 바탕 - 상태색이 잘 보인다)으로 옮긴다.
-+        // 위치는 원본 좌표(이름 x75 · 종류 x75 y32 · 묶음 x75 y45 · 상태 x55 y23)에서 옮긴 만큼만 적는다.
++        // 그룹 상자(384×176) 안 배치 - 디자인 카드의 각 칸 높이를 NiFi 상자 높이에 맞춘 값:
++        //   머리띠 0~32 · 상태줄 32~59(27) · 지표 4줄 59~149(23 · 22 · 23 · 22) · 바닥줄 149~176(27)
++        // 줄 · 선은 NiFi 가 그린 순서(그룹 상세 g 안의 rect 순번)로 고른다: 1 상태줄 · 2 바닥줄 · 3 이름 칸(Cerebro) ·
++        // 4 Queued · 5 선 · 6 In · 7 선 · 8 Read/Write · 9 선 · 10 Out. 글자 g 는 1 이름 · 2 값 · 3 «5 min».
++        g.process-group {
++            rect.process-group-banner {
++                clip-path: inset(0 round 8px 8px 0 0);
++            }
++
++            text.process-group-name {
++                font-size: 13px;
++                letter-spacing: -0.2px;
++                transform: translateX(23px);
++            }
++
++            // 버전 관리 아이콘이 있으면 이름 앞(아이콘 뒤)으로 - 이름은 NiFi 가 이 아이콘 뒤에 놓는다.
++            text.version-control {
++                transform: translateX(23px);
++            }
++
++            // 실행 중 스레드 수가 머리띠 오른쪽에 뜨면 «프로세스 그룹» 표시는 비켜 준다.
++            &:has(text.active-thread-count[style*='display: block']) text.cerebro-head-tag {
++                display: none;
++            }
++
++            g.process-group-details {
++                > rect:nth-of-type(1) {
++                    y: 32px;
++                    height: 27px;
++                }
++
++                > rect:nth-of-type(2) {
++                    y: 149px;
++                    height: 27px;
++                    clip-path: inset(0 round 0 0 8px 8px);
++                }
++
++                > rect.cerebro-th-col {
++                    y: 59px;
++                    height: 90px;
++                }
++
++                > rect:nth-of-type(4) {
++                    y: 59px;
++                    height: 23px;
++                }
++
++                > rect:nth-of-type(5) {
++                    y: 81px;
++                }
++
++                > rect:nth-of-type(6) {
++                    y: 82px;
++                    height: 22px;
++                }
++
++                > rect:nth-of-type(7) {
++                    y: 103px;
++                }
++
++                > rect:nth-of-type(8) {
++                    y: 104px;
++                    height: 23px;
++                }
++
++                > rect:nth-of-type(9) {
++                    y: 126px;
++                }
++
++                > rect:nth-of-type(10) {
++                    y: 127px;
++                    height: 22px;
++                }
++
++                > rect.cerebro-pill {
++                    x: 336px;
++                    height: 15px;
++                }
++
++                > rect.cerebro-pill-2 {
++                    y: 85.5px;
++                }
++
++                > rect.cerebro-pill-3 {
++                    y: 108px;
++                }
++
++                > rect.cerebro-pill-4 {
++                    y: 130.5px;
++                }
++
++                // 글자 기준선: 줄 가운데 + 4.25(12px 글자). NiFi 원래 줄 간격(19 · 18 · 18)과의 차이를 줄마다 더한다.
++                > g:nth-of-type(1) {
++                    transform: translate(8px, 69.75px);
++                }
++
++                > g:nth-of-type(2) {
++                    transform: translate(104px, 69.75px);
++                }
++
++                > g:nth-of-type(3) {
++                    transform: translate(350px, 69.75px);
++
++                    > text:nth-of-type(1) {
++                        transform: translateY(3.5px);
++                    }
++
++                    > text:nth-of-type(2) {
++                        transform: translateY(8px);
++                    }
++
++                    > text:nth-of-type(3) {
++                        transform: translateY(12.5px);
++                    }
++                }
++
++                > g:nth-of-type(1),
++                > g:nth-of-type(2) {
++                    > text:nth-of-type(2) {
++                        transform: translateY(3.5px);
++                    }
++
++                    > text:nth-of-type(3) {
++                        transform: translateY(8px);
++                    }
++
++                    > text:nth-of-type(4) {
++                        transform: translateY(12.5px);
++                    }
++                }
++            }
++
++            // 상태줄 · 바닥줄(디자인 .nifi-status-bar 11px · .nifi-card-footer 10.5px, 아이콘 · 숫자 같은 색).
++            // 항목 위치(양끝 맞춤 · 오른쪽 맞춤)와 멈춤 · 잘못됨 강조는 cerebro-canvas.ts(cerebroLayoutGroupContents).
++            text.process-group-contents-icon {
++                fill: #64748b !important;
++                opacity: 1 !important;
++                font-size: 11px;
++            }
++
++            text.process-group-contents-count {
++                font-size: 11px;
++            }
++
++            :is(
++                    text.process-group-up-to-date,
++                    text.process-group-locally-modified,
++                    text.process-group-stale,
++                    text.process-group-locally-modified-and-stale,
++                    text.process-group-sync-failure,
++                    text.process-group-up-to-date-count,
++                    text.process-group-locally-modified-count,
++                    text.process-group-stale-count,
++                    text.process-group-locally-modified-and-stale-count,
++                    text.process-group-sync-failure-count
++                ) {
++                font-size: 10.5px;
++                transform: translateY(-2.5px);
++            }
++
++            text.cerebro-warn {
++                fill: #ef4444 !important;
++                font-weight: 700;
++            }
++
++            text.cerebro-alert {
++                fill: #f59e0b !important;
++                font-weight: 700;
++            }
++        }
++
++        // 프로세서(352×128): 그룹 카드와 같은 구성 - 띠 색만 다르게(청회색), 상태줄 자리에 «실행 상태 · 종류 · 묶음».
++        //   머리띠 0~30 · 종류 띠 30~56(26) · 지표 4줄 56~128(18씩)
++        // 줄 · 선 순번(프로세서 상세 g 안의 rect): 1 이름 칸(Cerebro) · 2 In · 3 선 · 4 Read/Write · 5 선 · 6 Out · 7 선 · 8 Tasks/Time.
++        // 왼쪽 위 NiFi 아이콘 상자 · 아이콘은 숨긴다. 위치는 원본 좌표(이름 x75 y18 · 종류 x75 y32 · 묶음 x75 y45 · 상태 x55 y23)에서 옮긴 만큼.
 +        g.processor {
 +            rect.processor-banner {
 +                fill: $cerebro-processor-banner !important;
++                height: 30px;
++                clip-path: inset(0 round 8px 8px 0 0);
 +            }
 +
 +            rect.processor-icon-container,
@@ -765,38 +1030,132 @@ index 0000000000000000000000000000000000000000..d4206f268bb0c3498118158c0318199e
 +                display: none;
 +            }
 +
++            rect.cerebro-sub-band {
++                display: inline;
++                fill: #f8fafc;
++            }
++
 +            text.processor-name {
 +                fill: #ffffff !important;
 +                font-size: 13px;
 +                font-weight: 700;
-+                transform: translateX(-65px);
++                letter-spacing: -0.2px;
++                transform: translate(-42px, 1.5px);
 +            }
 +
 +            text.run-status-icon {
-+                transform: translate(-45px, 20px);
++                transform: translate(-43px, 25px);
 +            }
 +
 +            text.processor-type {
-+                fill: #64748b !important;
++                fill: #475569 !important;
 +                font-size: 11px;
-+                transform: translate(-45px, 6px);
++                font-weight: 600;
++                transform: translate(-45px, 9px);
 +            }
 +
 +            text.processor-bundle {
 +                fill: #94a3b8 !important;
-+                font-size: 10px;
-+                transform: translate(-45px, 3px);
++                font-size: 9.5px;
++                transform: translate(-45px, 7px);
 +            }
 +
-+            // «제한된 프로세서» · «주 노드 전용(P)» 표시는 띠 오른쪽(알림 아이콘 왼쪽)으로 - 원래 자리는 이름 · 종류와 겹친다.
++            // «제한된 프로세서» · «주 노드 전용(P)» 표시는 머리띠 오른쪽 «프로세서» 표시 앞으로 - 원래 자리는 이름 · 종류와 겹친다.
 +            circle.restricted-background,
 +            text.restricted {
-+                transform: translate(302px, 1px);
++                transform: translate(276px, 3px);
 +            }
 +
 +            circle.is-primary-background,
 +            text.is-primary {
-+                transform: translate(250px, -23px);
++                transform: translate(228px, -21px);
++            }
++
++            // 알림 아이콘은 머리띠 오른쪽 끝에 뜬다 - 그동안 «프로세서» 표시는 비켜 준다.
++            &:has(rect.bulletin-background[style*='visibility: visible']) text.cerebro-head-tag {
++                display: none;
++            }
++
++            g.processor-canvas-details {
++                > rect.cerebro-th-col {
++                    y: 56px;
++                    height: 72px;
++                    clip-path: inset(0 round 0 0 0 8px);
++                }
++
++                > rect:nth-of-type(2) {
++                    y: 56px;
++                    height: 18px;
++                }
++
++                > rect:nth-of-type(3) {
++                    y: 73px;
++                }
++
++                > rect:nth-of-type(4) {
++                    y: 74px;
++                    height: 18px;
++                }
++
++                > rect:nth-of-type(5) {
++                    y: 91px;
++                }
++
++                > rect:nth-of-type(6) {
++                    y: 92px;
++                    height: 18px;
++                }
++
++                > rect:nth-of-type(7) {
++                    y: 109px;
++                }
++
++                > rect:nth-of-type(8) {
++                    y: 110px;
++                    height: 18px;
++                    clip-path: inset(0 round 0 0 8px 8px);
++                }
++
++                > rect.cerebro-pill {
++                    x: 304px;
++                    height: 14px;
++                }
++
++                > rect.cerebro-pill-1 {
++                    y: 58px;
++                }
++
++                > rect.cerebro-pill-2 {
++                    y: 76px;
++                }
++
++                > rect.cerebro-pill-3 {
++                    y: 94px;
++                }
++
++                > rect.cerebro-pill-4 {
++                    y: 112px;
++                }
++
++                > g:nth-of-type(1) {
++                    transform: translate(12px, 60.25px);
++                }
++
++                > g:nth-of-type(2) {
++                    transform: translate(108px, 60.25px);
++                }
++
++                > g:nth-of-type(3) {
++                    transform: translate(322px, 60.25px);
++                }
++
++                > g > text:nth-of-type(3) {
++                    transform: translateY(-1px);
++                }
++
++                > g > text:nth-of-type(4) {
++                    transform: translateY(-2px);
++                }
 +            }
 +        }
 +
@@ -822,6 +1181,175 @@ index 0000000000000000000000000000000000000000..d4206f268bb0c3498118158c0318199e
 +            stroke: $cerebro-red !important;
 +        }
 +    }
++}
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-canvas.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-canvas.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..67a1235388f82fc9f7ddc5af8538fa3ed51de67a
+--- /dev/null
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-canvas.ts
+@@ -0,0 +1,163 @@
++/*
++ * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
++ *
++ * 캔버스의 프로세스 그룹 · 프로세서 상자를 디자인 카드(CEREBRO_ETL_UI_DESIGN_20261008 etl-manage.html 의 .nifi-node-card)처럼 그린다.
++ * NiFi 매니저(process-group-manager · processor-manager)가 상자를 만들 때 아래 요소를 같이 만든다 - 모두 display="none" 이라
++ * NiFi 에 직접 들어오면 보이지 않고, Cerebro 안(html.cerebro-embedded)에서만 _cerebro-embedded.scss 가 보이게 · 배치한다.
++ *
++ *   머리띠   → 왼쪽 아이콘(디자인 툴바와 같은 그룹 · 톱니 모양) · 오른쪽 «프로세스 그룹»/«프로세서» 표시 · 아래 선
++ *   지표 표  → 이름 칸 바탕(디자인 th) · «5 min» 알약
++ *   상태줄   → 항목 양끝 맞춤 · 멈춤(빨강)/잘못됨(주황) 강조, 바닥줄 → 오른쪽 맞춤(cerebroLayoutGroupContents)
++ *
++ * 상자 크기(384×176 · 352×128)는 NiFi 그대로다 - 바꾸면 이미 그려 둔 흐름의 상자끼리 겹친다.
++ */
++import { isEmbeddedInCerebro } from './cerebro-embed';
++
++type CerebroBoxKind = 'group' | 'processor';
++
++const SVG_ICON_SCALE = 14 / 24; // 디자인 아이콘: 24 단위 viewBox 를 14px 로
++
++// 디자인 툴바(.toolbar-btn)의 아이콘과 같은 모양 - 그룹은 겹친 사각형 두 개, 프로세서는 톱니.
++const GEAR_PATH =
++    'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 ' +
++    '1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06' +
++    'a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 ' +
++    '2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 ' +
++    '1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33' +
++    'l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 ' +
++    '2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z';
++
++const HEADER = {
++    group: { height: 32, tag: '프로세스 그룹' },
++    processor: { height: 30, tag: '프로세서' }
++};
++
++// 이름이 오른쪽 «프로세스 그룹»/«프로세서» 표시 · 아이콘과 겹치지 않게 줄이는 폭(Cerebro 안에서만).
++export function cerebroNameWidth(kind: CerebroBoxKind, nifiWidth: number): number {
++    if (!isEmbeddedInCerebro()) {
++        return nifiWidth;
++    }
++    return nifiWidth - (kind === 'group' ? 26 : 12);
++}
++
++/** 머리띠 아이콘 · 표시 · 아래 선. 상자를 처음 만들 때(renderProcessGroups · renderProcessors) 한 번. */
++export function appendCerebroHeader(box: any, kind: CerebroBoxKind): void {
++    const header = HEADER[kind];
++    const icon = box
++        .append('g')
++        .attr('class', 'cerebro-head-icon')
++        .attr('display', 'none')
++        .attr('transform', `translate(12, ${(header.height - 14) / 2}) scale(${SVG_ICON_SCALE})`);
++    if (kind === 'group') {
++        icon.append('rect').attr('x', 3).attr('y', 3).attr('width', 13).attr('height', 13).attr('rx', 2);
++        icon.append('rect').attr('x', 8).attr('y', 8).attr('width', 13).attr('height', 13).attr('rx', 2);
++    } else {
++        icon.append('circle').attr('cx', 12).attr('cy', 12).attr('r', 3);
++        icon.append('path').attr('d', GEAR_PATH);
++    }
++
++    box.append('text')
++        .attr('class', 'cerebro-head-tag')
++        .attr('display', 'none')
++        .attr('x', (d: any) => d.dimensions.width - 12)
++        .attr('y', header.height / 2 + 3.5)
++        .text(header.tag);
++
++    box.append('rect')
++        .attr('class', 'cerebro-head-line')
++        .attr('display', 'none')
++        .attr('x', 0)
++        .attr('y', header.height - 1)
++        .attr('width', (d: any) => d.dimensions.width)
++        .attr('height', 1);
++}
++
++/** 프로세서 머리띠 아래 «종류 · 묶음» 띠(그룹의 상태줄 자리). 상세(g.processor-canvas-details)보다 먼저 그려야 글자가 위에 온다. */
++export function appendCerebroProcessorSubBand(processor: any): void {
++    processor
++        .append('rect')
++        .attr('class', 'cerebro-sub-band')
++        .attr('display', 'none')
++        .attr('x', 0)
++        .attr('y', HEADER.processor.height)
++        .attr('width', (d: any) => d.dimensions.width)
++        .attr('height', 26);
++}
++
++/** 지표 표의 이름 칸 바탕(디자인 th). 줄 · 경계선보다 먼저 그려야 경계선이 이름 칸에도 보인다. 위치는 scss. */
++export function appendCerebroLabelColumn(details: any): void {
++    details.append('rect').attr('class', 'cerebro-th-col').attr('display', 'none');
++}
++
++/** «5 min» 알약 바탕. 줄을 다 그린 뒤(글자보다는 먼저) 그린다. 위치는 scss(cerebro-pill-1 … 4 = 지표 줄 번호). */
++export function appendCerebroPills(details: any, rows: number[]): void {
++    rows.forEach((row) => {
++        details.append('rect').attr('class', `cerebro-pill cerebro-pill-${row}`).attr('display', 'none');
++    });
++}
++
++function isShown(node: any, property: 'display' | 'visibility'): boolean {
++    if (node.empty()) {
++        return false;
++    }
++    const value = node.style(property);
++    return property === 'display' ? value !== 'none' : value === 'visible';
++}
++
++/**
++ * 그룹 상태줄 · 바닥줄 배치(디자인 .nifi-status-bar: 양끝 맞춤, .nifi-card-footer: 오른쪽 맞춤 · 간격 12)와 강조 색.
++ * NiFi 가 개수 · 위치를 다시 쓸 때마다(updateProcessGroups) 그리고 알림 표시가 바뀔 때마다(updateProcessGroupStatus) 부른다.
++ * NiFi 에 직접 들어온 경우는 아무것도 하지 않는다(원래 왼쪽부터 차례로 놓는 배치 그대로).
++ */
++export function cerebroLayoutGroupContents(processGroup: any, d: any): void {
++    if (!isEmbeddedInCerebro()) {
++        return;
++    }
++    const details = processGroup.select('g.process-group-details');
++    if (details.empty()) {
++        return;
++    }
++    const width: number = d.dimensions.width;
++    const pair = (name: string) => [
++        details.select(`text.process-group-${name}`),
++        details.select(`text.process-group-${name}-count`)
++    ];
++    const textWidth = (node: any) => node.node().getComputedTextLength();
++    const ICON_GAP = 3; // 디자인 .status-stat-item gap 2px + 글자 앞뒤 여백
++
++    const permitted = d.permissions.canRead;
++    const emphasize = (name: string, cls: string, on: boolean) => {
++        const [icon, count] = pair(name);
++        icon.classed(cls, permitted && on);
++        count.classed(cls, permitted && on);
++    };
++    emphasize('stopped', 'cerebro-warn', d.stoppedCount > 0);
++    emphasize('invalid', 'cerebro-alert', d.invalidCount > 0);
++    emphasize('sync-failure', 'cerebro-warn', d.syncFailureCount > 0);
++    emphasize('stale', 'cerebro-alert', d.staleCount > 0);
++    emphasize('locally-modified-and-stale', 'cerebro-alert', d.locallyModifiedAndStaleCount > 0);
++
++    // 상태줄: 왼쪽 12 ~ 오른쪽 12(알림 아이콘이 떠 있으면 그 앞)까지 같은 간격으로.
++    const status = ['transmitting', 'not-transmitting', 'running', 'stopped', 'invalid', 'disabled'].map(pair);
++    const left = 12;
++    const right = isShown(details.select('rect.bulletin-background'), 'visibility') ? width - 32 : width - 12;
++    const widths = status.map(([icon, count]) => textWidth(icon) + ICON_GAP + textWidth(count));
++    const gap = (right - left - widths.reduce((sum, w) => sum + w, 0)) / (status.length - 1);
++    let x = left;
++    status.forEach(([icon, count], i) => {
++        icon.attr('x', x);
++        count.attr('x', x + textWidth(icon) + ICON_GAP);
++        x += widths[i] + gap;
++    });
++
++    // 바닥줄: 오른쪽부터 간격 12(주석 아이콘이 떠 있으면 그 앞).
++    const footer = ['up-to-date', 'locally-modified', 'stale', 'locally-modified-and-stale', 'sync-failure'].map(pair);
++    x = isShown(details.select('text.component-comments'), 'visibility') ? width - 24 : width - 12;
++    footer.reverse().forEach(([icon, count]) => {
++        x -= textWidth(count);
++        count.attr('x', x);
++        x -= ICON_GAP + textWidth(icon);
++        icon.attr('x', x);
++        x -= 12;
++    });
 +}
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
 new file mode 100644
@@ -1322,11 +1850,95 @@ index f27e1219a947658c6215cd66e57006686c459442..eb232539da206d427147e4f982472519
  
              if (d.permissions.canRead) {
                  // use the specified color if appropriate
+diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/manager/process-group-manager.service.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/manager/process-group-manager.service.ts
+index 1d3140b55329657604c19eb82d54ce5c1c33d4f3..2a92f8079fc9744f85c7a159a539918cbde170d9 100644
+--- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/manager/process-group-manager.service.ts
++++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/manager/process-group-manager.service.ts
+@@ -34,6 +34,13 @@ import { VersionControlTip } from '../../ui/common/tooltips/version-control-tip/
+ import { Dimension } from '../../state/shared';
+ import { filter, Subject, switchMap, takeUntil } from 'rxjs';
+ import { ComponentType, NiFiCommon, TextTip } from '@nifi/shared';
++import {
++    appendCerebroHeader,
++    appendCerebroLabelColumn,
++    appendCerebroPills,
++    cerebroLayoutGroupContents,
++    cerebroNameWidth
++} from '../../../../cerebro/cerebro-canvas';
+ 
+ @Injectable({
+     providedIn: 'root'
+@@ -134,6 +141,9 @@ export class ProcessGroupManager implements OnDestroy {
+         // process group name
+         processGroup.append('text').attr('x', 10).attr('y', 21).attr('class', 'version-control');
+ 
++        // Cerebro: header icon / «프로세스 그룹» tag / bottom line - shown only inside Cerebro (cerebro-canvas.ts)
++        appendCerebroHeader(processGroup, 'group');
++
+         // always support selecting and navigation
+         processGroup.on('dblclick', function (event: MouseEvent, d: any) {
+             // enter this group on double click
+@@ -452,6 +462,9 @@ export class ProcessGroupManager implements OnDestroy {
+                     // ----------------
+ 
+                     // queued
++                    // Cerebro: label column background, drawn under the rows (cerebro-canvas.ts)
++                    appendCerebroLabelColumn(details);
++
+                     details
+                         .append('rect')
+                         .attr('class', 'process-group-queued-stats odd')
+@@ -528,6 +541,9 @@ export class ProcessGroupManager implements OnDestroy {
+                         .attr('x', 0)
+                         .attr('y', 123);
+ 
++                    // Cerebro: «5 min» pills of the In / Read/Write / Out rows (cerebro-canvas.ts)
++                    appendCerebroPills(details, [2, 3, 4]);
++
+                     // -----
+                     // stats
+                     // -----
+@@ -1161,9 +1177,9 @@ export class ProcessGroupManager implements OnDestroy {
+                             if (self.isUnderVersionControl(processGroupData)) {
+                                 const versionControlX = parseInt(versionControl.attr('x'), 10);
+                                 const processGroupNameX = parseInt(d3.select(this).attr('x'), 10);
+-                                return 300 - (processGroupNameX - versionControlX);
++                                return cerebroNameWidth('group', 300 - (processGroupNameX - versionControlX));
+                             } else {
+-                                return 300;
++                                return cerebroNameWidth('group', 300);
+                             }
+                         })
+                         .each(function (this: any, d: any) {
+@@ -1295,6 +1311,9 @@ export class ProcessGroupManager implements OnDestroy {
+             // ---------
+ 
+             self.canvasUtils.bulletins(processGroup, d.bulletins);
++
++            // Cerebro: status / footer alignment and emphasis inside Cerebro (cerebro-canvas.ts)
++            cerebroLayoutGroupContents(processGroup, d);
+         });
+     }
+ 
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/manager/processor-manager.service.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/manager/processor-manager.service.ts
-index 2f4a71002a9c5a3898c24521d985ec082da444c1..5c6a73410b09bd553271806e4dd44050cfa5c25d 100644
+index 2f4a71002a9c5a3898c24521d985ec082da444c1..9215833a11386f91afcb71be99c9723e2eac86d4 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/manager/processor-manager.service.ts
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/service/manager/processor-manager.service.ts
-@@ -106,6 +106,17 @@ export class ProcessorManager implements OnDestroy {
+@@ -34,6 +34,13 @@ import { ValidationErrorsTip } from '../../../../ui/common/tooltips/validation-e
+ import { ComponentType, TextTip, NiFiCommon } from '@nifi/shared';
+ import { Dimension } from '../../state/shared';
+ import { filter, Subject, switchMap, takeUntil } from 'rxjs';
++import {
++    appendCerebroHeader,
++    appendCerebroLabelColumn,
++    appendCerebroPills,
++    appendCerebroProcessorSubBand,
++    cerebroNameWidth
++} from '../../../../cerebro/cerebro-canvas';
+ 
+ @Injectable({
+     providedIn: 'root'
+@@ -106,12 +113,27 @@ export class ProcessorManager implements OnDestroy {
              .attr('filter', 'url(#component-drop-shadow)')
              .attr('stroke-width', 0);
  
@@ -1341,9 +1953,40 @@ index 2f4a71002a9c5a3898c24521d985ec082da444c1..5c6a73410b09bd553271806e4dd44050
 +            .attr('fill', 'none')
 +            .attr('stroke', 'none');
 +
++        // Cerebro: type / bundle band under the title band, header icon / «프로세서» tag - shown only inside Cerebro (cerebro-canvas.ts)
++        appendCerebroProcessorSubBand(processor);
++        appendCerebroHeader(processor, 'processor');
++
          // processor name
          processor
              .append('text')
+             .attr('x', 75)
+             .attr('y', 18)
+-            .attr('width', 230)
++            .attr('width', cerebroNameWidth('processor', 230))
+             .attr('height', 14)
+             .attr('class', 'processor-name');
+ 
+@@ -219,6 +241,9 @@ export class ProcessorManager implements OnDestroy {
+ 
+                     // draw the processor statistics table
+ 
++                    // Cerebro: label column background, drawn under the rows (cerebro-canvas.ts)
++                    appendCerebroLabelColumn(details);
++
+                     // in
+                     details
+                         .append('rect')
+@@ -296,6 +321,9 @@ export class ProcessorManager implements OnDestroy {
+                         .attr('x', 0)
+                         .attr('y', 107);
+ 
++                    // Cerebro: «5 min» pills of the four rows (cerebro-canvas.ts)
++                    appendCerebroPills(details, [1, 2, 3, 4]);
++
+                     // stats label container
+                     const processorStatsLabel = details.append('g').attr('transform', 'translate(10, 55)');
+ 
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html
 index e530d7f860b4864dd877c776957538ed47f02b9d..2ab6818740dfd1b47beb0b109cf177d253fa569c 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/new-canvas-item/new-canvas-item.component.html
