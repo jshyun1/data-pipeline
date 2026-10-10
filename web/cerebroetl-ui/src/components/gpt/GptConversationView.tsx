@@ -23,11 +23,16 @@ export type GptAnswerHeadingLabels = Partial<Record<GptAnswerHeading, string>>;
 
 /**
  * 서버 지시문이 정해 둔 구분 이름들. 모델이 번호 없이 이 이름만 적어도 구분으로 본다
- * (속성창 요약: 한 줄 요약 · 구성 · 지금 상태 / 로그 분석: 원인 · 조치 방법 · 확인할 것).
+ * (속성창 요약: 한 줄 요약 · 구성 · 지금 상태 · 등록 · 변경 · 눈여겨볼 점 / 로그 분석: 원인 · 조치 방법 · 확인할 것).
+ * «등록 · 변경» · «눈여겨볼 점»은 2026-10-10 에 더했다(JobAnalysisAgent.SUMMARY_REQUEST 의 마지막 두 구분) - 빠져 있어 ■ 없이 본문처럼 보였다.
+ * 띄어쓰기는 빼고 견준다 - 모델이 «등록·변경» · «눈여겨 볼 점»처럼 적어도 같은 구분이다.
  */
 const KNOWN_SECTIONS = [
-  ...HEADINGS, "한 줄 요약", "구성", "지금 상태", "요약", "기본정보", "스케줄", "실행 방식", "참고", "다음 단계",
+  ...HEADINGS, "한 줄 요약", "구성", "지금 상태", "등록 · 변경", "등록 및 변경", "눈여겨볼 점",
+  "요약", "기본정보", "스케줄", "실행 방식", "참고", "다음 단계",
 ];
+const sectionKey = (title: string) => title.replace(/\s+/g, "");
+const KNOWN_SECTION_KEYS = new Set(KNOWN_SECTIONS.map(sectionKey));
 
 /**
  * 한 줄이 «구분 제목»인지 본다(2026-10-05 요청). 제목이면 번호 · 꾸밈 기호를 뺀 이름을 돌려준다.
@@ -51,7 +56,7 @@ function sectionTitleOf(raw: string): string | null {
   }
   const numbered = /^\(?\d+\)?\s*[.)]?\s+(.+)$/.exec(line);
   const body = numbered ? plain(numbered[1]) : plain(line);
-  if (KNOWN_SECTIONS.includes(body)) {
+  if (KNOWN_SECTION_KEYS.has(sectionKey(body))) {
     return body;
   }
   if (numbered) {
