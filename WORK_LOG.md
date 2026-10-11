@@ -3637,3 +3637,30 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
   - 끝난 실행: 위 실행 줄 135,703행, 호출 줄 117,655행(117,555 + 100), job 줄 18,047 · 1 이다.
   - 실행 중(하위 job 원장 진행 5,000): 위 실행 줄 «23,048행 · 진행 중», 호출 줄 «5,000행 · 진행 중» 이다.
 - MSA 는 반영하지 않았다(화면 재배포 필요).
+
+## 109. 워크플로우 로그 상세 이력 job 이름 · CDC 워크플로우 속성창 줄 정렬 (2026-10-11~12)
+
+**요청**
+- 상세 실행이력 1 · 2번(JOB) 줄에 job ID 처럼 보이는 «etl_root_test_unstructed» 가 나온다. job 이름만 보이게 한다.
+- 3번(하위 워크플로우 호출) 줄 이름 옆의 «· wf_demo_dz_order_daily» 를 뺀다.
+- CDC 워크플로우 속성창 «CDC 파이프라인»에서 LOG_PIPE 줄만 이름과 상태 사이가 넓다. TB_IMP018M 처럼 맞춘다.
+
+**원인**
+- 상세 이력 줄 이름은 Airflow 태스크 그룹 id, 곧 워크플로우 노드 키(`job.key`)였다. 하위 호출 줄은 하위 워크플로우 이름 옆에 노드 키를 덧붙였다.
+- CDC 파이프라인 줄은 «이름 ↔ 상태» 양끝 정렬이었다. 상태 칸 너비가 글 길이를 따라가서, 상태 글이 짧아 한 줄에 들어가는 LOG_PIPE(«Source — · Sink STOPPED») 만 오른쪽으로 밀렸다.
+
+**변경**
+- `workflowLogV2/LogV2Grid.tsx`
+  - `useNodeNames`: 워크플로우 상세(`["workflow-detail", id]`, 속성창과 같은 캐시 키)의 노드에서 노드 키 → 이름을 만든다(JOB jobName · SUBWF subWorkflowName · CDC pipelineName).
+  - job 줄은 job 이름을, 하위 호출 줄은 하위 워크플로우 이름만 적는다. 노드가 지워졌거나 아직 못 받았으면 노드 키를 그대로 둔다.
+  - 실패 로그 창 머리도 같은 이름을 쓴다.
+  - `GridCtx.workflowIdOf` 를 더했다(EtlRunsPane 이 워크플로우 목록으로 채운다).
+- `AirflowDashboardPage` · `index.css`
+  - 파이프라인 줄을 이름 · 상태 두 칸 표(`.airflow-cdc-members` grid)로 바꿨다.
+  - 이름 칸은 가장 긴 이름에 맞추되 절반을 넘지 않는다. 상태 칸은 모든 줄에서 같은 자리에서 시작한다. 줄 구분선은 끊기지 않는다.
+
+**확인(로컬, cerebroetl-ui 재빌드)**
+- `tsc -b` 오류 0, oxlint 0 이다.
+- 가짜 응답 화면 시험(`qa-ui/names_mock.js`)
+  - 상세 이력: «01 test_unstructed», «02 test_Ontology_CL», «호출 03 DEMO_DZ_ORDER_DAILY», «04 workflow_done» 이다.
+  - CDC 줄: LOG_PIPE · TB_IMP018M 의 상태 칸이 같은 x(1384)에서 시작한다.

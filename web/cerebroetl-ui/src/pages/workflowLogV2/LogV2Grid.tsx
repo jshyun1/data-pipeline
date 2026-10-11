@@ -1,7 +1,8 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { listAirflowTaskInstances, type AirflowDagRun } from "../../api/platform";
+import { getWorkflow } from "../../api/workflows";
 import type { FailureLogTarget } from "../../components/TaskFailureLogModal";
 import {
   countValue,
@@ -38,6 +39,8 @@ export interface GridCtx {
   openTab: (sel: Selection, tab: DetailTab) => void;
   /** 실행 한 건을 한 줄로 부르는 이름(예: «total · 09-18 10:54:59 · 2차»). 실패 로그 창 머리에 적는다. */
   runLabel?: (dagId: string, runId: string) => string | undefined;
+  /** DAG 의 워크플로우 id. 있으면 job 줄에 노드 키 대신 job 이름을 적는다(useNodeNames). */
+  workflowIdOf?: (dagId: string) => number | undefined;
   refreshSeconds: number;
 }
 
@@ -244,6 +247,26 @@ export function RunRow({ run, ctx, scale, showDate, expandable = true, ordinal, 
   );
 }
 
+/**
+ * 워크플로우 노드 키 → 이름(job · 하위 워크플로우 · CDC 파이프라인). 워크플로우 상세를 화면 속성창과 같은 캐시 키로 읽는다.
+ * 지금 캔버스 기준이라, 실행 뒤에 노드를 지웠으면 그 줄은 노드 키로 남는다.
+ */
+function useNodeNames(dagId: string, ctx: GridCtx) {
+  const workflowId = ctx.workflowIdOf?.(dagId);
+  const detailQuery = useQuery({
+    queryKey: ["workflow-detail", workflowId],
+    queryFn: () => getWorkflow(workflowId!),
+    enabled: workflowId != null,
+    staleTime: 60_000,
+  });
+  return useMemo(() => new Map((detailQuery.data?.nodes ?? []).flatMap((node) => {
+    const name = node.nodeType === "CDC" ? node.pipelineName
+      : node.nodeType === "SUBWF" ? node.subWorkflowName
+      : node.jobName;
+    return name ? [[node.nodeKey, name] as const] : [];
+  })), [detailQuery.data]);
+}
+
 /** 실행 하나의 job 줄들. 하위 워크플로우 호출 job 은 펼치면 그 하위 실행의 job 들이 한 칸 더 들여 나온다. */
 export function RunBody({ dagId, runId, runState, depth, ctx, scale }: {
   dagId: string;
@@ -257,6 +280,7 @@ export function RunBody({ dagId, runId, runState, depth, ctx, scale }: {
   const { tasksQuery, tasks, jobs, logs, progress } = useRunTasks(dagId, runId,
     { enabled: true, refreshSeconds: ctx.refreshSeconds, runState });
   const { busyKey, rerun } = useRerun(dagId, runId, tasks, () => tasksQuery.refetch());
+  const nodeNames = useNodeNames(dagId, ctx);
   const pad = { paddingLeft: depth * 20 };
   if (tasksQuery.isLoading) {
     return <tr className="lv2-r k-info"><td colSpan={COLS}><div style={pad} className="lv2-muted">실행 단계를 불러오는 중입니다.</div></td></tr>;
@@ -268,7 +292,7 @@ export function RunBody({ dagId, runId, runState, depth, ctx, scale }: {
   return (
     <>
       {jobs.map((job, index) => (
-        <JobRow key={job.key} dagId={dagId} runId={runId} job={job} index={index} depth={depth} ctx={ctx}
+        <JobRow key={job.key} dagId={dagId} runId={runId} job={job} name={nodeNames.get(job.key)} index={index} depth={depth} ctx={ctx}
                 logs={logs} progress={progress} scale={jobScale} busyKey={busyKey} rerun={rerun} />
       ))}
     </>
@@ -276,11 +300,13 @@ export function RunBody({ dagId, runId, runState, depth, ctx, scale }: {
 }
 
 function JobRow({
-  dagId, runId, job, index, depth, ctx, logs, progress, scale, busyKey, rerun,
+  dagId, runId, job, name, index, depth, ctx, logs, progress, scale, busyKey, rerun,
 }: {
   dagId: string;
   runId: string;
   job: JobGroup;
+  /** 노드가 가리키는 job · 워크플로우 · 파이프라인 이름. 모르면(노드가 지워졌거나 아직 못 받음) 노드 키를 적는다. */
+  name?: string;
   index: number;
   depth: number;
   ctx: GridCtx;
@@ -296,6 +322,8 @@ function JobRow({
   const no = String(index + 1).padStart(2, "0");
   const child = job.kind === "call" ? ctx.findChildRun(dagId, runId, job.key) : undefined;
   const childDag = child?.dag_id ? ctx.dagsById.get(child.dag_id) : undefined;
+  // 줄 이름: job 은 job 이름, 하위 호출은 하위 워크플로우 이름만 적는다(2026-10-11 요청 - 노드 키 «etl_root_…» · «· wf_…» 를 뺐다).
+  const label = job.kind === "call" && childDag ? displayName(childDag) : name ?? job.key;
   const canExpand = job.kind === "job" || (job.kind === "call" && Boolean(child));
   const isRerunnable = job.kind !== "end";
   const failed = job.state === "failed";
@@ -309,7 +337,7 @@ function JobRow({
   const outcome = jobOutcome(job, logs, progress);
   const inProgress = jobProgress(job, progress) != null;
   const logTarget: FailureLogTarget = {
-    title: `${no} ${job.key}`,
+    title: `${no} ${label}`,
     dagId,
     runId,
     runLabel: ctx.runLabel?.(dagId, runId),
@@ -324,9 +352,8 @@ function JobRow({
           <div className="lv2-nm" style={{ paddingLeft: depth * 20 }}>
             <Toggle open={expanded} empty={!canExpand} onToggle={() => ctx.toggle(key)} />
             {job.kind === "call" && <span className="lv2-kind call">호출</span>}
-            <span className="lv2-nm-text" title={job.key}>
-              {no} {job.kind === "call" && childDag ? displayName(childDag) : job.key}
-              {job.kind === "call" && childDag && <span className="lv2-muted lv2-nm-sub"> · {job.key}</span>}
+            <span className="lv2-nm-text" title={label}>
+              {no} {label}
             </span>
           </div>
         </td>
@@ -379,7 +406,7 @@ function JobRow({
                 <button type="button" className="lv2-btn sm danger"
                         onClick={(event) => {
                           event.stopPropagation();
-                          ctx.openLog({ title: `${job.key} · ${stepName(step.task_id)}`, dagId, runId,
+                          ctx.openLog({ title: `${label} · ${stepName(step.task_id)}`, dagId, runId,
                                         runLabel: ctx.runLabel?.(dagId, runId), tasks: [step] });
                         }}>로그</button>
               ) : <span className={step.state === "upstream_failed" ? "lv2-muted" : "lv2-num"}>{stepOutcome}</span>}

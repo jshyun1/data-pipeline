@@ -1524,18 +1524,21 @@ function PropertyPanel({
               워크플로우는 지시를 보낼 뿐입니다. 아래는 각 파이프라인의 실제 상태입니다.
             </Typography.Text>
           </div>
-          {(cdcMembers ?? []).map((member) => (
-            <div key={member.pipelineId} className="airflow-cdc-member">
-              <Link to={`/cdc/pipelines?pipelineId=${member.pipelineId}`}>
-                {member.pipeline?.name ?? `파이프라인 ${member.pipelineId}`}
-              </Link>
-              <div>
-                {member.pipeline
-                  ? renderRuntimeStatus(member.pipeline, member.runtime)
-                  : <Tag color="error">삭제됨</Tag>}
+          {/* 이름 · 상태 두 칸. 상태 칸 시작을 모든 줄에서 맞춘다(2026-10-11 요청 - 상태 글이 짧은 줄은 오른쪽으로 밀려 사이가 벌어졌다). */}
+          <div className="airflow-cdc-members">
+            {(cdcMembers ?? []).map((member) => (
+              <div key={member.pipelineId} className="airflow-cdc-member">
+                <Link to={`/cdc/pipelines?pipelineId=${member.pipelineId}`}>
+                  {member.pipeline?.name ?? `파이프라인 ${member.pipelineId}`}
+                </Link>
+                <div>
+                  {member.pipeline
+                    ? renderRuntimeStatus(member.pipeline, member.runtime)
+                    : <Tag color="error">삭제됨</Tag>}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </section>
       )}
       {!inline && category === "ETL" && !isCdcWorkflowDag(dag) && <WatchingRules target="ETL" ids={etlJobIds ?? []} />}

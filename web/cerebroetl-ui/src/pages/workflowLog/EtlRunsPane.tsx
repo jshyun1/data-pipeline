@@ -253,6 +253,7 @@ export function EtlRunsPane({
       const dag = dagsById.get(dagId);
       return `${dag ? displayName(dag) : dagId} · ${runStamp(run)}`;
     },
+    workflowIdOf: (dagId) => workflows.find((workflow) => workflow.dagId === dagId)?.id,
     refreshSeconds,
   };
 

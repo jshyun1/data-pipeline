@@ -2340,17 +2340,33 @@ button.airflow-task-name:hover {
 }
 
 /* ----- 오른쪽: 속성 ----- */
-/* CDC 워크플로우 속성창의 파이프라인 줄. 실패한 것을 눌러 바로 그 파이프라인으로 간다. */
-.airflow-cdc-member {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px solid #f0f0f0;
+/* CDC 워크플로우 속성창의 파이프라인 줄. 실패한 것을 눌러 바로 그 파이프라인으로 간다.
+   이름 · 상태 두 칸 표(2026-10-11) - 예전 «양끝 정렬»은 상태 글이 짧은 줄(LOG_PIPE «Source — · Sink STOPPED»)만 오른쪽으로 밀려
+   이름과 사이가 벌어졌다. 이름 칸은 가장 긴 이름에 맞추되 절반을 넘지 않고, 상태 칸은 모든 줄에서 같은 자리에서 시작한다. */
+.airflow-cdc-members {
+  display: grid;
+  grid-template-columns: fit-content(50%) minmax(0, 1fr);
 }
 
-.airflow-cdc-member:last-child {
+.airflow-cdc-member {
+  display: contents;
+}
+
+.airflow-cdc-member > * {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 0;
+  border-bottom: 1px solid #f0f0f0;
+  overflow-wrap: anywhere;
+}
+
+/* 칸 사이는 이름 칸 오른쪽 여백으로 둔다 - column-gap 이면 줄 구분선이 칸 사이에서 끊긴다. */
+.airflow-cdc-member > :first-child {
+  padding-right: 12px;
+}
+
+.airflow-cdc-member:last-child > * {
   border-bottom: none;
 }
 
