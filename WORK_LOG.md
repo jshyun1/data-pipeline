@@ -3590,3 +3590,23 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 - 배포된 번들에서 «DAG 동기화 중» 문구가 없고 «대기 · 실행 중» 조회가 들어간 것을 확인했다.
 - 로그인 화면 측정 · 캡처는 못 했다. QA 비밀번호를 대화 기록에서 꺼내는 실행은 보안 분류기가 막는다.
 - 로컬 Kafka Connect 조회(목록 27ms · 커넥터 5개 상태 47ms)는 빨랐다. 로컬 실행 기록은 177건이다.
+
+## 107. Airflow 워크플로우당 동시 태스크 2 → 3 (2026-10-11)
+
+**요청**: 워크플로우 캔버스에서 병렬로 몇 개까지 도는지 물어본 뒤, `MAX_ACTIVE_TASKS_PER_DAG` 를 3으로 올려 달라고 했다.
+
+**현황(바꾸기 전)**
+- `PARALLELISM=4`(Airflow 전체), `MAX_ACTIVE_TASKS_PER_DAG=2`(워크플로우 한 실행), `MAX_ACTIVE_RUNS_PER_DAG=1` 이었다.
+- 캔버스가 만드는 DAG(`etl_workflows_dynamic.py`)는 `max_active_tasks` 를 따로 주지 않아 기본값을 쓴다.
+- job 노드의 `await` 는 PythonOperator 의 sleep 루프라 NiFi 작업이 끝날 때까지 한 칸을 쥔다. 그래서 한 워크플로우에서 동시에 도는 job 은 사실상 2개였다.
+- 하위 워크플로우 노드는 deferrable 이라 기다리는 동안 칸을 안 쓴다(전체 4칸은 공유).
+
+**변경**: `docker-compose.yml` 의 `AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG` 를 "3" 으로 바꿨다.
+- `PARALLELISM`(4)은 그대로다. 동시 fork 수 · 메모리 상한은 늘지 않는다.
+
+**반영(로컬)**
+- 실행 중 DAG run · 태스크 0 건을 확인한 뒤 `docker compose up -d --no-deps` 로 apiserver · scheduler · dag-processor · triggerer 를 다시 만들었다(같은 환경 블록).
+- 네 서비스 모두 healthy 다. `airflow config` 값은 3 이다.
+- 게시된 DAG 7개가 다시 읽혀 `dag.max_active_tasks` 가 모두 3 이다.
+- job 3개를 나란히 둔 워크플로우를 실제로 돌려 보지는 않았다(적재가 일어나서).
+- MSA 는 반영하지 않았다.

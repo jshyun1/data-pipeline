@@ -573,7 +573,10 @@ services:
       # 부담이 큼 - 동시 fork 수를 낮춰 순간 메모리 버스트가 겹치는 걸 줄인다.
       # (근본 해결은 아님 - 근본 원인은 WSL2 메모리/스왑 자체가 부족한 것)
       AIRFLOW__CORE__PARALLELISM: "4"
-      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "2"
+      # 워크플로우(DAG) 한 실행 안의 동시 태스크 수. job 노드는 await 가 끝날 때까지 한 칸을 쥐므로 사실상
+      # «한 워크플로우에서 동시에 도는 job 수»다. 2 → 3(2026-10-11 요청). 전체 상한은 위 PARALLELISM(4) 그대로라
+      # 동시 fork 수 · 메모리 상한은 늘지 않는다.
+      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "3"
       AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: "1"
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       # METADATA_DB_PASSWORD를 그대로 재사용하지 않는다 - 비밀번호에 URL 예약문자(!@#)가
