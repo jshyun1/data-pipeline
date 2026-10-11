@@ -52,7 +52,7 @@ import { listPipelineRuntimeStatuses, listPipelines } from "../api/pipelines";
 import { renderRuntimeStatus, sourceLabel, targetLabel } from "../utils/cdcPresentation";
 import { listPipelineGroups, type PipelineGroupResponse } from "../api/pipelineGroups";
 import { loadModeLabel, type PipelineResponse } from "../types/pipeline";
-import { buildWorkflowHierarchy, parentWorkflowPathOf, publishedParentsOf, type WorkflowTreeItem } from "../utils/workflowTree";
+import { buildWorkflowHierarchy, parentWorkflowPathOf, publishedParentsOf, sortFoldersFirst, type WorkflowTreeItem } from "../utils/workflowTree";
 import { PaletteTree, type PaletteTreeNode } from "../components/PaletteTree";
 import { EtlJobSummary } from "./ConsoleFramePage";
 import { GptChatPanel } from "../components/gpt/GptChatPanel";
@@ -782,7 +782,8 @@ export function WorkflowCanvasPage() {
       children: item.children.length ? toSubWorkflowNodes(item.children) : undefined,
     };
   });
-  const subWorkflowHierarchy = buildWorkflowHierarchy(allWorkflows);
+  // 같은 단계에서 폴더(하위가 있는 것) 먼저, 그다음 이름순(2026-10-11 요청 - 워크플로우 로그 트리와 같게).
+  const subWorkflowHierarchy = sortFoldersFirst(buildWorkflowHierarchy(allWorkflows));
   // 최상단 한 칸을 씌워 ETL(«ETL Root») · CDC(«CDC Root») 구역과 같은 꼴로 둔다(2026-10-08 요청).
   const subWorkflowNodes = toSubWorkflowNodes(subWorkflowHierarchy);
   const subWorkflowTree: PaletteTreeNode[] = subWorkflowNodes.length === 0 ? [] : [{

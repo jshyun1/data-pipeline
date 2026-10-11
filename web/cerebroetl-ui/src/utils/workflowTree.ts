@@ -51,6 +51,18 @@ export function buildWorkflowHierarchy(workflows: WorkflowSummary[]): WorkflowTr
   return [...roots, ...orphans];
 }
 
+/**
+ * 트리 정렬: 같은 단계에서 폴더(하위 워크플로우가 있는 것)를 위로, 그 안에서는 이름순(한글 · 숫자 자연 정렬).
+ * 목록이 온 순서(이름순) 그대로면 폴더와 워크플로우가 섞여 보기 어렵다(2026-10-11 요청).
+ * 워크플로우 로그 · 관리 · 생성/수정 화면 트리가 같이 쓴다. 빌더(buildWorkflowHierarchy)는 순서를 건드리지 않는다.
+ */
+export function sortFoldersFirst(items: WorkflowTreeItem[]): WorkflowTreeItem[] {
+  return items
+    .map((item) => ({ ...item, children: sortFoldersFirst(item.children) }))
+    .sort((a, b) => Number(b.children.length > 0) - Number(a.children.length > 0)
+      || a.workflow.name.localeCompare(b.workflow.name, "ko", { numeric: true, sensitivity: "base" }));
+}
+
 /** 계층을 평평하게 편다(그린 순서 그대로). 선택 처리에서 하위까지 함께 볼 때 쓴다. */
 export function flattenWorkflowTree(items: WorkflowTreeItem[]): WorkflowSummary[] {
   return items.flatMap((item) => [item.workflow, ...flattenWorkflowTree(item.children)]);

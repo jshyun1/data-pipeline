@@ -15,6 +15,7 @@ import {
 import {
   buildWorkflowHierarchy,
   flattenWorkflowTree,
+  sortFoldersFirst,
   type WorkflowTreeItem,
 } from "../utils/workflowTree";
 import { WfIcon, WorkflowPageHeader } from "../components/WorkflowPageHeader";
@@ -284,7 +285,8 @@ export function WorkflowDesignPage() {
    * 예전에는 NiFi 업무 그룹(DW/DZ/Template)으로 묶어 보여줬는데, 여기서 알고 싶은 것은
    * «total 을 돌리면 무엇이 같이 도는가»이고 그건 그룹이 아니라 캔버스에 그린 상하 관계다.
    */
-  const workflowTree = buildWorkflowHierarchy(workflows);
+  // 같은 단계에서 폴더(하위가 있는 것) 먼저, 그다음 이름순(2026-10-11 요청 - 워크플로우 로그 트리와 같게).
+  const workflowTree = sortFoldersFirst(buildWorkflowHierarchy(workflows));
 
   /** 검색어가 걸리는 워크플로우와 그 조상만 남긴다(자손이 걸리면 부모도 길로 남아야 한다). */
   const filterTree = (items: WorkflowTreeItem[], needle: string): WorkflowTreeItem[] => {

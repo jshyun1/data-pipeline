@@ -32,7 +32,7 @@ import { getAlertRulesWatching } from "../api/config";
 import { listPipelineRuntimeStatuses, listPipelines } from "../api/pipelines";
 import type { PipelineResponse, PipelineRuntimeStatusResponse } from "../types/pipeline";
 import { renderRuntimeStatus } from "../utils/cdcPresentation";
-import { buildWorkflowHierarchy, type WorkflowTreeItem } from "../utils/workflowTree";
+import { buildWorkflowHierarchy, sortFoldersFirst, type WorkflowTreeItem } from "../utils/workflowTree";
 import { getEtlJob, listEtlJobs } from "../api/etlJobs";
 import { categorizeDag, type DagCategory } from "../utils/dagHistory";
 import { scheduleDescription } from "../utils/schedulePreset";
@@ -435,17 +435,6 @@ type TreeArrow =
   | { kind: "row"; open: boolean }
   | { kind: "button"; open: boolean; onToggle: () => void };
 
-/**
- * 트리 정렬: 같은 단계에서 폴더(하위 워크플로우가 있는 것)를 위로, 그 안에서는 이름순(2026-10-11 요청).
- * 예전에는 목록이 온 순서(이름순)라 폴더와 워크플로우가 섞여 보기 어려웠다. 이 화면에서만 쓴다 - 빌더는 설계 화면도 같이 쓴다.
- */
-function foldersFirst(items: WorkflowTreeItem[]): WorkflowTreeItem[] {
-  return items
-    .map((item) => ({ ...item, children: foldersFirst(item.children) }))
-    .sort((a, b) => Number(b.children.length > 0) - Number(a.children.length > 0)
-      || a.workflow.name.localeCompare(b.workflow.name, "ko", { numeric: true, sensitivity: "base" }));
-}
-
 function BusinessTree({
   dags,
   selectedDagId,
@@ -675,7 +664,7 @@ function BusinessTree({
    * 부모를 «없는 것»으로 보기 때문이라, 게시된 워크플로우가 트리에서 사라지지는 않는다.
    */
   const publishedWorkflows = workflows.filter((workflow) => workflow.published);
-  const workflowHierarchy = foldersFirst(buildWorkflowHierarchy(publishedWorkflows));
+  const workflowHierarchy = sortFoldersFirst(buildWorkflowHierarchy(publishedWorkflows));
 
   /**
    * 트리에 자리를 갖는 DAG. 워크플로우 계층에 올라간 것이 전부다.

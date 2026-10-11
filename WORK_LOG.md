@@ -3508,3 +3508,21 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 **확인(로컬, cerebroetl-ui 재빌드)**
 - `tsc -b` 오류 0 이다.
 - 세 카드 모두 지표 4칸 → 구분선 → 오른쪽 단추(실패 N건 · 로그/ETL 로그/실행 이력)만 남았다.
+
+## 103. 워크플로우 관리 · 생성/수정 화면 트리도 «폴더 먼저 · 이름순» (2026-10-11)
+
+**요청**
+- 워크플로우 관리 화면과 워크플로우 생성 화면의 왼쪽 트리도 워크플로우 로그 트리(§98)처럼 폴더를 위로, 그다음 이름순으로 정렬한다.
+
+**변경**
+- §98 에서 로그 화면에만 둔 정렬(`foldersFirst`)을 `utils/workflowTree.ts` 의 `sortFoldersFirst` 로 옮겼다.
+- 세 화면이 같이 쓴다.
+  - 로그(`AirflowDashboardPage`)
+  - 관리(`WorkflowDesignPage` 의 workflowTree)
+  - 생성/수정(`WorkflowCanvasPage` 팔레트의 하위 워크플로우 트리)
+- 계층 빌더(`buildWorkflowHierarchy`)는 순서를 건드리지 않는다.
+
+**확인(로컬, cerebroetl-ui 재빌드)**
+- `tsc -b` 오류 0 이다.
+- 관리 화면: Workflow Root › total(폴더: dz_com_daily · dz_pop_daily) › 20261007 › cdc_imp › dw_com_daily.
+- 생성 화면: 워크플로우 구역이 같은 순서다(cdc_imp · CDC, dw_com_daily (미게시) 표기 그대로). ETL Root · CDC Root 구역은 원래대로다.
