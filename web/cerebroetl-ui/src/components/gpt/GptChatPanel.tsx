@@ -28,6 +28,7 @@ const OPENING_ASK: Partial<Record<LlmTargetType, string>> = {
   WORKFLOW: "워크플로우 정보 요약해줘",
   WORKFLOW_DRAFT: "워크플로우 정보 요약해줘",
   WORKFLOW_NODE: "워크플로우 정보 요약해줘",
+  WORKFLOW_RUN: "선택한 실행 차수 요약해줘",
 };
 
 /**

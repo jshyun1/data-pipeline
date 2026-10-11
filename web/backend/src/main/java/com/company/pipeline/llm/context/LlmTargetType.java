@@ -21,7 +21,9 @@ public enum LlmTargetType {
     /** 워크플로우 캔버스 노드 속성창 */
     WORKFLOW_NODE(SystemCode.NIFI),
     /** 워크플로우 로그 실패 로그 창 */
-    WORKFLOW_TASK(SystemCode.AIRFLOW);
+    WORKFLOW_TASK(SystemCode.AIRFLOW),
+    /** 워크플로우 로그 속성창 AI 어시스턴트 - 가운데 목록에서 고른 실행 차수 한 건(2026-10-11) */
+    WORKFLOW_RUN(SystemCode.AIRFLOW);
 
     private final SystemCode requiredSystem;
 

@@ -30,6 +30,8 @@ export type GptAnswerHeadingLabels = Partial<Record<GptAnswerHeading, string>>;
 const KNOWN_SECTIONS = [
   ...HEADINGS, "한 줄 요약", "구성", "지금 상태", "등록 · 변경", "등록 및 변경", "눈여겨볼 점",
   "요약", "기본정보", "스케줄", "실행 방식", "참고", "다음 단계",
+  // 워크플로우 실행 차수 요약(서버 JobAnalysisAgent.RUN_SUMMARY_REQUEST, 2026-10-11).
+  "실행 결과", "job별 결과", "이전 실행과 비교",
 ];
 const sectionKey = (title: string) => title.replace(/\s+/g, "");
 const KNOWN_SECTION_KEYS = new Set(KNOWN_SECTIONS.map(sectionKey));

@@ -10,6 +10,7 @@ export const TARGET_TYPE_LABEL: Record<LlmTargetType, string> = {
   WORKFLOW_DRAFT: "작성 중인 워크플로우",
   WORKFLOW_NODE: "워크플로우 노드",
   WORKFLOW_TASK: "워크플로우 작업",
+  WORKFLOW_RUN: "워크플로우 실행 차수",
 };
 
 /** 본문 안의 ``` 가 코드블록을 깨지 않게 막는다. */

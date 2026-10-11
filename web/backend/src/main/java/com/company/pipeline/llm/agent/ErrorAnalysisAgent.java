@@ -77,6 +77,7 @@ public final class ErrorAnalysisAgent {
             case WORKFLOW -> "워크플로우";
             case WORKFLOW_DRAFT -> "작성 중인 새 워크플로우(저장 전)";
             case WORKFLOW_NODE -> "워크플로우 노드";
+            case WORKFLOW_RUN -> "워크플로우 실행 차수";
         };
     }
 }

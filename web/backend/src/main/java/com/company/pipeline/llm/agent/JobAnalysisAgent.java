@@ -76,7 +76,38 @@ public final class JobAnalysisAgent {
             - 1~3가지. 없으면 «특이사항 없음».
             """;
 
+    /**
+     * 워크플로우 로그에서 고른 «실행 차수» 한 건의 첫 요약(2026-10-11 요청 - 워크플로우 설명이 아니라 그 회차의 결과를 말한다).
+     * 머리말 이름은 화면이 굵은 제목(■)으로 그리는 목록(GptConversationView KNOWN_SECTIONS)과 맞춘다.
+     */
+    public static final String RUN_SUMMARY_REQUEST = """
+            위 «선택한 실행 차수» 한 건을 운영자에게 보고하듯 요약해 줘. 제공된 정보에 있는 것만 쓰고, 없는 항목은 «확인되지 않음» 이라고 적는다.
+            워크플로우 설계 설명은 이 차수를 이해하는 데 필요한 만큼만 쓴다.
+
+            [형식]
+            한 줄 요약
+            (이 차수가 언제 · 어떻게 시작돼 어떤 결과로 끝났는지 한 문장)
+
+            실행 결과
+            - 상태 · 실행 유형(수동 · 스케줄 · 상위 호출) · 시작/종료 · 소요 · 적재 합계(하위 워크플로우 포함)
+
+            job별 결과
+            - 실행 순서대로 job · 하위 워크플로우 · CDC 노드마다 상태 · 소요 · 적재 건수 · 재시도.
+              하위 워크플로우는 그 안의 job 까지. 실패 · 미실행이면 어느 단계에서 왜 멈췄는지(로그 근거)를 같이 쓴다.
+
+            이전 실행과 비교
+            - 직전 실행들과 비교해 결과 · 소요 · 적재 건수가 눈에 띄게 다른 점. 비교할 기록이 없으면 «비교할 이전 실행 없음».
+
+            눈여겨볼 점
+            - 1~3가지(실패 원인과 조치, 재시도, 지연, 0건 적재, 이 차수 뒤 설계에서 빠진 노드 등). 없으면 «특이사항 없음».
+            """;
+
     private JobAnalysisAgent() {
+    }
+
+    /** 질문 없는 첫 요청에 쓸 요약 요청. 실행 차수만 형식이 다르다. */
+    public static String summaryRequest(LlmTargetType targetType) {
+        return targetType == LlmTargetType.WORKFLOW_RUN ? RUN_SUMMARY_REQUEST : SUMMARY_REQUEST;
     }
 
     /** 대상 종류에 맞는 역할 지시문. 입력 길이 계산에도 같은 것을 쓴다. */
@@ -102,7 +133,7 @@ public final class JobAnalysisAgent {
         head.append("\n\n[질문]\n");
 
         // 질문이 없으면 «탭을 연 첫 요청»이다 - 서버가 가진 요약 요청으로 바꾼다.
-        String ask = question == null || question.isBlank() ? SUMMARY_REQUEST : question.strip();
+        String ask = question == null || question.isBlank() ? summaryRequest(targetType) : question.strip();
         List<LlmMessage> out = new ArrayList<>();
         out.add(LlmMessage.system(systemPrompt(targetType)));
         List<LlmMessage> conversation = new ArrayList<>(keptTurns);

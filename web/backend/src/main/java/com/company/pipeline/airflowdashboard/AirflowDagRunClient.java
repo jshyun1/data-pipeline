@@ -253,6 +253,80 @@ public class AirflowDagRunClient {
         }
     }
 
+    /**
+     * 실행 한 건(2026-10-11, 워크플로우 로그 AI 어시스턴트의 «실행 차수» 대상). 없으면 null.
+     * 목록({@link #getDagRuns})은 최근 50건이라 오래된 차수를 고르면 빠진다 - id 로 바로 받는다.
+     */
+    public RunDetail getDagRun(String dagId, String runId) {
+        try {
+            return withAuth(token -> restClient.get()
+                    .uri("/dags/{dagId}/dagRuns/{runId}", dagId, runId)
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .body(RunDetail.class));
+        } catch (RestClientResponseException ex) {
+            if (ex.getStatusCode().value() == 404) {
+                return null;
+            }
+            throw ex;
+        }
+    }
+
+    /** 실행 한 건의 task 들(워크플로우 노드 × 단계). 실행이 없으면 빈 목록. */
+    public List<TaskInstance> getTaskInstances(String dagId, String runId) {
+        try {
+            TaskInstanceCollection response = withAuth(token -> restClient.get()
+                    .uri(uri -> uri.path("/dags/{dagId}/dagRuns/{runId}/taskInstances")
+                            .queryParam("limit", 500)
+                            .build(dagId, runId))
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .body(TaskInstanceCollection.class));
+            return response == null || response.taskInstances() == null ? List.of() : response.taskInstances();
+        } catch (RestClientResponseException ex) {
+            if (ex.getStatusCode().value() == 404) {
+                return List.of();
+            }
+            throw ex;
+        }
+    }
+
+    /**
+     * task 로그의 마지막 {@code maxLines} 줄. 실패한 단계의 원인을 붙이는 데 쓴다 - 앞부분(시작 · 설정 줄)은 원인이 아니다.
+     * 못 읽으면 null.
+     */
+    public String getTaskLogTail(String dagId, String runId, String taskId, int tryNumber, int maxLines) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode body = withAuth(token -> restClient.get()
+                    .uri(uri -> uri.path("/dags/{dagId}/dagRuns/{runId}/taskInstances/{taskId}/logs/{tryNumber}")
+                            .queryParam("full_content", true)
+                            .build(dagId, runId, taskId, Math.max(1, tryNumber)))
+                    .header("Authorization", "Bearer " + token)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(com.fasterxml.jackson.databind.JsonNode.class));
+            if (body == null || !body.path("content").isArray()) {
+                return null;
+            }
+            List<String> lines = new ArrayList<>();
+            body.path("content").forEach(entry -> {
+                String text = entry.isTextual() ? entry.asText() : entry.path("event").asText("");
+                if (entry.path("error_detail").isArray()) {
+                    StringBuilder detail = new StringBuilder();
+                    entry.path("error_detail").forEach(d -> detail.append(' ')
+                            .append(d.path("exc_type").asText("")).append(": ").append(d.path("exc_value").asText("")));
+                    text = text + detail;
+                }
+                if (!text.isBlank()) {
+                    lines.add(text);
+                }
+            });
+            return String.join("\n", lines.subList(Math.max(0, lines.size() - maxLines), lines.size()));
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
     public void deleteDag(String dagId) {
         try {
             withAuth(token -> restClient.delete()
@@ -286,6 +360,28 @@ public class AirflowDagRunClient {
     }
 
     record DagRunCollection(@JsonProperty("dag_runs") List<DagRun> dagRuns) {
+    }
+
+    record TaskInstanceCollection(@JsonProperty("task_instances") List<TaskInstance> taskInstances) {
+    }
+
+    /** 실행 한 건의 자세한 값. {@link DagRun} 에 없는 실행 유형 · 대기열 시각을 같이 받는다. */
+    public record RunDetail(
+            @JsonProperty("dag_run_id") String dagRunId,
+            @JsonProperty("dag_id") String dagId,
+            String state,
+            @JsonProperty("run_type") String runType,
+            @JsonProperty("queued_at") OffsetDateTime queuedAt,
+            @JsonProperty("start_date") OffsetDateTime startDate,
+            @JsonProperty("end_date") OffsetDateTime endDate) {
+    }
+
+    public record TaskInstance(
+            @JsonProperty("task_id") String taskId,
+            String state,
+            @JsonProperty("try_number") Integer tryNumber,
+            @JsonProperty("start_date") OffsetDateTime startDate,
+            @JsonProperty("end_date") OffsetDateTime endDate) {
     }
 
     public record DagRun(

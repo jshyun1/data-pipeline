@@ -278,7 +278,7 @@ public class LlmChatService {
         ConversationFitter.Normalized normalized = ConversationFitter.normalize(prepared.history(), false);
         // 질문이 없으면 요약 요청이 대신 들어간다 - 길이 계산도 그 길이로 한다.
         int askChars = prepared.question() == null || prepared.question().isBlank()
-                ? JobAnalysisAgent.SUMMARY_REQUEST.length() : prepared.question().length();
+                ? JobAnalysisAgent.summaryRequest(type).length() : prepared.question().length();
         int fixed = JobAnalysisAgent.systemPrompt(type).length() + prepared.contextText().length() + askChars
                 + PROMPT_WRAPPER_CHARS;
         String summary = prepared.summary();

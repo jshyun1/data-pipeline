@@ -50,6 +50,7 @@ export function EtlRunsPane({
   activeRuns: liveActiveRuns,
   refreshSeconds,
   onSelectDag,
+  onSelectRun,
   sync,
 }: {
   title: string;
@@ -68,6 +69,10 @@ export function EtlRunsPane({
   activeRuns: AirflowDagRun[] | undefined;
   refreshSeconds: number;
   onSelectDag: (dagId: string) => void;
+  /**
+   * 지금 고른 실행 차수(자동 선택 포함). 속성창 AI 어시스턴트가 그 차수를 대상으로 답한다(2026-10-11). 고른 것이 없으면 undefined.
+   */
+  onSelectRun?: (run: { dagId: string; runId: string } | undefined) => void;
   /**
    * DAG 카탈로그 동기화(2026-09-18 요청으로 화면 위 조작 띠에서 여기 «기간» 왼쪽으로 내려왔다).
    * 쓰기 권한이 없으면 화면에서 아예 뺀다 - 눌러도 403 인 버튼을 남기지 않는다.
@@ -224,7 +229,24 @@ export function EtlRunsPane({
     setSelection(sel);
     setHistoryExpanded(new Set());
     setHistorySelectedKey(undefined);
+    // 자동으로 고른 실행도 속성창(워크플로우 · AI 어시스턴트)이 따라오게 한다 - 손으로 고를 때(select)와 같다.
+    onSelectDag(first.dag_id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topRuns, periodRunsQuery.isFetched]);
+
+  // 고른 실행 차수를 화면에 알린다. 이 목록이 사라지면(다른 범위) 고른 것도 없앤다.
+  const selectedRunKey = selection?.kind === "run" ? `${selection.dagId}|${selection.runId}` : "";
+  const onSelectRunRef = useRef(onSelectRun);
+  onSelectRunRef.current = onSelectRun;
+  useEffect(() => {
+    if (!selectedRunKey) {
+      onSelectRunRef.current?.(undefined);
+      return;
+    }
+    const cut = selectedRunKey.indexOf("|");
+    onSelectRunRef.current?.({ dagId: selectedRunKey.slice(0, cut), runId: selectedRunKey.slice(cut + 1) });
+  }, [selectedRunKey]);
+  useEffect(() => () => onSelectRunRef.current?.(undefined), []);
 
   // 가운데는 워크플로우 실행 줄만 있다. 고르면 그 실행의 task 들이 아래 «실행 이력»에, 그 워크플로우가 속성창에 나온다.
   const select = (sel: Selection) => {

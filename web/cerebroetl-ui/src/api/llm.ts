@@ -155,7 +155,9 @@ export type LlmTargetType =
   | "WORKFLOW"
   | "WORKFLOW_DRAFT"
   | "WORKFLOW_NODE"
-  | "WORKFLOW_TASK";
+  | "WORKFLOW_TASK"
+  /** 워크플로우 로그에서 고른 실행 차수 한 건(dagId · runId, 2026-10-11) */
+  | "WORKFLOW_RUN";
 export type LlmAgentType = "ERROR_ANALYSIS" | "JOB_ANALYSIS";
 
 export interface LlmChatTurn {

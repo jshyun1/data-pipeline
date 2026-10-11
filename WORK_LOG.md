@@ -3664,3 +3664,40 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 - 가짜 응답 화면 시험(`qa-ui/names_mock.js`)
   - 상세 이력: «01 test_unstructed», «02 test_Ontology_CL», «호출 03 DEMO_DZ_ORDER_DAILY», «04 workflow_done» 이다.
   - CDC 줄: LOG_PIPE · TB_IMP018M 의 상태 칸이 같은 x(1384)에서 시작한다.
+
+## 110. 워크플로우 로그 AI 어시스턴트 - 고른 실행 차수 기준으로 답한다 (2026-10-12)
+
+**요청**: 워크플로우 로그 오른쪽 AI 어시스턴트가 워크플로우 설명을 한다. 가운데 목록에서 고른 실행 차수(회차) 정보를 바탕으로 답하게 한다.
+
+**변경**
+- 백엔드
+  - 대상 종류 `WORKFLOW_RUN`(AIRFLOW 권한)을 더했다. 화면은 `dagId · runId` 만 보낸다.
+  - `WorkflowRunContextCollector` 가 모으는 것:
+    - 차수: 상태 · 실행 유형(수동 · 스케줄 · 상위 호출) · 대기열/시작/종료 · 소요 · 그날 몇 번째 실행인지(화면 «N차»와 같은 규칙).
+    - 노드별 결과(실행 순서): 상태 · 시작 · 소요 · 재시도 · 실패 단계. job 은 실행 원장의 적재 건수 · 오류. 하위 워크플로우는 하위 실행의 노드까지 들여 쓴다(최대 3단).
+    - 적재 합계(하위 포함, 화면 실행 줄 합계와 같다), 실패 단계 로그 끝 25줄(최대 3개), 같은 워크플로우의 직전 실행 5건, 지금 설계.
+    - 지운 워크플로우의 실행도 노드 키로 설명한다.
+  - `WorkflowRunFacts`: task → 노드 묶기 · 상태 접기(화면 rollUpState 와 같음) · 차수 · 실행 유형 · 시간 글.
+  - `AirflowDagRunClient`: `getDagRun` · `getTaskInstances` · `getTaskLogTail` 를 더했다.
+  - `JobAnalysisAgent.RUN_SUMMARY_REQUEST`: 첫 요약은 «한 줄 요약 · 실행 결과 · job별 결과 · 이전 실행과 비교 · 눈여겨볼 점».
+- 화면
+  - `EtlRunsPane.onSelectRun`: 고른 실행(자동 선택 포함)을 올린다. 자동 선택 때도 `onSelectDag` 를 불러 속성창이 따라온다.
+  - `AirflowDashboardPage`: 고른 차수가 있으면 `WORKFLOW_RUN` 을 대상으로 한다. 차수마다 대화를 새로 연다(key). 기간 안에 실행이 없으면 예전처럼 워크플로우 대상이다.
+  - 첫 질문 «선택한 실행 차수 요약해줘». 굵은 제목 목록에 «실행 결과 · job별 결과 · 이전 실행과 비교»를 더했다.
+
+**확인(로컬, pipeline-api · cerebroetl-ui 재빌드)**
+- 백엔드 llm 시험 77건 통과. 새 시험 8건:
+  - `WorkflowRunFactsTest` 5건.
+  - `WorkflowRunContextCollectorTest` 3건: 상위 → 하위, 실패 원인, 합계 135,702, 직전 실행 / 지운 워크플로우 / 없는 실행.
+  - 시험이 잡은 버그: 아직 차례가 안 온 단계(state null)에서 `Set.of(...).contains(null)` NPE. 고쳤다.
+- 화면 `tsc -b` 오류 0. oxlint 경고 4건은 원래 있던 것이다.
+- 가짜 응답 화면 시험(`qa-ui/run_ai_mock.js`)
+  - AI 탭을 열면 `WORKFLOW_RUN {dagId, runId: 6차}` 로 묻는다. 다섯 제목이 ■ 제목으로 나온다.
+  - 5차를 고르면 그 runId 로 새 요청이 나간다.
+- 실제 LLM 호출은 하지 않았다. Claude 키는 크레딧 연결 대기 중이다.
+
+**같은 날 운영 메모**: 01:48 KST WSL 재시작 뒤 `scripts/docker-recover.sh` 로 복구했다.
+- exit 127 4개(account-db-local · airflow-apiserver · cerebroetl-ui · filebeat)와 dags 0개 3개를 다시 만들었다.
+- 정기 DAG 2개는 일시 중지라 밀린 실행은 없었다.
+- NiFi 컨트롤러 서비스는 재시작 전과 같은 6개 ENABLED 다.
+- CDC source-2 · source-3(Oracle) 태스크는 «offset SCN 이 Oracle 에 더 없음» FAILED 상태다. 재시작 전부터의 상태로 보여 건드리지 않았다.

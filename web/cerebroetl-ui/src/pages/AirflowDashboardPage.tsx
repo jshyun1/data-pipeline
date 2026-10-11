@@ -1742,6 +1742,8 @@ export function AirflowDashboardPage() {
   const gptEnabled = useGptEnabled();
   const [executionOpen, setExecutionOpen] = useState(false);
   const [synchronizing, setSynchronizing] = useState(false);
+  /** 가운데 실행 목록에서 고른 실행 차수(EtlRunsPane). 속성창 AI 어시스턴트의 대상이다. */
+  const [selectedRun, setSelectedRun] = useState<{ dagId: string; runId: string }>();
   // 이 화면의 «쓰기» 동작(카탈로그 동기화·실행 설정)은 Airflow 쓰기 권한이 있어야 한다.
   const { can: canTop, permissionsLoaded: permsLoadedTop } = useAuth();
   const canRunTop = !permsLoadedTop || canTop("AIRFLOW", "WRITE");
@@ -1982,10 +1984,15 @@ export function AirflowDashboardPage() {
   };
 
   /**
-   * AI 어시스턴트 대상: 고른 워크플로우 전체(CDC 워크플로우 포함). 그 밖의 DAG 는 없음.
-   * 파이프라인 하나에 대해 묻는 것은 CDC 관리 화면 상세 창의 AI 어시스턴트가 맡는다(CDC 가지는 2026-10-10 에 뺐다).
+   * AI 어시스턴트 대상: 가운데 목록에서 고른 실행 차수 한 건(2026-10-11 요청 - 워크플로우 설명이 아니라 그 회차 기준으로 답한다).
+   * 서버가 그 차수의 노드별 결과 · 적재 건수 · 실패 로그 · 직전 실행을 모은다(WorkflowRunContextCollector).
+   * 기간 안에 실행이 없어 고른 차수가 없으면 예전처럼 워크플로우 전체를 대상으로 한다.
+   * 차수마다 대화를 새로 연다(key) - 다른 차수를 고르면 그 차수 요약부터 다시 나온다.
    */
-  const aiTarget: { key: string; targetType: "WORKFLOW"; target: Record<string, string> } | undefined = !gptEnabled ? undefined
+  const aiTarget: { key: string; targetType: "WORKFLOW" | "WORKFLOW_RUN"; target: Record<string, string> } | undefined = !gptEnabled ? undefined
+    : selectedRun && selectedRun.dagId === selectedDagId
+      ? { key: `run:${selectedRun.dagId}|${selectedRun.runId}`, targetType: "WORKFLOW_RUN" as const,
+          target: { dagId: selectedRun.dagId, runId: selectedRun.runId } }
     : selectedWorkflowId
       ? { key: `wf:${selectedWorkflowId}`, targetType: "WORKFLOW" as const, target: { workflowId: String(selectedWorkflowId) } }
       : undefined;
@@ -2077,6 +2084,7 @@ export function AirflowDashboardPage() {
                   activeRuns={activeRunsQuery.data}
                   refreshSeconds={refreshSeconds}
                   onSelectDag={(dagId) => setSelectedDagId(dagId)}
+                  onSelectRun={setSelectedRun}
                   sync={canRunTop ? { busy: syncBusy, onSync: () => { void synchronizeDags(); } } : undefined}
                 />
               </main>
