@@ -1393,6 +1393,13 @@ function RunHistoryModal({
 }
 
 /** 이 대상을 감시하는 알림 규칙 목록. 예전의 «이상 감지 설정»을 대신한다. */
+/** 알림 규칙 심각도 - 설정 화면 «알림 규칙»과 같은 한글 이름(2026-10-12 요청: 영어 CRITICAL · WARNING · INFO 대신). */
+const RULE_SEVERITY: Record<string, { label: string; tone: string }> = {
+  CRITICAL: { label: "위험", tone: "critical" },
+  WARNING: { label: "경고", tone: "warning" },
+  INFO: { label: "정보", tone: "info" },
+};
+
 function WatchingRules({ target, ids }: { target: "CDC" | "ETL"; ids: Array<number | string> }) {
   const query = useQuery({
     queryKey: ["alert-rules-watching", target, ids.join(",")],
@@ -1407,21 +1414,26 @@ function WatchingRules({ target, ids }: { target: "CDC" | "ETL"; ids: Array<numb
         <p>이 작업을 감시 중인 규칙이 없습니다.</p>
       ) : (
         <div className="airflow-alert-list">
-          {rules.map((rule) => (
-            <article key={rule.id}>
-              <div>
-                <Tag color="blue">{rule.type_label}</Tag>
-                <b>{rule.name}</b>
-              </div>
-              {/* 백엔드가 «사용 중 + 이 대상을 감시»하는 규칙만 준다. 전부 사용 중이므로
-                  «사용/미사용» 문구는 더 이상 정보가 아니다. */}
-              <p>
-                심각도 {rule.severity}
-                {rule.schedule_enabled && rule.schedule_time ? ` · 매일 ${rule.schedule_time.slice(0, 5)}` : ""}
-              </p>
-              {rule.last_eval_error && <small style={{ color: "#dc2626" }}>{rule.last_eval_error}</small>}
-            </article>
-          ))}
+          {rules.map((rule) => {
+            const severity = RULE_SEVERITY[rule.severity] ?? { label: rule.severity, tone: "info" };
+            // 규칙 이름은 유형 이름과 다를 때만 적는다 - 기본 이름이 유형과 같아 «ETL Job 실패 ETL Job 실패»로 두 번 보였다(2026-10-12 요청).
+            const extra = [
+              rule.name && rule.name !== rule.type_label ? rule.name : null,
+              rule.schedule_enabled && rule.schedule_time ? `매일 ${rule.schedule_time.slice(0, 5)}` : null,
+            ].filter(Boolean).join(" · ");
+            return (
+              <article key={rule.id}>
+                {/* 백엔드가 «사용 중 + 이 대상을 감시»하는 규칙만 준다. 전부 사용 중이므로
+                    «사용/미사용» 문구는 더 이상 정보가 아니다. */}
+                <div>
+                  <Tag color="blue">{rule.type_label}</Tag>
+                  <span className={`airflow-alert-severity is-${severity.tone}`}>{severity.label}</span>
+                </div>
+                {extra && <p>{extra}</p>}
+                {rule.last_eval_error && <small style={{ color: "#dc2626" }}>{rule.last_eval_error}</small>}
+              </article>
+            );
+          })}
         </div>
       )}
       <Link to="/settings?tab=rules">알림 규칙 관리 바로가기</Link>

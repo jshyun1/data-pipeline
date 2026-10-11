@@ -2459,6 +2459,16 @@ button.airflow-task-name:hover {
   font-size: 12px;
 }
 
+/* 유형 태그 오른쪽 심각도(위험 · 경고 · 정보). */
+.airflow-alert-severity {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.airflow-alert-severity.is-critical { color: #dc2626; }
+.airflow-alert-severity.is-warning { color: #d97706; }
+.airflow-alert-severity.is-info { color: #475569; }
+
 .airflow-alert-list article p {
   margin: 6px 0;
   color: #475569;
