@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { listAirflowTaskInstances, type AirflowDagRun } from "../../api/platform";
@@ -80,17 +80,37 @@ function DurCell({ seconds, text, scale }: { seconds: number; text: string; scal
 }
 
 /**
- * 실행 한 건의 적재 합계·재시도 합계. job 을 다 받기 전에는 «…», job 이 없는 실행(하위 호출만 있는 상위)은 «-».
- * 실행 중이면 끝난 job 의 건수에 도는 job 의 «지금까지 적재 건수»를 더하고 {@code live} 로 알린다(2026-10-06).
+ * 적재 합계를 숫자로 들고 다니는 꼴. 하위 워크플로우 실행의 합계를 상위에 더하려고 글자(«N행»)로 바꾸기 전 단계를 따로 뒀다(2026-10-11).
+ * pending: 아직 받는 중(«…») · known: 셀 수 있는 건수가 하나라도 있음(없으면 «-») · live: 아직 도는 job 의 진행 건수가 섞임.
  */
-function runTotals(jobs?: JobGroup[], logs?: Record<string, string>, progress?: Record<string, number>) {
-  if (!jobs) return { result: "-", retry: "-", live: false };
-  const retry = `${jobs.reduce((sum, job) => sum + job.retryCount, 0)}회`;
+interface RowsSum {
+  pending: boolean;
+  known: boolean;
+  rows: number;
+  live: boolean;
+}
+
+const NO_ROWS: RowsSum = { pending: false, known: false, rows: 0, live: false };
+const PENDING_ROWS: RowsSum = { ...NO_ROWS, pending: true };
+
+function addRows(a: RowsSum, b: RowsSum): RowsSum {
+  return { pending: a.pending || b.pending, known: a.known || b.known, rows: a.rows + b.rows, live: a.live || b.live };
+}
+
+function rowsText(sum: RowsSum) {
+  return sum.pending ? "…" : sum.known ? `${sum.rows.toLocaleString()}행` : "-";
+}
+
+/**
+ * 실행 한 건이 «자기 job 으로» 적재한 합계. 하위 워크플로우 호출은 여기서 세지 않는다(useRunRows 가 하위 실행 합계를 더한다).
+ * job 로그를 다 받기 전에는 pending. 실행 중이면 끝난 job 의 건수에 도는 job 의 «지금까지 적재 건수»를 더하고 live 로 알린다(2026-10-06).
+ */
+function ownRows(jobs: JobGroup[], logs?: Record<string, string>, progress?: Record<string, number>): RowsSum {
   const doneJobs = jobs.filter((job) => job.kind === "job" && job.state === "success");
   const liveRows = jobs.map((job) => jobProgress(job, progress)).filter((rows): rows is number => rows != null);
-  if (!doneJobs.length && !liveRows.length) return { result: "-", retry, live: false };
+  if (!doneJobs.length && !liveRows.length) return NO_ROWS;
   const outcomes = doneJobs.map((job) => jobOutcome(job, logs, progress));
-  if (!logs || outcomes.includes("…")) return { result: "…", retry, live: false };
+  if (!logs || outcomes.includes("…")) return PENDING_ROWS;
   let total = liveRows.reduce((sum, rows) => sum + rows, 0);
   let known = liveRows.length > 0;
   for (const outcome of outcomes) {
@@ -100,7 +120,60 @@ function runTotals(jobs?: JobGroup[], logs?: Record<string, string>, progress?: 
       known = true;
     }
   }
-  return { result: known ? `${total.toLocaleString()}행` : "-", retry, live: liveRows.length > 0 };
+  return { pending: false, known, rows: total, live: liveRows.length > 0 };
+}
+
+/** 실행 한 건의 재시도 합계(자기 job 만). */
+function retryText(jobs?: JobGroup[]) {
+  return jobs ? `${jobs.reduce((sum, job) => sum + job.retryCount, 0)}회` : "-";
+}
+
+/**
+ * 실행 한 건의 적재 합계 - 자기 job + 하위 워크플로우 실행(그 아래 하위까지)(2026-10-11 요청: 상위 실행 줄이 하위 호출 117,655행을
+ * 빼고 자기 job 18,048행만 적었다).
+ *
+ * <p>하위 실행마다 {@link RowsProbe} 가 같은 계산을 하고 결과를 올려 보낸다. 부르는 쪽은 돌려준 {@code probes} 를 화면 어디든 그려 둬야
+ * 한다(DOM 은 만들지 않는다). 하위 실행을 아직 못 받았으면 합계도 «…»로 둔다 - 상위 건수만 먼저 보였다가 커지는 일이 없게.
+ */
+function useRunRows(dagId: string, runId: string, runState: string | undefined, ctx: GridCtx, enabled: boolean) {
+  const { tasksQuery, jobs, logs, progress } = useRunTasks(dagId, runId, { enabled, refreshSeconds: ctx.refreshSeconds, runState });
+  const [childSums, setChildSums] = useState<Record<string, RowsSum>>({});
+  const report = useCallback((key: string, sum: RowsSum) => {
+    setChildSums((previous) => {
+      const before = previous[key];
+      return before && before.pending === sum.pending && before.known === sum.known
+        && before.rows === sum.rows && before.live === sum.live ? previous : { ...previous, [key]: sum };
+    });
+  }, []);
+  const children = (jobs ?? []).flatMap((job) => {
+    if (job.kind !== "call") return [];
+    const child = ctx.findChildRun(dagId, runId, job.key);
+    return child?.dag_id ? [{ key: `${child.dag_id}|${child.dag_run_id}`, run: child, dagId: child.dag_id }] : [];
+  });
+  const own = jobs ? ownRows(jobs, logs, progress) : enabled && tasksQuery.isLoading ? PENDING_ROWS : NO_ROWS;
+  const sum = children.reduce((total, child) => addRows(total, childSums[child.key] ?? (enabled ? PENDING_ROWS : NO_ROWS)), own);
+  const probes = children.map((child) => (
+    <RowsProbe key={child.key} probeKey={child.key} dagId={child.dagId} run={child.run} ctx={ctx} enabled={enabled} onRows={report} />
+  ));
+  return { jobs, sum, probes };
+}
+
+/** 하위 워크플로우 실행 하나의 적재 합계를 위로 올려 보낸다. 화면에 그리는 것은 없다. */
+function RowsProbe({ probeKey, dagId, run, ctx, enabled, onRows }: {
+  probeKey: string;
+  dagId: string;
+  run: AirflowDagRun;
+  ctx: GridCtx;
+  enabled: boolean;
+  onRows: (key: string, sum: RowsSum) => void;
+}) {
+  const { sum, probes } = useRunRows(dagId, run.dag_run_id, run.state, ctx, enabled);
+  useEffect(() => {
+    onRows(probeKey, sum);
+    // sum 은 렌더마다 새 객체라 값으로 본다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [probeKey, onRows, sum.pending, sum.known, sum.rows, sum.live]);
+  return <>{probes}</>;
 }
 
 /** 적재 건수 칸 - 실행 중이면 «· 진행 중»을 덧붙인다. */
@@ -135,9 +208,7 @@ export function RunRow({ run, ctx, scale, showDate, expandable = true, ordinal, 
   const key = selectionKey(sel);
   const expanded = expandable && ctx.expanded.has(key);
   const selected = ctx.selectedKey === key;
-  const { jobs, logs, progress } = useRunTasks(dagId, run.dag_run_id,
-    { enabled: expanded || selected, refreshSeconds: ctx.refreshSeconds, runState: run.state });
-  const totals = runTotals(jobs, logs, progress);
+  const { jobs, sum, probes } = useRunRows(dagId, run.dag_run_id, run.state, ctx, expanded || selected);
   const name = dag ? displayName(dag) : dagId;
   const started = runAt(run);
   const end = run.end_date ?? (run.state === "running" ? dayjs().toISOString() : undefined);
@@ -163,8 +234,8 @@ export function RunRow({ run, ctx, scale, showDate, expandable = true, ordinal, 
         <td className="lv2-num">{formatAt(run.end_date)}</td>
         <td><DurCell seconds={durationSeconds(started, end)} text={duration(started, run.end_date ?? end)} scale={scale} /></td>
         {/* 실패한 실행도 «로그» 단추 없이 적재 합계만 적는다(2026-10-02 요청) - 실패 로그는 아래 상세 실행이력의 job 줄에서 연다. */}
-        <td><RowsText text={totals.result} live={totals.live} /></td>
-        <td className="lv2-num">{totals.retry}</td>
+        <td><RowsText text={rowsText(sum)} live={sum.live} />{probes}</td>
+        <td className="lv2-num">{retryText(jobs)}</td>
         <td className="lv2-muted">{runTypeLabel(run)}</td>
       </tr>
       {expanded && <RunBody dagId={dagId} runId={run.dag_run_id} runState={run.state} depth={1} ctx={ctx}
@@ -327,11 +398,10 @@ function JobRow({
   );
 }
 
+/** 하위 워크플로우 호출 줄의 적재 합계 - 그 하위 실행의 합계(그 아래 하위 포함, useRunRows). */
 function CallResult({ child, ctx }: { child: AirflowDagRun; ctx: GridCtx }) {
-  const { jobs, logs, progress } = useRunTasks(child.dag_id, child.dag_run_id,
-    { enabled: true, refreshSeconds: ctx.refreshSeconds, runState: child.state });
-  const totals = runTotals(jobs, logs, progress);
-  return <RowsText text={totals.result} live={totals.live} />;
+  const { sum, probes } = useRunRows(child.dag_id ?? "", child.dag_run_id, child.state, ctx, true);
+  return <><RowsText text={rowsText(sum)} live={sum.live} />{probes}</>;
 }
 
 /* ================================================================== 타임라인 */
