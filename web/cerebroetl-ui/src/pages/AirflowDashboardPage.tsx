@@ -14,6 +14,7 @@ import dayjs from "dayjs";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   getAirflowTaskLog,
+  listActiveAirflowDagRuns,
   listAirflowDagCatalog,
   listAirflowDags,
   listAirflowTaskInstances,
@@ -26,7 +27,6 @@ import {
   type AirflowDagRun,
   setAirflowDagPaused,
 } from "../api/platform";
-import { getProcessHealth, type ProcessGroup } from "../api/infra";
 import { getWorkflow, listWorkflows, type WorkflowSummary } from "../api/workflows";
 import { getAlertRulesWatching } from "../api/config";
 import { listPipelineRuntimeStatuses, listPipelines } from "../api/pipelines";
@@ -40,7 +40,7 @@ import { useAuth } from "../auth/AuthContext";
 import { WfIcon, WorkflowPageHeader, type WfIconName } from "../components/WorkflowPageHeader";
 import { cerebroBrandTheme } from "../theme/cerebro";
 import { TaskFailureLogModal, type FailureLogTarget } from "../components/TaskFailureLogModal";
-import { refreshRunsAfterTrigger } from "./workflowLogV2/logV2Live";
+import { ACTIVE_RUNS_IDLE_MS, ACTIVE_RUNS_KEY, LIVE_REFRESH_MS, refreshRunsAfterTrigger } from "./workflowLogV2/logV2Live";
 import { GptChatPanel } from "../components/gpt/GptChatPanel";
 import { useGptEnabled } from "../components/gpt/useGptEnabled";
 import { EtlRunsPane } from "./workflowLog/EtlRunsPane";
@@ -74,7 +74,6 @@ interface DashboardDag extends AirflowDag {
 interface DashboardData {
   dags: DashboardDag[];
   runs: AirflowDagRun[];
-  processGroups: ProcessGroup[];
 }
 
 // 트리 최상단 가지. CDC 가지(연결 → 스키마 → 파이프라인)는 2026-10-10 에 뺐다 - CDC 는 ETL 가지의 CDC 워크플로우로 제어하고,
@@ -137,7 +136,9 @@ function isCdcSendStep(steps: Array<{ task_id: string }>): boolean {
 }
 
 function runAt(run?: AirflowDagRun) {
-  return run?.start_date ?? run?.execution_date;
+  // 아직 대기 중(queued)이면 시작 시각이 없다 - 대기열에 들어간 시각으로 본다(실행 목록 logV2Data.runAt 과 같은 규칙).
+  // 이게 없으면 방금 건 실행이 «오늘 실행»에 안 잡혀 현황 «대기»에서 빠졌다(2026-10-11).
+  return run?.start_date ?? run?.queued_at ?? run?.run_after ?? run?.execution_date;
 }
 
 /**
@@ -227,12 +228,30 @@ function groupRuns(runs: AirflowDagRun[]) {
   return grouped;
 }
 
+/**
+ * 최근 실행(30초 주기)에 대기 · 실행 중 실행(3초/5초 주기)을 덮어쓴 것(2026-10-11 요청 - 현황 카드도 실행 목록처럼 빨리).
+ * 도는 실행은 몇 초 전 상태로, 방금 건(아직 시작 전) 실행은 새로 들어간다. 실행 목록(EtlRunsPane)과 같은 덮어쓰기다.
+ */
+function overlayActiveRuns(runs: AirflowDagRun[], activeRuns: AirflowDagRun[] | undefined) {
+  if (!activeRuns?.length) return runs;
+  const merged = new Map<string, AirflowDagRun>();
+  runs.forEach((run) => merged.set(`${run.dag_id}|${run.dag_run_id}`, run));
+  activeRuns.forEach((run) => {
+    const key = `${run.dag_id}|${run.dag_run_id}`;
+    merged.set(key, { ...merged.get(key), ...run });
+  });
+  return [...merged.values()];
+}
+
+/**
+ * 화면이 쓰는 DAG 목록 · 최근 실행. 서버 상태 점검(/infra/processes)은 받지 않는다 - 이 화면은 그 결과를 쓰지 않는데,
+ * Kafka · 커넥터별 · NiFi · Airflow 를 차례로 확인하느라 첫 조회가 그만큼 기다렸다(2026-10-11 뺌).
+ */
 async function loadDashboard(): Promise<DashboardData> {
-  const [airflowDags, catalog, runs, processHealth, etlJobs] = await Promise.all([
+  const [airflowDags, catalog, runs, etlJobs] = await Promise.all([
     listAirflowDags(),
     listAirflowDagCatalog(),
     listAllAirflowDagRuns({ maxRuns: 2000 }),
-    getProcessHealth().catch(() => ({ collectedAt: "", groups: [] })),
     listEtlJobs().catch(() => []),
   ]);
   const etlJobsByDagId = new Map(etlJobs.flatMap((job) => job.airflowDagId ? [[job.airflowDagId, job] as const] : []));
@@ -267,7 +286,6 @@ async function loadDashboard(): Promise<DashboardData> {
   return {
     dags: [...catalogDags, ...discoveredDags],
     runs,
-    processGroups: processHealth.groups,
   };
 }
 
@@ -1736,13 +1754,44 @@ export function AirflowDashboardPage() {
     staleTime: Infinity,
     refetchOnWindowFocus: false,
   });
+  // 진입 동기화를 기다리지 않고 바로 받는다(2026-10-11 요청 - 첫 화면이 «동기화 → 조회» 두 번을 차례로 기다렸다).
+  // 백엔드가 30초마다 같은 동기화를 하므로 DB 카탈로그는 이미 거의 최신이다. 진입 동기화로 DAG 가 새로 잡히거나
+  // 빠졌을 때만 아래에서 한 번 더 받는다.
   const dashboardQuery = useQuery({
     queryKey: ["airflow-dashboard"],
     queryFn: loadDashboard,
     refetchInterval: refreshSeconds * 1000,
-    // 동기화를 건너뛴 조회자도 대시보드는 봐야 한다.
-    enabled: !canRunTop || initialSyncQuery.isFetched,
   });
+  const entrySyncApplied = useRef(false);
+  useEffect(() => {
+    const result = initialSyncQuery.data;
+    // 진입 때 한 번만 본다. «동기화» 단추(synchronizeDags)는 끝나고 스스로 다시 받는다.
+    if (!result || entrySyncApplied.current) return;
+    entrySyncApplied.current = true;
+    if (result.createdCount > 0 || result.disabledCount > 0) void dashboardQuery.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSyncQuery.data]);
+  /*
+   * 대기 · 실행 중인 실행만(3초/5초, 2026-10-06 실행 목록에 넣은 것을 화면 전체로 올렸다 - 2026-10-11 요청).
+   * 현황 카드 · 트리 · 실행 목록이 같은 조회를 쓴다(예전에는 실행 목록만 이걸 받고 카드는 30초 주기 조회로만 셌다 -
+   * 실행을 걸면 목록엔 바로 뜨는데 카드 «실행 중»은 최대 30초 늦었다). 결과가 비면 100바이트 남짓이다.
+   */
+  const activeRunsQuery = useQuery({
+    queryKey: ACTIVE_RUNS_KEY,
+    queryFn: listActiveAirflowDagRuns,
+    refetchInterval: (query) => (query.state.data?.length ? LIVE_REFRESH_MS : ACTIVE_RUNS_IDLE_MS),
+  });
+  // 실행이 끝나 «대기 · 실행 중»에서 빠지면 최근 실행을 한 번 더 받아 끝난 상태(성공 · 실패)를 바로 반영한다.
+  const activeRunKey = (activeRunsQuery.data ?? []).map((run) => `${run.dag_id}|${run.dag_run_id}`).sort().join(",");
+  const previousActiveRunKey = useRef<string | undefined>(undefined);
+  const refetchDashboard = dashboardQuery.refetch;
+  useEffect(() => {
+    const before = previousActiveRunKey.current;
+    previousActiveRunKey.current = activeRunKey;
+    if (!before) return;
+    const stillActive = new Set(activeRunKey ? activeRunKey.split(",") : []);
+    if (before.split(",").some((key) => !stillActive.has(key))) void refetchDashboard();
+  }, [activeRunKey, refetchDashboard]);
   // ETL 트리를 NiFi 그룹 계층으로 보여주기 위해(ETL 관리 화면과 동일한 구조)
   // 트리에 워크플로우를 그룹별로 붙이려면 dag_id -> 그룹 매핑이 필요하다.
   const workflowsQuery = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
@@ -1762,7 +1811,10 @@ export function AirflowDashboardPage() {
     queryFn: listPipelineRuntimeStatuses,
     refetchInterval: refreshSeconds * 1000,
   });
-  const runsByDag = useMemo(() => groupRuns(dashboardQuery.data?.runs ?? []), [dashboardQuery.data?.runs]);
+  const runsByDag = useMemo(
+    () => groupRuns(overlayActiveRuns(dashboardQuery.data?.runs ?? [], activeRunsQuery.data)),
+    [dashboardQuery.data?.runs, activeRunsQuery.data],
+  );
   const businessDags = useMemo(
     () => (dashboardQuery.data?.dags ?? []).filter((dag) => categoryOf(dag) !== "기타"),
     [dashboardQuery.data?.dags],
@@ -1880,7 +1932,8 @@ export function AirflowDashboardPage() {
     setSelectedDagId(dag.dag_id);
     setDetailOpen(true);
   };
-  const initialLoading = !initialSyncQuery.isFetched || dashboardQuery.isLoading;
+  // 진입 동기화는 기다리지 않는다(위 dashboardQuery 설명). 조회만 끝나면 화면을 그린다.
+  const initialLoading = dashboardQuery.isLoading;
 
   const syncBusy = synchronizing || initialSyncQuery.isFetching;
   // 가운데 목록이 CDC(파이프라인)인지 ETL(워크플로우)인지. 제목·선택 행의 색만 가른다(초안: CDC 파랑 · ETL 빨강).
@@ -1944,7 +1997,7 @@ export function AirflowDashboardPage() {
         icon={<WfIcon name="pulse" size={22} strokeWidth={2.2} />}
       />
 
-      {initialLoading ? <div className="airflow-dashboard-loading"><Spin size="large" /><span>{canRunTop && !initialSyncQuery.isFetched ? "DAG 동기화 중..." : "대시보드 로딩 중..."}</span></div> : dashboardQuery.isError ? <Empty description="Airflow 현황을 불러올 수 없습니다." /> : (
+      {initialLoading ? <div className="airflow-dashboard-loading"><Spin size="large" /><span>대시보드 로딩 중...</span></div> : dashboardQuery.isError ? <Empty description="Airflow 현황을 불러올 수 없습니다." /> : (
         <>
           <section className={`lv2-curtain airflow-status-curtain ${curtainOpen ? "open" : "closed"}`}>
           <div className="lv2-curtain-body" aria-hidden={!curtainOpen}>
@@ -2018,6 +2071,7 @@ export function AirflowDashboardPage() {
                   dags={businessDags}
                   workflows={workflowsQuery.data ?? []}
                   dashboardRuns={dashboardQuery.data?.runs ?? []}
+                  activeRuns={activeRunsQuery.data}
                   refreshSeconds={refreshSeconds}
                   onSelectDag={(dagId) => setSelectedDagId(dagId)}
                   sync={canRunTop ? { busy: syncBusy, onSync: () => { void synchronizeDags(); } } : undefined}

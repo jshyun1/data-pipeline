@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, DatePicker, Space, Spin } from "antd";
 import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
-import { listActiveAirflowDagRuns, listAllAirflowDagRuns, type AirflowDagRun } from "../../api/platform";
+import { listAllAirflowDagRuns, type AirflowDagRun } from "../../api/platform";
 import type { WorkflowSummary } from "../../api/workflows";
 import { TaskFailureLogModal, type FailureLogTarget } from "../../components/TaskFailureLogModal";
 import { activeDayPresetByDate, type DayPreset } from "../../components/dayPreset";
@@ -19,7 +19,6 @@ import {
   type Selection,
 } from "../workflowLogV2/logV2Data";
 import { GridHead, RunBody, RunRow, type GridCtx } from "../workflowLogV2/LogV2Grid";
-import { ACTIVE_RUNS_IDLE_MS, ACTIVE_RUNS_KEY, LIVE_REFRESH_MS } from "../workflowLogV2/logV2Live";
 
 
 function toggleIn(set: Set<string>, key: string) {
@@ -48,6 +47,7 @@ export function EtlRunsPane({
   dags,
   workflows,
   dashboardRuns,
+  activeRuns: liveActiveRuns,
   refreshSeconds,
   onSelectDag,
   sync,
@@ -61,6 +61,11 @@ export function EtlRunsPane({
   workflows: WorkflowSummary[];
   /** 대시보드가 받아 둔 최근 실행(기간 무관). 실행 이력 · 하위 실행 찾기에 쓴다. */
   dashboardRuns: AirflowDagRun[];
+  /**
+   * 대기 · 실행 중인 실행(3초/5초 주기). 화면(AirflowDashboardPage)이 받아 현황 카드와 같이 쓴다(2026-10-11 - 예전에는 여기서 따로 받았다).
+   * 아직 못 받았으면 undefined.
+   */
+  activeRuns: AirflowDagRun[] | undefined;
   refreshSeconds: number;
   onSelectDag: (dagId: string) => void;
   /**
@@ -104,17 +109,11 @@ export function EtlRunsPane({
   });
 
   /*
-   * 대기 · 실행 중인 실행만 가볍게 받는다(2026-10-06 요청 - 수동 실행이 15~20초 뒤에야 보였다).
-   * 있으면 3초, 없으면 5초마다 받는다(결과가 비면 100바이트 남짓). 기간 내 실행 전체(최대 5,000건)는 화면 주기 그대로 두고, 실행이 끝나
-   * 이 목록에서 빠지는 순간에만 한 번 더 받는다. 실행을 건 화면은 이 키를 무효화해 바로 다시 받게 한다(refreshRunsAfterTrigger).
+   * 대기 · 실행 중인 실행(2026-10-06 요청 - 수동 실행이 15~20초 뒤에야 보였다). 있으면 3초, 없으면 5초마다 화면이 받는다(결과가
+   * 비면 100바이트 남짓). 기간 내 실행 전체(최대 5,000건)는 화면 주기 그대로 두고, 실행이 끝나 이 목록에서 빠지는 순간에만 한 번 더
+   * 받는다. 실행을 건 화면은 그 캐시 키를 무효화해 바로 다시 받게 한다(refreshRunsAfterTrigger). 지금을 포함한 기간에만 덮어쓴다.
    */
-  const activeRunsQuery = useQuery({
-    queryKey: ACTIVE_RUNS_KEY,
-    queryFn: listActiveAirflowDagRuns,
-    enabled: rangeIncludesNow,
-    refetchInterval: (query) => (query.state.data?.length ? LIVE_REFRESH_MS : ACTIVE_RUNS_IDLE_MS),
-  });
-  const activeRuns = rangeIncludesNow ? activeRunsQuery.data : undefined;
+  const activeRuns = rangeIncludesNow ? liveActiveRuns : undefined;
   const activeKey = (activeRuns ?? []).map((run) => `${run.dag_id}|${run.dag_run_id}`).sort().join(",");
   const previousActiveKey = useRef<string | undefined>(undefined);
   const refetchPeriodRuns = periodRunsQuery.refetch;
