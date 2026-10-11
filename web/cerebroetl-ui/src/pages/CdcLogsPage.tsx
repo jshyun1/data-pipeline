@@ -381,8 +381,11 @@ export function CdcLogsPage() {
       running: counts.get("RUNNING") ?? 0,
       success: counts.get("SUCCESS") ?? 0,
       failed: counts.get("FAILED") ?? 0,
+      stopped: counts.get("STOPPED") ?? 0,
+      delayed: counts.get("DELAYED") ?? 0,
+      // 위 다섯 가지 밖의 상태가 오면 뒤에 붙인다.
       extra: [...counts.entries()]
-        .filter(([status]) => !["RUNNING", "SUCCESS", "FAILED"].includes(status))
+        .filter(([status]) => !["RUNNING", "SUCCESS", "FAILED", "STOPPED", "DELAYED"].includes(status))
         .sort(([a], [b]) => compareText(STATUS_LABEL[a] ?? a, STATUS_LABEL[b] ?? b)),
     };
   }, [baseRows]);
@@ -473,6 +476,10 @@ export function CdcLogsPage() {
             {metric("RUNNING", <RightOutlined />, "진행 중", summary.running)}
             {metric("SUCCESS", <CheckCircleFilled />, "성공", summary.success, " etl-log-monitoring-metric--success")}
             {metric("FAILED", <CloseCircleFilled />, "실패", summary.failed, " etl-log-monitoring-metric--danger")}
+            {/* 중지 · 지연은 0 이어도 늘 보인다(2026-10-11 요청) - 예전에는 그 상태 행이 있을 때만 붙어,
+                기간을 늘려 조회하면 칸이 생겼다 없어졌다 했다. */}
+            {metric("STOPPED", null, STATUS_LABEL.STOPPED, summary.stopped, " etl-log-monitoring-metric--extra")}
+            {metric("DELAYED", null, STATUS_LABEL.DELAYED, summary.delayed, " etl-log-monitoring-metric--extra")}
             {summary.extra.map(([status, count]) =>
               metric(status, null, STATUS_LABEL[status] ?? status, count, " etl-log-monitoring-metric--extra", status),
             )}
