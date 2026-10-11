@@ -815,21 +815,14 @@ export function WorkflowCanvasPage() {
       byGroup.set(key, [...(byGroup.get(key) ?? []), pipeline]);
     });
     // 파이프라인 줄. job·워크플로우와 같은 조작이다 - 끌어다 놓으면 CDC 노드가 된다.
+    // 이름만 쓴다 - 옆에 붙던 소스 테이블명은 뺐다(2026-10-11 요청, CDC 관리 트리와 같게).
     const leaf = (pipeline: PipelineResponse): PaletteTreeNode => {
-      const table = pipeline.sourceTable ?? pipeline.targetTable;
       const placed = usedPipelineIdSet.has(pipeline.id);
       return {
         key: `cdc:${pipeline.id}`,
         icon: "file",
-        label: (
-          <>
-            {pipeline.name}
-            {table ? <span className="tree-node-note"> · {table}</span> : null}
-            {placed ? <span className="tree-node-note"> (배치됨)</span> : null}
-          </>
-        ),
-        title: `${pipeline.name}${table ? ` · ${table}` : ""}${placed ? " (배치됨)" : ""}`
-          + "\n끌어다 캔버스에 놓으면 추가됩니다",
+        label: placed ? <>{pipeline.name}<span className="tree-node-note"> (배치됨)</span></> : pipeline.name,
+        title: `${pipeline.name}${placed ? " (배치됨)" : ""}` + "\n끌어다 캔버스에 놓으면 추가됩니다",
         onDragStart: canWrite
           ? (event) => {
               event.dataTransfer.setData("application/cerebro-pipeline", String(pipeline.id));
