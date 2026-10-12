@@ -3990,8 +3990,14 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const [error, setError] = useState<string | null>(null);
   const addFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const selected = useMemo(() => findTreeNode(tree, activeGroupId), [activeGroupId, tree]);
-  const selectedGroupId = activeGroupId ?? "root";
+  const selected = useMemo(() => {
+    const found = findTreeNode(tree, activeGroupId);
+    if (found || activeGroupId || !tree) {
+      return found;
+    }
+    return { node: tree, path: [tree] };
+  }, [activeGroupId, tree]);
+  const selectedGroupId = activeGroupId ?? selected?.node.id ?? "root";
   const job = jobs.find((entry) => entry.nifiPgId === selectedGroupId) ?? null;
   const selectedGroupIds = useMemo(() => {
     const ids = collectTreeIds(selected?.node ?? null);
