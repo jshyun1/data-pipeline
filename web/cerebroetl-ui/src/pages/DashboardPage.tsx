@@ -24,6 +24,7 @@ import {
   listAllAirflowDagRuns,
   listKafkaConnectorsWithStatus,
   listNifiExecutionLogs,
+  listNifiProcessorRuns,
 } from "../api/platform";
 import type { AirflowDagRun } from "../api/platform";
 import { listPipelines } from "../api/pipelines";
@@ -455,6 +456,15 @@ export function DashboardPage() {
     placeholderData: (previousData) => previousData,
   });
 
+  // ETL 카드 «실행 중 · 성공» 칸 - ETL 로그 화면 상단과 같은 원본(적재 프로세서 실행 구간)을 같은 기간으로 센다(2026-10-12).
+  const nifiProcessorRunsQuery = useQuery({
+    queryKey: ["dashboard-nifi-processor-runs", appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD")],
+    queryFn: () =>
+      listNifiProcessorRuns(appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD")),
+    refetchInterval: 30000,
+    placeholderData: (previousData) => previousData,
+  });
+
   // 서버 리소스/프로세스는 인프라 구역을 보고 있을 때만 폴링한다(통계만 보는 동안
   // 15초마다 NiFi/Kafka/Airflow를 헛되게 두드리지 않도록).
   const hostResourcesQuery = useQuery({
@@ -479,8 +489,11 @@ export function DashboardPage() {
   const airflowHistory = airflowHistoryQuery.data ?? EMPTY_AIRFLOW_HISTORY;
   const showAirflowInitialLoading = airflowHistoryQuery.isLoading && !airflowHistoryQuery.data;
 
-  const nifiRunning = nifiJobs.filter((job) => job.status === "RUNNING").length;
   const nifiStopped = nifiJobs.filter((job) => job.status === "STOPPED").length;
+  // ETL 로그 화면 상단 숫자와 같은 기준: 실행 중 = 아직 안 끝난 적재 실행 구간, 성공 = 끝난 구간, 실패 = 실패 이벤트(nifiFailedItems).
+  const nifiRuns = nifiProcessorRunsQuery.data ?? [];
+  const nifiRunsRunning = nifiRuns.filter((run) => run.status === "RUNNING").length;
+  const nifiRunsSucceeded = nifiRuns.length - nifiRunsRunning;
 
   // 카드에 쓰는 «장애 N건»은 조회 기간의 실패 건수다(아래 cdcFailedItems 와 같은 것).
   const kafkaPaused = kafkaConnectors.filter((job) => job.status === "PAUSED").length;
@@ -837,21 +850,32 @@ export function DashboardPage() {
             </div>
 
             <NowDivider />
-            {/* 원본 #9 용어 정리: 활성 스레드 → 실행 중 작업, 대기 FlowFiles → 대기 데이터 */}
+            {/* 칸 순서 «실행 중 · 실패 · 성공 · 중지 · 대기 데이터»(2026-10-12 요청 - 예전 «실행 중 작업(활성 스레드) · 대기 데이터 · 실행 · 중지»).
+                실행 중 · 실패 · 성공은 ETL 로그 화면 상단과 같은 숫자다. 중지 · 대기 데이터는 지금 상태다. */}
             <div className="kpi-detail-list">
               <MetricRow
-                label="실행 중 작업"
-                value={String(nifiActiveThreads)}
-                hint="ETL 활성 스레드 수 — 지금 실제로 돌고 있는 작업"
+                label="실행 중"
+                value={String(nifiRunsRunning)}
+                hint="지금 적재 중인 실행 - ETL 로그 «실행 중»과 같은 기준"
               />
+              <MetricRow
+                label="실패"
+                value={String(nifiFailedItems.length)}
+                warn={nifiFailedItems.length > 0}
+                hint="조회 기간의 실패 - ETL 로그 «실패»와 같은 기준"
+              />
+              <MetricRow
+                label="성공"
+                value={String(nifiRunsSucceeded)}
+                hint="조회 기간에 끝난 적재 실행 - ETL 로그 «성공»과 같은 기준"
+              />
+              <MetricRow label="중지" value={String(nifiStopped)} warn={nifiStopped > 0} />
               <MetricRow
                 label="대기 데이터"
                 value={formatCompactCount(nifiQueued)}
                 warn={nifiQueued > 0 && nifiActiveThreads === 0}
                 hint="처리를 기다리며 큐에 쌓인 데이터 건수(FlowFile)"
               />
-              <MetricRow label="실행" value={String(nifiRunning)} />
-              <MetricRow label="중지" value={String(nifiStopped)} warn={nifiStopped > 0} />
               {/* «설정 확인 필요» 칸은 뺐다(2026-10-11 요청). */}
             </div>
           </div>
