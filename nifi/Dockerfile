@@ -43,10 +43,13 @@ ARG PYTHON_DOTENV_VERSION=1.0.1
 
 USER root
 
-# 비정형 오디오/비디오 적재 플로우의 ExecuteStreamCommand가 ffprobe로 미디어 메타데이터를 확인한다.
-# ffprobe는 Debian ffmpeg 패키지에 포함된다.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
+# 비정형 적재 플로우의 ExecuteStreamCommand가 외부 명령으로 미디어/파일 메타데이터를 확인한다.
+# ffprobe는 Debian ffmpeg 패키지에, exiftool은 libimage-exiftool-perl 패키지에 포함된다.
+RUN echo 'deb http://deb.debian.org/debian bookworm main' > /etc/apt/sources.list && \
+    echo 'deb http://deb.debian.org/debian bookworm-updates main' >> /etc/apt/sources.list && \
+    echo 'deb http://security.debian.org/debian-security bookworm-security main' >> /etc/apt/sources.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg libimage-exiftool-perl && \
     rm -rf /var/lib/apt/lists/*
 
 # ExecuteStreamCommand에서 실행하는 온톨로지 Python 적재 스크립트 의존성
