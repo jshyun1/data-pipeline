@@ -863,8 +863,9 @@ export function DashboardPage() {
                   실패 {nifiFailedItems.length}건
                 </button>
               ) : null}
+              {/* 세 카드 버튼 이름을 «로그»로 통일했다(2026-10-12 요청 - CDC «로그» · ETL «ETL 로그» · Workflow «실행 이력»이 제각각이었다). */}
               <button type="button" className="btn-kpi-action" onClick={() => navigate("/etl/logs")}>
-                ETL 로그 →
+                로그 →
               </button>
             </div>
           </div>
@@ -913,7 +914,7 @@ export function DashboardPage() {
                 </button>
               ) : null}
               <button type="button" className="btn-kpi-action" onClick={() => navigate("/airflow/dashboard")}>
-                실행 이력 →
+                로그 →
               </button>
             </div>
           </div>
