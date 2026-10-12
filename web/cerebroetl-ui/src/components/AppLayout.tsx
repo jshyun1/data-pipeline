@@ -246,15 +246,16 @@ export function AppLayout() {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) {
       return;
     }
-    if (!hasLeaveGuard()) {
+    event.preventDefault();
+    if (hasLeaveGuard()) {
+      void confirmLeave().then((ok) => {
+        if (ok) {
+          navigate(path);
+        }
+      });
       return;
     }
-    event.preventDefault();
-    void confirmLeave().then((ok) => {
-      if (ok) {
-        navigate(path);
-      }
-    });
+    navigate(path);
   };
 
   // 권한이 아직 안 실렸으면(fail-open) 전부 보여준다. 실린 뒤엔 시스템 권한으로 게이팅.
