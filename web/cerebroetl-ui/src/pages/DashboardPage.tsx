@@ -800,7 +800,7 @@ export function DashboardPage() {
             <NowDivider />
             <div className="kpi-detail-list">
               <MetricRow
-                label="미처리"
+                label="미처리 건"
                 value={formatCompactCount(kafkaBacklog)}
                 warn={kafkaBacklog > 0}
                 hint="CDC consumer lag 합계 — 아직 타깃에 반영되지 않은 건수"
