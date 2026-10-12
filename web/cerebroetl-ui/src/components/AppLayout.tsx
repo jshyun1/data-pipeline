@@ -4,7 +4,7 @@ import { Layout, Tooltip } from "antd";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { useAuth } from "../auth/AuthContext";
-import { confirmLeave } from "../utils/navigationGuard";
+import { confirmLeave, hasLeaveGuard } from "../utils/navigationGuard";
 import type { AccessAction, SystemCode } from "../api/authz";
 
 const { Header, Content } = Layout;
@@ -244,6 +244,9 @@ export function AppLayout() {
     path: string,
   ) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) {
+      return;
+    }
+    if (!hasLeaveGuard()) {
       return;
     }
     event.preventDefault();

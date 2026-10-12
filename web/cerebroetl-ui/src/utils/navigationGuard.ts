@@ -18,6 +18,11 @@ export function setLeaveGuard(next: LeaveGuard | null) {
   guard = next;
 }
 
+/** 현재 화면이 이탈 확인을 등록해 두었는지 본다. */
+export function hasLeaveGuard(): boolean {
+  return guard !== null;
+}
+
 /** 이동해도 되는지 묻는다. 가드가 없으면 항상 true. */
 export async function confirmLeave(): Promise<boolean> {
   if (!guard) {
