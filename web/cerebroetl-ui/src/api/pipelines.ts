@@ -6,6 +6,7 @@ import type {
   PipelineResponse,
   PipelineRuntimeStatusResponse,
   PipelineConsistencyCheckResponse,
+  PipelineUpdateRequest,
 } from "../types/pipeline";
 
 export async function listPipelines(): Promise<PipelineResponse[]> {
@@ -60,6 +61,23 @@ export async function createPipelineBatch(requests: PipelineCreateRequest[]): Pr
 export async function createLogFilePipeline(request: LogPipelineCreateRequest): Promise<PipelineResponse> {
   const res = await apiClient.post<ApiResponse<PipelineResponse>>("/pipelines/log-file", request);
   return unwrap(res.data);
+}
+
+export async function getPipeline(id: number): Promise<PipelineResponse> {
+  const res = await apiClient.get<ApiResponse<PipelineResponse>>(`/pipelines/${id}`);
+  return unwrap(res.data);
+}
+
+/** 정의 값만 바꾼다(2026-10-12). 등록된 커넥터는 그대로고, 바뀐 커넥터 설정은 다음 «배포» 때 들어간다. */
+export async function updatePipeline(id: number, request: PipelineUpdateRequest): Promise<PipelineResponse> {
+  const res = await apiClient.put<ApiResponse<PipelineResponse>>(`/pipelines/${id}`, request);
+  return unwrap(res.data);
+}
+
+/** 파이프라인 id → 아직 커넥터에 안 들어간 항목(제외 컬럼 · 마스킹 컬럼 · DELETE 반영). 없는 파이프라인은 빠진다. */
+export async function listPendingConfig(): Promise<Record<string, string[]>> {
+  const res = await apiClient.get<ApiResponse<Record<string, string[]>>>("/pipelines/pending-config");
+  return unwrap(res.data) ?? {};
 }
 
 export async function deletePipeline(id: number): Promise<void> {

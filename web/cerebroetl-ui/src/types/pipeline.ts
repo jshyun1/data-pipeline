@@ -117,6 +117,30 @@ export interface PipelineCreateRequest {
   groupId?: number | null;
 }
 
+/**
+ * 파이프라인 정의 수정(web/backend PipelineUpdateRequest, 2026-10-12). 저장하면 정의 값만 바뀌고 등록된 커넥터는 그대로다.
+ * 고칠 수 있는 값: name · description · groupId · excludedColumns · maskedColumns · deleteEnabled.
+ * 나머지는 잠긴 값 - 지금 값을 그대로 보내면 서버가 같은지 확인한다(다르면 거절).
+ */
+export interface PipelineUpdateRequest {
+  name: string;
+  description?: string | null;
+  groupId?: number | null;
+  excludedColumns?: string[];
+  maskedColumns?: string[];
+  deleteEnabled?: boolean;
+  sourceConnectionId?: number | null;
+  targetConnectionId?: number | null;
+  sourceSchema?: string | null;
+  sourceTable?: string | null;
+  targetSchema?: string | null;
+  targetTable?: string | null;
+  topicPrefix?: string | null;
+  loadMode?: string | null;
+  deltaOpColumn?: string | null;
+  snapshotMode?: string | null;
+}
+
 // web/backend의 LogPipelineCreateRequest와 1:1. parseType/multilineEnabled는 이번 버전
 // PLAIN/false만 지원해서 화면에 노출하지 않는다(백엔드가 자동으로 그 값으로 처리).
 export interface LogPipelineCreateRequest {
