@@ -41,6 +41,37 @@ def load_single_ontology_pass1(conn, parsed_data: Dict[str, Any], meta_info: Dic
     version = parsed_data.get("version")
 
     with conn.cursor() as cur:
+        # tb_ontology_term1.ontology_code FK가 tb_ontology_meta1을 참조하므로
+        # term 적재 전에 기준 meta 행을 먼저 보장한다.
+        upsert_meta_sql = """
+            INSERT INTO tb_ontology_meta1 (
+                ontology_code, ontology_name, source_url, version, etag, last_modified, file_md5,
+                term_count, synonym_count, last_synced_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            ON CONFLICT (ontology_code) DO UPDATE
+            SET ontology_name = EXCLUDED.ontology_name,
+                source_url = EXCLUDED.source_url,
+                version = EXCLUDED.version,
+                etag = EXCLUDED.etag,
+                last_modified = EXCLUDED.last_modified,
+                file_md5 = EXCLUDED.file_md5,
+                term_count = EXCLUDED.term_count,
+                synonym_count = EXCLUDED.synonym_count,
+                last_synced_at = NOW(),
+                updated_at = NOW();
+        """
+        cur.execute(upsert_meta_sql, (
+            onto_code,
+            ONTOLOGIES[onto_code]["name"],
+            ONTOLOGIES[onto_code]["url"],
+            version,
+            meta_info.get("etag"),
+            meta_info.get("last_modified"),
+            file_md5,
+            0,
+            0
+        ))
+
         # 기존 데이터 삭제 (해당 온톨로지만 정리 - CASCADE로 하위 테이블 동시 삭제)
         cur.execute("DELETE FROM tb_ontology_term1 WHERE ontology_code = %s", (onto_code,))
 
@@ -139,23 +170,8 @@ def load_single_ontology_pass1(conn, parsed_data: Dict[str, Any], meta_info: Dic
                 execute_values(cur, insert_rel_sql, chunk)
             logger.info(f"[{onto_code}] 1-Pass: 계층/관계 {len(rel_records):,}건 적재 완료")
 
-        # 5. tb_ontology_meta1 갱신
-        update_meta_sql = """
-            INSERT INTO tb_ontology_meta1 (
-                ontology_code, ontology_name, source_url, version, etag, last_modified, file_md5,
-                term_count, synonym_count, last_synced_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-            ON CONFLICT (ontology_code) DO UPDATE
-            SET version = EXCLUDED.version,
-                etag = EXCLUDED.etag,
-                last_modified = EXCLUDED.last_modified,
-                file_md5 = EXCLUDED.file_md5,
-                term_count = EXCLUDED.term_count,
-                synonym_count = EXCLUDED.synonym_count,
-                last_synced_at = NOW(),
-                updated_at = NOW();
-        """
-        cur.execute(update_meta_sql, (
+        # 5. tb_ontology_meta1 최종 건수 갱신
+        cur.execute(upsert_meta_sql, (
             onto_code,
             ONTOLOGIES[onto_code]["name"],
             ONTOLOGIES[onto_code]["url"],

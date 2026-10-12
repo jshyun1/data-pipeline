@@ -233,6 +233,17 @@ export function AppLayout() {
     setOpenMenu((current) => (current === path ? null : current));
   };
 
+  const moveTo = (path: string) => {
+    // ETL 생성 화면은 비정형 전송 같은 단계별 로컬 상태가 많다. 이 화면에서 다른 메뉴로 갈 때
+    // URL만 바뀌고 생성 화면이 남는 브라우저 상태가 재현되어, 생성 화면을 떠나는 전환은 문서
+    // 로드로 확정한다. 작성 중인 값은 EtlCreatePage 쪽 draft 저장 로직이 보존한다.
+    if (location.pathname === "/etl/create" && path !== "/etl/create") {
+      window.location.assign(path);
+      return;
+    }
+    navigate(path);
+  };
+
   /**
    * 메뉴 이동. «저장하지 않은 변경»이 있는 화면(워크플로우 캔버스)이 가드를 걸어 두면
    * 먼저 물어보고, 취소하면 이동하지 않는다. 걸린 가드가 없으면 평소와 똑같이 동작한다.
@@ -250,12 +261,12 @@ export function AppLayout() {
     if (hasLeaveGuard()) {
       void confirmLeave().then((ok) => {
         if (ok) {
-          navigate(path);
+          moveTo(path);
         }
       });
       return;
     }
-    navigate(path);
+    moveTo(path);
   };
 
   // 권한이 아직 안 실렸으면(fail-open) 전부 보여준다. 실린 뒤엔 시스템 권한으로 게이팅.
@@ -462,7 +473,7 @@ export function AppLayout() {
         </div>
       </Header>
       <Content className="app-content">
-        <Outlet />
+        <Outlet key={location.pathname} />
       </Content>
     </Layout>
   );
