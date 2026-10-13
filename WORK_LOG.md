@@ -3899,7 +3899,10 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
   - `docker compose build pipeline-api` 가 두 번 gradle 의존성 받기에서 실패했다(BOM 버전이 비어 lombok · spring-boot 를 못 찾음, 호스트 부하 load 85~93 · 여유 메모리 0.4GB).
     테스트용 gradle 캐시 볼륨으로 작업 폴더 사본에서 `bootJar` 를 만들고 Dockerfile 런타임 단계 그대로 `data-pipeline-pipeline-api:latest` 로 담아 `up --no-deps --no-build`.
   - 이미지에는 옆 세션(대시보드 CPU 카드 «상세»)의 미커밋 백엔드 변경도 들어갔다 - 그 세션과 맞춰 작업 폴더 그대로 빌드(10/12 부터 떠 있던 상태와 같은 내용 + 테스트 정리분).
-- 실제 워크플로우 실행으로는 아직 보지 않았다. DZ job 의 적재 대상이 외부 DB(119.204.108.98)라 TOTAL 재실행은 사용자 확인 뒤에 한다.
+- 실제 실행(사용자가 TOTAL 실행, 15:21): job 마다 원장 1행 · 전부 CALLBACK, await 모두 «완료(콜백 확정)»
+  - COM001M 43 · COM002L 4,598 · POP003L 1,660,590행이 await 로그 · 원장 · ETL 로그에서 같다.
+  - POP003L 원장 227 이 추출 동안 열려 있었고, NiFi 종료 → await 종료 7초(전: 42초), await 3분 17초(전: 4분 39초). COM 은 5 · 7초.
+  - 남은 차이(워크플로우 3분 17초 vs ETL 로그 2분 45초)는 ETL 로그가 적재 구간만 재는 측정 기준 차이다.
 
 **안 고친 것**
 - ETL 로그가 서로 다른 실행의 적재를 45초 안이면 한 줄로 묶는 문제(오늘 129 = 86 + 43).
