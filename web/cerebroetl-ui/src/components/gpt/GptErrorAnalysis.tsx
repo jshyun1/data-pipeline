@@ -22,7 +22,6 @@ export interface GptErrorAnalysisProps {
   target: Record<string, string>;
   /** 화면에 보이는 오류 문구. 대상 정보는 서버가 모은다. */
   errorText: string;
-  onClose: () => void;
   headings?: GptAnswerHeading[];
   headingLabels?: GptAnswerHeadingLabels;
 }
@@ -38,7 +37,7 @@ function targetFallbackLabel(targetType: LlmTargetType, target: Record<string, s
  * <p>대화는 저장하지 않는다 - 창을 닫으면 사라진다. 추가 질문마다 오류 내용 · 첫 분석 · 앞 문답을 같이 보낸다.
  * 길어지면 서버가 오래된 추가 문답부터 빼고 안내한다(대상 정보와 첫 분석은 항상 남는다).
  */
-export function GptErrorAnalysis({ targetType, target, errorText, onClose, headings, headingLabels }: GptErrorAnalysisProps) {
+export function GptErrorAnalysis({ targetType, target, errorText, headings, headingLabels }: GptErrorAnalysisProps) {
   const status = useLlmStatus().data;
   const chat = useGptConversation({ agentType: "ERROR_ANALYSIS", targetType, target, errorText });
 
@@ -75,12 +74,11 @@ export function GptErrorAnalysis({ targetType, target, errorText, onClose, headi
           {providerName ?? "-"}{deployment ? ` (${DEPLOYMENT_LABEL[deployment]})` : ""}
           {" · "}개인정보 마스킹 {masked ? "켜짐" : "꺼짐"}
         </span>
-        {/* 단추 셋은 같은 모양(2026-10-11 요청 - «프롬프트 편집»이 글자 링크라 따로 놀았다). «중지»는 뺐다 -
-            답이 오는 중에도 «닫기»가 그대로 있고, 닫으면 흐르던 요청은 끊긴다(useGptConversation 정리). */}
+        {/* 단추는 같은 모양(2026-10-11 요청 - «프롬프트 편집»이 글자 링크라 따로 놀았다). «중지»는 뺐고, «닫기»도 뺐다(2026-10-13 요청) -
+            로그 창(모달)을 닫으면 이 창도 닫히고 흐르던 요청은 끊긴다(useGptConversation 정리). */}
         <span className="gpt-analysis-actions">
           <Button size="small" onClick={() => void chat.openPreview()}>프롬프트 편집</Button>
           <Button size="small" onClick={saveMarkdown}>MD 저장하기</Button>
-          <Button size="small" onClick={onClose}>닫기</Button>
         </span>
       </div>
       {chat.meta?.truncated && (

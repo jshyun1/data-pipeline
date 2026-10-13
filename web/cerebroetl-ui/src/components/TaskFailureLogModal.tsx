@@ -1,7 +1,6 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
-import { Alert, Button, Modal, Spin, Tag } from "antd";
+import { Alert, Modal, Spin, Tag } from "antd";
 import { GptErrorAnalysis } from "./gpt/GptErrorAnalysis";
 import { useGptEnabled } from "./gpt/useGptEnabled";
 import {
@@ -197,23 +196,19 @@ function TaskLogView({ item, dagId, runId, nameOf }: {
   const single = item.attempts.length <= 1;
   const hasReason = item.attempts.some((attempt) => (attempt.log?.exceptions.length ?? 0) > 0) || item.events.length > 0;
   const gptEnabled = useGptEnabled();
-  // 창을 열면 바로 GPT 해석을 시작한다 - ETL · CDC 로그 창과 같다(2026-10-02 요청). 닫으면 «GPT 해석» 단추로 다시 연다.
-  const [analyzing, setAnalyzing] = useState(true);
+  // 창을 열면 바로 GPT 해석을 시작한다 - ETL · CDC 로그 창과 같다(2026-10-02 요청). GPT 해석 안의 «닫기»를 뺀 뒤로(2026-10-13 요청)
+  // 해석은 로그 창이 열려 있는 동안 늘 보인다 - 다시 여는 «GPT 해석» 단추도 필요 없어졌다.
   return (
     <section className="failure-log-task">
       <div className="failure-log-task-head">
         <strong>{taskLabel(item.taskId)}</strong>
         {!single && <Tag>{item.attempts.length}회 시도</Tag>}
-        {gptEnabled && hasReason && !analyzing && (
-          <Button size="small" className="gpt-analysis-open" onClick={() => setAnalyzing(true)}>GPT 해석</Button>
-        )}
       </div>
-      {gptEnabled && hasReason && analyzing && (
+      {gptEnabled && hasReason && (
         <GptErrorAnalysis
           targetType="WORKFLOW_TASK"
           target={{ dagId, runId, taskId: item.taskId }}
           errorText={screenErrorText(item)}
-          onClose={() => setAnalyzing(false)}
         />
       )}
       {item.attempts.map((attempt) => <AttemptView key={attempt.tryNumber} attempt={attempt} single={single} />)}

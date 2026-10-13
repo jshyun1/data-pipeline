@@ -4102,3 +4102,17 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 - 화면 렌더링(react-dom/server 로 GptTurns): «[답변 범위] …» 그대로 · `**[답변 범위]**` · `> [답변 범위]` 모두 안내 상자 1개, 머리말 글자는 본문에 안 남음,
   보통 답은 상자 0개. 타입 검사 통과(린트 경고 3건은 고치기 전과 같음).
 - 반영: pipeline-api(jar 에 AnswerScope 포함) · cerebroetl-ui(번들에 gpt-answer-scope). 실제 모델(Qwen3) 답은 로그인한 화면에서 확인할 몫이다.
+
+## 132. 로그 GPT 해석 창 «닫기» 버튼 삭제 (2026-10-13)
+
+**요청**: 모든 로그의 GPT 해석 오른쪽 위 «닫기» 버튼을 지운다.
+
+**변경**
+- `components/gpt/GptErrorAnalysis`(모든 로그 GPT 해석이 같이 쓰는 부품): «닫기» 단추와 `onClose` 속성 삭제. 남은 단추는 «프롬프트 편집» · «MD 저장하기».
+  로그 창(모달)을 닫으면 이 창도 닫히고 흐르던 요청은 끊긴다(useGptConversation 정리) - 따로 닫을 방법이 없어도 된다.
+- 쓰는 곳 4군데에서 `onClose` 를 뺐다: ETL 로그 · CDC 로그 · 워크플로우 실패 로그(TaskFailureLogModal) · 대시보드 실패 상세(FailureDetailModal).
+- 닫을 수 없게 되면서 죽은 코드가 된 «GPT 해석» 다시 열기 단추 · 상태값을 걷어냈다: ETL 로그 · CDC 로그(`analysisOpen` · `afterOpenChange`),
+  워크플로우 실패 로그(`analyzing`, 쓰지 않게 된 `useState` · `Button` 가져오기). 대시보드 실패 상세는 그 파일을 고치던 옆 세션(data-pipeline-80)이 정리하기로 했다.
+
+**확인**: 타입 검사 · oxlint 통과(경고 0). 옆 세션 미커밋 변경을 뺀 스테이징본만으로도 `tsc -p tsconfig.app.json` 통과.
+화면 재빌드 · 재기동 후 번들의 GPT 해석 머리줄에 «닫기»가 없다. 죽은 코드 정리분은 동작이 같아 다시 빌드하지 않았다(다음 화면 빌드에 들어간다).

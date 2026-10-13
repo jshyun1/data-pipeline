@@ -125,7 +125,6 @@ function FailureBody({ item }: { item: FailureDetailItem }) {
           targetType={item.gpt.targetType}
           target={item.gpt.target}
           errorText={[item.title, ...item.lines.map(([l, v]) => `${l}: ${v}`), errorText].join("\n")}
-          onClose={() => setAnalyzing(false)}
         />
       )}
     </div>
