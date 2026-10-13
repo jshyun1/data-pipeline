@@ -24,10 +24,13 @@ import {
   createFileLoadFlow,
   createHttpLoadFlow,
   createUnstructuredLoadFlow,
+  getEtlWizardGroup,
   getNifiProcessGroupTree,
   listRootNifiControllerServices,
   testHttpApi,
+  updateEtlWizardGroup,
   uploadFileLoadFiles,
+  type EtlWizardSnapshot,
   type NifiProcessGroupEntity,
   type NifiControllerServiceEntity,
   type NifiProcessGroupTreeNode,
@@ -35,7 +38,7 @@ import {
 import { syncEtlJobs } from "../api/etlJobs";
 import { validateCalciteSql } from "../api/formulaHelp";
 import type { ConnectionResponse } from "../types/connection";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 
 const WIZARD_STEPS = [
   { id: "type", label: "유형 선택" },
@@ -280,6 +283,93 @@ function clearEtlCreateDraft() {
   } catch {
     // Ignore storage failures.
   }
+}
+
+function sanitizeConnectionInfoForSnapshot(connectionInfo: ConnectionInfo): ConnectionInfo {
+  return { ...connectionInfo, apiKey: "" };
+}
+
+function buildWizardSnapshot({
+  activeStep,
+  etlType,
+  completedSteps,
+  basicInfo,
+  connectionInfo,
+  loadMode,
+  showTruncateSql,
+  truncateSql,
+  loadSql,
+  queryRecordSql,
+  sourceColumns,
+  loadSqlColumns,
+  httpSourceJson,
+  httpTestPassed,
+  httpTestType,
+  targetColumns,
+  columnMappings,
+  inputDirectory,
+  fileColumns,
+}: EtlCreateDraft & { inputDirectory?: string; fileColumns?: string[] }): EtlWizardSnapshot {
+  return {
+    version: 1,
+    activeStep,
+    etlType,
+    completedSteps,
+    basicInfo,
+    connectionInfo: sanitizeConnectionInfoForSnapshot(connectionInfo),
+    loadMode,
+    showTruncateSql,
+    truncateSql,
+    loadSql,
+    queryRecordSql,
+    sourceColumns,
+    loadSqlColumns,
+    httpSourceJson,
+    httpTestPassed,
+    httpTestType,
+    targetColumns,
+    columnMappings,
+    inputDirectory,
+    fileColumns,
+  };
+}
+
+function draftFromSnapshot(snapshot: EtlWizardSnapshot | null | undefined): EtlCreateDraft | null {
+  if (!snapshot || !snapshot.etlType) {
+    return null;
+  }
+  const snapshotBasicInfo = snapshot.basicInfo as Partial<Omit<BasicInfo, "files">> | undefined;
+  return {
+    activeStep: (snapshot.activeStep as WizardStepId | undefined) ?? "type",
+    etlType: snapshot.etlType,
+    completedSteps: (snapshot.completedSteps ?? []).filter((step): step is WizardStepId =>
+      WIZARD_STEPS.some((item) => item.id === step),
+    ),
+    basicInfo: {
+      jobName: snapshotBasicInfo?.jobName ?? DEFAULT_BASIC_INFO.jobName,
+      parentGroupId: snapshotBasicInfo?.parentGroupId ?? DEFAULT_BASIC_INFO.parentGroupId,
+      parentGroupPath: snapshotBasicInfo?.parentGroupPath ?? DEFAULT_BASIC_INFO.parentGroupPath,
+      comments: snapshotBasicInfo?.comments ?? DEFAULT_BASIC_INFO.comments,
+      fileExtension: snapshotBasicInfo?.fileExtension ?? DEFAULT_BASIC_INFO.fileExtension,
+    },
+    connectionInfo: {
+      ...DEFAULT_CONNECTION_INFO,
+      ...(snapshot.connectionInfo as Partial<ConnectionInfo> | undefined),
+      apiKey: "",
+    },
+    loadMode: snapshot.loadMode ?? "INSERT",
+    showTruncateSql: snapshot.showTruncateSql ?? false,
+    truncateSql: snapshot.truncateSql ?? "",
+    loadSql: snapshot.loadSql ?? "",
+    queryRecordSql: snapshot.queryRecordSql ?? "",
+    sourceColumns: (snapshot.sourceColumns ?? []) as SourceColumnMetadata[],
+    loadSqlColumns: (snapshot.loadSqlColumns ?? []) as SourceColumnMetadata[],
+    httpSourceJson: snapshot.httpSourceJson ?? "",
+    httpTestPassed: snapshot.httpTestPassed ?? false,
+    httpTestType: snapshot.httpTestType,
+    targetColumns: (snapshot.targetColumns ?? []) as ColumnMetadataResponse[],
+    columnMappings: (snapshot.columnMappings ?? []) as ColumnMapping[],
+  };
 }
 
 function flattenProcessGroups(
@@ -1248,10 +1338,12 @@ function TypeStep({
   selectedType,
   onTypeChange,
   onComplete,
+  readOnly = false,
 }: {
   selectedType: EtlType;
   onTypeChange: (type: EtlType) => void;
   onComplete: () => void;
+  readOnly?: boolean;
 }) {
   return (
     <>
@@ -1261,7 +1353,7 @@ function TypeStep({
           <button
             key={option.value}
             type="button"
-            disabled={option.disabled}
+            disabled={option.disabled || readOnly}
             className={`type-card${selectedType === option.value ? " selected" : ""}${option.disabled ? " disabled" : ""}`}
             onClick={() => onTypeChange(option.value)}
           >
@@ -1328,11 +1420,15 @@ function BasicStep({
   etlType,
   onChange,
   onComplete,
+  editMode = false,
+  hasExistingFileLoadInput = false,
 }: {
   value: BasicInfo;
   etlType: EtlType;
   onChange: (nextValue: Partial<BasicInfo>) => void;
   onComplete: () => void;
+  editMode?: boolean;
+  hasExistingFileLoadInput?: boolean;
 }) {
   const [groupTree, setGroupTree] = useState<NifiProcessGroupTreeNode | null>(null);
   const [groupError, setGroupError] = useState<string | null>(null);
@@ -1365,7 +1461,7 @@ function BasicStep({
   const isFileLoad = etlType === "FILE_LOAD";
   const canComplete = value.jobName.trim().length > 0 &&
     value.parentGroupId.length > 0 &&
-    (!isFileLoad || (["csv", "excel"].includes(value.fileExtension) && value.files.length > 0));
+    (!isFileLoad || (["csv", "excel"].includes(value.fileExtension) && (value.files.length > 0 || (editMode && hasExistingFileLoadInput))));
 
   return (
     <>
@@ -1388,7 +1484,7 @@ function BasicStep({
               <select
                 className="spec-select"
                 value={value.parentGroupId}
-                disabled={!groupTree || !!groupError}
+                disabled={editMode || !groupTree || !!groupError}
                 onChange={(event) => {
                   const selectedGroup = processGroupOptions.find((group) => group.id === event.target.value);
                   onChange({
@@ -1454,6 +1550,9 @@ function BasicStep({
                     <span className="file-chosen-text">
                       {value.files.length > 0 ? `${value.files.length}개 파일 선택됨` : "선택된 파일 없음"}
                     </span>
+                    {editMode && hasExistingFileLoadInput && value.files.length === 0 ? (
+                      <span className="file-chosen-text">기존 입력 경로 사용</span>
+                    ) : null}
                   </div>
                 </td>
               </tr>
@@ -2148,6 +2247,7 @@ function QueryStep({
   truncateSql,
   loadSql,
   showTruncateSql,
+  loadModeReadOnly = false,
   onLoadModeChange,
   onTruncateSqlChange,
   onLoadSqlChange,
@@ -2160,6 +2260,7 @@ function QueryStep({
   truncateSql: string;
   loadSql: string;
   showTruncateSql: boolean;
+  loadModeReadOnly?: boolean;
   onLoadModeChange: (loadMode: LoadMode) => void;
   onTruncateSqlChange: (truncateSql: string) => void;
   onLoadSqlChange: (loadSql: string) => void;
@@ -2238,6 +2339,7 @@ function QueryStep({
                     type="radio"
                     name="etl-load-mode"
                     checked={loadMode === "INSERT"}
+                    disabled={loadModeReadOnly}
                     onChange={() => onLoadModeChange("INSERT")}
                   />
                   <span>INSERT</span>
@@ -2248,6 +2350,7 @@ function QueryStep({
                       type="radio"
                       name="etl-load-mode"
                       checked={loadMode === "TRUNCATE"}
+                      disabled={loadModeReadOnly}
                       onChange={() => onLoadModeChange("TRUNCATE")}
                     />
                     <span>TRUNCATE 후 적재</span>
@@ -2258,6 +2361,7 @@ function QueryStep({
                     type="radio"
                     name="etl-load-mode"
                     checked={loadMode === "UPSERT"}
+                    disabled={loadModeReadOnly}
                     onChange={() => onLoadModeChange("UPSERT")}
                   />
                   <span>UPSERT</span>
@@ -3000,17 +3104,19 @@ function CompletionView({
   summary,
   onOpenCanvas,
   onOpenDag,
+  editMode = false,
 }: {
   summary: CompletionSummary;
   onOpenCanvas: () => void;
   onOpenDag: () => void;
+  editMode?: boolean;
 }) {
   return (
     <div className="std-card std-card-body etl-completion-card">
       <Result
         status="success"
-        title="ETL 템플릿 그룹 생성 완료"
-        subTitle="아래 리소스가 생성되었습니다."
+        title={editMode ? "ETL 생성마법사 편집 완료" : "ETL 템플릿 그룹 생성 완료"}
+        subTitle={editMode ? "수정한 설정이 프로세스 그룹에 반영되었습니다." : "아래 리소스가 생성되었습니다."}
         extra={[
           <Button type="primary" key="canvas" onClick={onOpenCanvas}>
             캔버스에서 보기
@@ -3040,12 +3146,17 @@ function CompletionView({
 
 export function EtlCreatePage() {
   const navigate = useNavigate();
-  const restoredDraft = useMemo(() => readEtlCreateDraft(), []);
+  const { processGroupId: editProcessGroupId } = useParams();
+  const isEditMode = !!editProcessGroupId;
+  const restoredDraft = useMemo(() => (isEditMode ? null : readEtlCreateDraft()), [isEditMode]);
   const preserveRestoredSqlRef = useRef(Boolean(restoredDraft?.loadSql));
   const [activeStep, setActiveStep] = useState<WizardStepId>(restoredDraft?.activeStep ?? "type");
   const [etlType, setEtlType] = useState<EtlType>(restoredEtlType(restoredDraft));
+  const [loadedEditType, setLoadedEditType] = useState<EtlType | null>(null);
   const [completed, setCompleted] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [editLoading, setEditLoading] = useState(isEditMode);
+  const [editError, setEditError] = useState<string | null>(null);
   const [completedSteps, setCompletedSteps] = useState<WizardStepId[]>(restoredDraft?.completedSteps ?? []);
   const [completionSummary, setCompletionSummary] = useState<CompletionSummary | null>(null);
   const [basicInfo, setBasicInfo] = useState<BasicInfo>({
@@ -3069,6 +3180,8 @@ export function EtlCreatePage() {
   const [httpTestType, setHttpTestType] = useState<"JSON_API" | "FILE_DOWNLOAD" | undefined>(restoredDraft?.httpTestType);
   const [targetColumns, setTargetColumns] = useState<ColumnMetadataResponse[]>(restoredDraft?.targetColumns ?? []);
   const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>(restoredDraft?.columnMappings ?? []);
+  const [fileLoadInputDirectory, setFileLoadInputDirectory] = useState("");
+  const [fileLoadColumns, setFileLoadColumns] = useState<string[]>([]);
   const mappingSourceColumns = useMemo(
     () => etlType === "HTTP" ? HTTP_SOURCE_COLUMNS : loadSqlColumns.length > 0 ? loadSqlColumns : sourceColumns,
     [etlType, loadSqlColumns, sourceColumns],
@@ -3105,6 +3218,67 @@ export function EtlCreatePage() {
   const visibleWizardSteps = isUnstructuredLoad ? WIZARD_STEPS.slice(0, 3) : WIZARD_STEPS;
 
   useEffect(() => {
+    if (!isEditMode || !editProcessGroupId) {
+      return;
+    }
+    let cancelled = false;
+    setEditLoading(true);
+    setEditError(null);
+    getEtlWizardGroup(editProcessGroupId)
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        const draft = draftFromSnapshot(response.wizardSnapshot);
+        if (!draft) {
+          throw new Error("저장된 생성마법사 입력값을 찾지 못했습니다.");
+        }
+        preserveRestoredSqlRef.current = Boolean(draft.loadSql);
+        setActiveStep(draft.activeStep);
+        setEtlType(draft.etlType);
+        setLoadedEditType(draft.etlType);
+        setCompletedSteps(draft.completedSteps.length > 0 ? draft.completedSteps : WIZARD_STEPS.map((step) => step.id));
+        setBasicInfo({
+          ...DEFAULT_BASIC_INFO,
+          ...draft.basicInfo,
+          jobName: response.processGroupName || draft.basicInfo.jobName,
+          parentGroupId: response.parentGroupId || draft.basicInfo.parentGroupId,
+          comments: response.comments ?? draft.basicInfo.comments,
+          files: [],
+        });
+        setConnectionInfo(draft.connectionInfo);
+        setLoadMode(draft.loadMode);
+        setShowTruncateSql(draft.showTruncateSql);
+        setTruncateSql(draft.truncateSql);
+        setLoadSql(draft.loadSql || defaultLoadSql(draft.loadMode, draft.connectionInfo.sourceSchema, draft.connectionInfo.sourceTable, draft.connectionInfo.sourceDatabaseType));
+        setQueryRecordSql(draft.queryRecordSql);
+        setSourceColumns(draft.sourceColumns);
+        setLoadSqlColumns(draft.loadSqlColumns);
+        setHttpSourceJson(draft.httpSourceJson);
+        setHttpTestPassed(draft.httpTestPassed || draft.etlType === "HTTP");
+        setHttpTestType(draft.httpTestType);
+        setTargetColumns(draft.targetColumns);
+        setColumnMappings(draft.columnMappings);
+        setFileLoadInputDirectory(response.wizardSnapshot?.inputDirectory ?? "");
+        setFileLoadColumns(response.wizardSnapshot?.fileColumns ?? []);
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setEditError(ex instanceof Error ? ex.message : "생성마법사 정보를 불러오지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setEditLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editProcessGroupId, isEditMode]);
+
+  useEffect(() => {
     if (isUnstructuredLoad && (activeStep === "query" || activeStep === "target")) {
       setActiveStep("connection");
     }
@@ -3123,7 +3297,7 @@ export function EtlCreatePage() {
     !!connectionInfo.targetTable.trim();
 
   useEffect(() => {
-    if (completed) {
+    if (completed || isEditMode) {
       return;
     }
     writeEtlCreateDraft({
@@ -3165,6 +3339,7 @@ export function EtlCreatePage() {
     httpSourceJson,
     httpTestPassed,
     httpTestType,
+    isEditMode,
     queryRecordSql,
     showTruncateSql,
     sourceColumns,
@@ -3266,13 +3441,47 @@ export function EtlCreatePage() {
     completeAndOpen("query", "target");
   };
 
+  const currentWizardSnapshot = (nextInputDirectory = fileLoadInputDirectory, nextFileColumns = fileLoadColumns) =>
+    buildWizardSnapshot({
+      activeStep: isUnstructuredLoad ? "connection" : "target",
+      etlType,
+      completedSteps: visibleWizardSteps.map((step) => step.id),
+      basicInfo: {
+        jobName: basicInfo.jobName,
+        parentGroupId: basicInfo.parentGroupId,
+        parentGroupPath: basicInfo.parentGroupPath,
+        comments: basicInfo.comments,
+        fileExtension: basicInfo.fileExtension,
+      },
+      connectionInfo,
+      loadMode,
+      showTruncateSql,
+      truncateSql,
+      loadSql,
+      queryRecordSql,
+      sourceColumns,
+      loadSqlColumns,
+      httpSourceJson,
+      httpTestPassed,
+      httpTestType,
+      targetColumns,
+      columnMappings,
+      inputDirectory: nextInputDirectory || undefined,
+      fileColumns: nextFileColumns.length > 0 ? nextFileColumns : undefined,
+    });
+
   const completeWizard = async () => {
+    if (isEditMode && loadedEditType && etlType !== loadedEditType) {
+      message.warning("편집 모드에서는 생성 유형을 변경할 수 없습니다.");
+      moveStep("type");
+      return;
+    }
     if (!basicInfo.jobName.trim() || !basicInfo.parentGroupId) {
       message.warning("기본 정보의 작업명과 상위 그룹을 입력하세요.");
       moveStep("basic");
       return;
     }
-    if (isFileLoad && basicInfo.files.length === 0) {
+    if (isFileLoad && basicInfo.files.length === 0 && (!isEditMode || !fileLoadInputDirectory || fileLoadColumns.length === 0)) {
       message.warning("파일을 선택하세요.");
       moveStep("basic");
       return;
@@ -3307,28 +3516,44 @@ export function EtlCreatePage() {
     try {
       let createdGroup: NifiProcessGroupEntity;
       if (isFileLoad) {
-        const uploadResult = await uploadFileLoadFiles(
-          basicInfo.jobName.trim(),
-          basicInfo.fileExtension as "csv" | "excel",
-          basicInfo.files,
-        );
-        if (uploadResult.columns.length === 0) {
+        const uploadResult = basicInfo.files.length > 0
+          ? await uploadFileLoadFiles(
+            basicInfo.jobName.trim(),
+            basicInfo.fileExtension as "csv" | "excel",
+            basicInfo.files,
+          )
+          : null;
+        const nextInputDirectory = uploadResult?.nifiInputDirectory ?? fileLoadInputDirectory;
+        const nextFileColumns = uploadResult?.columns ?? fileLoadColumns;
+        if (nextFileColumns.length === 0) {
           throw new Error("파일 헤더에서 컬럼을 찾지 못했습니다.");
         }
-        createdGroup = await createFileLoadFlow({
+        const wizardSnapshot = currentWizardSnapshot(nextInputDirectory, nextFileColumns);
+        const flowRequest = {
           jobName: basicInfo.jobName.trim(),
           parentGroupId: basicInfo.parentGroupId,
           comments: basicInfo.comments.trim(),
           fileExtension: basicInfo.fileExtension as "csv" | "excel",
-          inputDirectory: uploadResult.nifiInputDirectory,
-          columns: uploadResult.columns,
+          inputDirectory: nextInputDirectory,
+          columns: nextFileColumns,
           targetServiceId: connectionInfo.targetServiceId,
           targetDatabaseType: connectionInfo.targetDatabaseType,
           targetSchema: connectionInfo.targetSchema.trim(),
           targetTable: connectionInfo.targetTable.trim(),
-        });
+          wizardSnapshot,
+        };
+        createdGroup = isEditMode && editProcessGroupId
+          ? await updateEtlWizardGroup(editProcessGroupId, {
+            etlType,
+            fileLoad: flowRequest,
+            wizardSnapshot,
+          })
+          : await createFileLoadFlow(flowRequest);
+        setFileLoadInputDirectory(nextInputDirectory);
+        setFileLoadColumns(nextFileColumns);
       } else if (isHttpLoad) {
-        createdGroup = await createHttpLoadFlow({
+        const wizardSnapshot = currentWizardSnapshot();
+        const flowRequest = {
           jobName: basicInfo.jobName.trim(),
           parentGroupId: basicInfo.parentGroupId,
           comments: basicInfo.comments.trim(),
@@ -3339,12 +3564,21 @@ export function EtlCreatePage() {
           targetDatabaseType: connectionInfo.targetDatabaseType,
           targetSchema: connectionInfo.targetSchema.trim(),
           targetTable: connectionInfo.targetTable.trim(),
-          loadMode: loadMode === "UPSERT" ? "UPSERT" : "INSERT",
+          loadMode: loadMode === "UPSERT" ? "UPSERT" as const : "INSERT" as const,
           queryRecordSql: queryRecordSql.trim() || undefined,
           primaryKeys: loadMode === "UPSERT" ? targetPrimaryKeys : undefined,
-        });
+          wizardSnapshot,
+        };
+        createdGroup = isEditMode && editProcessGroupId
+          ? await updateEtlWizardGroup(editProcessGroupId, {
+            etlType,
+            httpLoad: flowRequest,
+            wizardSnapshot,
+          })
+          : await createHttpLoadFlow(flowRequest);
       } else if (isUnstructuredLoad) {
-        createdGroup = await createUnstructuredLoadFlow({
+        const wizardSnapshot = currentWizardSnapshot();
+        const flowRequest = {
           jobName: basicInfo.jobName.trim(),
           parentGroupId: basicInfo.parentGroupId,
           comments: basicInfo.comments.trim(),
@@ -3352,9 +3586,19 @@ export function EtlCreatePage() {
           targetDatabaseType: connectionInfo.targetDatabaseType,
           targetSchema: connectionInfo.targetSchema.trim(),
           targetTable: connectionInfo.targetTable.trim(),
-        });
+          wizardSnapshot,
+        };
+        createdGroup = isEditMode && editProcessGroupId
+          ? await updateEtlWizardGroup(editProcessGroupId, {
+            etlType,
+            unstructuredLoad: flowRequest,
+            wizardSnapshot,
+            unstructuredInputDirectory: fileLoadInputDirectory || wizardSnapshot.inputDirectory,
+          })
+          : await createUnstructuredLoadFlow(flowRequest);
       } else {
-        createdGroup = await createInitialDbToDbFlow({
+        const wizardSnapshot = currentWizardSnapshot();
+        const flowRequest = {
           jobName: basicInfo.jobName.trim(),
           parentGroupId: basicInfo.parentGroupId,
           comments: basicInfo.comments.trim(),
@@ -3373,7 +3617,15 @@ export function EtlCreatePage() {
           loadSql: loadSql.trim() || undefined,
           queryRecordSql: queryRecordSql.trim() || undefined,
           primaryKeys: loadMode === "UPSERT" ? targetPrimaryKeys : undefined,
-        });
+          wizardSnapshot,
+        };
+        createdGroup = isEditMode && editProcessGroupId
+          ? await updateEtlWizardGroup(editProcessGroupId, {
+            etlType,
+            initialDbToDb: flowRequest,
+            wizardSnapshot,
+          })
+          : await createInitialDbToDbFlow(flowRequest);
       }
       const processGroupId = createdGroup.id;
       if (!processGroupId) {
@@ -3390,8 +3642,10 @@ export function EtlCreatePage() {
         etlType,
         dagId: etlDagId(processGroupId),
       });
-      message.success("ETL 템플릿 그룹을 복제하고 설정을 반영했습니다.");
-      clearEtlCreateDraft();
+      message.success(isEditMode ? "생성마법사 설정을 수정했습니다." : "ETL 템플릿 그룹을 복제하고 설정을 반영했습니다.");
+      if (!isEditMode) {
+        clearEtlCreateDraft();
+      }
       const finalStep = isUnstructuredLoad ? "connection" : "target";
       setCompletedSteps((previous) => previous.includes(finalStep) ? previous : [...previous, finalStep]);
       setCompleted(true);
@@ -3408,11 +3662,15 @@ export function EtlCreatePage() {
       <TypeStep
         selectedType={etlType}
         onTypeChange={(nextType) => {
+          if (isEditMode) {
+            return;
+          }
           preserveRestoredSqlRef.current = false;
           setEtlType(nextType);
           invalidateFrom("type");
         }}
         onComplete={() => completeAndOpen("type", "basic")}
+        readOnly={isEditMode}
       />
     ),
     basic: (
@@ -3424,6 +3682,8 @@ export function EtlCreatePage() {
           invalidateFrom("basic");
         }}
         onComplete={() => completeAndOpen("basic", "connection")}
+        editMode={isEditMode}
+        hasExistingFileLoadInput={!!fileLoadInputDirectory && fileLoadColumns.length > 0}
       />
     ),
     connection: (
@@ -3477,7 +3737,11 @@ export function EtlCreatePage() {
         truncateSql={truncateSql}
         loadSql={loadSql}
         showTruncateSql={showTruncateSql}
+        loadModeReadOnly={isEditMode}
         onLoadModeChange={(nextLoadMode) => {
+          if (isEditMode) {
+            return;
+          }
           preserveRestoredSqlRef.current = false;
           const effectiveLoadMode = isHttpLoad && nextLoadMode === "TRUNCATE" ? "INSERT" : nextLoadMode;
           setLoadMode(effectiveLoadMode);
@@ -3514,6 +3778,28 @@ export function EtlCreatePage() {
 
   const summaryOptions = { etlType, basicInfo, connectionInfo, loadMode };
 
+  if (isEditMode && editLoading) {
+    return (
+      <div className="etl-create-page etl-create-wrap">
+        <div className="std-card std-card-body etl-completion-card">
+          생성마법사 정보를 불러오는 중입니다.
+        </div>
+      </div>
+    );
+  }
+
+  if (isEditMode && editError) {
+    return (
+      <div className="etl-create-page etl-create-wrap">
+        <Result
+          status="warning"
+          title="생성마법사 정보를 불러오지 못했습니다"
+          subTitle={editError}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="etl-create-page etl-create-wrap">
       {completed && completionSummary ? (
@@ -3521,6 +3807,7 @@ export function EtlCreatePage() {
           summary={completionSummary}
           onOpenCanvas={() => navigate(`/etl/manage?processGroupId=${encodeURIComponent(completionSummary.processGroupId)}`)}
           onOpenDag={() => navigate("/airflow/manage")}
+          editMode={isEditMode}
         />
       ) : (
         <>

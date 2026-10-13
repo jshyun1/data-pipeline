@@ -7,6 +7,7 @@ public record NifiProcessGroupTreeResponse(
         String name,
         String comments,
         String createdBy,
+        boolean wizardCreated,
         String groupType,
         String jobStatus,
         int processorCount,

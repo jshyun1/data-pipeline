@@ -409,6 +409,64 @@ public class NifiClient {
         }
     }
 
+    public NifiProcessGroupResponse updateInitialDbToDbFlow(String groupId, NifiInitialDbToDbCreateRequest request) {
+        String loadMode = nullToBlank(request.loadMode()).trim().toUpperCase();
+        if (!"INSERT".equals(loadMode) && !"TRUNCATE".equals(loadMode) && !"UPSERT".equals(loadMode)) {
+            throw new NifiClientException("DB -> DB 템플릿은 INSERT, TRUNCATE, UPSERT 적재 방식만 지원합니다.", null);
+        }
+        if (("INSERT".equals(loadMode) || "UPSERT".equals(loadMode)) && !StringUtils.hasText(loadSql(request))) {
+            throw new NifiClientException("DB -> DB 적재 방식은 적재로직 SQL문이 필요합니다.", null);
+        }
+        if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.primaryKeys())) {
+            throw new NifiClientException("타깃 테이블의 Primary Key를 찾지 못했습니다.", null);
+        }
+        String token = getToken();
+        NifiFlowResponse.ProcessGroupEntity group =
+                findChildProcessGroupById(request.parentGroupId().trim(), groupId);
+        updateProcessGroup(token, group, request.jobName().trim(), nullToBlank(request.comments()));
+        updateInitialDbToDbProcessors(token, groupId, request, loadMode);
+        return new NifiProcessGroupResponse(groupId, request.jobName().trim(), request.parentGroupId().trim(),
+                directProcessorCount(groupId));
+    }
+
+    public NifiProcessGroupResponse updateFileLoadFlow(String groupId, NifiFileLoadCreateRequest request) {
+        String token = getToken();
+        NifiFlowResponse.ProcessGroupEntity group =
+                findChildProcessGroupById(request.parentGroupId().trim(), groupId);
+        updateProcessGroup(token, group, request.jobName().trim(), nullToBlank(request.comments()));
+        updateFileLoadProcessors(token, groupId, request);
+        return new NifiProcessGroupResponse(groupId, request.jobName().trim(), request.parentGroupId().trim(),
+                directProcessorCount(groupId));
+    }
+
+    public NifiProcessGroupResponse updateHttpLoadFlow(String groupId, NifiHttpLoadCreateRequest request) {
+        String loadMode = nullToBlank(request.loadMode()).trim().toUpperCase();
+        if (!"INSERT".equals(loadMode) && !"UPSERT".equals(loadMode)) {
+            throw new NifiClientException("HTTP 수집 템플릿은 INSERT, UPSERT 적재 방식만 지원합니다.", null);
+        }
+        if ("UPSERT".equals(loadMode) && !StringUtils.hasText(request.primaryKeys())) {
+            throw new NifiClientException("타깃 테이블의 Primary Key를 찾지 못했습니다.", null);
+        }
+        String token = getToken();
+        NifiFlowResponse.ProcessGroupEntity group =
+                findChildProcessGroupById(request.parentGroupId().trim(), groupId);
+        updateProcessGroup(token, group, request.jobName().trim(), nullToBlank(request.comments()));
+        updateHttpLoadProcessors(token, groupId, request, loadMode);
+        return new NifiProcessGroupResponse(groupId, request.jobName().trim(), request.parentGroupId().trim(),
+                directProcessorCount(groupId));
+    }
+
+    public NifiProcessGroupResponse updateUnstructuredLoadFlow(String groupId,
+            NifiUnstructuredLoadCreateRequest request, String inputDirectory) {
+        String token = getToken();
+        NifiFlowResponse.ProcessGroupEntity group =
+                findChildProcessGroupById(request.parentGroupId().trim(), groupId);
+        updateProcessGroup(token, group, request.jobName().trim(), nullToBlank(request.comments()));
+        updateUnstructuredLoadProcessors(token, groupId, request, inputDirectory);
+        return new NifiProcessGroupResponse(groupId, request.jobName().trim(), request.parentGroupId().trim(),
+                directProcessorCount(groupId));
+    }
+
     public NifiControllerServiceEntity createPostgresDbcpControllerService(
             Long connectionId,
             String connectionName,

@@ -2,6 +2,7 @@ package com.company.pipeline.nifi.dto;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import com.fasterxml.jackson.databind.JsonNode;
 
 public record NifiUnstructuredLoadCreateRequest(
         @NotBlank
@@ -27,6 +28,8 @@ public record NifiUnstructuredLoadCreateRequest(
 
         @NotBlank
         @Size(max = 128)
-        String targetTable
+        String targetTable,
+
+        JsonNode wizardSnapshot
 ) {
 }

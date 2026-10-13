@@ -7059,6 +7059,10 @@ button.alert-compact-trigger.is-clear:hover {
   font-weight: 700;
 }
 
+.nifi-wizard-edit-actions {
+  margin-top: 10px;
+}
+
 .nifi-detail-section dd.nifi-detail-inline-value {
   overflow: visible;
   text-overflow: clip;

@@ -28,6 +28,12 @@ public class NifiProcessGroupMetadata {
     @Column(name = "comments")
     private String comments;
 
+    @Column(name = "wizard_created", nullable = false)
+    private boolean wizardCreated;
+
+    @Column(name = "wizard_payload", columnDefinition = "text")
+    private String wizardPayload;
+
     @Column(name = "created_by", length = 255, nullable = false)
     private String createdBy;
 
@@ -47,6 +53,7 @@ public class NifiProcessGroupMetadata {
         this.processGroupName = processGroupName;
         this.parentGroupId = parentGroupId;
         this.comments = comments;
+        this.wizardCreated = false;
         this.createdBy = actor;
         this.createdAt = now;
         this.updatedBy = actor;
@@ -59,5 +66,12 @@ public class NifiProcessGroupMetadata {
         this.comments = comments;
         this.updatedBy = actor;
         this.updatedAt = LocalDateTime.now();
+    }
+
+    public void applyWizardSnapshot(String processGroupName, String parentGroupId, String comments,
+                                    String wizardPayload, String actor) {
+        applySnapshot(processGroupName, parentGroupId, comments, actor);
+        this.wizardCreated = true;
+        this.wizardPayload = wizardPayload;
     }
 }

@@ -76,6 +76,7 @@ export function App() {
         />
         <Route path="/etl" element={<Navigate to="/etl/create" replace />} />
         <Route path="/etl/create" element={<EtlCreatePage />} />
+        <Route path="/etl/edit/:processGroupId" element={<EtlCreatePage />} />
         <Route
           path="/etl/manage"
           element={

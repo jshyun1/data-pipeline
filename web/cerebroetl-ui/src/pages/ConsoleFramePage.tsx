@@ -14,6 +14,7 @@ import { Alert, Button, Modal, Result, Spin, message } from "antd";
 import {
   DoubleLeftOutlined,
   DoubleRightOutlined,
+  EditOutlined,
   FileOutlined,
   FolderOutlined,
   ReloadOutlined,
@@ -4698,6 +4699,13 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
     }
   };
 
+  const openWizardEdit = () => {
+    if (!selectedGroupId) {
+      return;
+    }
+    window.open(`/etl/edit/${encodeURIComponent(selectedGroupId)}`, "_blank", "noopener,noreferrer");
+  };
+
   return (
     <>
       <aside
@@ -4865,6 +4873,13 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
                     keyword={logKeyword}
                     onNavigate={navigate}
                   />
+                  {displayNode?.wizardCreated ? (
+                    <div className="nifi-wizard-edit-actions">
+                      <Button icon={<EditOutlined />} size="small" onClick={openWizardEdit}>
+                        생성마법사 편집
+                      </Button>
+                    </div>
+                  ) : null}
                 </section>
               </>
             ) : null}

@@ -112,6 +112,7 @@ public class NifiProcessGroupTreeService {
             return new NifiProcessGroupTreeResponse(groupId, displayName(fallbackName, groupId),
                     fallbackComments,
                     NifiProcessGroupMetadataService.LEGACY_ACTOR,
+                    false,
                     "EMPTY", "WAITING", 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of());
         }
 
@@ -165,6 +166,7 @@ public class NifiProcessGroupTreeService {
                 nodeName,
                 fallbackComments,
                 metadata.getCreatedBy(),
+                metadata.isWizardCreated(),
                 groupType,
                 jobStatus,
                 totalJobCount,

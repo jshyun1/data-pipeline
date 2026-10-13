@@ -11,6 +11,8 @@ import com.company.pipeline.monitoring.NifiExecutionLogEntry;
 import com.company.pipeline.monitoring.NifiExecutionLogEntryRepository;
 import com.company.pipeline.monitoring.NifiProcessorRunRepository;
 import com.company.pipeline.nifi.dto.NifiExecutionLogResponse;
+import com.company.pipeline.nifi.dto.NifiEtlWizardResponse;
+import com.company.pipeline.nifi.dto.NifiEtlWizardSaveRequest;
 import com.company.pipeline.nifi.dto.NifiFileLoadCreateRequest;
 import com.company.pipeline.nifi.dto.NifiFileUploadResponse;
 import com.company.pipeline.nifi.dto.NifiHttpApiTestRequest;
@@ -28,7 +30,9 @@ import com.company.pipeline.nifi.dto.NifiProcessorDetailResponse;
 import com.company.pipeline.nifi.dto.NifiProcessorRunResponse;
 import com.company.pipeline.nifi.dto.NifiUnstructuredLoadCreateRequest;
 import com.company.pipeline.user.AppUser;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.validation.Valid;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -136,8 +140,7 @@ public class NifiController {
             @AuthenticationPrincipal AppUser user
     ) {
         NifiProcessGroupResponse response = nifiClient.createInitialDbToDbFlow(request);
-        processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
-                request.comments(), user);
+        recordWizardCreated(response, request.comments(), request.wizardSnapshot(), user);
         processGroupTreeService.invalidateAfterMutation();
         return ApiResponse.success(response);
     }
@@ -153,8 +156,7 @@ public class NifiController {
             throw new NifiClientException("파일 적재 archive 경로 준비 실패: " + ex.getMessage(), ex);
         }
         NifiProcessGroupResponse response = nifiClient.createFileLoadFlow(request);
-        processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
-                request.comments(), user);
+        recordWizardCreated(response, request.comments(), request.wizardSnapshot(), user);
         processGroupTreeService.invalidateAfterMutation();
         return ApiResponse.success(response);
     }
@@ -165,8 +167,7 @@ public class NifiController {
             @AuthenticationPrincipal AppUser user
     ) {
         NifiProcessGroupResponse response = nifiClient.createHttpLoadFlow(request);
-        processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
-                request.comments(), user);
+        recordWizardCreated(response, request.comments(), request.wizardSnapshot(), user);
         processGroupTreeService.invalidateAfterMutation();
         return ApiResponse.success(response);
     }
@@ -194,8 +195,68 @@ public class NifiController {
 
         String inputDirectory = UNSTRUCTURED_NIFI_ROOT + "/" + folderName + "/";
         NifiProcessGroupResponse response = nifiClient.createUnstructuredLoadFlow(request, inputDirectory);
-        processGroupMetadataService.recordCreated(response.id(), response.name(), response.parentGroupId(),
-                request.comments(), user);
+        recordWizardCreated(response, request.comments(),
+                wizardSnapshotWithInputDirectory(request.wizardSnapshot(), inputDirectory), user);
+        processGroupTreeService.invalidateAfterMutation();
+        return ApiResponse.success(response);
+    }
+
+    @GetMapping("/etl/groups/{groupId}/wizard")
+    public ApiResponse<NifiEtlWizardResponse> getEtlWizard(
+            @PathVariable String groupId
+    ) {
+        NifiProcessGroupMetadata metadata = processGroupMetadataService.findById(groupId)
+                .orElseThrow(() -> new NifiClientException("생성마법사 정보를 찾지 못했습니다.", null));
+        if (!metadata.isWizardCreated()) {
+            throw new NifiClientException("생성마법사로 만든 그룹만 편집할 수 있습니다.", null);
+        }
+        return ApiResponse.success(new NifiEtlWizardResponse(
+                metadata.getProcessGroupId(),
+                metadata.getProcessGroupName(),
+                metadata.getParentGroupId(),
+                metadata.getComments(),
+                metadata.isWizardCreated(),
+                readWizardPayload(metadata.getWizardPayload())
+        ));
+    }
+
+    @PutMapping("/etl/groups/{groupId}/wizard")
+    public ApiResponse<NifiProcessGroupResponse> updateEtlWizard(
+            @PathVariable String groupId,
+            @Valid @RequestBody NifiEtlWizardSaveRequest request,
+            @AuthenticationPrincipal AppUser user
+    ) {
+        NifiProcessGroupMetadata metadata = processGroupMetadataService.findById(groupId)
+                .orElseThrow(() -> new NifiClientException("생성마법사 정보를 찾지 못했습니다.", null));
+        if (!metadata.isWizardCreated()) {
+            throw new NifiClientException("생성마법사로 만든 그룹만 편집할 수 있습니다.", null);
+        }
+        NifiProcessGroupResponse response = switch (request.etlType().trim()) {
+            case "DB_TO_DB" -> {
+                NifiInitialDbToDbCreateRequest flow = requireBody(request.initialDbToDb(), "DB -> DB 적재 정보가 없습니다.");
+                yield nifiClient.updateInitialDbToDbFlow(groupId, flow);
+            }
+            case "FILE_LOAD" -> {
+                NifiFileLoadCreateRequest flow = requireBody(request.fileLoad(), "파일 적재 정보가 없습니다.");
+                prepareFileLoadDirectories(flow.inputDirectory());
+                yield nifiClient.updateFileLoadFlow(groupId, flow);
+            }
+            case "HTTP" -> {
+                NifiHttpLoadCreateRequest flow = requireBody(request.httpLoad(), "HTTP 수집 정보가 없습니다.");
+                yield nifiClient.updateHttpLoadFlow(groupId, flow);
+            }
+            case "UNSTRUCTURED" -> {
+                NifiUnstructuredLoadCreateRequest flow = requireBody(request.unstructuredLoad(), "비정형 전송 정보가 없습니다.");
+                String inputDirectory = request.unstructuredInputDirectory();
+                if (!hasText(inputDirectory)) {
+                    throw new NifiClientException("비정형 전송 입력 경로를 찾지 못했습니다.", null);
+                }
+                yield nifiClient.updateUnstructuredLoadFlow(groupId, flow, inputDirectory.trim());
+            }
+            default -> throw new NifiClientException("지원하지 않는 생성마법사 유형입니다: " + request.etlType(), null);
+        };
+        processGroupMetadataService.updateWizardSnapshot(response.id(), response.name(), response.parentGroupId(),
+                commentsFor(request), wizardPayload(request.wizardSnapshot()), user);
         processGroupTreeService.invalidateAfterMutation();
         return ApiResponse.success(response);
     }
@@ -371,6 +432,64 @@ public class NifiController {
     private void ensureFileLoadDirectory(Path directory) throws IOException {
         Files.createDirectories(directory);
         applyFileLoadOwnerAndPermissions(directory, FILE_LOAD_DIRECTORY_PERMISSIONS);
+    }
+
+    private void recordWizardCreated(NifiProcessGroupResponse response, String comments,
+            JsonNode wizardSnapshot, AppUser user) {
+        processGroupMetadataService.recordWizardCreated(response.id(), response.name(), response.parentGroupId(),
+                comments, wizardPayload(wizardSnapshot), user);
+    }
+
+    private JsonNode readWizardPayload(String wizardPayload) {
+        if (!hasText(wizardPayload)) {
+            return objectMapper.createObjectNode();
+        }
+        try {
+            return objectMapper.readTree(wizardPayload);
+        } catch (Exception ex) {
+            return objectMapper.createObjectNode();
+        }
+    }
+
+    private String wizardPayload(JsonNode wizardSnapshot) {
+        try {
+            return objectMapper.writeValueAsString(wizardSnapshot == null ? objectMapper.createObjectNode() : wizardSnapshot);
+        } catch (Exception ex) {
+            throw new NifiClientException("생성마법사 정보를 저장하지 못했습니다: " + ex.getMessage(), ex);
+        }
+    }
+
+    private JsonNode wizardSnapshotWithInputDirectory(JsonNode wizardSnapshot, String inputDirectory) {
+        ObjectNode node = wizardSnapshot != null && wizardSnapshot.isObject()
+                ? ((ObjectNode) wizardSnapshot).deepCopy()
+                : objectMapper.createObjectNode();
+        node.put("inputDirectory", inputDirectory);
+        return node;
+    }
+
+    private <T> T requireBody(T value, String message) {
+        if (value == null) {
+            throw new NifiClientException(message, null);
+        }
+        return value;
+    }
+
+    private String commentsFor(NifiEtlWizardSaveRequest request) {
+        return switch (request.etlType().trim()) {
+            case "DB_TO_DB" -> request.initialDbToDb() == null ? null : request.initialDbToDb().comments();
+            case "FILE_LOAD" -> request.fileLoad() == null ? null : request.fileLoad().comments();
+            case "HTTP" -> request.httpLoad() == null ? null : request.httpLoad().comments();
+            case "UNSTRUCTURED" -> request.unstructuredLoad() == null ? null : request.unstructuredLoad().comments();
+            default -> null;
+        };
+    }
+
+    private void prepareFileLoadDirectories(String inputDirectory) {
+        try {
+            ensureFileLoadDirectoriesForNifiPath(inputDirectory);
+        } catch (IOException ex) {
+            throw new NifiClientException("파일 적재 archive 경로 준비 실패: " + ex.getMessage(), ex);
+        }
     }
 
     private void applyFileLoadOwnerAndPermissions(Path path, Set<PosixFilePermission> permissions)

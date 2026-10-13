@@ -3,6 +3,7 @@ package com.company.pipeline.nifi.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import com.fasterxml.jackson.databind.JsonNode;
 
 public record NifiHttpLoadCreateRequest(
         @NotBlank
@@ -49,6 +50,8 @@ public record NifiHttpLoadCreateRequest(
         String queryRecordSql,
 
         @Size(max = 512)
-        String primaryKeys
+        String primaryKeys,
+
+        JsonNode wizardSnapshot
 ) {
 }

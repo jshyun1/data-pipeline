@@ -164,6 +164,38 @@ export interface NifiProcessGroupEntity {
   processorCount?: number | null;
 }
 
+export interface EtlWizardSnapshot {
+  version: 1;
+  activeStep?: string;
+  etlType?: "DB_TO_DB" | "FILE_LOAD" | "HTTP" | "UNSTRUCTURED";
+  completedSteps?: string[];
+  basicInfo?: object;
+  connectionInfo?: object;
+  loadMode?: "INSERT" | "TRUNCATE" | "UPSERT";
+  showTruncateSql?: boolean;
+  truncateSql?: string;
+  loadSql?: string;
+  queryRecordSql?: string;
+  sourceColumns?: unknown[];
+  loadSqlColumns?: unknown[];
+  httpSourceJson?: string;
+  httpTestPassed?: boolean;
+  httpTestType?: "JSON_API" | "FILE_DOWNLOAD";
+  targetColumns?: unknown[];
+  columnMappings?: unknown[];
+  inputDirectory?: string;
+  fileColumns?: string[];
+}
+
+export interface NifiEtlWizardResponse {
+  processGroupId: string;
+  processGroupName: string;
+  parentGroupId?: string | null;
+  comments?: string | null;
+  wizardCreated: boolean;
+  wizardSnapshot?: EtlWizardSnapshot | null;
+}
+
 export interface NifiFileUploadResponse {
   folderName: string;
   serverDirectory: string;
@@ -177,6 +209,7 @@ export interface NifiProcessGroupTreeNode {
   name: string;
   comments?: string | null;
   createdBy?: string | null;
+  wizardCreated?: boolean;
   groupType?: "GROUPING" | "JOB" | "EMPTY";
   jobStatus?: "WAITING" | "RUNNING" | "STOPPED" | "FAILED";
   processorCount: number;
@@ -548,6 +581,7 @@ export async function createFileLoadFlow(payload: {
   targetDatabaseType: string;
   targetSchema: string;
   targetTable: string;
+  wizardSnapshot?: EtlWizardSnapshot;
 }): Promise<NifiProcessGroupEntity> {
   const res = await apiClient.post<ApiResponse<NifiProcessGroupEntity>>("/nifi/etl/file-load", payload);
   return unwrap(res.data);
@@ -567,6 +601,7 @@ export async function createHttpLoadFlow(payload: {
   loadMode: "INSERT" | "UPSERT";
   queryRecordSql?: string;
   primaryKeys?: string;
+  wizardSnapshot?: EtlWizardSnapshot;
 }): Promise<NifiProcessGroupEntity> {
   const res = await apiClient.post<ApiResponse<NifiProcessGroupEntity>>("/nifi/etl/http-load", payload);
   return unwrap(res.data);
@@ -580,6 +615,7 @@ export async function createUnstructuredLoadFlow(payload: {
   targetDatabaseType: string;
   targetSchema: string;
   targetTable: string;
+  wizardSnapshot?: EtlWizardSnapshot;
 }): Promise<NifiProcessGroupEntity> {
   const res = await apiClient.post<ApiResponse<NifiProcessGroupEntity>>("/nifi/etl/unstructured-load", payload);
   return unwrap(res.data);
@@ -747,6 +783,7 @@ export interface InitialDbToDbFlowCreateRequest {
   loadSql?: string;
   queryRecordSql?: string;
   primaryKeys?: string;
+  wizardSnapshot?: EtlWizardSnapshot;
 }
 
 export async function createInitialDbToDbFlow(
@@ -759,6 +796,32 @@ export async function createInitialDbToDbFlow(
 export async function getNifiProcessGroupTree(): Promise<NifiProcessGroupTreeNode> {
   const res = await apiClient.get<ApiResponse<NifiProcessGroupTreeNode>>("/nifi/process-group-tree");
   return unwrap<NifiProcessGroupTreeNode>(res.data);
+}
+
+export async function getEtlWizardGroup(groupId: string): Promise<NifiEtlWizardResponse> {
+  const res = await apiClient.get<ApiResponse<NifiEtlWizardResponse>>(
+    `/nifi/etl/groups/${encodeURIComponent(groupId)}/wizard`,
+  );
+  return unwrap<NifiEtlWizardResponse>(res.data);
+}
+
+export async function updateEtlWizardGroup(
+  groupId: string,
+  payload: {
+    etlType: "DB_TO_DB" | "FILE_LOAD" | "HTTP" | "UNSTRUCTURED";
+    initialDbToDb?: InitialDbToDbFlowCreateRequest;
+    fileLoad?: Parameters<typeof createFileLoadFlow>[0];
+    httpLoad?: Parameters<typeof createHttpLoadFlow>[0];
+    unstructuredLoad?: Parameters<typeof createUnstructuredLoadFlow>[0];
+    wizardSnapshot: EtlWizardSnapshot;
+    unstructuredInputDirectory?: string;
+  },
+): Promise<NifiProcessGroupEntity> {
+  const res = await apiClient.put<ApiResponse<NifiProcessGroupEntity>>(
+    `/nifi/etl/groups/${encodeURIComponent(groupId)}/wizard`,
+    payload,
+  );
+  return unwrap<NifiProcessGroupEntity>(res.data);
 }
 
 export async function refreshNifiProcessGroupTree(): Promise<NifiProcessGroupTreeNode> {
