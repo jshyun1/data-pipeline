@@ -2578,7 +2578,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
   const navigate = useNavigate();
   const [tree, setTree] = useState<NifiProcessGroupTreeNode | null>(null);
   const treeRef = useRef<NifiProcessGroupTreeNode | null>(null);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(["root"]));
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2606,7 +2606,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
         setError(null);
         onTreeChange?.(result);
         if (resetExpanded) {
-          setExpandedIds(new Set());
+          setExpandedIds(new Set(["root"]));
         }
         if (syncCatalog) {
           try {
@@ -2654,18 +2654,6 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
       cleanupRequest();
     };
   }, [loadTree]);
-
-  useEffect(() => {
-    const selected = findTreeNode(tree, activeGroupId);
-    if (!selected) {
-      return;
-    }
-    setExpandedIds((previous) => {
-      const next = new Set(previous);
-      selected.path.forEach((node) => next.add(node.id));
-      return next;
-    });
-  }, [activeGroupId, tree]);
 
   const openGroup = (groupId: string) => {
     navigate(`/etl/manage?processGroupId=${encodeURIComponent(groupId)}`);
