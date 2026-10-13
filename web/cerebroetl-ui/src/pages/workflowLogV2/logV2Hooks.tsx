@@ -9,12 +9,12 @@ import {
   retryAirflowTasks,
   type AirflowTaskInstance,
 } from "../../api/platform";
-import { groupJobs, jobKeyOf } from "./logV2Data";
+import { groupJobs, jobKeyOf, settledRowsOf } from "./logV2Data";
 import { hasLiveTasks, isLiveRun, LIVE_REFRESH_MS } from "./logV2Live";
 
 /**
  * 한 실행의 task 목록과(성공 task 의) 로그. 목록 행·상세 창·타임라인이 같은 캐시 키를 써서 한 번만 받는다.
- * 적재 건수는 성공 task 로그에서 읽는다 - 기존 화면과 같은 방식이다.
+ * 적재 건수는 실행 원장의 최종 건수를 먼저 보고, 원장에 없으면 성공 task 로그에서 읽는다(2026-10-13).
  *
  * <p>실행 중이면(2026-10-06) task 를 3초마다 받고, 아직 끝나지 않은 job 의 «지금까지 적재 건수»를 실행 원장에서 읽어
  * {@code progress}(노드 키 → 건수)로 준다 - NiFi 완료 감시가 실행 중에 2초 판정마다 원장에 적는다. 다 끝나면 화면 주기로 돌아간다.
@@ -45,11 +45,12 @@ export function useRunTasks(
       staleTime: Infinity,
     })),
   });
+  // 실행 중에는 진행 건수, 끝난 job 은 최종 건수를 원장에서 읽는다(2026-10-13 - 끝난 실행도 받는다). task 목록과 같은 주기다.
   const ledgerQuery = useQuery({
     queryKey: ["logv2-ledger", runId],
     queryFn: () => listJobRunsOfDagRun(runId!),
-    enabled: enabled && withLogs && live && Boolean(runId),
-    refetchInterval: LIVE_REFRESH_MS,
+    enabled: enabled && withLogs && Boolean(runId),
+    refetchInterval: live ? LIVE_REFRESH_MS : refreshSeconds * 1000,
   });
   const jobs = tasks ? groupJobs(tasks) : undefined;
   // 받은 로그만 담는다. 아직 못 받은 task 는 빠져 있고, 화면은 그 칸을 «…»로 둔다.
@@ -69,7 +70,13 @@ export function useRunTasks(
     });
     return out;
   }, [ledger, live]);
-  return { tasksQuery, tasks, jobs, logs, progress };
+  // 끝난 job 의 최종 적재 건수(노드 키 → 건수). 닫힌 원장 행만 본다. undefined = 아직 받는 중(화면은 «…»).
+  // 원장 조회가 안 되면(권한 · 옛 백엔드) 빈 값으로 두어 예전처럼 await 로그에서 읽게 한다.
+  const settled = useMemo(() => {
+    if (!enabled || !withLogs || !runId || ledgerQuery.isError) return {};
+    return ledger ? settledRowsOf(ledger) : undefined;
+  }, [ledger, ledgerQuery.isError, enabled, withLogs, runId]);
+  return { tasksQuery, tasks, jobs, logs, progress, settled };
 }
 
 /**

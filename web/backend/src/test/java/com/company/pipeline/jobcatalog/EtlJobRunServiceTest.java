@@ -144,4 +144,37 @@ class EtlJobRunServiceTest {
         assertThat(run.getEndedAt()).isNull();
         assertThat(run.getStatus()).isEqualTo(EtlJobRun.STATUS_RUNNING);
     }
+
+    @Test
+    void 워크플로우가_연_실행은_추출로_오래_조용해도_닫지_않는다() {
+        // 추출이 1분 넘게 걸리는 동안 적재 프로세서가 조용했다 - 예전에는 45초 뒤 «성공 0건»으로 닫혀 완료 신호가 새 행으로 갔다(2026-10-13).
+        EtlJobRun run = new EtlJobRun(7L, T0);
+        run.adoptByWorkflow("token", "wf", "node", "manual__1", "node.open_run");
+        when(runRepository.findByEndedAtIsNull()).thenReturn(List.of(run));
+
+        int closed = service.closeIdleRuns(T0.plusSeconds(120), 45);
+
+        assertThat(closed).isZero();
+        assertThat(run.getEndedAt()).isNull();
+        assertThat(run.getStatus()).isEqualTo(EtlJobRun.STATUS_RUNNING);
+    }
+
+    @Test
+    void 워크플로우가_연_실행을_아무도_마감하지_않으면_오래_뒤_실패로_정리하고_판정은_비워_둔다() {
+        EtlJobRun run = new EtlJobRun(7L, T0);
+        run.adoptByWorkflow("token", "wf", "node", "manual__1", "node.open_run");
+        run.observeActivity(T0.plusSeconds(30), 10L);
+        when(runRepository.findByEndedAtIsNull()).thenReturn(List.of(run));
+
+        int closed = service.closeIdleRuns(T0.plusSeconds(30 + EtlJobRunService.WORKFLOW_ABANDON_SECONDS + 1), 45);
+
+        assertThat(closed).isEqualTo(1);
+        assertThat(run.getStatus()).isEqualTo(EtlJobRun.STATUS_FAILED);
+        assertThat(run.getEndedAt()).isEqualTo(T0.plusSeconds(30));
+        assertThat(run.getErrorMessage()).contains("3시간");
+        assertThat(run.getCompletionSource()).isNull();
+        // 늦게라도 실제 판정이 오면 덮어쓴다.
+        run.completeBy(EtlJobRun.SOURCE_CALLBACK, EtlJobRun.STATUS_SUCCESS, 10L, null, T0.plusSeconds(40));
+        assertThat(run.getStatus()).isEqualTo(EtlJobRun.STATUS_SUCCESS);
+    }
 }

@@ -15,7 +15,7 @@ import {
   type AirflowDagRun,
   type AirflowTaskInstance,
 } from "../../api/platform";
-import { listEtlJobs } from "../../api/etlJobs";
+import { listEtlJobs, type JobRunLedgerView } from "../../api/etlJobs";
 import { categorizeDag, type DagCategory } from "../../utils/dagHistory";
 
 export type BusinessCategory = Exclude<DagCategory, "기타">;
@@ -338,8 +338,13 @@ export function countValue(text: string) {
 /**
  * job 의 «적재 / 결과» 문구. 실패는 로그 버튼을 그리므로 빈 문자열.
  * 아직 끝나지 않은 job 은 실행 원장의 «지금까지 적재 건수»({@code progress}, 노드 키 → 건수)가 있으면 그것을 적는다(2026-10-06).
+ *
+ * <p>끝난 job 은 실행 원장의 최종 건수({@code settled})를 먼저 본다(2026-10-13). 예전에는 await 로그 문구만 읽었는데, 짧은 job 은
+ * 그 문구가 «적재 건수: 없음»으로 찍혀(콜백이 NiFi 조회보다 먼저 닫음) 실제 43 · 4,598행이 0행으로 보였다 - 원장에는 맞게 있었다.
+ * 원장에 건수가 없는 실행(완료 감시 이전 · 카운터 없는 job)만 로그에서 읽는다. {@code settled} 가 undefined 면 원장을 받는 중이라 «…».
  */
-export function jobOutcome(job: JobGroup, logs?: Record<string, string>, progress?: Record<string, number>) {
+export function jobOutcome(job: JobGroup, logs?: Record<string, string>, progress?: Record<string, number>,
+                           settled?: Record<string, number>) {
   if (job.state === "failed") return "";
   if (job.state === "upstream_failed") return "선행 작업 실패로 미실행";
   if (job.kind === "cdc") return job.state === "success" ? "지시 보냄" : "-";
@@ -348,8 +353,32 @@ export function jobOutcome(job: JobGroup, logs?: Record<string, string>, progres
     const rows = jobProgress(job, progress);
     return rows != null ? `${rows.toLocaleString()}행` : "-";
   }
+  if (settled === undefined) return "…";
+  const rows = settled[job.key];
+  if (rows != null) return `${rows.toLocaleString()}행`;
   const counted = job.steps.find((step) => step.task_id.endsWith(".await")) ?? job.steps.at(-1)!;
   return logs && counted.task_id in logs ? loadCountOf(logs[counted.task_id]) : "…";
+}
+
+/** 끝난 job 의 최종 적재 건수(노드 키 → 건수). 닫힌 원장 행만 본다 - 한 노드가 재시도로 여러 번 열렸으면 마지막 것(시작 순 정렬). */
+export function settledRowsOf(ledger: JobRunLedgerView[]) {
+  const out: Record<string, number> = {};
+  ledger.forEach((run) => {
+    if (run.nodeKey && run.endedAt && run.rowsProcessed != null) out[run.nodeKey] = run.rowsProcessed;
+  });
+  return out;
+}
+
+/** 단계 줄의 «적재 / 결과». await 는 job 줄과 같은 숫자(원장 최종 건수)를 먼저 쓴다 - 둘이 다르게 보이지 않게. */
+export function stepOutcome(step: AirflowTaskInstance, logs?: Record<string, string>, settled?: Record<string, number>) {
+  if (step.state === "upstream_failed") return "선행 작업 실패로 미실행";
+  if (step.state !== "success") return "-";
+  if (step.task_id.endsWith(".await")) {
+    if (settled === undefined) return "…";
+    const rows = settled[jobKeyOf(step.task_id)];
+    if (rows != null) return `${rows.toLocaleString()}행`;
+  }
+  return logs && step.task_id in logs ? loadCountOf(logs[step.task_id]) : "…";
 }
 
 /** 아직 끝나지 않은 job 의 «지금까지 적재 건수». 끝났거나 모르면 undefined. */

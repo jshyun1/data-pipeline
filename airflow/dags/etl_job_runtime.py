@@ -77,15 +77,32 @@ def start_pg(node: dict, **_) -> dict:
     return baseline
 
 
-def stop_pg(node: dict, **_) -> None:
+def stop_pg(node: dict, **context) -> None:
     """실패해도 반드시 정지시켜야 다음 주기에 다시 트리거된다(trigger_rule=all_done)."""
     try:
         nifi.stop_group(node["nifi_pg_id"], node.get("name", ""))
     except Exception as exc:
         print(f"[{node.get('name')}] 그룹 정지 실패(다음 실행에 영향 가능): {exc}")
+    _fail_if_never_awaited(node, context)
 
 
-def _callback_state(run_token: str) -> tuple[str, str]:
+def _fail_if_never_awaited(node: dict, context: dict) -> None:
+    """완료 대기가 성공하지 못했으면 원장을 실패로 닫는다(2026-10-13).
+
+    시작(start_pg)이 실패하면 완료 대기는 돌지 않아(upstream_failed) 아무도 원장을 닫지 않는다. 예전에는
+    백엔드 유휴 정리가 45초 뒤 «성공 0건»으로 닫았다 - 10/13 1차 실행의 DZ_COM001M(원장 219)은 컨트롤러 서비스가
+    꺼져 시작에 실패했는데 원장에는 성공으로 남았다. 유휴 정리가 워크플로우 행을 닫지 않게 바꿨으므로 여기서 닫는다.
+
+    완료 대기가 실패한 경우는 그쪽이 이미 실패를 보고했다. 원장은 먼저 온 판정을 지키므로 여기서 다시 보내도 바뀌지 않는다.
+    """
+    task_instance = context["task_instance"]
+    if task_instance.xcom_pull(task_ids=f"{node['key']}.await", key="return_value"):
+        return
+    run_token = task_instance.xcom_pull(task_ids=f"{node['key']}.open_run", key="return_value") or ""
+    _report_failed(run_token, f"[{node.get('name')}] 완료 대기 전에 중단됨 - NiFi 시작(start_pg) 단계 로그 확인")
+
+
+def _callback_state(run_token: str) -> tuple[str, str, int | None]:
     """백엔드 원장 상태. 콜백(플랜 B-1)이나 관측 마감이 닫았으면 여기서 잡힌다.
 
     <b>completion_source가 있는 마감만 신뢰한다.</b> 원장에는 유휴 정리
@@ -95,18 +112,18 @@ def _callback_state(run_token: str) -> tuple[str, str]:
     태스크가 성공으로 끝난 사고가 있었다(2026-08-31).
     """
     if not run_token:
-        return "", ""
+        return "", "", None
     try:
         run = _get(f"/api/etl/job-runs/{run_token}")
         if not (run.get("completionSource") or ""):
-            return "", ""
-        return (run.get("status") or ""), (run.get("errorMessage") or "")
+            return "", "", None
+        return (run.get("status") or ""), (run.get("errorMessage") or ""), run.get("rowsProcessed")
     except Exception as exc:
         print(f"원장 조회 실패(이번 주기 건너뜀): {exc}")
-        return "", ""
+        return "", "", None
 
 
-def await_completion(node: dict, **context) -> None:
+def await_completion(node: dict, **context) -> str:
     """완료 대기. 1순위 콜백, 2순위 유휴 추측.
 
     유휴 판정 기준은 기존 로직 그대로다 - 시작 직후에도 queued/active가 0이라
@@ -121,6 +138,8 @@ def await_completion(node: dict, **context) -> None:
     except Exception as exc:
         _report_failed(run_token, str(exc))
         raise
+    # 정지 단계(_fail_if_never_awaited)가 «완료 대기가 끝까지 돌았다»를 이 값으로 안다.
+    return "done"
 
 
 def _await_completion(node: dict, run_token: str, **context) -> None:
@@ -147,12 +166,12 @@ def _await_completion(node: dict, run_token: str, **context) -> None:
 
     while time.time() < deadline:
         # 1순위: 콜백/관측기가 원장을 닫았는가
-        status, error_message = _callback_state(run_token)
+        status, error_message, ledger_rows = _callback_state(run_token)
         if status == "FAILED":
             raise RuntimeError(f"[{pg_name}] job 실패(콜백): {error_message}")
         if status == "SUCCESS":
             print(f"[{pg_name}] 완료(콜백 확정)")
-            nifi.print_load_summary(pg_name, token, baseline, processor_names)
+            _print_callback_load_summary(pg_id, pg_name, token, baseline, processor_names, ledger_rows)
             # 콜백이 성공이라 해도 이번 실행에서 ERROR bulletin을 봤으면 실패다.
             # 유휴 경로에만 이 검사가 있어서, 콜백 경로로 빠지면 오류가 묻혔다.
             nifi.fail_if_errors(pg_name, errors)
@@ -208,6 +227,28 @@ def _await_completion(node: dict, run_token: str, **context) -> None:
     raise RuntimeError(
         f"[{pg_name}] {timeout}초 안에 완료되지 않음 (queued={queued}, activeThreads={active}). "
         "백프레셔로 막혔거나 하류가 소비하지 못하고 있을 수 있음")
+
+
+def _print_callback_load_summary(pg_id: str, pg_name: str, token: str, baseline: dict,
+                                 processor_names: dict, ledger_rows) -> None:
+    """콜백으로 끝났을 때의 «이번 실행 적재 건수» 줄(화면이 이 줄에서 건수를 읽는다).
+
+    프로세서 이름은 유휴 판정용 NiFi 조회 때만 모인다. 짧은 job 은 첫 조회 전에 콜백이 닫아서 이름이 비고,
+    그래서 실제로는 43 · 4,598행을 넣었는데 «적재 건수: 없음»(화면 0행)으로 남았다(2026-10-13 DZ_COM001M · 002L).
+    이름이 비었으면 여기서 한 번 조회하고, 그래도 0이면 NiFi 완료 감시가 원장에 적은 건수로 적는다.
+    """
+    if not processor_names:
+        try:
+            processor_names = nifi.processor_names_of(pg_id, token)
+        except Exception as exc:  # 건수 표시는 부가 정보라 못 읽어도 성공은 그대로다
+            print(f"[{pg_name}] 프로세서 목록 조회 실패(원장 건수로 표시): {exc}")
+    rows = nifi.print_load_summary(pg_name, token, baseline, processor_names, quiet_when_empty=True)
+    if rows:
+        return
+    if ledger_rows:
+        print(f"[{pg_name}] 이번 실행 적재 건수 (총 {int(ledger_rows):,}행) - NiFi 완료 감시 기준")
+    else:
+        print(f"[{pg_name}] 이번 실행 적재 건수: 없음")
 
 
 # 원장은 몇 초마다 본다(가벼운 단일 행 조회). NiFi 상태 조회(무거움)는 지금처럼 WAIT_POLL_INTERVAL_SECONDS 마다만 한다.
