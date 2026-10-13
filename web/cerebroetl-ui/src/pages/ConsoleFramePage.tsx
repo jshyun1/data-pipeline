@@ -4926,6 +4926,7 @@ export function ConsoleFramePage({
   const [isDetailPanelCollapsed, setIsDetailPanelCollapsed] = useState(false);
   const [frameChromeReady, setFrameChromeReady] = useState(!showProcessGroupTree);
   const [detailPanelWidth, setDetailPanelWidth] = useState(NIFI_DETAIL_PANEL_DEFAULT_WIDTH);
+  const [nifiProcessorDialogOpen, setNifiProcessorDialogOpen] = useState(false);
   const [jobCatalogReloadKey, setJobCatalogReloadKey] = useState(0);
   const processGroupTreeRef = useRef<NifiProcessGroupTreeNode | null>(null);
   const processGroupIdRef = useRef<string | null>(null);
@@ -4965,7 +4966,24 @@ export function ConsoleFramePage({
 
   useEffect(() => {
     setFrameChromeReady(!showProcessGroupTree);
+    setNifiProcessorDialogOpen(false);
   }, [frameKey, frameSrc, showProcessGroupTree]);
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.source !== frameRef.current?.contentWindow) {
+        return;
+      }
+      const data = event.data;
+      if (!data || typeof data !== "object" || data.type !== "cerebro:nifi-processor-dialog") {
+        return;
+      }
+      setNifiProcessorDialogOpen(Boolean(data.open));
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
 
   useEffect(() => {
     if (!showProcessGroupTree || frameChromeReady) {
@@ -5079,8 +5097,8 @@ export function ConsoleFramePage({
       chromeHidden = hideToolChrome(frame);
       patchKoreanTooltips(frame);
       installNifiPanelLayout(frame);
+      installProcessorDialogViewportFit(frame);
     }
-    installProcessorDialogViewportFit(frame);
     installProcessorEditReadonlyGuard(frame, processorEditLockFrameState);
     clickNifiMenuItem(frame, nifiAutoOpenMenuTitles);
     if (showProcessGroupTree) {
@@ -5136,7 +5154,10 @@ export function ConsoleFramePage({
     : undefined;
 
   return (
-    <div className={`console-page${showProcessGroupTree ? " console-page--with-panels" : ""}`} style={consolePageStyle}>
+    <div
+      className={`console-page${showProcessGroupTree ? " console-page--with-panels" : ""}${nifiProcessorDialogOpen ? " console-page--nifi-dialog-open" : ""}`}
+      style={consolePageStyle}
+    >
       {showProcessGroupTree ? (
         <div className={`console-side console-side-left${isTreePanelCollapsed ? " collapsed" : ""}`}>
           <button

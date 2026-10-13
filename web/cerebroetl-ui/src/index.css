@@ -3014,8 +3014,8 @@ button.airflow-task-name:hover {
 }
 
 .etl-target-column-row.drop-target {
-  background: #eefaf0;
-  box-shadow: inset 0 0 0 2px rgb(163, 204, 163);
+  background: #8ee6a3;
+  box-shadow: inset 0 0 0 2px #22a447;
 }
 
 .etl-target-column-row.drop-target strong {
@@ -5579,6 +5579,15 @@ button.alert-compact-trigger.is-clear:hover {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #ffffff;
+}
+
+.console-page--nifi-dialog-open > .console-frame-shell {
+  position: fixed;
+  inset: var(--app-offset) 0 0 0;
+  z-index: 100020;
+  width: auto;
+  height: auto;
+  border-radius: 0;
 }
 
 .console-side {

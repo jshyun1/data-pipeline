@@ -1986,7 +1986,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..8b1bb2375e7d5b8b323ec47fc152b95d92701ad6
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ui.ts
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,278 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -2004,6 +2004,21 @@ index 0000000000000000000000000000000000000000..8b1bb2375e7d5b8b323ec47fc152b95d
 +const PROCESSOR_DIALOG_MARGIN = 8;
 +const PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE = 'data-cerebro-processor-dialog-fit-target';
 +const PROCESSOR_DIALOG_SCALED_ATTRIBUTE = 'data-cerebro-processor-dialog-scaled';
++const PROCESSOR_DIALOG_MESSAGE_TYPE = 'cerebro:nifi-processor-dialog';
++
++function notifyProcessorDialogOpen(open: boolean): void {
++    try {
++        window.parent?.postMessage(
++            {
++                type: PROCESSOR_DIALOG_MESSAGE_TYPE,
++                open
++            },
++            '*'
++        );
++    } catch {
++        // 부모 창 접근이 막힌 환경에서는 NiFi 내부 크기만 맞춘다.
++    }
++}
 +
 +function resetProcessorDialogPane(pane: Element): void {
 +    pane.removeAttribute(PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE);
@@ -2042,6 +2057,41 @@ index 0000000000000000000000000000000000000000..8b1bb2375e7d5b8b323ec47fc152b95d
 +    return panes.find(isProcessorEditDialog) ?? null;
 +}
 +
++function processorDialogViewport(): { width: number; height: number; left: number; top: number } {
++    const fallback = {
++        width: window.innerWidth,
++        height: window.innerHeight,
++        left: PROCESSOR_DIALOG_MARGIN,
++        top: PROCESSOR_DIALOG_MARGIN
++    };
++
++    try {
++        const frame = window.frameElement;
++        if (!(frame instanceof HTMLElement) || !window.parent) {
++            return fallback;
++        }
++
++        const rect = frame.getBoundingClientRect();
++        const parentWidth = window.parent.visualViewport?.width ?? window.parent.innerWidth;
++        const parentHeight = window.parent.visualViewport?.height ?? window.parent.innerHeight;
++        const visibleLeft = Math.max(rect.left, 0);
++        const visibleTop = Math.max(rect.top, 0);
++        const visibleRight = Math.min(rect.right, parentWidth);
++        const visibleBottom = Math.min(rect.bottom, parentHeight);
++        const visibleWidth = Math.max(1, visibleRight - visibleLeft);
++        const visibleHeight = Math.max(1, visibleBottom - visibleTop);
++
++        return {
++            width: Math.min(window.innerWidth, visibleWidth),
++            height: Math.min(window.innerHeight, visibleHeight),
++            left: Math.max(PROCESSOR_DIALOG_MARGIN, visibleLeft - rect.left + PROCESSOR_DIALOG_MARGIN),
++            top: Math.max(PROCESSOR_DIALOG_MARGIN, visibleTop - rect.top + PROCESSOR_DIALOG_MARGIN)
++        };
++    } catch {
++        return fallback;
++    }
++}
++
 +function fitProcessorDialog(): void {
 +    const root = document.documentElement;
 +    const pane = findProcessorDialogPane();
@@ -2055,11 +2105,14 @@ index 0000000000000000000000000000000000000000..8b1bb2375e7d5b8b323ec47fc152b95d
 +
 +    if (!pane) {
 +        root.removeAttribute(PROCESSOR_DIALOG_SCALED_ATTRIBUTE);
++        notifyProcessorDialogOpen(false);
 +        return;
 +    }
 +
-+    const availableWidth = Math.max(1, window.innerWidth - PROCESSOR_DIALOG_MARGIN * 2);
-+    const availableHeight = Math.max(1, window.innerHeight - PROCESSOR_DIALOG_MARGIN * 2);
++    notifyProcessorDialogOpen(true);
++    const viewport = processorDialogViewport();
++    const availableWidth = Math.max(1, viewport.width - PROCESSOR_DIALOG_MARGIN * 2);
++    const availableHeight = Math.max(1, viewport.height - PROCESSOR_DIALOG_MARGIN * 2);
 +    const scale = Math.max(
 +        0.3,
 +        Math.min(1, availableWidth / PROCESSOR_DIALOG_BASE_WIDTH, availableHeight / PROCESSOR_DIALOG_BASE_HEIGHT)
@@ -2078,13 +2131,13 @@ index 0000000000000000000000000000000000000000..8b1bb2375e7d5b8b323ec47fc152b95d
 +    root.style.setProperty('--cerebro-processor-dialog-scale', scale.toFixed(4));
 +    root.style.setProperty('--cerebro-processor-dialog-width', `${PROCESSOR_DIALOG_BASE_WIDTH}px`);
 +    root.style.setProperty('--cerebro-processor-dialog-height', `${scaledHeight}px`);
-+    root.style.setProperty('--cerebro-processor-dialog-left', `${PROCESSOR_DIALOG_MARGIN}px`);
-+    root.style.setProperty('--cerebro-processor-dialog-top', `${PROCESSOR_DIALOG_MARGIN}px`);
++    root.style.setProperty('--cerebro-processor-dialog-left', `${viewport.left}px`);
++    root.style.setProperty('--cerebro-processor-dialog-top', `${viewport.top}px`);
 +
 +    pane.style.setProperty('position', 'fixed', 'important');
 +    pane.style.setProperty('inset', 'auto', 'important');
-+    pane.style.setProperty('left', `${PROCESSOR_DIALOG_MARGIN}px`, 'important');
-+    pane.style.setProperty('top', `${PROCESSOR_DIALOG_MARGIN}px`, 'important');
++    pane.style.setProperty('left', `${viewport.left}px`, 'important');
++    pane.style.setProperty('top', `${viewport.top}px`, 'important');
 +    pane.style.setProperty('width', `${PROCESSOR_DIALOG_BASE_WIDTH}px`, 'important');
 +    pane.style.setProperty('max-width', 'none', 'important');
 +    pane.style.setProperty('height', `${scaledHeight}px`, 'important');
@@ -2108,8 +2161,20 @@ index 0000000000000000000000000000000000000000..8b1bb2375e7d5b8b323ec47fc152b95d
 +
 +    const observer = new MutationObserver(schedule);
 +    observer.observe(document.documentElement, { childList: true, subtree: true });
++    const frameResizeObserver = window.ResizeObserver && window.frameElement instanceof HTMLElement
++        ? new ResizeObserver(schedule)
++        : null;
++    if (window.frameElement instanceof HTMLElement) {
++        frameResizeObserver?.observe(window.frameElement);
++    }
 +    window.addEventListener('resize', schedule);
 +    window.visualViewport?.addEventListener('resize', schedule);
++    try {
++        window.parent?.addEventListener('resize', schedule);
++        window.parent?.visualViewport?.addEventListener('resize', schedule);
++    } catch {
++        // 부모 창 접근이 막힌 환경에서는 iframe 내부 크기만 기준으로 맞춘다.
++    }
 +    schedule();
 +}
 +
