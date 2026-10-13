@@ -6,7 +6,7 @@ import { Column } from "@ant-design/plots";
 import type { Dayjs } from "dayjs";
 import { getDashboardTop5, type Top5Item, type Top5Metric } from "../api/dashboard";
 import { ChartEmptyState } from "./ChartEmptyState";
-import { refitAfterLayout } from "./chartFit";
+import { refitAfterLayout, zeroSafeYScale } from "./chartFit";
 
 // 하단 Job Top 5 — 건수/소요시간/실패 구분. 상단 RangePicker(from~to) 날짜범위를 그대로 따른다.
 // 값은 차트와 툴팁으로만 보여준다(막대 옆 목록은 화면이 복잡해져 걷어냄).
@@ -59,6 +59,7 @@ export function JobTop5Card({ title, from, to }: { title: string; from: Dayjs; t
               data={items}
               xField="label"
               yField="value"
+              scale={{ y: zeroSafeYScale(items.map((item) => item.value)) }}
               style={{ maxWidth: 24, radiusTopLeft: 4, radiusTopRight: 4 }}
               // labelAutoRotate 는 «축에 넣을 자리가 있는지» 를 마운트 시점 크기로 한 번
               // 판단하고 끝난다. 이 카드는 flex 안에 절대배치라 그 순간 높이가 확정되지 않아,
@@ -67,7 +68,7 @@ export function JobTop5Card({ title, from, to }: { title: string; from: Dayjs; t
               // 대시보드의 다른 차트들과 같이 회전 대신 말줄임을 쓴다 - 크기 판단에 기대지 않는다.
               axis={{
                 x: { labelAutoHide: false, labelAutoRotate: false, labelAutoEllipsis: true },
-                y: { nice: true },
+                y: {},
               }}
               tooltip={{
                 title: (d: { label: string }) => d.label,

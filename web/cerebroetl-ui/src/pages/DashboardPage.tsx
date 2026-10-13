@@ -38,11 +38,12 @@ import { categorizeDag, NIFI_METRICS_COLLECTOR_DAG_ID, resolveDagDisplayName, ty
 import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
 import { InfraRegion } from "../components/InfraRegion";
 import { ActionQueuePanel } from "../components/ActionQueuePanel";
-import { refitAfterLayout } from "../components/chartFit";
+import { refitAfterLayout, zeroSafeYScale } from "../components/chartFit";
 import { activeDayPreset, dayPresetRange } from "../components/dayPreset";
 import { JobTop5Card } from "../components/JobTop5Card";
 import { ChangeIndicator, MetricRow, NowDivider, TimeBadge } from "../components/kpi/kpiBits";
 import { formatRecovery, judgeCdcFlow } from "../components/kpi/flowState";
+import { CDC_COMMAND_LABEL } from "../utils/cdcLabels";
 
 const { RangePicker } = DatePicker;
 
@@ -267,11 +268,68 @@ function toDailyHourBuckets(points: HourlyLoadPointResponse[]) {
     );
 }
 
+/**
+ * 고른 시간대 한 구간을 1시간 단위로 펼친다(2026-10-13 요청).
+ * 날짜가 여러 날이면 날짜별로 나란히 선다 - 그래서 막대는 «시간 × 날짜» 격자를 채운다.
+ */
+function toHourRows(points: HourlyLoadPointResponse[], bucketIndex: number) {
+  const start = bucketIndex * HOURS_PER_BUCKET;
+  const hours = Array.from({ length: HOURS_PER_BUCKET }, (_, index) => start + index);
+  const byDateHour = new Map<string, number>();
+  const dates = new Set<string>();
+  points.forEach((point) => {
+    dates.add(point.date);
+    if (point.hour >= start && point.hour < start + HOURS_PER_BUCKET) {
+      const key = `${point.date}|${point.hour}`;
+      byDateHour.set(key, (byDateHour.get(key) ?? 0) + point.count);
+    }
+  });
+  return Array.from(dates)
+    .sort()
+    .flatMap((date) =>
+      hours.map((hour) => ({
+        date: formatLoadDate(date),
+        hour: `${String(hour).padStart(2, "0")}시`,
+        count: byDateHour.get(`${date}|${hour}`) ?? 0,
+      })),
+    );
+}
+
+/**
+ * 차트 오른쪽 위 시간대 단추(예전 범례 자리). 색은 막대와 같아 범례 노릇도 한다.
+ *
+ * <p>예전 범례는 누르면 그 시간대를 «빼고» 그렸다 - 요청대로 누른 시간대«만» 1시간 단위로 보여 주도록 바꿨다
+ * (2026-10-13). 다시 누르거나 «전체»를 누르면 네 구간 묶음으로 돌아온다.
+ */
+function HourBucketPicker({ range, active, onSelect }: {
+  range: string[];
+  active: number | null;
+  onSelect: (index: number | null) => void;
+}) {
+  return (
+    <div className="hour-bucket-picker" role="group" aria-label="시간대 고르기">
+      <button type="button" className={active === null ? "is-active" : undefined}
+              onClick={() => onSelect(null)}>전체</button>
+      {HOUR_BUCKET_LABELS.map((label, index) => (
+        <button key={label} type="button" className={active === index ? "is-active" : undefined}
+                aria-pressed={active === index}
+                title={active === index ? "다시 누르면 전체로 돌아갑니다" : `${label}를 1시간 단위로 봅니다`}
+                onClick={() => onSelect(active === index ? null : index)}>
+          <span className="hour-bucket-dot" style={{ background: range[index] }} />
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 interface ChartPanelProps {
   title: string;
   loading: boolean;
   hasData: boolean;
   emptyText: string;
+  /** 카드 제목 줄 오른쪽(시간대 단추 등). */
+  extra?: ReactNode;
   children: ReactNode;
 }
 
@@ -280,9 +338,9 @@ interface ChartPanelProps {
  * 고정 높이를 쓰지 않는다). autoFit이 컨테이너 크기를 읽을 수 있도록 실제 크기가 있는
  * 상자를 하나 두고 그 안에 절대배치한다.
  */
-function ChartPanel({ title, loading, hasData, emptyText, children }: ChartPanelProps) {
+function ChartPanel({ title, loading, hasData, emptyText, extra, children }: ChartPanelProps) {
   return (
-    <Card className="dashboard-panel dashboard-chart-card" title={title} loading={loading}>
+    <Card className="dashboard-panel dashboard-chart-card" title={title} loading={loading} extra={extra}>
       {hasData ? (
         <div className="chart-fit-shell">{children}</div>
       ) : (
@@ -322,8 +380,44 @@ function hourBucketScale(range: string[]) {
   return { color: { domain: HOUR_BUCKET_LABELS, range } };
 }
 
-const HOUR_BUCKET_LEGEND = {
-  color: { position: "top" as const, layout: { justifyContent: "flex-end" }, itemLabelFontSize: 11 },
+/**
+ * 막대마다 그 시간대를 적는다(2026-10-13 요청) - 색만으로는 어느 시간대인지 알기 어려웠다.
+ *
+ * <p>막대 안이 아니라 축 바로 아래 줄에 적고, 날짜는 그 아래 줄로 내린다(`BUCKET_X_AXIS`).
+ * 막대가 짧으면 안에 적은 글자가 안 보이고, 흰 글자는 연한 구간에서 묻혔다.
+ * 자리가 모자라면 `overlapHide` 가 겹치는 글자를 숨긴다 - 조회 기간이 길 때 글자가 뭉개지지 않는다.
+ */
+const BUCKET_BAR_LABEL = {
+  text: (datum: { bucket: string }) => datum.bucket.replace("시", ""),
+  position: "bottom" as const,
+  dy: 14,
+  fontSize: 10,
+  fill: "#8c8c8c",
+  textAlign: "center" as const,
+  transform: [{ type: "overlapHide" as const }],
+};
+
+/** 시간대 글자가 축 바로 아래 줄을 쓰므로 날짜는 한 단 더 내린다(labelSpacing). */
+const BUCKET_X_AXIS = { labelAutoRotate: false, labelAutoHide: false, labelAutoEllipsis: true, labelSpacing: 22 };
+
+/**
+ * 한 계열색에서 밝기 단계를 만든다. 1시간 단위 화면은 날짜별로 막대가 갈리는데, 날짜 수가
+ * 정해져 있지 않아 고정 색표를 쓸 수 없다(4색을 돌려쓰면 같은 색이 겹친다).
+ *
+ * <p>흰색 쪽이 아니라 검은색 쪽으로 어둡게 내려간다 - 00~06시처럼 바탕색이 이미 연한
+ * 구간에서는 흰색과 섞으면 첫 막대가 거의 안 보였다.
+ */
+function dateShades(base: string, count: number) {
+  const rgb = [1, 3, 5].map((at) => parseInt(base.slice(at, at + 2), 16));
+  return Array.from({ length: Math.max(count, 1) }, (_, index) => {
+    const darken = count <= 1 ? 0 : 0.45 * (index / (count - 1));
+    const channels = rgb.map((value) => Math.round(value * (1 - darken)));
+    return `#${channels.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+  });
+}
+
+const HOUR_DATE_LEGEND = {
+  color: { position: "top" as const, layout: { justifyContent: "flex-start" }, itemLabelFontSize: 11 },
 };
 
 export function DashboardPage() {
@@ -508,6 +602,18 @@ export function DashboardPage() {
   );
   const nifiHourly = useMemo(() => toDailyHourBuckets(nifiHourlyQuery.data?.hourly ?? []), [nifiHourlyQuery.data]);
   const kafkaHourly = useMemo(() => toDailyHourBuckets(kafkaHourlyQuery.data?.hourly ?? []), [kafkaHourlyQuery.data]);
+  // 고른 시간대(null 이면 네 구간 묶음). 시간대를 고르면 그 구간만 1시간 단위로 그린다(2026-10-13 요청).
+  const [nifiBucket, setNifiBucket] = useState<number | null>(null);
+  const [kafkaBucket, setKafkaBucket] = useState<number | null>(null);
+  const nifiHourRows = useMemo(
+    () => (nifiBucket === null ? [] : toHourRows(nifiHourlyQuery.data?.hourly ?? [], nifiBucket)),
+    [nifiHourlyQuery.data, nifiBucket]);
+  const kafkaHourRows = useMemo(
+    () => (kafkaBucket === null ? [] : toHourRows(kafkaHourlyQuery.data?.hourly ?? [], kafkaBucket)),
+    [kafkaHourlyQuery.data, kafkaBucket]);
+  // 1시간 단위 화면의 날짜 목록. 날짜 수만큼 밝기 단계를 만들고, 하루뿐이면 범례를 숨긴다.
+  const nifiHourDates = useMemo(() => [...new Set(nifiHourRows.map((row) => row.date))], [nifiHourRows]);
+  const kafkaHourDates = useMemo(() => [...new Set(kafkaHourRows.map((row) => row.date))], [kafkaHourRows]);
 
   /**
    * ETL 실패. ETL 로그 화면의 실패 줄과 같은 항목(그룹 · job · 프로세서 · 시각)을 먼저 적고 원문을 보여 준다.
@@ -517,21 +623,30 @@ export function DashboardPage() {
     () => [
       ...(nifiExecutionLogsQuery.data ?? [])
         .filter((entry) => entry.status === "FAILED")
-        .map((entry) => ({
+        .map((entry) => {
+          // 대상은 파이프라인 이름이다(2026-10-13 요청) - ETL 로그 화면의 «job명» 칸과 같은 값을 쓴다
+          // (서버가 프로세서 → step → job 으로 찾아 준 이름을 jobName · rootGroupName 에 함께 담아 준다).
+          // 어느 파이프라인에도 속하지 않는 오류(NAR «Cerebro job 완료 감시» 같은 플랫폼 오류)는 로그 화면과 같이 «-».
+          const target = entry.groupName ?? entry.rootGroupName ?? "-";
+          // 대상 · 구분으로 이미 보이는 값은 펼친 칸에 다시 적지 않는다.
+          const lines = ([
+            entry.jobName && entry.jobName !== target ? (["job", entry.jobName] as [string, string]) : null,
+            entry.rootGroupName && entry.rootGroupName !== target && entry.rootGroupName !== entry.jobName
+              ? (["그룹", entry.rootGroupName] as [string, string]) : null,
+          ].filter(Boolean)) as Array<[string, string]>;
+          return {
           id: `log-${entry.id}`,
-          // 대상은 job 명으로 적는다 - ETL 로그 화면의 «job» 칸과 같은 값이어야 한다(2026-09-28).
-          title: entry.jobName ?? entry.groupName ?? "ETL",
+          title: target,
+          // 구분은 실패가 난 프로세서 - 같은 파이프라인에서 어느 자리가 멈췄는지 한눈에 갈린다.
+          category: entry.processorName,
           datetime: entry.occurredAt,
-          lines: [
-            ["그룹", entry.rootGroupName ? `${entry.rootGroupName} > ${entry.groupName ?? "-"}` : entry.groupName ?? "-"],
-            ["job", entry.jobName ?? "-"],
-            ["프로세서", entry.processorName],
-          ] as Array<[string, string]>,
+          lines,
           loadError: async () => entry.message ?? "오류 메시지를 찾을 수 없습니다.",
           gpt: entry.jobId
             ? { targetType: "ETL_JOB" as const, target: { jobId: String(entry.jobId) } }
             : undefined,
-        })),
+          };
+        }),
     ],
     // 여기에 «지금 Invalid 인 프로세스 그룹»을 같이 넣었었는데 뺐다(2026-09-28) - 그것은 실행 실패가 아니라
     // «설정이 덜 됐다»는 현재 상태라, 오늘 아무것도 돌리지 않아도 계속 잡혔다. 대시보드의 오류는 조회 기간 안의
@@ -556,11 +671,11 @@ export function DashboardPage() {
       .map((row) => ({
         id: `cdc-event-${row.id}`,
         title: row.pipelineName,
+        // 구분은 CDC 로그 화면과 같은 말로 적는다(명령 코드가 아니라 «런타임 감시» 식).
+        category: CDC_COMMAND_LABEL[row.command] ?? row.command,
         datetime: row.occurredAt,
-        lines: [
-          ["파이프라인", row.pipelineName],
-          ["구분", `${row.command} · 실패`],
-        ] as Array<[string, string]>,
+        // 파이프라인 · 구분은 표의 열로 보이므로 다시 적지 않는다(2026-10-13).
+        lines: [] as Array<[string, string]>,
         loadError: async () => row.message ?? "오류 메시지를 찾을 수 없습니다.",
         gpt: gptTarget(row.pipelineId),
       }));
@@ -570,10 +685,9 @@ export function DashboardPage() {
       .map((row) => ({
         id: `cdc-proc-${row.pipelineId}-${row.occurredAt}`,
         title: row.pipelineName,
+        category: "처리",
         datetime: row.occurredAt,
         lines: [
-          ["파이프라인", row.pipelineName],
-          ["구분", "처리 · 실패"],
           ["소스 → 타깃", `${row.source} → ${row.target}`],
           ["Topic", row.topicName || "-"],
         ] as Array<[string, string]>,
@@ -592,19 +706,24 @@ export function DashboardPage() {
    */
   const workflowFailedItems: FailureDetailItem[] = useMemo(
     () => airflowHistory.failedEntries.map((entry) => {
+      // id 는 `${dagId}:${runId}` 다. run_id 안에도 콜론이 있어 첫 콜론만 구분자로 쓴다.
       const splitAt = entry.id.indexOf(":");
       const dagId = splitAt > 0 ? entry.id.slice(0, splitAt) : entry.id;
+      const runId = splitAt > 0 ? entry.id.slice(splitAt + 1) : "";
       return {
         id: entry.id,
         title: entry.basicContent,
+        // 구분은 그 DAG 가 ETL 쪽인지 CDC 쪽인지다(2026-10-13 요청, categorizeDag 와 같은 기준).
+        category: entry.category,
         datetime: entry.datetime,
-        lines: [
-          ["워크플로우", entry.basicContent],
-          ["구분", entry.category],
-          ["DAG", dagId],
-        ] as Array<[string, string]>,
+        lines: [["DAG", dagId]] as Array<[string, string]>,
         loadError: async () =>
           (entry.fetchLog ? await entry.fetchLog() : undefined) ?? "로그를 불러올 수 없습니다.",
+        // ETL · CDC 창처럼 펼치면 바로 해석한다(2026-10-13 요청). 실행 차수 단위라 WORKFLOW_RUN -
+        // 서버가 그 차수의 단계 · 실패 로그 · 하위 워크플로우까지 모은다.
+        gpt: runId
+          ? { targetType: "WORKFLOW_RUN" as const, target: { dagId, runId } }
+          : undefined,
       };
     }),
     [airflowHistory.failedEntries],
@@ -914,49 +1033,99 @@ export function DashboardPage() {
 
       <div className="dashboard-stats-grid">
         <ChartPanel
-          title="ETL 일별·시간대별 적재 건수"
+          title={nifiBucket === null
+            ? "ETL 일별·시간대별 적재 건수"
+            : `ETL ${HOUR_BUCKET_LABELS[nifiBucket]} 적재 건수 (1시간 단위)`}
           loading={nifiHourlyLoading}
-          hasData={nifiHourly.some((point) => point.count > 0)}
+          hasData={(nifiBucket === null ? nifiHourly : nifiHourRows).some((point) => point.count > 0)}
           emptyText="조회 기간에 적재 이력이 없습니다."
+          extra={<HourBucketPicker range={NIFI_HOUR_RANGE} active={nifiBucket} onSelect={setNifiBucket} />}
         >
-          <Column
-            autoFit
-            onReady={({ chart }) => refitAfterLayout(chart)}
-            data={nifiHourly}
-            xField="date"
-            yField="count"
-            colorField="bucket"
-            transform={[{ type: "dodgeX" }]}
-            scale={hourBucketScale(NIFI_HOUR_RANGE)}
-            style={barStyle()}
-            axis={{ x: NAME_X_AXIS, y: COUNT_Y_AXIS }}
-            legend={HOUR_BUCKET_LEGEND}
-            tooltip={COUNT_TOOLTIP}
-          />
+          {nifiBucket === null ? (
+            <Column
+              key="bucket"
+              autoFit
+              onReady={({ chart }) => refitAfterLayout(chart)}
+              data={nifiHourly}
+              xField="date"
+              yField="count"
+              colorField="bucket"
+              transform={[{ type: "dodgeX" }]}
+              scale={{ ...hourBucketScale(NIFI_HOUR_RANGE), y: zeroSafeYScale(nifiHourly.map((row) => row.count)) }}
+              style={barStyle()}
+              axis={{ x: BUCKET_X_AXIS, y: COUNT_Y_AXIS }}
+              legend={false}
+              label={BUCKET_BAR_LABEL}
+              tooltip={COUNT_TOOLTIP}
+            />
+          ) : (
+            <Column
+              key="hour"
+              autoFit
+              onReady={({ chart }) => refitAfterLayout(chart)}
+              data={nifiHourRows}
+              xField="hour"
+              yField="count"
+              colorField="date"
+              transform={[{ type: "dodgeX" }]}
+              scale={{ color: { range: dateShades(NIFI_HOUR_RANGE[nifiBucket], nifiHourDates.length) },
+                y: zeroSafeYScale(nifiHourRows.map((row) => row.count)) }}
+              style={barStyle()}
+              axis={{ x: NAME_X_AXIS, y: COUNT_Y_AXIS }}
+              legend={nifiHourDates.length > 1 ? HOUR_DATE_LEGEND : false}
+              label={false}
+              tooltip={COUNT_TOOLTIP}
+            />
+          )}
         </ChartPanel>
 
         <JobTop5Card title="ETL Job Top 5" from={appliedRange[0]} to={appliedRange[1]} />
 
         <ChartPanel
-          title="CDC 일별·시간대별 처리 건수"
+          title={kafkaBucket === null
+            ? "CDC 일별·시간대별 처리 건수"
+            : `CDC ${HOUR_BUCKET_LABELS[kafkaBucket]} 처리 건수 (1시간 단위)`}
           loading={kafkaHourlyLoading}
-          hasData={kafkaHourly.some((point) => point.count > 0)}
+          hasData={(kafkaBucket === null ? kafkaHourly : kafkaHourRows).some((point) => point.count > 0)}
           emptyText="조회 기간에 처리 이력이 없습니다."
+          extra={<HourBucketPicker range={CDC_HOUR_RANGE} active={kafkaBucket} onSelect={setKafkaBucket} />}
         >
-          <Column
-            autoFit
-            onReady={({ chart }) => refitAfterLayout(chart)}
-            data={kafkaHourly}
-            xField="date"
-            yField="count"
-            colorField="bucket"
-            transform={[{ type: "dodgeX" }]}
-            scale={hourBucketScale(CDC_HOUR_RANGE)}
-            style={barStyle()}
-            axis={{ x: NAME_X_AXIS, y: COUNT_Y_AXIS }}
-            legend={HOUR_BUCKET_LEGEND}
-            tooltip={COUNT_TOOLTIP}
-          />
+          {kafkaBucket === null ? (
+            <Column
+              key="bucket"
+              autoFit
+              onReady={({ chart }) => refitAfterLayout(chart)}
+              data={kafkaHourly}
+              xField="date"
+              yField="count"
+              colorField="bucket"
+              transform={[{ type: "dodgeX" }]}
+              scale={{ ...hourBucketScale(CDC_HOUR_RANGE), y: zeroSafeYScale(kafkaHourly.map((row) => row.count)) }}
+              style={barStyle()}
+              axis={{ x: BUCKET_X_AXIS, y: COUNT_Y_AXIS }}
+              legend={false}
+              label={BUCKET_BAR_LABEL}
+              tooltip={COUNT_TOOLTIP}
+            />
+          ) : (
+            <Column
+              key="hour"
+              autoFit
+              onReady={({ chart }) => refitAfterLayout(chart)}
+              data={kafkaHourRows}
+              xField="hour"
+              yField="count"
+              colorField="date"
+              transform={[{ type: "dodgeX" }]}
+              scale={{ color: { range: dateShades(CDC_HOUR_RANGE[kafkaBucket], kafkaHourDates.length) },
+                y: zeroSafeYScale(kafkaHourRows.map((row) => row.count)) }}
+              style={barStyle()}
+              axis={{ x: NAME_X_AXIS, y: COUNT_Y_AXIS }}
+              legend={kafkaHourDates.length > 1 ? HOUR_DATE_LEGEND : false}
+              label={false}
+              tooltip={COUNT_TOOLTIP}
+            />
+          )}
         </ChartPanel>
 
         <ChartPanel
@@ -971,6 +1140,7 @@ export function DashboardPage() {
             data={kafkaLoadTop}
             xField="label"
             yField="count"
+            scale={{ y: zeroSafeYScale(kafkaLoadTop.map((row) => row.count)) }}
             style={barStyle(CDC_COLOR)}
             axis={{ x: NAME_X_AXIS, y: COUNT_Y_AXIS }}
             tooltip={COUNT_TOOLTIP}
