@@ -74,6 +74,10 @@ const NIFI_TOOL_LABEL_ATTRIBUTE = "data-cerebro-tool-label";
 const NIFI_MENU_BUTTON_ATTRIBUTE = "data-cerebro-menu-button";
 const NIFI_BREADCRUMB_ATTRIBUTE = "data-cerebro-canvas-breadcrumb";
 const NIFI_BREADCRUMB_CONTAINER_ATTRIBUTE = "data-cerebro-canvas-breadcrumb-container";
+const PROCESSOR_DIALOG_VIEWPORT_STYLE_ID = "cerebro-processor-dialog-viewport";
+const PROCESSOR_DIALOG_VIEWPORT_FIT_ATTRIBUTE = "data-cerebro-processor-dialog-viewport-fit";
+const PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE = "data-cerebro-processor-dialog-scaled";
+const PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE = "data-cerebro-processor-dialog-fit-target";
 const NIFI_READ_ONLY_LOCK_ATTRIBUTE = "data-cerebro-readonly-lock";
 const NIFI_READ_ONLY_LOCK_INSTALLED_ATTRIBUTE = "data-cerebro-readonly-lock-installed";
 const NIFI_READ_ONLY_HOLDER_ATTRIBUTE = "data-cerebro-readonly-lock-holder";
@@ -91,6 +95,89 @@ function clampDetailPanelWidth(width: number): number {
   const maxWidth = Math.max(NIFI_DETAIL_PANEL_MIN_WIDTH, Math.floor(window.innerWidth * 0.72));
   return Math.min(maxWidth, Math.max(NIFI_DETAIL_PANEL_MIN_WIDTH, width));
 }
+
+const PROCESSOR_DIALOG_VIEWPORT_CSS = `
+  .cdk-global-overlay-wrapper:has(.processor-configuration),
+  .cdk-global-overlay-wrapper:has([${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"]) {
+    align-items: center !important;
+    justify-content: center !important;
+    box-sizing: border-box !important;
+    padding: 16px !important;
+  }
+  .cdk-overlay-pane:has(.processor-configuration),
+  .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] {
+    width: min(1024px, calc(100vw - 32px)) !important;
+    max-width: calc(100vw - 32px) !important;
+    max-height: calc(100vh - 32px) !important;
+  }
+  .processor-configuration,
+  .mat-dialog-container:has(.processor-configuration),
+  .mat-mdc-dialog-container:has(.processor-configuration),
+  [role="dialog"]:has(.processor-configuration),
+  .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] .mat-dialog-container,
+  .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] .mat-mdc-dialog-container,
+  .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] [role="dialog"] {
+    box-sizing: border-box !important;
+    width: min(1024px, calc(100vw - 32px)) !important;
+    max-width: calc(100vw - 32px) !important;
+    max-height: calc(100vh - 32px) !important;
+    overflow: auto !important;
+  }
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-global-overlay-wrapper:has(.processor-configuration),
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-global-overlay-wrapper:has([${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"]) {
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+    padding: 0 !important;
+  }
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-overlay-pane:has(.processor-configuration),
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] {
+    position: fixed !important;
+    inset: auto !important;
+    left: var(--cerebro-processor-dialog-left, 8px) !important;
+    top: var(--cerebro-processor-dialog-top, 8px) !important;
+    width: var(--cerebro-processor-dialog-width, 1024px) !important;
+    max-width: none !important;
+    height: var(--cerebro-processor-dialog-height, calc(100vh - 16px)) !important;
+    max-height: none !important;
+    margin: 0 !important;
+    transform: scale(var(--cerebro-processor-dialog-scale, 1)) !important;
+    transform-origin: top left !important;
+  }
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .processor-configuration,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .mat-dialog-container:has(.processor-configuration),
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .mat-mdc-dialog-container:has(.processor-configuration),
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] [role="dialog"]:has(.processor-configuration),
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] .mat-dialog-container,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] .mat-mdc-dialog-container,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] [role="dialog"] {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    height: 100% !important;
+    max-height: none !important;
+    margin: 0 !important;
+    overflow: auto !important;
+  }
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .processor-configuration .mat-mdc-dialog-content,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .processor-configuration .mat-dialog-content,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .processor-configuration .mat-mdc-tab-body-content,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .processor-configuration .mat-tab-body-content,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] .mat-mdc-dialog-content,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] .mat-dialog-content,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] .mat-mdc-tab-body-content,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] .mat-tab-body-content {
+    max-height: none !important;
+    overflow: auto !important;
+  }
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .processor-configuration .mat-mdc-dialog-actions,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .processor-configuration .mat-dialog-actions,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] .mat-mdc-dialog-actions,
+  html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] .mat-dialog-actions {
+    box-sizing: border-box !important;
+    width: 100% !important;
+  }
+`;
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
 // 보이게 한다. 번들 분석으로 실제 렌더링되는 요소를 확인한 선택자:
 // - NiFi: 두 곳에 있었다.
@@ -128,27 +215,7 @@ const HIDE_TOOL_CHROME_CSS = `
   .cdk-overlay-container {
     z-index: 100010 !important;
   }
-  .cdk-global-overlay-wrapper:has(.processor-configuration) {
-    align-items: center !important;
-    justify-content: center !important;
-    box-sizing: border-box !important;
-    padding: 16px !important;
-  }
-  .cdk-overlay-pane:has(.processor-configuration) {
-    width: min(1024px, calc(100vw - 32px)) !important;
-    max-width: calc(100vw - 32px) !important;
-    max-height: calc(100vh - 32px) !important;
-  }
-  .processor-configuration,
-  .mat-dialog-container:has(.processor-configuration),
-  .mat-mdc-dialog-container:has(.processor-configuration),
-  [role="dialog"]:has(.processor-configuration) {
-    box-sizing: border-box !important;
-    width: min(1024px, calc(100vw - 32px)) !important;
-    max-width: calc(100vw - 32px) !important;
-    max-height: calc(100vh - 32px) !important;
-    overflow: auto !important;
-  }
+  ${PROCESSOR_DIALOG_VIEWPORT_CSS}
   #${NIFI_MINI_TOOLBAR_ID} {
     position: fixed !important;
     left: 14px !important;
@@ -1054,9 +1121,122 @@ const NIFI_PROCESSOR_EDIT_TEXT: Record<string, string> = {
   "Run Schedule*": "실행 주기*",
   Execution: "실행 대상",
   "Execution*": "실행 대상*",
+  "Required field": "필수 항목",
+  Verification: "검증",
+  Property: "속성",
+  Value: "값",
+};
+const COMMON_NIFI_PROCESSOR_PROPERTY_TEXT: Record<string, string> = {
+  "Database Connection Pooling Service": "데이터베이스 연결 풀링 서비스",
+  "Distributed Cache Service": "분산 캐시 서비스",
+  "Record Reader": "레코드 리더",
+  "Record Writer": "레코드 작성기",
+  "Schema Access Strategy": "스키마 접근 방식",
+  "Schema Registry": "스키마 레지스트리",
+  "Schema Name": "스키마명",
+  "Schema Text": "스키마 텍스트",
+  "Schema Reference Reader": "스키마 참조 리더",
+  "Schema Write Strategy": "스키마 쓰기 방식",
+  "Schema Branch": "스키마 브랜치",
+  "Schema Version": "스키마 버전",
+  "Schema Version Identifier": "스키마 버전 식별자",
+  "Schema Protocol Version": "스키마 프로토콜 버전",
+  "Cache Schema": "스키마 캐시",
+  "Date Format": "날짜 형식",
+  "Time Format": "시간 형식",
+  "Timestamp Format": "타임스탬프 형식",
+  "Character Set": "문자셋",
+  "Compression Format": "압축 형식",
+  Destination: "대상",
+  "Attribute Name": "속성명",
+  "Attribute Value": "속성값",
+  "Relationship Name": "관계명",
+  "Expression Language Scope": "표현 언어 범위",
+  "Maximum Batch Size": "최대 배치 크기",
+  "Maximum Fragment Size": "최대 조각 크기",
+  "Include Zero Record FlowFiles": "빈 레코드 FlowFile 포함",
+  "Mime Type": "MIME 타입",
+  "Dynamic Property": "동적 속성",
+};
+
+const NIFI_PROCESSOR_PROPERTY_TEXT: Record<string, Record<string, string>> = {
+  QueryRecord: {
+    "Record Reader": "레코드 리더",
+    "Record Writer": "레코드 작성기",
+    "Include Zero Record FlowFiles": "빈 레코드 FlowFile 포함",
+    "Cache Schema": "스키마 캐시",
+  },
+  PutDatabaseRecord: {
+    "Database Connection Pooling Service": "데이터베이스 연결 풀링 서비스",
+    "Record Reader": "레코드 리더",
+    "Statement Type": "SQL 문 유형",
+    "Table Name": "테이블명",
+    "Catalog Name": "카탈로그명",
+    "Schema Name": "스키마명",
+    "Translate Field Names": "필드명 변환",
+    "Unmatched Column Behavior": "일치하지 않는 컬럼 처리",
+    "Unmatched Field Behavior": "일치하지 않는 필드 처리",
+    "Update Keys": "업데이트 키",
+    "Quoted Identifiers": "식별자 따옴표 처리",
+    "Quoted Table Identifiers": "테이블 식별자 따옴표 처리",
+    "Query Timeout": "쿼리 타임아웃",
+    "Max Wait Time": "최대 대기 시간",
+    "Rollback On Failure": "실패 시 롤백",
+    "Obtain Generated Keys": "생성 키 가져오기",
+    "Use Avro Logical Types": "Avro 논리 타입 사용",
+    "Maximum Batch Size": "최대 배치 크기",
+  },
+  RouteOnAttribute: {
+    "Routing Strategy": "라우팅 방식",
+    "Route Strategy": "라우팅 전략",
+    "Route to Property name": "속성명으로 라우팅",
+    "Matching Strategy": "매칭 방식",
+    "Expression Language Scope": "표현 언어 범위",
+  },
+  UpdateAttribute: {
+    "Delete Attributes Expression": "속성 삭제 표현식",
+    "Store State": "상태 저장 위치",
+    "Stateful Variables Initial Value": "상태 변수 초기값",
+    "Cache Entry Identifier": "캐시 항목 식별자",
+    "Distributed Cache Service": "분산 캐시 서비스",
+  },
+  ListFile: {
+    "Input Directory": "입력 디렉터리",
+    "Listing Strategy": "목록 조회 방식",
+    "Recurse Subdirectories": "하위 디렉터리 재귀 탐색",
+    "Input Directory Location": "입력 디렉터리 위치",
+    "File Filter": "파일 필터",
+    "Path Filter": "경로 필터",
+    "Include File Attributes": "파일 속성 포함",
+    "Minimum File Age": "최소 파일 나이",
+    "Maximum File Age": "최대 파일 나이",
+    "Minimum File Size": "최소 파일 크기",
+    "Maximum File Size": "최대 파일 크기",
+    "Ignore Hidden Files": "숨김 파일 무시",
+    "Target System Timestamp Precision": "대상 시스템 타임스탬프 정밀도",
+    "Tracking Timestamps": "타임스탬프 추적",
+    "Entity Tracking State Cache": "엔티티 추적 상태 캐시",
+    "Entity Tracking Time Window": "엔티티 추적 시간 범위",
+    "Initial Listing Target": "초기 목록 대상",
+    "Follow Symbolic Links": "심볼릭 링크 따라가기",
+    "Record Writer": "레코드 작성기",
+  },
+  ExecuteSQLRecord: {
+    "Database Connection Pooling Service": "데이터베이스 연결 풀링 서비스",
+    "SQL Pre-Query": "SQL 사전 쿼리",
+    "SQL select query": "SQL 조회 쿼리",
+    "SQL Post-Query": "SQL 사후 쿼리",
+    "Max Wait Time": "최대 대기 시간",
+    "Record Writer": "레코드 작성기",
+    "Normalize Table/Column Names": "테이블/컬럼명 정규화",
+    "Use Avro Logical Types": "Avro 논리 타입 사용",
+    "Default Decimal Precision": "기본 Decimal 정밀도",
+  },
 };
 const NIFI_PROCESSOR_EDIT_TAB_TEXT = new Set(["Settings", "Scheduling", "Properties", "Relationships", "Comments"]);
 const NIFI_PROCESSOR_EDIT_CONTENT_TABS = new Set(["Settings", "설정", "Scheduling", "스케줄링"]);
+const NIFI_PROCESSOR_EDIT_PROPERTY_TABS = new Set(["Properties", "속성"]);
+const NIFI_PROCESSOR_EDIT_PROPERTY_UI_TEXT = new Set(["Required field", "Verification", "Property", "Value"]);
 const NIFI_PROCESSOR_EDIT_TAB_SELECTOR = '[role="tab"], .mat-mdc-tab, .mat-tab-label';
 const HIDDEN_NIFI_CONTEXT_MENU_ITEMS = new Set(["About", "정보", "Appearance", "화면 표시", "Animations", "애니메이션"]);
 const NIFI_STATUS_TOOLTIP_ICON_TEXT: Array<[string, string]> = [
@@ -1187,16 +1367,57 @@ function translateNifiTooltip(value: string) {
   return undefined;
 }
 
-function translateProcessorEditText(value: string, includeFieldLabels = true) {
+function processorTypeKey(value: string | null | undefined) {
+  if (!value) {
+    return undefined;
+  }
+  const typeName = value
+    .replace(/\s+\d+(?:\.\d+)*(?:[-.\w]*)?\s*$/, "")
+    .split(".")
+    .pop()
+    ?.trim();
+  return typeName && NIFI_PROCESSOR_PROPERTY_TEXT[typeName] ? typeName : undefined;
+}
+
+function translateProcessorPropertyText(value: string, processorType?: string) {
+  const typeKey = processorTypeKey(processorType);
+  return (typeKey ? NIFI_PROCESSOR_PROPERTY_TEXT[typeKey]?.[value] : undefined)
+    ?? COMMON_NIFI_PROCESSOR_PROPERTY_TEXT[value];
+}
+
+function translateProcessorEditText(
+  value: string,
+  includeFieldLabels = true,
+  includePropertyLabels = false,
+  processorType?: string,
+) {
   const trimmed = value.replace(/\s+/g, " ").trim();
   const exact = NIFI_PROCESSOR_EDIT_TEXT[trimmed];
-  if (exact && (includeFieldLabels || NIFI_PROCESSOR_EDIT_TAB_TEXT.has(trimmed))) {
+  if (
+    exact
+    && (
+      includeFieldLabels
+      || NIFI_PROCESSOR_EDIT_TAB_TEXT.has(trimmed)
+      || (includePropertyLabels && NIFI_PROCESSOR_EDIT_PROPERTY_UI_TEXT.has(trimmed))
+    )
+  ) {
     return exact;
   }
   const normalized = trimmed.replace(/\s*\*$/, "");
   const normalizedExact = NIFI_PROCESSOR_EDIT_TEXT[normalized];
-  if (normalizedExact && (includeFieldLabels || NIFI_PROCESSOR_EDIT_TAB_TEXT.has(normalized))) {
+  if (
+    normalizedExact
+    && (
+      includeFieldLabels
+      || NIFI_PROCESSOR_EDIT_TAB_TEXT.has(normalized)
+      || (includePropertyLabels && NIFI_PROCESSOR_EDIT_PROPERTY_UI_TEXT.has(normalized))
+    )
+  ) {
     return `${normalizedExact}${trimmed.endsWith("*") ? "*" : ""}`;
+  }
+  const property = includePropertyLabels ? translateProcessorPropertyText(trimmed, processorType) : undefined;
+  if (property) {
+    return `${property}(${trimmed})`;
   }
   return undefined;
 }
@@ -1274,6 +1495,119 @@ function hideToolChrome(frame: HTMLIFrameElement) {
     // 문서가 아직 교체 중이면 다음 iframe load에서 다시 시도한다.
     return false;
   }
+}
+
+function updateProcessorDialogViewportFit(frame: HTMLIFrameElement) {
+  const doc = iframeDocument(frame);
+  if (!doc) {
+    return;
+  }
+  const frameWindow = doc.defaultView;
+  if (!frameWindow) {
+    return;
+  }
+  const root = doc.documentElement;
+  const dialog = findProcessorEditDialogs(doc)[0] ?? doc.querySelector(".processor-configuration");
+  doc.querySelectorAll(`[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"]`).forEach((element) => {
+    element.removeAttribute(PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE);
+  });
+  if (!dialog) {
+    root.removeAttribute(PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE);
+    root.style.removeProperty("--cerebro-processor-dialog-scale");
+    root.style.removeProperty("--cerebro-processor-dialog-width");
+    root.style.removeProperty("--cerebro-processor-dialog-height");
+    root.style.removeProperty("--cerebro-processor-dialog-left");
+    root.style.removeProperty("--cerebro-processor-dialog-top");
+    return;
+  }
+  const overlayPane = dialog.closest(".cdk-overlay-pane") ?? dialog;
+  overlayPane.setAttribute(PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE, "true");
+
+  const frameRect = frame.getBoundingClientRect();
+  const visualViewport = window.visualViewport;
+  const parentWidth = visualViewport?.width ?? window.innerWidth;
+  const parentHeight = visualViewport?.height ?? window.innerHeight;
+  const visibleLeft = Math.max(frameRect.left, 0);
+  const visibleTop = Math.max(frameRect.top, 0);
+  const visibleRight = Math.min(frameRect.right, parentWidth);
+  const visibleBottom = Math.min(frameRect.bottom, parentHeight);
+  const visibleFrameWidth = Math.max(0, visibleRight - visibleLeft);
+  const visibleFrameHeight = Math.max(0, visibleBottom - visibleTop);
+  const margin = 8;
+  const baseWidth = 1024;
+  const baseHeight = 720;
+  const viewportWidth = Math.max(1, Math.min(frameWindow.innerWidth, visibleFrameWidth || frameWindow.innerWidth));
+  const viewportHeight = Math.max(1, Math.min(frameWindow.innerHeight, visibleFrameHeight || frameWindow.innerHeight));
+  const availableWidth = Math.max(1, viewportWidth - margin * 2);
+  const availableHeight = Math.max(1, viewportHeight - margin * 2);
+  const scale = Math.max(0.3, Math.min(1, availableWidth / baseWidth, availableHeight / baseHeight));
+  if (scale >= 0.999) {
+    root.removeAttribute(PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE);
+    root.style.removeProperty("--cerebro-processor-dialog-scale");
+    root.style.removeProperty("--cerebro-processor-dialog-width");
+    root.style.removeProperty("--cerebro-processor-dialog-height");
+    root.style.removeProperty("--cerebro-processor-dialog-left");
+    root.style.removeProperty("--cerebro-processor-dialog-top");
+    return;
+  }
+
+  root.setAttribute(PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE, "true");
+  root.style.setProperty("--cerebro-processor-dialog-scale", scale.toFixed(4));
+  root.style.setProperty("--cerebro-processor-dialog-width", `${baseWidth}px`);
+  root.style.setProperty("--cerebro-processor-dialog-height", `${availableHeight / scale}px`);
+  root.style.setProperty("--cerebro-processor-dialog-left", `${margin}px`);
+  root.style.setProperty("--cerebro-processor-dialog-top", `${margin}px`);
+}
+
+function installProcessorDialogViewportFit(frame: HTMLIFrameElement) {
+  const doc = iframeDocument(frame);
+  const frameWindow = frame.contentWindow;
+  if (!doc || !frameWindow) {
+    return;
+  }
+
+  let style = doc.getElementById(PROCESSOR_DIALOG_VIEWPORT_STYLE_ID);
+  if (!style) {
+    style = doc.createElement("style");
+    style.id = PROCESSOR_DIALOG_VIEWPORT_STYLE_ID;
+    doc.head.appendChild(style);
+  }
+  if (style.textContent !== PROCESSOR_DIALOG_VIEWPORT_CSS) {
+    style.textContent = PROCESSOR_DIALOG_VIEWPORT_CSS;
+  }
+
+  updateProcessorDialogViewportFit(frame);
+
+  if (doc.documentElement.getAttribute(PROCESSOR_DIALOG_VIEWPORT_FIT_ATTRIBUTE) === "true") {
+    return;
+  }
+  doc.documentElement.setAttribute(PROCESSOR_DIALOG_VIEWPORT_FIT_ATTRIBUTE, "true");
+
+  let frameId: number | null = null;
+  const schedule = () => {
+    if (frameId !== null) {
+      return;
+    }
+    frameId = frameWindow.requestAnimationFrame(() => {
+      frameId = null;
+      updateProcessorDialogViewportFit(frame);
+    });
+  };
+  const DialogMutationObserver = doc.defaultView?.MutationObserver ?? MutationObserver;
+  const observer = new DialogMutationObserver(schedule);
+  observer.observe(doc.documentElement, { childList: true, subtree: true });
+  frameWindow.addEventListener("resize", schedule);
+  window.addEventListener("resize", schedule);
+  window.visualViewport?.addEventListener("resize", schedule);
+  frameWindow.addEventListener("beforeunload", () => {
+    if (frameId !== null) {
+      frameWindow.cancelAnimationFrame(frameId);
+    }
+    frameWindow.removeEventListener("resize", schedule);
+    window.removeEventListener("resize", schedule);
+    window.visualViewport?.removeEventListener("resize", schedule);
+    observer.disconnect();
+  }, { once: true });
 }
 
 function cleanupLegacyNifiMiniCreateToolbars(frame: HTMLIFrameElement) {
@@ -2365,10 +2699,20 @@ interface ProcessorEditLockFrameState {
 
 function dialogTextMatchesProcessorEditor(element: Element) {
   const text = elementText(element);
-  if (!text || text.length > 3000) {
+  if (!text || text.length > 20000) {
     return false;
   }
   return /(Edit\s+Processor|프로세서\s*편집|Processor\s*\|)/i.test(text) && /\bApply\b|적용/.test(text);
+}
+
+function processorEditType(dialog: Element) {
+  const text = elementText(dialog);
+  const titleMatch = text.match(/(?:Edit\s+Processor|프로세서\s*편집|Processor)\s*\|\s*([A-Za-z][\w.]*)(?:\s+\d+(?:\.\d+)*)?/i);
+  const fromTitle = processorTypeKey(titleMatch?.[1]);
+  if (fromTitle) {
+    return fromTitle;
+  }
+  return Object.keys(NIFI_PROCESSOR_PROPERTY_TEXT).find((typeName) => new RegExp(`\\b${typeName}\\b`, "i").test(text));
 }
 
 function findProcessorEditDialogs(doc: Document) {
@@ -2391,23 +2735,26 @@ function processorEditActiveTab(dialog: Element) {
   return selectedTab ? elementText(selectedTab) : "";
 }
 
-function processorEditAllowsFieldTranslation(dialog: Element) {
-  const activeTab = processorEditActiveTab(dialog);
-  return !activeTab || NIFI_PROCESSOR_EDIT_CONTENT_TABS.has(activeTab);
-}
-
 function isProcessorEditTabLabel(element: Element | null) {
   return Boolean(element?.closest(NIFI_PROCESSOR_EDIT_TAB_SELECTOR));
 }
 
 function patchProcessorEditDialogText(doc: Document) {
   findProcessorEditDialogs(doc).forEach((dialog) => {
-    const allowFieldTranslation = processorEditAllowsFieldTranslation(dialog);
+    const activeTab = processorEditActiveTab(dialog);
+    const processorType = processorEditType(dialog);
+    const allowFieldTranslation = !activeTab || NIFI_PROCESSOR_EDIT_CONTENT_TABS.has(activeTab);
+    const allowPropertyTranslation = NIFI_PROCESSOR_EDIT_PROPERTY_TABS.has(activeTab);
     dialog.querySelectorAll(NIFI_TOOLTIP_ATTRIBUTES.map((name) => `[${name}]`).join(", ")).forEach((element) => {
       NIFI_TOOLTIP_ATTRIBUTES.forEach((attributeName) => {
         const value = element.getAttribute(attributeName);
         const translated = value
-          ? translateProcessorEditText(value, allowFieldTranslation || isProcessorEditTabLabel(element))
+          ? translateProcessorEditText(
+            value,
+            allowFieldTranslation || isProcessorEditTabLabel(element),
+            allowPropertyTranslation,
+            processorType,
+          )
           : undefined;
         if (translated && translated !== value) {
           element.setAttribute(attributeName, translated);
@@ -2431,7 +2778,12 @@ function patchProcessorEditDialogText(doc: Document) {
       if (!trimmed || trimmed.length > 80 || trimmed.includes("\n")) {
         continue;
       }
-      const translated = translateProcessorEditText(trimmed, allowFieldTranslation || isProcessorEditTabLabel(node.parentElement));
+      const translated = translateProcessorEditText(
+        trimmed,
+        allowFieldTranslation || isProcessorEditTabLabel(node.parentElement),
+        allowPropertyTranslation,
+        processorType,
+      );
       if (translated) {
         node.nodeValue = value.replace(trimmed, translated);
       }
@@ -4687,6 +5039,7 @@ export function ConsoleFramePage({
       patchKoreanTooltips(frame);
       installNifiPanelLayout(frame);
     }
+    installProcessorDialogViewportFit(frame);
     installProcessorEditReadonlyGuard(frame, processorEditLockFrameState);
     clickNifiMenuItem(frame, nifiAutoOpenMenuTitles);
     if (showProcessGroupTree) {
@@ -4705,6 +5058,7 @@ export function ConsoleFramePage({
           hideToolChrome(frame);
           patchKoreanTooltips(frame);
           installNifiPanelLayout(frame);
+          installProcessorDialogViewportFit(frame);
           setFrameChromeReady(true);
         }
       }, chromeHidden ? 450 : 650);

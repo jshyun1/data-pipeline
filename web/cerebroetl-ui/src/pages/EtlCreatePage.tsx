@@ -1010,11 +1010,35 @@ function removeSourceColumnFromLogic(logic: string, columnName: string) {
   return nextLogic;
 }
 
-function appendSourceColumnToMapping(mapping: ColumnMapping, sourceColumn: SourceColumnMetadata) {
+function expressionForTargetType(expression: string, sourceType: string | undefined, targetType: string | undefined) {
+  if (!targetType) {
+    return expression;
+  }
+  const targetCategory = dataTypeCategory(targetType);
+  const sourceCategory = sourceType ? dataTypeCategory(sourceType) : "unknown";
+  if (targetCategory === "text" && sourceCategory !== "text") {
+    return `CAST(${expression} AS VARCHAR)`;
+  }
+  if (targetCategory === "number" && sourceCategory !== "number") {
+    return `CAST(${expression} AS DECIMAL)`;
+  }
+  return expression;
+}
+
+function mappingJoinOperator(targetType: string | undefined) {
+  return targetType && dataTypeCategory(targetType) === "number" ? "+" : "||";
+}
+
+function appendSourceColumnToMapping(
+  mapping: ColumnMapping,
+  sourceColumn: SourceColumnMetadata,
+  targetColumn?: ColumnMetadataResponse,
+) {
   if (mappingReferencedSourceColumns(mapping, [sourceColumn], []).length > 0) {
     return mapping;
   }
-  const sourceExpression = sourceColumn.name;
+  const sourceExpression = expressionForTargetType(sourceColumn.name, sourceColumn.dataType, targetColumn?.dataType);
+  const operator = mappingJoinOperator(targetColumn?.dataType);
   const logic = mapping.logic.trim();
   if (!logic && !mapping.sourceColumn) {
     return {
@@ -1027,12 +1051,12 @@ function appendSourceColumnToMapping(mapping: ColumnMapping, sourceColumn: Sourc
   if (!logic) {
     return {
       ...mapping,
-      logic: `${mapping.sourceColumn} || ${sourceExpression}`,
+      logic: `${expressionForTargetType(mapping.sourceColumn, undefined, targetColumn?.dataType)} ${operator} ${sourceExpression}`,
     };
   }
   return {
     ...mapping,
-    logic: `${logic} || ${sourceExpression}`,
+    logic: `${logic} ${operator} ${sourceExpression}`,
   };
 }
 
@@ -2427,7 +2451,13 @@ function TargetStep({
       return;
     }
     const nextMappings = columnMappings.map((mapping) =>
-      mapping.id === mappingId ? appendSourceColumnToMapping(mapping, sourceColumn) : mapping,
+      mapping.id === mappingId
+        ? appendSourceColumnToMapping(
+          mapping,
+          sourceColumn,
+          targetColumns.find((targetColumn) => normalizeName(targetColumn.name) === normalizeName(mapping.targetColumn)),
+        )
+        : mapping,
     );
     applyColumnMappings(nextMappings);
   };
