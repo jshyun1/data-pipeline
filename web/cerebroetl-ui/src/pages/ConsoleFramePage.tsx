@@ -1497,6 +1497,26 @@ function hideToolChrome(frame: HTMLIFrameElement) {
   }
 }
 
+function resetProcessorDialogFitTarget(element: Element) {
+  element.removeAttribute(PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE);
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+  [
+    "position",
+    "inset",
+    "left",
+    "top",
+    "width",
+    "max-width",
+    "height",
+    "max-height",
+    "margin",
+    "transform",
+    "transform-origin",
+  ].forEach((property) => element.style.removeProperty(property));
+}
+
 function updateProcessorDialogViewportFit(frame: HTMLIFrameElement) {
   const doc = iframeDocument(frame);
   if (!doc) {
@@ -1509,7 +1529,7 @@ function updateProcessorDialogViewportFit(frame: HTMLIFrameElement) {
   const root = doc.documentElement;
   const dialog = findProcessorEditDialogs(doc)[0] ?? doc.querySelector(".processor-configuration");
   doc.querySelectorAll(`[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"]`).forEach((element) => {
-    element.removeAttribute(PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE);
+    resetProcessorDialogFitTarget(element);
   });
   if (!dialog) {
     root.removeAttribute(PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE);
@@ -1557,6 +1577,20 @@ function updateProcessorDialogViewportFit(frame: HTMLIFrameElement) {
   root.style.setProperty("--cerebro-processor-dialog-height", `${availableHeight / scale}px`);
   root.style.setProperty("--cerebro-processor-dialog-left", `${margin}px`);
   root.style.setProperty("--cerebro-processor-dialog-top", `${margin}px`);
+
+  if (overlayPane instanceof HTMLElement) {
+    overlayPane.style.setProperty("position", "fixed", "important");
+    overlayPane.style.setProperty("inset", "auto", "important");
+    overlayPane.style.setProperty("left", `${margin}px`, "important");
+    overlayPane.style.setProperty("top", `${margin}px`, "important");
+    overlayPane.style.setProperty("width", `${baseWidth}px`, "important");
+    overlayPane.style.setProperty("max-width", "none", "important");
+    overlayPane.style.setProperty("height", `${availableHeight / scale}px`, "important");
+    overlayPane.style.setProperty("max-height", "none", "important");
+    overlayPane.style.setProperty("margin", "0", "important");
+    overlayPane.style.setProperty("transform", `scale(${scale.toFixed(4)})`, "important");
+    overlayPane.style.setProperty("transform-origin", "top left", "important");
+  }
 }
 
 function installProcessorDialogViewportFit(frame: HTMLIFrameElement) {
@@ -1596,6 +1630,12 @@ function installProcessorDialogViewportFit(frame: HTMLIFrameElement) {
   const DialogMutationObserver = doc.defaultView?.MutationObserver ?? MutationObserver;
   const observer = new DialogMutationObserver(schedule);
   observer.observe(doc.documentElement, { childList: true, subtree: true });
+  const FrameResizeObserver = window.ResizeObserver;
+  const resizeObserver = FrameResizeObserver ? new FrameResizeObserver(schedule) : null;
+  resizeObserver?.observe(frame);
+  if (frame.parentElement) {
+    resizeObserver?.observe(frame.parentElement);
+  }
   frameWindow.addEventListener("resize", schedule);
   window.addEventListener("resize", schedule);
   window.visualViewport?.addEventListener("resize", schedule);
@@ -1607,6 +1647,7 @@ function installProcessorDialogViewportFit(frame: HTMLIFrameElement) {
     window.removeEventListener("resize", schedule);
     window.visualViewport?.removeEventListener("resize", schedule);
     observer.disconnect();
+    resizeObserver?.disconnect();
   }, { once: true });
 }
 
