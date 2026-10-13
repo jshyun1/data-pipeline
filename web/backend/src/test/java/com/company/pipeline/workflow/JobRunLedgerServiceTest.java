@@ -1,6 +1,7 @@
 package com.company.pipeline.workflow;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -109,5 +110,18 @@ class JobRunLedgerServiceTest {
         service.progressByPg(PG, 5L);
 
         verify(runRepository, never()).save(any());
+    }
+
+    @Test
+    void byToken_looksUpOneRowByIndex_notTheWholeLedger() {
+        // Airflow 완료 대기가 1초마다 부른다(2026-10-13) - 원장 전체(findAll)를 읽지 않고 토큰 인덱스로 한 행만 찾는다.
+        EtlJobRun run = new EtlJobRun(34L, LocalDateTime.now());
+        when(runRepository.findByRunToken("tok")).thenReturn(Optional.of(run));
+        when(runRepository.findByRunToken("missing")).thenReturn(Optional.empty());
+
+        assertThat(service.byToken("tok")).isSameAs(run);
+        assertThatThrownBy(() -> service.byToken("missing"))
+                .hasMessageContaining("실행을 찾을 수 없습니다");
+        verify(runRepository, never()).findAll();
     }
 }

@@ -3908,3 +3908,33 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 - ETL 로그가 서로 다른 실행의 적재를 45초 안이면 한 줄로 묶는 문제(오늘 129 = 86 + 43).
 - job 하나당 Airflow 단계 5개의 고정 비용(약 15초).
 - 워크플로우 행이 Airflow 중단으로 3시간 안에 닫히지 않은 채 같은 job 이 다시 돌면 새 실행이 그 행을 입양한다(드문 경우, 예전과 같음).
+
+## 120. 워크플로우 job 마무리 단축 - 검증 단계를 빈 관문으로 · 원장 확인 1초 (2026-10-13)
+
+**요청**: §119 의 «안 고친 것» 중 job 하나당 고정 비용에서 «2-가 검증 단계 정리 · 2-나 원장 확인 3초 → 1초»를 진행.
+
+**원인(실측, 15:21 TOTAL 의 DZ_COM001M)**: NiFi 작업 4.5초인데 job 줄 20초.
+- 검증(verify) 6.5초: 단계 프로세스 기동 · DAG 파일 파싱 2초 + 고정 연결 `target_db_postgres` 접속 실패(호스트 이름 못 찾음) 4초 → «검증 생략».
+  - 접속이 돼도 이번 실행 건수가 아니라 테이블 전체 행 수였고, job 의 실제 대상 DB 도 아니었다(DZ 는 외부 DB 119.204.108.98). 실패하지도 않았다.
+  - 다음 job 은 그룹의 끝 단계(verify · stop_pg)를 다 기다리므로 verify 가 곧 다음 job 의 시작 지연이었다.
+- 완료 감지 약 7초 중 await 의 원장 확인 간격(3초)이 평균 1.5초 · 최대 3초.
+- 원장 확인 API(`GET /api/etl/job-runs/{token}` → `JobRunLedgerService.byToken`)가 원장 전체를 읽어(`findAll`) 걸렀다. 1초로 줄이면 도는 job 마다 매초 전체를 읽게 된다.
+
+**변경**
+- `airflow/dags/etl_workflows_dynamic.py`: `verify` 를 `EmptyOperator(task_id="verify")` 로. 이름 · 위치(await 바로 뒤)는 그대로라
+  «완료 대기가 성공해야 다음 노드로» 관문(실패 세탁 방지, 2026-08-31)은 유지된다. 프로세스를 띄우지 않아 스케줄러가 바로 성공 처리한다.
+  - 화면 단계 줄 · «이 작업만 실행» · AI 단계 설명은 task id 가 같아 그대로다. 단계 줄의 결과 칸은 «-»(예전 MSA 에서는 테이블 전체 행 수가 찍혔을 수 있다).
+- `airflow/dags/etl_job_runtime.py`: `verify_landing` 삭제(쓰는 곳 없음). `LEDGER_POLL_SECONDS` 3 → 1.
+- 백엔드: `EtlJobRunRepository.findByRunToken`(고유 인덱스 `uq_etl_job_run_token`), `byToken` 이 그것을 쓴다. 테스트 1건(`JobRunLedgerServiceTest` - findAll 을 부르지 않음).
+- 다음 job 은 이제 stop_pg(약 3초)만 기다린다 - 정지까지 기다리는 것은 그대로 둔다(같은 그룹을 연달아 쓰는 그림에서 앞 job 의 정지가 뒤 job 을 멈추지 않게).
+
+**확인(로컬)**
+- 백엔드 테스트(작업 폴더 사본): workflow · jobcatalog · monitoring 81건 통과(`JobRunLedgerServiceTest` 6건 = 기존 5 + 새 1).
+- DAG(`DagBag` 로 직접 읽음): import 오류 없음 · DAG 5개, `dz_com_dz_com001m.verify` = EmptyOperator(all_success, 위 = await),
+  다음 job `open_run` 의 위 = verify · stop_pg(그대로), stop_pg = all_done.
+- Airflow 컨테이너에서 실제 `_callback_state`(서비스 토큰 주입 포함)로 원장 227 조회: SUCCESS · 1,660,590, 10회 15~50ms(중간 20ms). 없는 토큰은 예전처럼 400 → «건너뜀».
+- 1초 간격 부담: 도는 job 하나당 초당 1건 · 고유 인덱스 단건 조회. 동시에 도는 job 은 많아야 4개(PARALLELISM=4)라 초당 4건.
+  백엔드가 멈추면 «원장 조회 실패» 줄이 3초 대신 1초마다 찍히는 정도다.
+- 반영: pipeline-api(16:06, §119 와 같은 방식 - gradle 캐시 bootJar + Dockerfile 런타임 단계). Airflow 는 dags 폴더 마운트라 다음 파싱 · 태스크부터.
+- 곁가지 관찰: gradle 빌드처럼 호스트 부하가 크면(load 50~93) Airflow 가 DAG 파일(`etl_workflows_dynamic.py`)을 30초 안에 못 읽어
+  import 오류(DAG 0개)가 잠깐 난다. 14:00~14:52 · 15:59~ 두 번 있었고 부하가 빠지면 1~4초로 돌아온다. 그 사이 새 실행 · 게시 반영은 늦어질 수 있다.

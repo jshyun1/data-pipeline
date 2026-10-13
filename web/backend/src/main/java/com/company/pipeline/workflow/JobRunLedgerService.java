@@ -80,11 +80,13 @@ public class JobRunLedgerService {
         return run;
     }
 
+    /**
+     * 실행 토큰으로 찾는다. 예전에는 원장 전체를 읽어 걸렀다 - Airflow 완료 대기가 도는 job 마다 이걸 부르므로(1초 간격, 2026-10-13)
+     * 행이 쌓일수록 매번 전체를 읽게 된다. 고유 인덱스(uq_etl_job_run_token)로 한 행만 찾는다.
+     */
     @Transactional(readOnly = true)
     public EtlJobRun byToken(String runToken) {
-        return runRepository.findAll().stream()
-                .filter(run -> runToken.equals(run.getRunToken()))
-                .findFirst()
+        return runRepository.findByRunToken(runToken)
                 .orElseThrow(() -> new BusinessException(ErrorCode.VALIDATION_ERROR,
                         "실행을 찾을 수 없습니다: " + runToken));
     }

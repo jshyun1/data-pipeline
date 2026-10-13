@@ -251,9 +251,11 @@ def _print_callback_load_summary(pg_id: str, pg_name: str, token: str, baseline:
         print(f"[{pg_name}] 이번 실행 적재 건수: 없음")
 
 
-# 원장은 몇 초마다 본다(가벼운 단일 행 조회). NiFi 상태 조회(무거움)는 지금처럼 WAIT_POLL_INTERVAL_SECONDS 마다만 한다.
-# NiFi 안의 완료 감시(Cerebro NAR, 2026-10-05)가 job 이 끝나는 즉시 원장을 닫으므로, 여기서 몇 초 안에 알아챈다.
-LEDGER_POLL_SECONDS = 3
+# 원장은 1초마다 본다(실행 토큰 고유 인덱스로 찾는 단일 행 조회). NiFi 상태 조회(무거움)는 지금처럼 WAIT_POLL_INTERVAL_SECONDS 마다만 한다.
+# NiFi 안의 완료 감시(Cerebro NAR, 2026-10-05)가 job 이 끝나는 즉시 원장을 닫으므로, 여기서 1초 안에 알아챈다.
+# 3초였을 때는 감시가 닫은 뒤 평균 1.5초 · 최대 3초를 더 기다렸다(2026-10-13 1초로). 백엔드가 토큰 조회 때 원장 전체를 읽던 것을
+# 인덱스 조회로 바꾼 뒤에 줄였다 - 그대로 1초로 줄이면 도는 job 마다 매초 전체를 읽는다.
+LEDGER_POLL_SECONDS = 1
 
 
 def _wait_for_ledger(run_token: str, seconds: float) -> None:
@@ -290,27 +292,3 @@ def _report_observed(run_token: str, rows: int) -> None:
         _post(f"/api/etl/job-runs/{run_token}/observe-complete", {"rows": rows})
     except Exception as exc:
         print(f"원장 마감 보고 실패(무시): {exc}")
-
-
-def verify_landing(node: dict, **context) -> None:
-    """spec의 target_tables로 적재를 확인한다.
-
-    대상 테이블을 Airflow Variable이 아니라 spec에서 읽는 것이 기존과의 차이다.
-    예전에는 `{dag_id}__target_schema/table/timestamp_column`을 손으로 넣어야 했고,
-    셋 중 하나만 빠져도 검증이 조용히 skip됐다(실측: 이 환경엔 그 Variable이
-    하나도 없어서 검증이 매번 건너뛰어지고 있었다).
-    """
-    tables = node.get("target_tables") or []
-    if not tables:
-        print(f"[{node.get('name')}] 적재 대상 테이블이 없어 검증 생략(추출 전용 job일 수 있음)")
-        return
-
-    from airflow.providers.postgres.hooks.postgres import PostgresHook
-    hook = PostgresHook(postgres_conn_id="target_db_postgres")
-    for table in tables:
-        try:
-            count = hook.get_first(f"SELECT COUNT(*) FROM {table}")[0]
-            print(f"[{node.get('name')}] {table} 총 {count:,}행")
-        except Exception as exc:
-            # 검증 실패가 적재 자체를 실패로 만들면 안 된다(권한/스키마 문제일 수 있음).
-            print(f"[{node.get('name')}] {table} 조회 실패(검증 생략): {exc}")
