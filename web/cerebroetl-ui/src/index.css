@@ -11067,3 +11067,71 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   font-size: 11px;
   line-height: 1.5;
 }
+
+/* 자원 카드 제목 줄 오른쪽(«상세» 단추 · 상태 배지, 2026-10-12 요청). */
+.infra-tile-title-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* CPU 상세 창 - 머리줄과 안내 */
+.infra-process-modal-head {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.infra-process-modal-note {
+  margin-bottom: 10px;
+}
+
+/* 차트 오른쪽 위 시간대 단추(예전 범례 자리, 2026-10-13 요청). 색 점은 막대 색과 같아 범례 노릇도 한다. */
+.hour-bucket-picker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.hour-bucket-picker button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: none;
+  color: #64748b;
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.hour-bucket-picker button:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.hour-bucket-picker button.is-active {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.hour-bucket-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+/* 제목이 길어져도 단추 줄이 눌리지 않게 한다. */
+.dashboard-chart-card > .ant-card-head .ant-card-extra {
+  margin-left: 12px;
+}

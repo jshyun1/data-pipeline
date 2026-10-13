@@ -61,3 +61,15 @@ export function refitAfterLayout(chart: FitTarget): void {
     observer.disconnect();
   });
 }
+
+/**
+ * 건수가 모두 0 일 때 가로축이 차트 한가운데 그려지던 문제를 막는다(2026-10-13 제보).
+ *
+ * <p>값이 전부 0 이면 y 범위가 «0~0» 이라 G2 가 보기 좋게 넓히면서 음수 쪽까지 잡는다.
+ * 그러면 0 선이 가운데로 올라와 «ㅣ--» 모양이 된다. 아래를 0 으로 고정하고, 위가 없을 때만
+ * 1 까지 벌려 축이 늘 «ㄴ» 모양(세로는 왼쪽 · 가로는 바닥)이 되게 한다.
+ */
+export function zeroSafeYScale(values: Array<number | null | undefined>) {
+  const max = values.reduce<number>((acc, value) => Math.max(acc, Number(value) || 0), 0);
+  return max > 0 ? { domainMin: 0, nice: true } : { domainMin: 0, domainMax: 1, nice: false };
+}
