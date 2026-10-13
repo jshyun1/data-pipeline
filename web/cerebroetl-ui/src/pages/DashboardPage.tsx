@@ -34,7 +34,6 @@ import { listWorkflows } from "../api/workflows";
 import { collectNifiJobs, extractErrorGroupMessages } from "../utils/nifiJobs";
 import { summarizeKafkaConnectors } from "../utils/kafkaConnectors";
 import { FailureDetailModal, type FailureDetailItem } from "../components/FailureDetailModal";
-import { TaskFailureLogModal, type FailureLogTarget } from "../components/TaskFailureLogModal";
 import { categorizeDag, NIFI_METRICS_COLLECTOR_DAG_ID, resolveDagDisplayName, type DagCategory } from "../utils/dagHistory";
 import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
 import { InfraRegion } from "../components/InfraRegion";
@@ -343,9 +342,6 @@ export function DashboardPage() {
   const [airflowActiveTile, setAirflowActiveTile] = useState<AirflowTileKind | null>(null);
   const [nifiFailedOpen, setNifiFailedOpen] = useState(false);
   const [kafkaFailedOpen, setKafkaFailedOpen] = useState(false);
-  /** Airflow 실패 줄에서 연 실패 로그 창. 워크플로우 로그 화면과 <b>같은 창</b>을 쓴다(2026-09-21 요청). */
-  const [workflowFailure, setWorkflowFailure] = useState<FailureLogTarget | undefined>();
-  const [workflowFailureLoading, setWorkflowFailureLoading] = useState<string | null>(null);
 
   // NiFi/Kafka는 Airflow DAG 실행 이력을 거치지 않고 각자의 API를 직접 조회한다 -
   // 이게 실제 처리 상태(대기열, 오류)를 그대로 반영하는 값이라 짧은 주기로 새로고침한다.
@@ -591,7 +587,8 @@ export function DashboardPage() {
 
   /**
    * 워크플로우 실패. ETL · CDC 와 같은 창(FailureDetailModal)에 같은 차례로 담는다(2026-09-28 요청).
-   * 줄을 펼치면 실행 로그가 보이고, [로그] 를 누르면 시도별 로그 · 하위 워크플로우까지 따라가는 전용 창이 열린다.
+   * 줄을 펼치면 GPT 해석 · 실행 로그가 보인다. 줄마다 있던 [로그](시도별 로그 전용 창)는 뺐다(2026-10-13 요청) -
+   * 그 창은 워크플로우 로그 화면에서 연다.
    */
   const workflowFailedItems: FailureDetailItem[] = useMemo(
     () => airflowHistory.failedEntries.map((entry) => {
@@ -612,36 +609,6 @@ export function DashboardPage() {
     }),
     [airflowHistory.failedEntries],
   );
-
-  /**
-   * 실패한 실행의 «로그» - 워크플로우 로그 화면과 같은 창(TaskFailureLogModal)을 띄운다.
-   * 그 창이 시도별 로그 · Airflow 기록 · 하위 워크플로우까지 따라가고 GPT 해석도 그 안에 있다.
-   */
-  const openWorkflowFailureLog = async (entry: HistoryEntry) => {
-    // id 는 `${dagId}:${runId}` 인데 run_id 안에도 콜론이 있다(manual__2026-09-21T06:35:27…) - 첫 콜론만 구분자다.
-    const splitAt = entry.id.indexOf(":");
-    const dagId = splitAt > 0 ? entry.id.slice(0, splitAt) : "";
-    const runId = splitAt > 0 ? entry.id.slice(splitAt + 1) : "";
-    if (!dagId || !runId) {
-      return;
-    }
-    setWorkflowFailureLoading(entry.id);
-    try {
-      const tasks = await listAirflowTaskInstances(dagId, runId);
-      const failed = tasks.filter((task) => task.state === "failed" || task.state === "upstream_failed");
-      setWorkflowFailure({
-        title: entry.basicContent,
-        dagId,
-        runId,
-        tasks: failed.length > 0 ? failed : tasks,
-      });
-    } catch {
-      // 창을 못 열면 기존처럼 줄을 펼쳐 원문을 볼 수 있다 - 여기서 더 막지 않는다.
-      setWorkflowFailure(undefined);
-    } finally {
-      setWorkflowFailureLoading(null);
-    }
-  };
 
   const airflowModalRows = useMemo(() => {
     switch (airflowActiveTile) {
@@ -1037,16 +1004,6 @@ export function DashboardPage() {
         title={`워크플로우 실패 상세 · ${selectedPeriodLabel}`}
         loading={showAirflowInitialLoading}
         items={workflowFailedItems}
-        rowAction={{
-          label: "로그",
-          busyId: workflowFailureLoading ?? undefined,
-          onClick: (item) => {
-            const entry = airflowHistory.failedEntries.find((row) => row.id === item.id);
-            if (entry) {
-              void openWorkflowFailureLog(entry);
-            }
-          },
-        }}
       />
       <FailureDetailModal
         open={nifiFailedOpen}
@@ -1062,8 +1019,6 @@ export function DashboardPage() {
         loading={kafkaConnectorsQuery.isLoading && !kafkaConnectorsQuery.data}
         items={cdcFailedItems}
       />
-      {/* 워크플로우(Airflow) 실패는 로그 화면과 같은 창을 그대로 띄운다 - 시도별 로그 · 하위 워크플로우 · GPT 해석이 한 자리에 있다. */}
-      <TaskFailureLogModal target={workflowFailure} onClose={() => setWorkflowFailure(undefined)} />
     </div>
     </ConfigProvider>
   );

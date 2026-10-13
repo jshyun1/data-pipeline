@@ -4116,3 +4116,21 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 
 **확인**: 타입 검사 · oxlint 통과(경고 0). 옆 세션 미커밋 변경을 뺀 스테이징본만으로도 `tsc -p tsconfig.app.json` 통과.
 화면 재빌드 · 재기동 후 번들의 GPT 해석 머리줄에 «닫기»가 없다. 죽은 코드 정리분은 동작이 같아 다시 빌드하지 않았다(다음 화면 빌드에 들어간다).
+
+## 133. 대시보드 실패 상세 팝업 - 맨 위 강조 띠 · 워크플로우 실패 줄의 «로그» 버튼 삭제 (2026-10-13)
+
+**요청**: 대시보드 CDC · ETL · Workflow 실패 건을 눌렀을 때 뜨는 팝업에도 로그 창들처럼 맨 위 붉은 강조 띠를 넣고,
+워크플로우 실패 팝업의 줄마다 오른쪽에 있는 «로그» 버튼은 지운다.
+
+**변경**
+- `components/FailureDetailModal`(세 실패 팝업이 같이 쓰는 창): `rootClassName` 에 `accent-modal` - 로그 창 셋과 같은 3px 띠.
+  줄마다 버튼을 붙이던 `rowAction` 속성 · 열을 지웠다(쓰던 곳은 워크플로우 «로그» 하나뿐).
+- `pages/DashboardPage`: 워크플로우 실패 팝업의 `rowAction`(«로그» → 시도별 로그 전용 창 TaskFailureLogModal)과 그것만 쓰던
+  `openWorkflowFailureLog` · 상태 2개 · 창 렌더 · import 를 지웠다. 줄을 펼치면 나오는 GPT 해석 · 실행 로그는 그대로.
+  전용 창은 워크플로우 로그 화면(AirflowDashboardPage · EtlRunsPane)과 WorkflowInfoSections 에서 그대로 열린다.
+- 두 파일 모두 옆 세션(data-pipeline-80)의 미커밋 작업이 많아, 그 세션이 편집을 멈춘 동안 필요한 줄만 바꿨고 커밋은 HEAD 에 내 변경만 얹었다
+  (HEAD 의 FailureDetailModal 에는 «GPT 해석» 다시 열기 단추가 아직 있어 `Button` import 는 남김).
+
+**확인**: 타입 검사 · oxlint 통과(경고 0), 스테이징본만으로도 `tsc -p tsconfig.app.json` 통과. 화면 재빌드 · 재기동.
+가짜 세션 + 가짜 응답(qa-playwright, 실패한 워크플로우 실행 1건 · ETL 실패 2건): 두 팝업 모두 `accent-modal` · 맨 위 3px 빨강 그라데이션,
+워크플로우 실패 팝업 열은 «대상 · 구분 · 시각», 줄 안 버튼은 펼침 단추뿐(«로그» 없음). 화면 오류 0.
