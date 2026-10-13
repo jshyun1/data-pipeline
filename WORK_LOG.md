@@ -4014,3 +4014,28 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 - nginx: `/airflow/` · `/airflow/auth/…` 응답 헤더가 `Content-Security-Policy: frame-ancestors 'self'`.
 - 대시보드(가짜 세션 + 가짜 응답, qa-playwright): 요약 카드 CDC · ETL · Workflow, 차트 · Top 5 · 자원 카드까지 그려지고 화면 오류 0
   (옆 세션의 미커밋 대시보드 변경이 같은 이미지에 들어가 그쪽 요청으로 확인).
+
+## 128. 알림 발송 - 마지막 실패가 «발송 중»에 갇혀 끝없이 재시도 · 만료 알림도 발송하던 문제 (2026-10-13)
+
+**요청**: 카카오 알림 발송 실패가 계속되는지 확인. 사용자가 카카오 «사용»을 끈 뒤 «1. 밀린 알림 정리 2. 버그 수정» 진행.
+토큰 갱신은 다음에 요청할 때 (가) 방식(사용자가 터미널에서 도우미 실행 → 설정 화면 API 키에 붙여 넣기)으로.
+
+**원인(실측)**
+- 카카오 액세스 토큰(6시간)이 만료돼 발송마다 «this access token does not exist»(401).
+- 9/29~10/13 14:20 에 만든 카카오 알림 62건이 `SENDING` · attempt 4/5 로 5분마다 다시 나갔다(마지막 성공 9/28).
+  - 실패 처리(`gatewayFail` · 메일 실패 · `markNoRelay`)가 «재시도»(`attempt_count+1 < max_attempts`)와 «포기»(`attempt_count >= max_attempts`)를
+    두 번에 나눠 갱신했다. 마지막 시도(4/5)가 실패하면 둘 다 안 맞아 `SENDING` 그대로 → 5분 뒤 집기 회수가 `RETRY` 로 → 무한 반복.
+  - `expires_at`(만든 뒤 6시간)을 아무도 보지 않아 2주 전 알림도 계속 다시 보냈다. 토큰을 그대로 갱신했다면 62건이 한꺼번에 나갔다.
+
+**정리(1번)**: 사용자가 17:41 카카오 «사용»을 끄자 다음 주기(17:42~17:45)에 62건이 모두 `DEAD`(CHANNEL_OFF)로 닫혔다.
+그 뒤 카카오 발송 실패 0건. 데이터는 따로 손대지 않았다.
+
+**고친 것(2번, `NotificationService`)**
+- `recordFailure`: 실패 한 번을 한 번의 UPDATE 로 - `status = CASE WHEN attempt_count+1 >= max_attempts THEN 'DEAD' ELSE 'RETRY' END`,
+  `attempt_count+1`. 메일 · 문자/카카오 · 릴레이 없음 세 곳이 이것을 쓴다. status 를 attempt_count 보다 앞에 둬서 SET 을 왼쪽부터 계산하는 H2 에서도 옛 값으로 판정.
+- `expireStale`(발송 주기 맨 앞, 집기 회수 다음): 유효 시간이 지난 `PENDING · RETRY` 는 보내지 않고 `DEAD`(EXPIRED). 화면 알림(IN_APP)은 뺀다.
+- 테스트(`NotificationGatewayTest`, H2 PostgreSQL 모드): 마지막 시도 실패 → DEAD · 5/5, 릴레이 없음 마지막 시도 → DEAD,
+  만료 알림은 게이트웨이에 안 나가고 EXPIRED · 화면 알림은 SENT. 테스트 표에 `expires_at` 추가.
+
+**확인(로컬)**: 알림 테스트 12건 통과(기존 9 + 새 3). pipeline-api 반영(17:55) 뒤 발송 주기가 오류 없이 돈다(만료 정리 · 발송 처리 실패 로그 0).
+카카오는 꺼진 채라 실제 발송은 하지 않았다 - 토큰 갱신 뒤 «사용»을 켜고 «테스트 발송»으로 확인한다.

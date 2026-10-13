@@ -58,6 +58,7 @@ class NotificationGatewayTest {
                     failure_detail VARCHAR(1000),
                     claimed_by VARCHAR(40),
                     claim_expires_at TIMESTAMP,
+                    expires_at TIMESTAMP,
                     updated_at TIMESTAMP)
                 """);
         jdbc.execute("""
@@ -255,6 +256,48 @@ class NotificationGatewayTest {
         assertThat(gateway.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS))
                 .as("만료된 집기는 회수돼 다시 나가야 한다").isNotNull();
         assertThat(status(id)).isEqualTo("SENT");
+    }
+
+    @Test
+    void 마지막_시도가_실패하면_포기로_끝나고_다시_집히지_않는다() throws Exception {
+        // 예전에는 마지막 시도(4/5) 실패가 «재시도»도 «포기»도 아니어서 SENDING 으로 남았다가 5분 뒤 회수돼 끝없이 다시 나갔다(2026-10-13).
+        gateway.enqueue(new MockResponse().setResponseCode(401).setBody("{\"msg\":\"this access token does not exist\"}"));
+        long id = insertDelivery("KAKAO", "01012345678", "제목", "본문");
+        jdbc.update("UPDATE notification_delivery SET attempt_count=4 WHERE id=?", id);
+
+        service(kakaoSettings()).dispatch();
+
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT status, attempt_count, failure_reason FROM notification_delivery WHERE id=?", id);
+        assertThat(row.get("status")).isEqualTo("DEAD");
+        assertThat(((Number) row.get("attempt_count")).intValue()).isEqualTo(5);
+        assertThat(row.get("failure_reason")).isEqualTo("KAKAO_ERROR");
+    }
+
+    @Test
+    void 릴레이가_없어도_마지막_시도면_포기로_끝난다() {
+        long id = insertDelivery("KAKAO", "01012345678", "제목", "본문");
+        jdbc.update("UPDATE notification_delivery SET attempt_count=4 WHERE id=?", id);
+
+        service(settings(Map.of(), "")).dispatch();
+
+        assertThat(status(id)).isEqualTo("DEAD");
+    }
+
+    @Test
+    void 유효_시간이_지난_알림은_보내지_않고_닫는다_화면_알림은_빼고() throws Exception {
+        long stale = insertDelivery("KAKAO", "01012345678", "제목", "2주 전 알림");
+        long inApp = insertDelivery("IN_APP", null, "제목", "화면 알림");
+        jdbc.update("UPDATE notification_delivery SET status='RETRY', expires_at=CURRENT_TIMESTAMP - INTERVAL '1' MINUTE "
+                + "WHERE id IN (?, ?)", stale, inApp);
+
+        service(kakaoSettings()).dispatch();
+
+        assertThat(gateway.takeRequest(1, java.util.concurrent.TimeUnit.SECONDS)).as("지난 알림은 나가면 안 된다").isNull();
+        assertThat(jdbc.queryForObject("SELECT failure_reason FROM notification_delivery WHERE id=?", String.class, stale))
+                .isEqualTo("EXPIRED");
+        assertThat(status(stale)).isEqualTo("DEAD");
+        assertThat(status(inApp)).as("화면 알림은 만료로 닫지 않는다").isEqualTo("SENT");
     }
 
     /** 카카오 게이트웨이 설정 한 벌(집기 테스트들이 같이 쓴다). */
