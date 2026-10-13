@@ -128,6 +128,27 @@ const HIDE_TOOL_CHROME_CSS = `
   .cdk-overlay-container {
     z-index: 100010 !important;
   }
+  .cdk-global-overlay-wrapper:has(.processor-configuration) {
+    align-items: center !important;
+    justify-content: center !important;
+    box-sizing: border-box !important;
+    padding: 16px !important;
+  }
+  .cdk-overlay-pane:has(.processor-configuration) {
+    width: min(1024px, calc(100vw - 32px)) !important;
+    max-width: calc(100vw - 32px) !important;
+    max-height: calc(100vh - 32px) !important;
+  }
+  .processor-configuration,
+  .mat-dialog-container:has(.processor-configuration),
+  .mat-mdc-dialog-container:has(.processor-configuration),
+  [role="dialog"]:has(.processor-configuration) {
+    box-sizing: border-box !important;
+    width: min(1024px, calc(100vw - 32px)) !important;
+    max-width: calc(100vw - 32px) !important;
+    max-height: calc(100vh - 32px) !important;
+    overflow: auto !important;
+  }
   #${NIFI_MINI_TOOLBAR_ID} {
     position: fixed !important;
     left: 14px !important;

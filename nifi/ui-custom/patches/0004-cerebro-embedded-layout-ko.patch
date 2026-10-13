@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..563080750d46759b8f4e31fdaff264398ba11315
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss
-@@ -0,0 +1,1178 @@
+@@ -0,0 +1,1202 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -33,6 +33,30 @@ index 0000000000000000000000000000000000000000..563080750d46759b8f4e31fdaff26439
 +    // ETL 이 띄우는 안내 글자(«프로세스 그룹» 등)는 이 겹침 칸에 그려진다 - 공구막대 · 창보다 위로.
 +    .cdk-overlay-container {
 +        z-index: 100010 !important;
++    }
++
++    .cdk-global-overlay-wrapper:has(.processor-configuration) {
++        align-items: center !important;
++        justify-content: center !important;
++        box-sizing: border-box !important;
++        padding: 16px !important;
++    }
++
++    .cdk-overlay-pane:has(.processor-configuration) {
++        width: min(1024px, calc(100vw - 32px)) !important;
++        max-width: calc(100vw - 32px) !important;
++        max-height: calc(100vh - 32px) !important;
++    }
++
++    .processor-configuration,
++    .mat-dialog-container:has(.processor-configuration),
++    .mat-mdc-dialog-container:has(.processor-configuration),
++    [role='dialog']:has(.processor-configuration) {
++        box-sizing: border-box !important;
++        width: min(1024px, calc(100vw - 32px)) !important;
++        max-width: calc(100vw - 32px) !important;
++        max-height: calc(100vh - 32px) !important;
++        overflow: auto !important;
 +    }
 +
 +    /* ---------------- 1. 공구막대 (디자인 .nifi-toolbar-wrap / .nifi-component-toolbar) ---------------- */

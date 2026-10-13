@@ -6295,7 +6295,7 @@ button.alert-compact-trigger.is-clear:hover {
 .nifi-tree-node::before {
   content: "";
   position: absolute;
-  left: calc(var(--tree-indent) + 8px);
+  left: calc(var(--tree-indent) - 10px);
   top: 0;
   bottom: 0;
   border-left: 1px dotted #a8b0bb;
@@ -6309,9 +6309,9 @@ button.alert-compact-trigger.is-clear:hover {
 .nifi-tree-node::after {
   content: "";
   position: absolute;
-  left: calc(var(--tree-indent) + 8px);
+  left: calc(var(--tree-indent) - 10px);
   top: 14px;
-  width: 13px;
+  width: 10px;
   border-top: 1px dotted #a8b0bb;
   pointer-events: none;
 }
