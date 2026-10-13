@@ -68,16 +68,17 @@ public class PipelineService {
         this.metadataArchiveRepository = metadataArchiveRepository;
     }
 
+    /** @param createdBy 등록자(로그인 사용자 ID). 컨트롤러가 {@code RequestActorResolver} 로 정한다 - 모르면 등록하지 않는다. */
     @Transactional
-    public PipelineResponse create(PipelineCreateRequest request) {
-        PipelineDefinition entity = buildDefinition(request);
+    public PipelineResponse create(PipelineCreateRequest request, String createdBy) {
+        PipelineDefinition entity = buildDefinition(request, createdBy);
         pipelineDefinitionRepository.save(entity);
         return PipelineResponse.from(entity, List.of());
     }
 
     /** 모든 항목을 먼저 검증한 뒤 한 DB 트랜잭션에서 정의를 저장한다. Connector 준비는 별도 보상 단계다. */
     @Transactional
-    public List<PipelineResponse> createBatchDefinitions(List<PipelineCreateRequest> requests) {
+    public List<PipelineResponse> createBatchDefinitions(List<PipelineCreateRequest> requests, String createdBy) {
         if (requests == null || requests.isEmpty() || requests.size() > 50) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "배치 생성은 1건 이상 50건 이하만 가능합니다.");
         }
@@ -87,12 +88,12 @@ public class PipelineService {
                 throw new BusinessException(ErrorCode.VALIDATION_ERROR, "배치 안에 중복된 파이프라인명이 있습니다: " + request.name());
             }
         }
-        List<PipelineDefinition> entities = requests.stream().map(this::buildDefinition).toList();
+        List<PipelineDefinition> entities = requests.stream().map(request -> buildDefinition(request, createdBy)).toList();
         return pipelineDefinitionRepository.saveAllAndFlush(entities).stream()
                 .map(entity -> PipelineResponse.from(entity, List.of())).toList();
     }
 
-    private PipelineDefinition buildDefinition(PipelineCreateRequest request) {
+    private PipelineDefinition buildDefinition(PipelineCreateRequest request, String createdBy) {
         if (pipelineDefinitionRepository.existsByName(request.name())) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "이미 사용 중인 파이프라인명입니다: " + request.name());
         }
@@ -121,7 +122,7 @@ public class PipelineService {
                 request.topicPrefix(),
                 request.deleteEnabled(),
                 request.description(),
-                null
+                createdBy
         );
         // 그룹은 관리 화면 트리에서 놓일 자리다. 없는 그룹을 가리키면 트리에서 사라지므로 먼저 확인한다.
         groupService.requireExists(request.groupId());
@@ -155,7 +156,7 @@ public class PipelineService {
      * 하고 여기선 랜딩(타겟) DB 연결만 검증하면 된다.
      */
     @Transactional
-    public PipelineResponse createLogFilePipeline(LogPipelineCreateRequest request) {
+    public PipelineResponse createLogFilePipeline(LogPipelineCreateRequest request, String createdBy) {
         PipelineConnection target = findConnectionOrThrow(request.targetConnectionId());
 
         String parseType = request.parseType() != null ? request.parseType() : "PLAIN";
@@ -182,7 +183,7 @@ public class PipelineService {
                 null,
                 false,
                 request.description(),
-                null
+                createdBy
         );
         entity = pipelineDefinitionRepository.saveAndFlush(entity);
 

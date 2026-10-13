@@ -100,6 +100,8 @@ def apply(node: dict, **context) -> str:
     print(f"[{name}] 파이프라인 {pipeline_id} 에 {action} 지시 (현재 {status})")
     response = requests.post(
         f"{PIPELINE_API_BASE_URL}/api/pipelines/{pipeline_id}/{action}",
+        # 제어 이력의 요청자 - 백엔드는 서비스 토큰이 맞을 때만 이 이름을 믿고 «airflow:DAG» 로 남긴다(2026-10-13).
+        headers={"X-Requested-By": context["dag"].dag_id},
         # 백엔드는 Oracle Debezium Source task 가 RUNNING 이 될 때까지 최대 60초 검증한다.
         timeout=(10, 120),
     )

@@ -17,6 +17,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -59,7 +60,7 @@ class WorkflowServiceKeyTest {
         when(workflowRepository.existsByWorkflowKey("cdc")).thenReturn(true);
         when(workflowRepository.existsByWorkflowKey("cdc_2")).thenReturn(false);
 
-        WorkflowSummary created = service.create(request(null, "CDC"));
+        WorkflowSummary created = service.create(request(null, "CDC"), "kim");
 
         assertThat(created.workflowKey()).isEqualTo("cdc_2");
         assertThat(created.dagId()).isEqualTo("etl_wf_cdc_2");
@@ -69,7 +70,7 @@ class WorkflowServiceKeyTest {
     void explicitKeyOfDeletedWorkflow_isRejected() {
         when(workflowRepository.existsByWorkflowKey("cdc")).thenReturn(true);
 
-        assertThatThrownBy(() -> service.create(request("cdc", "CDC")))
+        assertThatThrownBy(() -> service.create(request("cdc", "CDC"), "kim"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("삭제된 워크플로우가 쓰던");
         verify(workflowRepository, never()).save(any());
@@ -79,7 +80,19 @@ class WorkflowServiceKeyTest {
     void freshKey_isUsedAsIs() {
         when(workflowRepository.existsByWorkflowKey("orders")).thenReturn(false);
 
-        assertThat(service.create(request(null, "orders")).workflowKey()).isEqualTo("orders");
+        assertThat(service.create(request(null, "orders"), "kim").workflowKey()).isEqualTo("orders");
+    }
+
+    @Test
+    void create_storesRegistrant() {
+        // 등록자를 남긴다(2026-10-13, V81) - 예전에는 칸이 없어 AI 가 누가 만들었는지 말할 수 없었다.
+        when(workflowRepository.existsByWorkflowKey("orders")).thenReturn(false);
+
+        service.create(request(null, "orders"), "kim");
+
+        ArgumentCaptor<EtlWorkflow> saved = ArgumentCaptor.forClass(EtlWorkflow.class);
+        verify(workflowRepository).save(saved.capture());
+        assertThat(saved.getValue().getCreatedBy()).isEqualTo("kim");
     }
 
     private static CreateWorkflow request(String key, String name) {

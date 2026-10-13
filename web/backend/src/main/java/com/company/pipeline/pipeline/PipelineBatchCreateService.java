@@ -21,8 +21,8 @@ public class PipelineBatchCreateService {
         this.pipelineDeployService = pipelineDeployService;
     }
 
-    public PipelineBatchCreateResponse create(PipelineBatchCreateRequest request) {
-        List<PipelineResponse> definitions = pipelineService.createBatchDefinitions(request.pipelines());
+    public PipelineBatchCreateResponse create(PipelineBatchCreateRequest request, String createdBy) {
+        List<PipelineResponse> definitions = pipelineService.createBatchDefinitions(request.pipelines(), createdBy);
         List<PipelineResponse> prepared = new ArrayList<>();
         try {
             for (PipelineResponse definition : definitions) {

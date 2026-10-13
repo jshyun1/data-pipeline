@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -78,12 +79,16 @@ class PipelineServiceTest {
         var request = new PipelineCreateRequest("test-pipeline", 10L, 20L,
                 "APPUSER", "CUSTOMERS", "cdc_landing", "customers", "test-topic", true, null);
 
-        var response = pipelineService.create(request);
+        var response = pipelineService.create(request, "kim");
 
         assertThat(response.name()).isEqualTo("test-pipeline");
         assertThat(response.sourceDbType()).isEqualTo(DbType.ORACLE);
         assertThat(response.targetDbType()).isEqualTo(DbType.POSTGRESQL);
         assertThat(response.status()).isEqualTo(PipelineStatus.CREATED);
+        // 등록자가 정의에 남는다(2026-10-13 - 예전에는 늘 null).
+        ArgumentCaptor<PipelineDefinition> saved = ArgumentCaptor.forClass(PipelineDefinition.class);
+        verify(pipelineDefinitionRepository).save(saved.capture());
+        assertThat(saved.getValue().getCreatedBy()).isEqualTo("kim");
     }
 
     @Test
@@ -98,7 +103,7 @@ class PipelineServiceTest {
                 "APPUSER", "AA_TABLE", "public", "aa_table_delta", "oracle-cdc", "INITIAL",
                 java.util.List.of(), java.util.List.of(), false, null, "delta_append", " Change_Type ", null);
 
-        var response = pipelineService.create(request);
+        var response = pipelineService.create(request, "kim");
 
         assertThat(response.loadMode()).isEqualTo("DELTA_APPEND");
         assertThat(response.deltaOpColumn()).isEqualTo("Change_Type");
@@ -116,7 +121,7 @@ class PipelineServiceTest {
                 "APPUSER", "AA_TABLE", "public", "aa_table_delta", "oracle-cdc", "NO_DATA",
                 java.util.List.of(), java.util.List.of(), false, null, "DELTA_UPSERT", null, null);
 
-        var response = pipelineService.create(request);
+        var response = pipelineService.create(request, "kim");
 
         assertThat(response.loadMode()).isEqualTo("DELTA_UPSERT");
         assertThat(response.deltaOpColumn()).isEqualTo("cdc_op");
@@ -134,7 +139,7 @@ class PipelineServiceTest {
                 "APPUSER", "CUSTOMERS", "cdc_landing", "customers", "test-topic", "INITIAL",
                 java.util.List.of(), java.util.List.of(), true, null, null, "cdc_op", null);
 
-        var response = pipelineService.create(request);
+        var response = pipelineService.create(request, "kim");
 
         assertThat(response.loadMode()).isEqualTo("UPSERT");
         assertThat(response.deltaOpColumn()).isNull();
@@ -153,7 +158,7 @@ class PipelineServiceTest {
 
         assertThat(org.junit.jupiter.api.Assertions.assertThrows(
                 com.company.pipeline.common.BusinessException.class,
-                () -> pipelineService.create(request)).getMessage()).contains("구분컬럼명");
+                () -> pipelineService.create(request, "kim")).getMessage()).contains("구분컬럼명");
     }
 
     @Test
@@ -168,7 +173,7 @@ class PipelineServiceTest {
 
         assertThat(org.junit.jupiter.api.Assertions.assertThrows(
                 com.company.pipeline.common.BusinessException.class,
-                () -> pipelineService.create(request)).getMessage()).contains("공통 사용자");
+                () -> pipelineService.create(request, "kim")).getMessage()).contains("공통 사용자");
     }
 
     @Test
@@ -186,7 +191,7 @@ class PipelineServiceTest {
         var request = new LogPipelineCreateRequest("app-log", "filebeat-1", "/var/log/app/app.log",
                 null, "END", "PLAIN", "UTF-8", false, 20L, "log_landing", "app_log", null, null);
 
-        var response = pipelineService.createLogFilePipeline(request);
+        var response = pipelineService.createLogFilePipeline(request, "kim");
 
         assertThat(response.name()).isEqualTo("app-log");
         assertThat(response.pipelineType()).isEqualTo("LOG_FILE");
@@ -206,7 +211,7 @@ class PipelineServiceTest {
 
         assertThat(org.junit.jupiter.api.Assertions.assertThrows(
                 com.company.pipeline.common.BusinessException.class,
-                () -> pipelineService.createLogFilePipeline(request)).getMessage()).contains("PLAIN");
+                () -> pipelineService.createLogFilePipeline(request, "kim")).getMessage()).contains("PLAIN");
     }
 
     @Test

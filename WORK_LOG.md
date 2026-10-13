@@ -3938,3 +3938,46 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 - 반영: pipeline-api(16:06, §119 와 같은 방식 - gradle 캐시 bootJar + Dockerfile 런타임 단계). Airflow 는 dags 폴더 마운트라 다음 파싱 · 태스크부터.
 - 곁가지 관찰: gradle 빌드처럼 호스트 부하가 크면(load 50~93) Airflow 가 DAG 파일(`etl_workflows_dynamic.py`)을 30초 안에 못 읽어
   import 오류(DAG 0개)가 잠깐 난다. 14:00~14:52 · 15:59~ 두 번 있었고 부하가 빠지면 1~4초로 돌아온다. 그 사이 새 실행 · 게시 반영은 늦어질 수 있다.
+
+## 126. CDC 파이프라인 · 워크플로우 등록자, CDC 제어 이력 요청자 (2026-10-13)
+
+**요청**: CDC 관리 화면 AI 어시스턴트가 등록자를 «확인되지 않음»이라 한다 - 등록자는 무조건 알 수 있어야 한다.
+진행: ① 앞으로 등록하는 CDC 파이프라인에 등록자 저장 ③ 제어 이력(준비 · 시작 · 정지 · 재시작 …) 요청자 ④ 워크플로우에도 등록자.
+② 이미 등록된 것은 지금 상태로 둔다(채우지 않음).
+
+**원인**
+- `PipelineService` 의 두 생성 경로(테이블 CDC · 로그 파일)가 `new PipelineDefinition(…, null)` - 등록자를 늘 null 로 저장했다.
+  생성 API 도 로그인 사용자를 받지 않았다. AI 문맥(`CdcPipelineContextCollector`)은 그 빈 값을 «-»로 넘겨 «확인되지 않음».
+- 제어 이력 `pipeline_command_history.requested_by` 도 «멈춘 건 건너뛰기»(§57) 말고는 넘기지 않아 로컬 2,919건 전부 비어 있었다.
+  이미 등록된 파이프라인의 등록자를 되찾을 기록은 어디에도 없다.
+- 워크플로우는 등록자 칸 자체가 없었다(게시자만).
+- 업무 API 는 아직 permitAll(인가 강제 off)이라 컨트롤러에 신원이 들어오지 않을 수 있다. 화면 요청은 JWT 로 사용자가 잡히고,
+  Airflow 는 서비스 토큰(`X-Service-Token`)으로 사용자 없이 통과한다.
+
+**변경**
+- `user/security/RequestActorResolver`(신규): 지금 요청의 주체 - 로그인 사용자 ID → 서비스 토큰이 맞으면 «airflow»(호출 DAG 가
+  `X-Requested-By` 로 밝히면 «airflow:DAG», 토큰이 맞을 때만 믿음) → 없으면 모름.
+  - `requireForRegistration`: 모르면 401 «로그인 정보가 없어 … 등록자를 알 수 없습니다. 다시 로그인한 뒤 등록해 주세요.» - 등록자 없는 등록은 받지 않는다.
+  - `currentForChange`: 변경 요청(POST · PUT · DELETE · PATCH)일 때만 - 조회 중 남는 기록에 «보던 사람»이 찍히지 않게.
+- CDC 등록: `PipelineController` 의 단건 · 일괄 · 로그 파일 등록이 등록자를 정해 `PipelineService.create / createBatchDefinitions / createLogFilePipeline`
+  (+ `PipelineBatchCreateService`)에 넘기고, 정의의 `created_by` 에 남는다.
+- 제어 이력: `PipelineCommandHistoryRecorder.record` 가 요청자를 안 받으면 지금 변경 요청의 주체로 채운다. 준비 · 시작 · 정지 · 일시정지 · 재시작 ·
+  싱크 설정 갱신 · 경고 닫기 등 모든 제어가 한 곳으로 지나서 한 번에 채워진다. 자동 감시(`RUNTIME_MONITOR`)와 요청 밖(스케줄러)은 비워 둔다.
+  CDC 관리 «상세 › 제어 이력»의 «요청자» 열(§58)에 그대로 보인다.
+- Airflow `cdc_runtime.apply`: CDC 제어 요청에 `X-Requested-By: <dag_id>` → 워크플로우가 보낸 시작 · 정지는 «airflow:etl_wf_…».
+- 워크플로우: `V81__etl_workflow_created_by.sql`(`etl_workflow.created_by VARCHAR(100)`), `EtlWorkflow.createdBy`,
+  `WorkflowService.create(request, createdBy)`, `WorkflowController` 가 등록자를 정한다. AI 문맥(`WorkflowContextCollector`)에 «등록자» 줄.
+- 기존 CDC 파이프라인 · 워크플로우의 등록자는 비워 둔다(요청) - AI 는 계속 «확인되지 않음».
+- 테스트: `RequestActorResolverTest` 5건, `PipelineCommandHistoryRecorderTest` 4건, `WorkflowServiceKeyTest` 등록자 1건,
+  `PipelineServiceTest` 등록자 확인 · 시그니처, `PipelineBatchCreateServiceTest` 시그니처.
+
+**주의 - MSA 포털**: 포털(app02 `/etls/pipelines`)이 pipeline-api 를 Cerebro 로그인 없이 서버 쪽에서 프록시한다(메모 2026-08-19).
+포털을 통해 CDC 파이프라인을 «등록»하는 경로가 있다면 이제 401 로 거절된다. Cerebro 화면(13001)에서 등록하는 것은 영향 없다.
+
+**확인(로컬)**
+- 백엔드 테스트(작업 폴더 사본): pipeline · workflow · user · llm · jobcatalog 180건 통과.
+- 반영: pipeline-api(16:56, gradle 캐시 bootJar + Dockerfile 런타임 단계). 기동 때 V81 적용 - `etl_workflow.created_by varchar(100)`.
+- 로그인 없이 워크플로우 · CDC 등록 요청 → 둘 다 401, 아무것도 만들어지지 않음.
+  - 로컬은 `AUTHZ_ENFORCEMENT_ENABLED=true` 라 권한 검사(`PermissionAspect`)가 먼저 막는다(문구 «인증이 필요합니다»).
+    강제가 꺼진 서버에서는 이번 확인이 «… 등록자를 알 수 없습니다» 로 막는다(단위 테스트로 확인).
+- 서비스 토큰 경로(«airflow:DAG»)는 실제 제어 이력을 남기게 되므로 단위 테스트로만 확인했다. 다음에 CDC 워크플로우가 돌면 제어 이력 요청자에 보인다.

@@ -93,11 +93,20 @@ public class EtlWorkflow {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
+    /** 등록자(로그인 사용자 ID, 2026-10-13~). 그 전에 만든 워크플로우는 비어 있다. */
+    @Column(name = "created_by", length = 100)
+    private String createdBy;
+
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
     public EtlWorkflow(String workflowKey, String name) {
+        this(workflowKey, name, null);
+    }
+
+    public EtlWorkflow(String workflowKey, String name, String createdBy) {
         LocalDateTime now = LocalDateTime.now();
+        this.createdBy = createdBy;
         this.workflowKey = workflowKey;
         this.name = name;
         this.timezone = "Asia/Seoul";

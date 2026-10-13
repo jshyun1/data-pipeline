@@ -5,6 +5,7 @@ import com.company.pipeline.authz.RequirePermission;
 import com.company.pipeline.authz.SystemCode;
 import com.company.pipeline.common.ApiResponse;
 import com.company.pipeline.user.AppUser;
+import com.company.pipeline.user.security.RequestActorResolver;
 import com.company.pipeline.workflow.dto.WorkflowRequests.CreateWorkflow;
 import com.company.pipeline.workflow.dto.WorkflowRequests.SaveGraph;
 import com.company.pipeline.workflow.dto.WorkflowRequests.UpdateWorkflow;
@@ -37,11 +38,14 @@ public class WorkflowController {
 
     private final WorkflowService workflowService;
     private final WorkflowPublishService publishService;
+    private final RequestActorResolver actorResolver;
 
     public WorkflowController(WorkflowService workflowService,
-                              WorkflowPublishService publishService) {
+                              WorkflowPublishService publishService,
+                              RequestActorResolver actorResolver) {
         this.workflowService = workflowService;
         this.publishService = publishService;
+        this.actorResolver = actorResolver;
     }
 
     @GetMapping
@@ -57,7 +61,8 @@ public class WorkflowController {
     @PostMapping
     @RequirePermission(system = SystemCode.NIFI, bits = AccessBits.WRITE)
     public ApiResponse<WorkflowSummary> create(@Valid @RequestBody CreateWorkflow request) {
-        return ApiResponse.success(workflowService.create(request));
+        // 등록자를 반드시 남긴다 - 모르면 401(다시 로그인)(2026-10-13).
+        return ApiResponse.success(workflowService.create(request, actorResolver.requireForRegistration("워크플로우")));
     }
 
     @PutMapping("/{id}")
