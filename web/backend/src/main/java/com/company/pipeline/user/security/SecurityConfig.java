@@ -16,8 +16,8 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 
 /**
  * 통합 웹 보안 설정. Keycloak을 제거하고 이 앱이 직접 발급/검증하는 JWT
- * (PipelineJwtService/PipelineJwtAuthenticationFilter)로 전환했다 - 인증원은
- * 통합 계정 테이블(ST_USER, MySQL)이고, 토큰 서명 자체는 이 앱 단독 비밀키로 한다.
+ * (PipelineJwtService/PipelineJwtAuthenticationFilter)로 전환했다 - 인증원은 authz.provider 에 따른다
+ * (기본 LOCAL=app_user, EXTERNAL=사내 ST_USER). 토큰 서명 자체는 이 앱 단독 비밀키로 한다.
  *
  * 기존 업무 API(/api/pipelines 등)는 여전히 permitAll이다: Airflow 제어 DAG와
  * (레거시)pipeline-ui가 토큰 없이 호출하므로, 이들 게이팅은 서비스 토큰 도입 후 별도 단계.

@@ -3981,3 +3981,36 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
   - 로컬은 `AUTHZ_ENFORCEMENT_ENABLED=true` 라 권한 검사(`PermissionAspect`)가 먼저 막는다(문구 «인증이 필요합니다»).
     강제가 꺼진 서버에서는 이번 확인이 «… 등록자를 알 수 없습니다» 로 막는다(단위 테스트로 확인).
 - 서비스 토큰 경로(«airflow:DAG»)는 실제 제어 이력을 남기게 되므로 단위 테스트로만 확인했다. 다음에 CDC 워크플로우가 돌면 제어 이력 요청자에 보인다.
+
+## 127. MSA 포털 연결 안 함 - 포털 토큰 교환 · nginx 포털 iframe 허용 제거, 포털 전제 주석 · 문서 정리 (2026-10-13)
+
+**요청**: MSA 포털에는 연결하지 않는다. 포털 때문에 프로젝트에 남은 단점을 확인하고(조사 4건), 그중 «2. nginx 포털 주소 iframe 허용»
+«4. 꺼져 있지만 남은 것»을 진행. «1. 인가 강제 기본 켜기» «3. ST_USER 로그인 방식 · 계정 DB 정리»는 나중에(MSA 설정 확인 뒤).
+
+**조사 결과(요약)**
+1. 인가 강제 기본 off - 주석이 «포털이 무인증 프록시하니 off» 라고 지시. off 면 로그인 없이 업무 API 전부(사용자 관리 포함) 호출 가능.
+   로컬은 `.env` 로 켜져 있다. `.env.example` 에 항목이 없어 새 설치는 off. **나중에** - MSA 의 서비스 토큰 · 역할 배정 확인 필요.
+2. nginx 가 Airflow 화면을 `localhost:5173` · `192.168.50.30:5173`(포털) 이 iframe 으로 넣도록 허용 - 로그인된 Airflow 화면 클릭재킹 여지.
+3. ST_USER 로그인(EXTERNAL) - 기본 LOCAL 이라 안 씀. compose 가 `ACCOUNT_DB_*` 를 기본값 없이 요구 · `.env.example` 이 사내 MySQL 접속 정보를 요구 ·
+   mysql 드라이버 · 로컬 `account-db-local` 컨테이너(안 씀). **나중에** - MSA 가 EXTERNAL 로 로그인하는지 확인 필요(그렇다면 지우면 로그인 불가).
+4. 꺼져 있지만 남은 것 - 포털 토큰 교환(`/api/authz/portal-exchange`, 공유 HMAC 키로 Cerebro JWT 발급), «로그인은 ST_USER» 낡은 주석, 인수인계 문서의 «P4.5 가장 시급».
+
+**변경**
+- 삭제: `authz/portal/PortalExchangeController` · `PortalTokenExchangeService` · `PortalTokenExchangeServiceTest`,
+  `application.yml` 의 `portal.integration.*`, `docker-compose.yml` 의 `PORTAL_*` 3줄, `.env.example` 의 `PORTAL_*`.
+- nginx(`web/cerebroetl-ui/nginx.conf`): Airflow 두 location 의 `frame-ancestors` 를 `'self'` 만. Cerebro 는 `/airflow/…` 같은 주소로
+  띄우고(Vite 개발 서버도 `/airflow` 를 프록시) 'self' 로 충분하다. 포털 언급 주석 2곳(평문 HTTP · Permissions-Policy)을 Cerebro 기준으로.
+- 감사 화면(`AuditLogPage`): «포털» 분류 삭제(로컬 감사 기록에 PORTAL_* 액션 0건 - 옛 기록이 있다면 «기타»로 보인다).
+- 주석: «인증원은 ST_USER» → «authz.provider 에 따름(기본 LOCAL=app_user, EXTERNAL=사내 ST_USER)»
+  (`SecurityConfig` · `UserService` · `api/auth.ts` · `LoginPage`), `PermissionAuditLog`(svc:portal), `ConsoleFramePage`(«통합 포털이 SSO 전담» → Cerebro).
+- 문서: `docs/2026-08-24-remaining-work-handoff.md` §1 P4.5 · `docs/2026-08-20-integration-verification.md` M2-9 에 «폐기(2026-10-13)».
+- 그대로 둔 것: 인가 강제를 «포털 때문에 off» 라고 설명하는 주석(`application.yml` · `PermissionAspect` · `PermissionAspectAuditTest` · `SecurityConfig`)은
+  1번을 할 때 함께 고친다. `V48__create_authz.sql` 의 `svc:portal` 주석은 마이그레이션 체크섬 때문에 손대지 않는다.
+  로컬 `.env` 의 `PORTAL_*` 값은 이제 아무도 읽지 않는다(로컬 파일이라 그대로).
+
+**확인(로컬)**
+- 백엔드 테스트(작업 폴더 사본): authz · user · pipeline · workflow 91건 통과. 포털 클래스를 쓰는 곳은 없었다(그 패키지 안에서만 쓰임).
+- 반영: pipeline-api(17:46, 컨테이너 환경에 `PORTAL_*` 0개) · cerebroetl-ui.
+- nginx: `/airflow/` · `/airflow/auth/…` 응답 헤더가 `Content-Security-Policy: frame-ancestors 'self'`.
+- 대시보드(가짜 세션 + 가짜 응답, qa-playwright): 요약 카드 CDC · ETL · Workflow, 차트 · Top 5 · 자원 카드까지 그려지고 화면 오류 0
+  (옆 세션의 미커밋 대시보드 변경이 같은 이미지에 들어가 그쪽 요청으로 확인).

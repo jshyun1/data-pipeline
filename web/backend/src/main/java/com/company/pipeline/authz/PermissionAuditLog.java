@@ -15,7 +15,7 @@ import lombok.Setter;
 
 /**
  * 권한 감사 로그. V47(permission_audit_log) 매핑. "언제 누가 누구에게 무슨 권한을 줬나"와
- * 로그인/거부를 남긴다(설계서 §7.8). 서비스 호출은 actor_id='svc:airflow'/'svc:portal'.
+ * 로그인/거부를 남긴다(설계서 §7.8). 서비스 호출은 actor_id='svc:airflow'.
  */
 @Entity
 @Table(name = "permission_audit_log")
