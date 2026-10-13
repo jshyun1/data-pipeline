@@ -48,7 +48,7 @@ import {
   type NifiProcessorRun,
   type NifiProcessGroupTreeNode,
 } from "../api/platform";
-import { getLlmStatus } from "../api/llm";
+import { getLlmStatus, type LlmStatus } from "../api/llm";
 import { GptChatPanel } from "../components/gpt/GptChatPanel";
 import { getWorkflow, listWorkflows, type WorkflowDetail } from "../api/workflows";
 
@@ -57,6 +57,15 @@ const CANVAS_SELECTION_SYNC_ATTRIBUTE = "data-cerebro-canvas-selection-sync";
 const CANVAS_ROUTE_SYNC_ATTRIBUTE = "data-cerebro-canvas-route-sync";
 const KOREAN_TOOLTIP_PATCH_ATTRIBUTE = "data-cerebro-korean-tooltip-patch";
 const KOREAN_TOOLTIP_INTERVAL_ATTRIBUTE = "data-cerebro-korean-tooltip-interval";
+const NIFI_PROCESSOR_HELP_POPUP_ATTRIBUTE = "data-cerebro-processor-help-popup";
+const NIFI_PROCESSOR_HELP_OBSERVER_ATTRIBUTE = "data-cerebro-processor-help-observer";
+const NIFI_PROCESSOR_HELP_STYLE_ID = "cerebro-processor-help-popup-style";
+const NIFI_PROCESSOR_HELP_MODAL_ID = "cerebro-processor-help-modal";
+const NIFI_PROCESSOR_HELP_TEXT_ATTRIBUTE = "data-cerebro-help-text";
+const NIFI_PROCESSOR_HELP_TITLE_ATTRIBUTE = "data-cerebro-help-title";
+const NIFI_PROCESSOR_HELP_CONTEXT_ATTRIBUTE = "data-cerebro-help-context";
+const NIFI_LLM_ENABLED_ATTRIBUTE = "data-cerebro-llm-enabled";
+const NIFI_LLM_PROVIDER_ATTRIBUTE = "data-cerebro-llm-provider";
 const NIFI_STATUS_HIDDEN_ATTRIBUTE = "data-cerebro-status-hidden";
 const NIFI_STATUS_BAR_HIDDEN_ATTRIBUTE = "data-cerebro-status-bar-hidden";
 const NIFI_PANEL_LAYOUT_ATTRIBUTE = "data-cerebro-nifi-panel-layout";
@@ -1095,7 +1104,18 @@ const NIFI_TOOLTIP_TEXT: Record<string, string> = {
   Add: "추가",
   Apply: "적용",
 };
-const NIFI_TOOLTIP_ATTRIBUTES = ["title", "aria-label", "data-tooltip", "matTooltip", "mattooltip", "tooltip", "placeholder"];
+const NIFI_TOOLTIP_ATTRIBUTES = [
+  "title",
+  "aria-label",
+  "data-tooltip",
+  "matTooltip",
+  "mattooltip",
+  "ng-reflect-message",
+  "data-mat-tooltip",
+  "data-original-title",
+  "tooltip",
+  "placeholder",
+];
 const NIFI_PROCESSOR_EDIT_TEXT: Record<string, string> = {
   Settings: "설정",
   Scheduling: "스케줄링",
@@ -2136,7 +2156,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
 
   const patchDocument = () => {
     doc
-      .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], [placeholder], title")
+      .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [ng-reflect-message], [data-mat-tooltip], [data-original-title], [tooltip], [placeholder], title")
       .forEach(patchElement);
     patchTextNodes(doc);
     HIDDEN_NIFI_STATUS_ICON_CLASSES.forEach((iconClass) => {
@@ -2149,6 +2169,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
     doc.querySelectorAll(NIFI_MENU_ICON_CLASSES.map((className) => `.${className}`).join(", ")).forEach(patchCanvasToolVisibility);
     doc.querySelectorAll('[role="menuitem"], .mat-mdc-menu-item, .mat-menu-item, button, a, li').forEach(patchContextMenuItemVisibility);
     patchCanvasBreadcrumb();
+    installProcessorHelpPopup(doc);
   };
 
   patchDocument();
@@ -2162,6 +2183,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
   const observer = new DocumentMutationObserver((mutations) => {
     if (hasOpenNifiDialog(doc)) {
       patchProcessorEditDialogText(doc);
+      installProcessorHelpPopup(doc);
       return;
     }
     for (const mutation of mutations) {
@@ -2187,7 +2209,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
         patchElement(node);
         patchTextNodes(node);
         node
-          .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [tooltip], [placeholder], title")
+          .querySelectorAll("[title], [aria-label], [data-tooltip], [matTooltip], [mattooltip], [ng-reflect-message], [data-mat-tooltip], [data-original-title], [tooltip], [placeholder], title")
           .forEach(patchElement);
         node.querySelectorAll("*").forEach(patchExactTextElement);
         HIDDEN_NIFI_STATUS_ICON_CLASSES.forEach((iconClass) => {
@@ -2205,6 +2227,7 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
       });
     }
     patchCanvasBreadcrumb();
+    installProcessorHelpPopup(doc);
   });
 
   observer.observe(doc.documentElement, {
@@ -2227,6 +2250,56 @@ function patchKoreanTooltips(frame: HTMLIFrameElement) {
         doc.defaultView?.clearInterval(intervalId);
       }
     }, { once: true });
+  }
+}
+
+function installNifiProcessorHelpPopup(frame: HTMLIFrameElement) {
+  const doc = iframeDocument(frame);
+  const frameWindow = frame.contentWindow;
+  if (!doc) {
+    return;
+  }
+  installProcessorHelpPopup(doc);
+  if (!frameWindow || doc.documentElement.getAttribute(NIFI_PROCESSOR_HELP_OBSERVER_ATTRIBUTE) === "true") {
+    return;
+  }
+  doc.documentElement.setAttribute(NIFI_PROCESSOR_HELP_OBSERVER_ATTRIBUTE, "true");
+  const DocumentMutationObserver = doc.defaultView?.MutationObserver ?? MutationObserver;
+  let frameId: number | null = null;
+  const schedule = () => {
+    if (frameId !== null) {
+      return;
+    }
+    frameId = frameWindow.requestAnimationFrame(() => {
+      frameId = null;
+      installProcessorHelpPopup(doc);
+    });
+  };
+  const observer = new DocumentMutationObserver(schedule);
+  observer.observe(doc.documentElement, {
+    attributeFilter: NIFI_TOOLTIP_ATTRIBUTES,
+    attributes: true,
+    childList: true,
+    subtree: true,
+  });
+  frameWindow.addEventListener("beforeunload", () => {
+    if (frameId !== null) {
+      frameWindow.cancelAnimationFrame(frameId);
+    }
+    observer.disconnect();
+  }, { once: true });
+}
+
+function setNifiFrameLlmStatus(frame: HTMLIFrameElement, status: Pick<LlmStatus, "enabled" | "providerName" | "maskSensitive">) {
+  const doc = iframeDocument(frame);
+  if (!doc) {
+    return;
+  }
+  doc.documentElement.setAttribute(NIFI_LLM_ENABLED_ATTRIBUTE, status.enabled ? "true" : "false");
+  if (status.enabled && status.providerName) {
+    doc.documentElement.setAttribute(NIFI_LLM_PROVIDER_ATTRIBUTE, status.providerName);
+  } else {
+    doc.documentElement.removeAttribute(NIFI_LLM_PROVIDER_ATTRIBUTE);
   }
 }
 
@@ -2781,6 +2854,412 @@ function isProcessorEditTabLabel(element: Element | null) {
   return Boolean(element?.closest(NIFI_PROCESSOR_EDIT_TAB_SELECTOR));
 }
 
+function ensureProcessorHelpPopupStyle(doc: Document) {
+  if (doc.getElementById(NIFI_PROCESSOR_HELP_STYLE_ID)) {
+    return;
+  }
+  const style = doc.createElement("style");
+  style.id = NIFI_PROCESSOR_HELP_STYLE_ID;
+  style.textContent = `
+    [${NIFI_PROCESSOR_HELP_TEXT_ATTRIBUTE}] {
+      cursor: pointer !important;
+    }
+    [${NIFI_PROCESSOR_HELP_TEXT_ATTRIBUTE}]:focus {
+      outline: 2px solid #93c5fd !important;
+      outline-offset: 2px !important;
+      border-radius: 4px !important;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483647;
+      display: none;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 28px 10px;
+      background: rgba(15, 23, 42, 0.42);
+      box-sizing: border-box;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID}[data-open="true"] {
+      display: flex;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-dialog {
+      width: min(960px, calc(100vw - 20px));
+      max-height: calc(100vh - 56px);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      background: #ffffff;
+      border-radius: 6px;
+      border: 1px solid #d7dce5;
+      border-top: 4px solid #ef4444;
+      box-shadow: 0 18px 52px rgba(15, 23, 42, 0.3);
+      color: #111827;
+      font-family: "Noto Sans KR", "Apple SD Gothic Neo", Arial, sans-serif;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-header {
+      min-height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 0 20px;
+      border-bottom: 1px solid #e5e7eb;
+      background: #ffffff;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 18px;
+      font-weight: 700;
+      color: #111827;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-close {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: #6b7280;
+      cursor: pointer;
+      font-size: 24px;
+      line-height: 1;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-close:hover {
+      background: #f3f4f6;
+      color: #111827;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-body {
+      overflow: auto;
+      padding: 26px 24px;
+      background: #f8fafc;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-section {
+      border: 1px solid #c7d2fe;
+      border-radius: 7px;
+      background: #ffffff;
+      padding: 16px 16px 18px;
+      margin-bottom: 16px;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-gpt {
+      background: #f8fbff;
+      border-color: #b8c7ff;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-section-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      color: #1e3a8a;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-section-title::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 2px;
+      background: #111827;
+      flex: 0 0 auto;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-provider {
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #1f2937;
+      font-size: 13px;
+      line-height: 1.65;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 14px 20px;
+      border-top: 1px solid #e5e7eb;
+      background: #ffffff;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-button {
+      min-width: 64px;
+      height: 32px;
+      padding: 0 14px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #ffffff;
+      color: #334155;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    #${NIFI_PROCESSOR_HELP_MODAL_ID} .cerebro-help-button:hover {
+      border-color: #94a3b8;
+      background: #f8fafc;
+    }
+  `;
+  doc.head?.appendChild(style);
+}
+
+function ensureProcessorHelpModal(doc: Document) {
+  let modal = doc.getElementById(NIFI_PROCESSOR_HELP_MODAL_ID);
+  if (modal) {
+    return modal;
+  }
+  modal = doc.createElement("div");
+  modal.id = NIFI_PROCESSOR_HELP_MODAL_ID;
+  modal.setAttribute("aria-hidden", "true");
+  modal.innerHTML = `
+    <div class="cerebro-help-dialog" role="dialog" aria-modal="true" aria-labelledby="cerebro-processor-help-title">
+      <div class="cerebro-help-header">
+        <div class="cerebro-help-title" id="cerebro-processor-help-title"></div>
+        <button type="button" class="cerebro-help-close" data-cerebro-help-close="true" aria-label="닫기">×</button>
+      </div>
+      <div class="cerebro-help-body">
+        <div class="cerebro-help-section" data-cerebro-help-section="true">
+          <div class="cerebro-help-section-title">도움말</div>
+          <div class="cerebro-help-text" data-cerebro-help-body="true"></div>
+        </div>
+      </div>
+      <div class="cerebro-help-footer">
+        <button type="button" class="cerebro-help-button" data-cerebro-help-close="true">닫기</button>
+      </div>
+    </div>
+  `;
+  doc.body?.appendChild(modal);
+  return modal;
+}
+
+function closeProcessorHelpModal(doc: Document) {
+  const modal = doc.getElementById(NIFI_PROCESSOR_HELP_MODAL_ID);
+  if (!modal) {
+    return;
+  }
+  modal.removeAttribute("data-open");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function openProcessorHelpModal(doc: Document, title: string, helpText: string, context: string) {
+  ensureProcessorHelpPopupStyle(doc);
+  const modal = ensureProcessorHelpModal(doc);
+  modal.querySelector(".cerebro-help-title")!.textContent = context ? `${context} | ${title}` : title;
+  modal.querySelector("[data-cerebro-help-body='true']")!.textContent = helpText;
+
+  const helpSection = modal.querySelector("[data-cerebro-help-section='true']");
+  const llmEnabled = doc.documentElement.getAttribute(NIFI_LLM_ENABLED_ATTRIBUTE) === "true";
+  const providerName = doc.documentElement.getAttribute(NIFI_LLM_PROVIDER_ATTRIBUTE) ?? "";
+  modal.querySelector(".cerebro-help-gpt")?.remove();
+  if (llmEnabled && helpSection?.parentElement) {
+    const gptSection = doc.createElement("div");
+    gptSection.className = "cerebro-help-section cerebro-help-gpt";
+    const sectionTitle = doc.createElement("div");
+    sectionTitle.className = "cerebro-help-section-title";
+    sectionTitle.textContent = "GPT 해석";
+    if (providerName) {
+      const provider = doc.createElement("span");
+      provider.className = "cerebro-help-provider";
+      provider.textContent = providerName;
+      sectionTitle.appendChild(provider);
+    }
+    const sectionBody = doc.createElement("div");
+    sectionBody.className = "cerebro-help-text";
+    sectionBody.textContent = `${title} 속성의 NiFi descriptor 설명을 기준으로 값을 확인하세요. 필요하면 설정값과 현재 플로우 맥락을 함께 검토해 조정할 수 있습니다.`;
+    gptSection.append(sectionTitle, sectionBody);
+    helpSection.parentElement.insertBefore(gptSection, helpSection);
+  }
+
+  modal.setAttribute("data-open", "true");
+  modal.setAttribute("aria-hidden", "false");
+  (modal.querySelector("[data-cerebro-help-close='true']") as HTMLElement | null)?.focus();
+}
+
+function processorHelpContext(dialog: Element) {
+  const titleElement = dialog.querySelector(
+    [
+      ".mat-mdc-dialog-title",
+      ".mat-dialog-title",
+      ".dialog-title",
+      ".processor-configuration-header",
+      "h1",
+      "h2",
+    ].join(", "),
+  );
+  const title = titleElement ? elementText(titleElement) : "";
+  if (title && title.length <= 120) {
+    return title;
+  }
+  const text = elementText(dialog);
+  const matched = text.match(/(?:Edit\s+Processor|프로세서\s*편집|Processor)\s*\|\s*([A-Za-z][\w.]*)(?:\s+\d+(?:\.\d+)*)?/i);
+  return matched?.[0] ?? "";
+}
+
+function processorHelpTooltipText(element: Element) {
+  const values = NIFI_TOOLTIP_ATTRIBUTES
+    .filter((attributeName) => attributeName !== "placeholder")
+    .map((attributeName) => element.getAttribute(attributeName)?.replace(/\s+/g, " ").trim())
+    .filter((value): value is string => Boolean(value));
+  const useful = values.filter((value) => {
+    if (value.length < 24 || value.length > 3000) {
+      return false;
+    }
+    if (/^(Information|Info|Help|도움말|정보)$/i.test(value)) {
+      return false;
+    }
+    if (/^도움말\s*보기:/i.test(value)) {
+      return false;
+    }
+    return /[.!?。:]|FlowFile|Expression|property|attribute|processor|component|scope|Sensitive|Regular|Controller|Record|Schema/i.test(value);
+  });
+  return useful.sort((a, b) => b.length - a.length)[0];
+}
+
+function closestProcessorPropertyRow(element: Element) {
+  const direct = element.closest("tr, [role='row'], .mat-mdc-row, .mat-row, .property-row, .editable-table-row");
+  if (direct) {
+    return direct;
+  }
+  let current: Element | null = element.parentElement;
+  for (let depth = 0; depth < 5 && current && current !== element.ownerDocument.body; depth += 1) {
+    const rect = current.getBoundingClientRect();
+    const text = elementText(current);
+    if (rect.width >= 180 && rect.height > 0 && rect.height <= 90 && text.length <= 500) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function cleanProcessorPropertyLabel(value: string, helpText: string) {
+  return value
+    .replace(helpText, "")
+    .replace(/\b(No value set|Required field|Supports expression language|Sensitive property)\b/gi, "")
+    .replace(/필수\s*항목|값\s*없음/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s*\*$/, "")
+    .trim();
+}
+
+function processorHelpTitle(element: Element, helpText: string, processorType?: string) {
+  const row = closestProcessorPropertyRow(element);
+  const cell = row?.querySelector("td, [role='cell'], .property-name, .setting-name, .mat-column-name");
+  const rawTitle = cleanProcessorPropertyLabel(
+    (cell ? elementText(cell) : "") || cleanProcessorPropertyLabel(elementText(row ?? element), helpText),
+    helpText,
+  );
+  const englishMatch = rawTitle.match(/\(([^()]+)\)\s*$/);
+  if (englishMatch?.[1]) {
+    const korean = rawTitle.slice(0, englishMatch.index).trim();
+    return korean ? `${korean}(${englishMatch[1].trim()})` : englishMatch[1].trim();
+  }
+  const englishTitle = rawTitle || "Processor Property";
+  const koreanTitle = translateProcessorPropertyText(englishTitle, processorType);
+  return koreanTitle ? `${koreanTitle}(${englishTitle})` : englishTitle;
+}
+
+function prepareProcessorHelpTarget(element: Element, dialog: Element, processorType?: string) {
+  if (element.hasAttribute(NIFI_PROCESSOR_HELP_TEXT_ATTRIBUTE)) {
+    return;
+  }
+  const helpText = processorHelpTooltipText(element);
+  if (!helpText) {
+    return;
+  }
+  const title = processorHelpTitle(element, helpText, processorType);
+  element.setAttribute(NIFI_PROCESSOR_HELP_TEXT_ATTRIBUTE, helpText);
+  element.setAttribute(NIFI_PROCESSOR_HELP_TITLE_ATTRIBUTE, title);
+  element.setAttribute(NIFI_PROCESSOR_HELP_CONTEXT_ATTRIBUTE, processorHelpContext(dialog));
+  element.setAttribute("role", element.getAttribute("role") ?? "button");
+  element.setAttribute("tabindex", element.getAttribute("tabindex") ?? "0");
+  element.setAttribute("aria-label", `도움말 보기: ${title}`);
+  ["title", "data-tooltip", "matTooltip", "mattooltip", "ng-reflect-message", "data-mat-tooltip", "data-original-title", "tooltip"].forEach((attributeName) => {
+    element.removeAttribute(attributeName);
+  });
+}
+
+function installProcessorHelpPopup(doc: Document) {
+  ensureProcessorHelpPopupStyle(doc);
+  ensureProcessorHelpModal(doc);
+  findProcessorEditDialogs(doc).forEach((dialog) => {
+    const processorType = processorEditType(dialog);
+    const selector = NIFI_TOOLTIP_ATTRIBUTES
+      .filter((attributeName) => attributeName !== "placeholder")
+      .map((attributeName) => `[${attributeName}]`)
+      .join(", ");
+    dialog.querySelectorAll(selector).forEach((element) => prepareProcessorHelpTarget(element, dialog, processorType));
+  });
+
+  if (doc.documentElement.getAttribute(NIFI_PROCESSOR_HELP_POPUP_ATTRIBUTE) === "true") {
+    return;
+  }
+  doc.documentElement.setAttribute(NIFI_PROCESSOR_HELP_POPUP_ATTRIBUTE, "true");
+
+  const suppressOriginalTooltip = (event: Event) => {
+    const target = event.target instanceof Element
+      ? event.target.closest(`[${NIFI_PROCESSOR_HELP_TEXT_ATTRIBUTE}]`)
+      : null;
+    if (target) {
+      event.stopPropagation();
+    }
+  };
+  doc.addEventListener("mouseover", suppressOriginalTooltip, true);
+  doc.addEventListener("mouseenter", suppressOriginalTooltip, true);
+  doc.addEventListener("pointerenter", suppressOriginalTooltip, true);
+
+  doc.addEventListener("click", (event) => {
+    const target = event.target instanceof Element
+      ? event.target.closest(`[${NIFI_PROCESSOR_HELP_TEXT_ATTRIBUTE}]`)
+      : null;
+    const closeTarget = event.target instanceof Element
+      ? event.target.closest("[data-cerebro-help-close='true']")
+      : null;
+    const modal = doc.getElementById(NIFI_PROCESSOR_HELP_MODAL_ID);
+    if (closeTarget || event.target === modal) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeProcessorHelpModal(doc);
+      return;
+    }
+    if (!target) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    openProcessorHelpModal(
+      doc,
+      target.getAttribute(NIFI_PROCESSOR_HELP_TITLE_ATTRIBUTE) ?? "Processor Property",
+      target.getAttribute(NIFI_PROCESSOR_HELP_TEXT_ATTRIBUTE) ?? "",
+      target.getAttribute(NIFI_PROCESSOR_HELP_CONTEXT_ATTRIBUTE) ?? "",
+    );
+  }, true);
+
+  doc.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeProcessorHelpModal(doc);
+      return;
+    }
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    const target = event.target instanceof Element
+      ? event.target.closest(`[${NIFI_PROCESSOR_HELP_TEXT_ATTRIBUTE}]`)
+      : null;
+    if (!target) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    openProcessorHelpModal(
+      doc,
+      target.getAttribute(NIFI_PROCESSOR_HELP_TITLE_ATTRIBUTE) ?? "Processor Property",
+      target.getAttribute(NIFI_PROCESSOR_HELP_TEXT_ATTRIBUTE) ?? "",
+      target.getAttribute(NIFI_PROCESSOR_HELP_CONTEXT_ATTRIBUTE) ?? "",
+    );
+  }, true);
+}
+
 function patchProcessorEditDialogText(doc: Document) {
   findProcessorEditDialogs(doc).forEach((dialog) => {
     const activeTab = processorEditActiveTab(dialog);
@@ -2831,6 +3310,7 @@ function patchProcessorEditDialogText(doc: Document) {
       }
     }
   });
+  installProcessorHelpPopup(doc);
 }
 
 function restoreLockDisabledState(element: Element) {
@@ -4940,6 +5420,11 @@ export function ConsoleFramePage({
   const [isTreePanelCollapsed, setIsTreePanelCollapsed] = useState(false);
   const [isDetailPanelCollapsed, setIsDetailPanelCollapsed] = useState(false);
   const [frameChromeReady, setFrameChromeReady] = useState(!showProcessGroupTree);
+  const [frameLlmStatus, setFrameLlmStatus] = useState<Pick<LlmStatus, "enabled" | "providerName" | "maskSensitive">>({
+    enabled: false,
+    providerName: null,
+    maskSensitive: null,
+  });
   const [detailPanelWidth, setDetailPanelWidth] = useState(NIFI_DETAIL_PANEL_DEFAULT_WIDTH);
   const [nifiProcessorDialogOpen, setNifiProcessorDialogOpen] = useState(false);
   const [jobCatalogReloadKey, setJobCatalogReloadKey] = useState(0);
@@ -5001,6 +5486,44 @@ export function ConsoleFramePage({
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    getLlmStatus()
+      .then((status) => {
+        if (cancelled) {
+          return;
+        }
+        const nextStatus = {
+          enabled: status.enabled,
+          providerName: status.providerName,
+          maskSensitive: status.maskSensitive,
+        };
+        setFrameLlmStatus(nextStatus);
+        if (frameRef.current) {
+          setNifiFrameLlmStatus(frameRef.current, nextStatus);
+        }
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        const nextStatus = { enabled: false, providerName: null, maskSensitive: null };
+        setFrameLlmStatus(nextStatus);
+        if (frameRef.current) {
+          setNifiFrameLlmStatus(frameRef.current, nextStatus);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (frameRef.current) {
+      setNifiFrameLlmStatus(frameRef.current, frameLlmStatus);
+    }
+  }, [frameLlmStatus]);
+
+  useEffect(() => {
     if (!showProcessGroupTree || frameChromeReady) {
       return;
     }
@@ -5010,15 +5533,17 @@ export function ConsoleFramePage({
       // 아직 다 안 읽힌 문서(빈 about:blank, 읽는 중인 NiFi)면 Cerebro 판인지 알 수 없다 - 덧칠은 onLoad(handleFrameLoad)에 맡긴다.
       // 여기서 걸면 Cerebro 판 화면에도 덧칠(1초 주기 훑기)이 붙는다(2026-10-05 확인).
       if (frame && isFrameDocumentLoaded(frame) && !isCerebroNifiUi(frame)) {
+        setNifiFrameLlmStatus(frame, frameLlmStatus);
         hideToolChrome(frame);
         patchKoreanTooltips(frame);
         installNifiPanelLayout(frame);
+        installNifiProcessorHelpPopup(frame);
       }
       setFrameChromeReady(true);
     }, 1500);
 
     return () => window.clearTimeout(timerId);
-  }, [frameChromeReady, frameInstanceKey, showProcessGroupTree]);
+  }, [frameChromeReady, frameInstanceKey, frameLlmStatus, showProcessGroupTree]);
 
   useEffect(() => {
     if (!healthcheckSrc) {
@@ -5104,6 +5629,7 @@ export function ConsoleFramePage({
   const handleFrameLoad = (event: SyntheticEvent<HTMLIFrameElement>) => {
     const frame = event.currentTarget;
     frameRef.current = frame;
+    setNifiFrameLlmStatus(frame, frameLlmStatus);
     // Cerebro 판 NiFi 화면이면 배치 · 한글을 NiFi 가 이미 처리했다 - 덧칠은 건너뛰고 연동(잠금 · 선택 · 경로)만 건다.
     const cerebroNifiUi = isCerebroNifiUi(frame);
     let chromeHidden = true;
@@ -5114,6 +5640,7 @@ export function ConsoleFramePage({
       installNifiPanelLayout(frame);
       installProcessorDialogViewportFit(frame);
     }
+    installNifiProcessorHelpPopup(frame);
     installProcessorEditReadonlyGuard(frame, processorEditLockFrameState);
     clickNifiMenuItem(frame, nifiAutoOpenMenuTitles);
     if (showProcessGroupTree) {
@@ -5133,6 +5660,7 @@ export function ConsoleFramePage({
           patchKoreanTooltips(frame);
           installNifiPanelLayout(frame);
           installProcessorDialogViewportFit(frame);
+          installNifiProcessorHelpPopup(frame);
           setFrameChromeReady(true);
         }
       }, chromeHidden ? 450 : 650);
