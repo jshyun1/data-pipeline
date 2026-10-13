@@ -130,6 +130,15 @@ export function renderLag(metric: RealtimePipelineMetricResponse | undefined) {
 }
 
 /**
+ * 화면에 보이는 유형 이름(2026-10-13 요청). 저장 값은 그대로 두고 표기만 짧게 한다
+ * - «TABLE_CDC» 는 CDC 화면 안에서 CDC 가 자명하고, 로그 적재는 «LOG» 로 짝을 맞춘다.
+ */
+export const CDC_TYPE_LABEL: Record<string, string> = {
+  TABLE_CDC: "TABLE",
+  LOG_FILE: "LOG",
+};
+
+/**
  * CDC 파이프라인 목록 열. 이름·유형·소스→타깃·Topic·상태·지연·마지막 처리.
  * CDC 관리 화면이 여기에 «소속 워크플로우» · «관리» 열을 덧붙여 쓴다.
  *
@@ -147,7 +156,9 @@ export function cdcPipelineColumns(
       dataIndex: "pipelineType",
       width: 84,
       sorter: (a, b) => byText(a.pipelineType, b.pipelineType),
-      render: (value: string) => <Tag color={value === "LOG_FILE" ? "purple" : "blue"}>{value}</Tag>,
+      render: (value: string) => (
+        <Tag color={value === "LOG_FILE" ? "purple" : "blue"}>{CDC_TYPE_LABEL[value] ?? value}</Tag>
+      ),
     },
     {
       // 여기만 폭을 안 준다 - 남는 자리를 이 열이 흡수해야 표가 가로로 넘치지 않는다.

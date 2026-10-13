@@ -66,6 +66,7 @@ import {
   RUNTIME_STATUS_COLOR,
   RUNTIME_STATUS_LABEL,
   cdcPipelineColumns,
+  CDC_TYPE_LABEL,
   renderRuntimeStatus,
 } from "../utils/cdcPresentation";
 
@@ -75,8 +76,8 @@ const STATUS_OPTIONS = ["CREATED", "DEPLOYING", "READY", "DEPLOYED", "PAUSED", "
 }));
 
 const TYPE_OPTIONS = [
-  { value: "TABLE_CDC", label: "TABLE_CDC" },
-  { value: "LOG_FILE", label: "LOG_FILE" },
+  { value: "TABLE_CDC", label: CDC_TYPE_LABEL.TABLE_CDC },
+  { value: "LOG_FILE", label: CDC_TYPE_LABEL.LOG_FILE },
 ];
 
 const STATUS_SEVERITY: Record<string, number> = {
@@ -595,7 +596,7 @@ export function PipelinesPage() {
         className="std-full-table"
         loading={isLoading}
         dataSource={filteredPipelines}
-        scroll={{ x: 1120 }}
+        scroll={{ x: 1180 }}
         pagination={{ pageSize: 20, hideOnSinglePage: true, showSizeChanger: true, showTotal: (total) => `총 ${total}건` }}
         columns={[
           // 이름은 굵게 한 줄로(디자인). 공용 열 정의(cdcPipelineColumns)는 로그 화면도 쓰므로 여기서만 바꾼다.
@@ -650,9 +651,10 @@ export function PipelinesPage() {
           },
           {
             title: "관리",
-            width: 130,
+            // 상세 · 수정 · 삭제가 한 줄에 서도록 폭을 잡는다(2026-10-13 요청 - 130px 에서는 «삭제»가 내려갔다).
+            width: 190,
             render: (_, record) => (
-              <Space wrap>
+              <Space wrap={false}>
                 <Button size="small" onClick={() => setDetailPipelineId(record.id)}>
                   상세
                 </Button>
@@ -730,7 +732,9 @@ export function PipelinesPage() {
                     <Descriptions.Item label="이름">{detailPipeline.name}</Descriptions.Item>
                     {/* 트리 어디에 놓여 있는지. 최상단(전체 파이프라인)부터 순서대로 보여준다. */}
                     <Descriptions.Item label="경로">{groupPathOf(detailPipeline.groupId)}</Descriptions.Item>
-                    <Descriptions.Item label="유형">{detailPipeline.pipelineType}</Descriptions.Item>
+                    <Descriptions.Item label="유형">
+                      {CDC_TYPE_LABEL[detailPipeline.pipelineType] ?? detailPipeline.pipelineType}
+                    </Descriptions.Item>
                     <Descriptions.Item label="소스">
                       {detailPipeline.pipelineType === "LOG_FILE"
                         ? "Filebeat"

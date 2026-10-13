@@ -12,6 +12,7 @@ import dayjs, { type Dayjs } from "dayjs";
 import { Link, useSearchParams } from "react-router-dom";
 import { activeDayPresetByDate } from "../components/dayPreset";
 import { GptErrorAnalysis } from "../components/gpt/GptErrorAnalysis";
+import { CDC_COMMAND_LABEL } from "../utils/cdcLabels";
 import { useGptEnabled } from "../components/gpt/useGptEnabled";
 import { StdPage } from "../components/StdPage";
 import {
@@ -41,19 +42,6 @@ const STATUS_COLOR: Record<string, string> = {
   FAILED: "error",
 };
 
-const COMMAND_LABEL: Record<string, string> = {
-  VALIDATE: "검증",
-  DEPLOY: "배포",
-  PREPARE: "실행 준비",
-  START: "시작",
-  PAUSE: "일시정지",
-  STOP: "중지",
-  RESTART: "재시작",
-  DELETE: "삭제",
-  RUNTIME_MONITOR: "런타임 감시",
-  DISMISS_DRIFT: "불일치 확인",
-  SINK_CONFIG_REFRESH: "싱크 설정 재적용",
-};
 
 type StatusFilter = "ALL" | string;
 
@@ -321,7 +309,7 @@ export function CdcLogsPage() {
       status: row.result ?? "RUNNING",
       pipelineId: row.pipelineId,
       pipelineName: row.pipelineName,
-      kindLabel: COMMAND_LABEL[row.command] ?? row.command,
+      kindLabel: CDC_COMMAND_LABEL[row.command] ?? row.command,
       startedAt: row.occurredAt,
       endedAt: row.completedAt,
       processedCount: null,
