@@ -110,7 +110,16 @@ public final class JobAnalysisAgent {
         return targetType == LlmTargetType.WORKFLOW_RUN ? RUN_SUMMARY_REQUEST : SUMMARY_REQUEST;
     }
 
-    /** 대상 종류에 맞는 역할 지시문. 입력 길이 계산에도 같은 것을 쓴다. */
+    /**
+     * 실제로 보내는 역할 지시문. 질문이 있으면 «답변 범위» 안내를 덧붙인다(2026-10-13 요청) - 정확히 답할 수 없는 질문에는
+     * 답 첫머리에서 «이 AI 가 무엇을 어디까지 답할 수 있는지»를 먼저 밝히게 한다. 질문 없는 첫 요약은 형식이 정해져 있어 붙이지 않는다.
+     * 입력 길이 계산에도 같은 것을 쓴다.
+     */
+    public static String instructions(LlmTargetType targetType, boolean hasQuestion) {
+        return hasQuestion ? systemPrompt(targetType) + AnswerScope.guide(targetType) : systemPrompt(targetType);
+    }
+
+    /** 대상 종류에 맞는 역할 지시문(범위 안내 전). */
     public static String systemPrompt(LlmTargetType targetType) {
         if (targetType == LlmTargetType.WORKFLOW_DRAFT) {
             return SYSTEM_PROMPT.replace(SAVED_RULE, DRAFT_RULE) + DRAFT_GUIDE;
@@ -133,9 +142,10 @@ public final class JobAnalysisAgent {
         head.append("\n\n[질문]\n");
 
         // 질문이 없으면 «탭을 연 첫 요청»이다 - 서버가 가진 요약 요청으로 바꾼다.
-        String ask = question == null || question.isBlank() ? summaryRequest(targetType) : question.strip();
+        boolean hasQuestion = question != null && !question.isBlank();
+        String ask = hasQuestion ? question.strip() : summaryRequest(targetType);
         List<LlmMessage> out = new ArrayList<>();
-        out.add(LlmMessage.system(systemPrompt(targetType)));
+        out.add(LlmMessage.system(instructions(targetType, hasQuestion)));
         List<LlmMessage> conversation = new ArrayList<>(keptTurns);
         conversation.add(LlmMessage.user(ask));
         LlmMessage first = conversation.get(0);

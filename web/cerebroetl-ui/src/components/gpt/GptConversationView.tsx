@@ -38,6 +38,18 @@ const sectionKey = (title: string) => title.replace(/\s+/g, "");
 const KNOWN_SECTION_KEYS = new Set(KNOWN_SECTIONS.map(sectionKey));
 
 /**
+ * 속성창 AI 어시스턴트가 정확히 답할 수 없는 질문에 답 첫머리로 쓰는 «답변 범위» 안내의 머리말(서버 AnswerScope.MARKER, 2026-10-13).
+ * 이 머리말로 시작하는 줄은 본문이 아니라 안내 상자로 그린다.
+ */
+const ANSWER_SCOPE_MARKER = "[답변 범위]";
+
+/** «답변 범위» 줄이면 머리말을 뗀 안내 글을, 아니면 null. 모델이 굵게 · 인용 · 목록 기호를 붙여 써도 알아본다. */
+function answerScopeOf(line: string): string | null {
+  const plain = line.replace(/\*\*/g, "").replace(/^\s*(?:[>#-]+\s*)?/, "").trim();
+  return plain.startsWith(ANSWER_SCOPE_MARKER) ? plain.slice(ANSWER_SCOPE_MARKER.length).trim() : null;
+}
+
+/**
  * 한 줄이 «구분 제목»인지 본다(2026-10-05 요청). 제목이면 번호 · 꾸밈 기호를 뺀 이름을 돌려준다.
  *
  * <p>«1. 원인» 처럼 번호가 붙은 제목은 번호를 떼고, «1. PostgreSQL 에 접속해 …» 같은 절차 문장은
@@ -148,6 +160,15 @@ function AnswerText({ text, headings, headingLabels }: {
   return (
     <div className="gpt-analysis-answer">
       {lines.map((line, index) => {
+        const scope = answerScopeOf(line);
+        if (scope !== null) {
+          return (
+            <div key={index} className="gpt-answer-scope">
+              <span className="gpt-answer-scope-label">답변 범위</span>
+              {renderAssistantText(scope)}
+            </div>
+          );
+        }
         const title = sectionTitleOf(line);
         if (title) {
           inSection = true;
