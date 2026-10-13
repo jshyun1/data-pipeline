@@ -3220,11 +3220,18 @@ function displayValue(value: unknown) {
   return String(value);
 }
 
+function groupDisplayName(node?: NifiProcessGroupTreeNode | null) {
+  if (!node) {
+    return null;
+  }
+  return node.id === "root" || node.name === "Root" ? "ETL Root" : node.name;
+}
+
 function fullGroupPath(path?: NifiProcessGroupTreeNode[]) {
   if (!path?.length) {
-    return "Root";
+    return "ETL Root";
   }
-  const names = path.map((node, index) => index === 0 ? "Root" : node.name).filter(Boolean);
+  const names = path.map((node, index) => index === 0 ? "ETL Root" : groupDisplayName(node)).filter(Boolean);
   return names.join(" / ");
 }
 
@@ -4110,6 +4117,7 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const displayJob = details.find((entry) => entry.job.nifiPgId === selectedGroupId)?.job ?? job;
   const relatedJob = displayJob ?? primaryJob;
   const displayNode = selected?.node ?? null;
+  const isRootGroup = selectedGroupId === "root";
   const isJobGroup = displayNode?.groupType === "JOB";
   const isGroupingGroup = displayNode?.groupType === "GROUPING";
   const displayPath = fullGroupPath(selected?.path);
@@ -4134,10 +4142,10 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
   const lastRunDate = formatDateOnly(latestRun?.endedAt ?? latestRun?.startedAt ?? relatedJob?.lastSyncedAt);
   const logKeyword = detailLogKeyword(displayJob, displayNode);
   const addedFilesStorageKey = addedFileStorageKey(displayJob?.id, inputDirectory);
-  const titleName = displayJob?.jobName ?? displayNode?.name ?? "선택 없음";
+  const titleName = displayJob?.jobName ?? groupDisplayName(displayNode) ?? (isRootGroup ? "ETL Root" : "선택 없음");
   const headerTitle = isJobGroup
     ? `Job : ${titleName}`
-    : isGroupingGroup
+    : isGroupingGroup || isRootGroup
       ? `Group : ${titleName}`
       : titleName;
   const aiAssistantAvailable = aiAssistantEnabled && !!selectedGroupId;
@@ -4494,9 +4502,10 @@ export function ConsoleFramePage({
   const [frameKey, setFrameKey] = useState(0);
   const [processGroupTree, setProcessGroupTree] = useState<NifiProcessGroupTreeNode | null>(null);
   const processGroupId = new URLSearchParams(location.search).get("processGroupId");
-  const [selectedProcessGroupId, setSelectedProcessGroupId] = useState<string | null>(processGroupId);
+  const selectedRouteGroupId = processGroupId ?? "root";
+  const [selectedProcessGroupId, setSelectedProcessGroupId] = useState<string | null>(selectedRouteGroupId);
   const [selectedCanvasItem, setSelectedCanvasItem] = useState<CanvasSelection | null>(
-    processGroupId ? { type: "processGroup", id: processGroupId } : null,
+    { type: "processGroup", id: selectedRouteGroupId },
   );
   const [isTreePanelCollapsed, setIsTreePanelCollapsed] = useState(false);
   const [isDetailPanelCollapsed, setIsDetailPanelCollapsed] = useState(false);
@@ -4513,12 +4522,12 @@ export function ConsoleFramePage({
   const frameSrc = processGroupId ? withProcessGroupId(src, processGroupId) : src;
   const frameInstanceKey = `${frameKey}:${frameSrc}`;
   processGroupTreeRef.current = processGroupTree;
-  processGroupIdRef.current = processGroupId;
+  processGroupIdRef.current = selectedRouteGroupId;
 
   useEffect(() => {
-    setSelectedProcessGroupId(processGroupId);
-    setSelectedCanvasItem(processGroupId ? { type: "processGroup", id: processGroupId } : null);
-  }, [processGroupId]);
+    setSelectedProcessGroupId(selectedRouteGroupId);
+    setSelectedCanvasItem({ type: "processGroup", id: selectedRouteGroupId });
+  }, [selectedRouteGroupId]);
 
   useEffect(() => {
     setFrameChromeReady(!showProcessGroupTree);
@@ -4609,9 +4618,9 @@ export function ConsoleFramePage({
   };
 
   const selectCanvasProcessGroupRoute = (groupId: string | null) => {
-    const normalizedGroupId = groupId === "root" ? null : groupId;
+    const normalizedGroupId = groupId ?? "root";
     setSelectedProcessGroupId(normalizedGroupId);
-    setSelectedCanvasItem(normalizedGroupId ? { type: "processGroup", id: normalizedGroupId } : null);
+    setSelectedCanvasItem({ type: "processGroup", id: normalizedGroupId });
   };
 
   const handleFrameLoad = (event: SyntheticEvent<HTMLIFrameElement>) => {
