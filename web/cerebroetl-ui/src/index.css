@@ -6289,36 +6289,8 @@ button.alert-compact-trigger.is-clear:hover {
 
 .nifi-tree-node {
   position: relative;
-  --tree-indent: calc(var(--tree-depth, 0) * 18px);
-}
-
-.nifi-tree-node::before {
-  content: "";
-  position: absolute;
-  left: calc(var(--tree-indent) - 10px);
-  top: 0;
-  bottom: 0;
-  border-left: 1px dotted #a8b0bb;
-  pointer-events: none;
-}
-
-.nifi-tree-node.last::before {
-  bottom: calc(100% - 14px);
-}
-
-.nifi-tree-node::after {
-  content: "";
-  position: absolute;
-  left: calc(var(--tree-indent) - 10px);
-  top: 14px;
-  width: 10px;
-  border-top: 1px dotted #a8b0bb;
-  pointer-events: none;
-}
-
-.nifi-tree-node[style*="--tree-depth: 0"]::before,
-.nifi-tree-node[style*="--tree-depth: 0"]::after {
-  display: none;
+  display: flex;
+  flex-direction: column;
 }
 
 .nifi-tree-row {
@@ -6327,7 +6299,6 @@ button.alert-compact-trigger.is-clear:hover {
   align-items: center;
   min-height: 27px;
   border-radius: 6px;
-  padding-left: var(--tree-indent);
   white-space: nowrap;
 }
 
@@ -6364,9 +6335,7 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 .nifi-tree-toggle.empty {
-  border-color: transparent;
-  background: transparent;
-  cursor: default;
+  display: none;
 }
 
 .nifi-tree-label {
@@ -6376,6 +6345,44 @@ button.alert-compact-trigger.is-clear:hover {
   gap: 6px;
   padding: 0;
   cursor: pointer;
+}
+
+.nifi-tree-sub-group {
+  margin-top: 2px;
+  margin-left: 7px;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nifi-tree-sub-group > .nifi-tree-node {
+  position: relative;
+}
+
+.nifi-tree-sub-group > .nifi-tree-node::before {
+  content: "";
+  position: absolute;
+  left: -11px;
+  top: -2px;
+  bottom: 0;
+  border-left: 1px dotted #a8b0bb;
+  pointer-events: none;
+}
+
+.nifi-tree-sub-group > .nifi-tree-node:last-child::before {
+  bottom: auto;
+  height: 17px;
+}
+
+.nifi-tree-sub-group > .nifi-tree-node::after {
+  content: "";
+  position: absolute;
+  left: -11px;
+  top: 15px;
+  width: 11px;
+  border-top: 1px dotted #a8b0bb;
+  pointer-events: none;
 }
 
 .nifi-tree-kind {

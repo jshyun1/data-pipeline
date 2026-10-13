@@ -2746,17 +2746,13 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
     return null;
   };
 
-  const renderNode = (node: NifiProcessGroupTreeNode, depth = 0, isLast = true) => {
+  const renderNode = (node: NifiProcessGroupTreeNode) => {
     const hasChildren = node.children.length > 0;
     const searching = searchQuery.trim().length > 0;
     const expanded = searching || expandedIds.has(node.id);
     const active = activeGroupId === node.id || (!activeGroupId && node.id === "root");
     return (
-      <div
-        key={node.id}
-        className={`nifi-tree-node${isLast ? " last" : ""}${expanded ? " expanded" : ""}`}
-        style={{ "--tree-depth": depth } as CSSProperties}
-      >
+      <div key={node.id} className={`nifi-tree-node${expanded ? " expanded" : ""}`}>
         <div
           className={active ? "nifi-tree-row active" : "nifi-tree-row"}
         >
@@ -2773,9 +2769,11 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
             <span className="nifi-tree-name">{highlightedName(node.name)}</span>
           </button>
         </div>
-        {hasChildren && expanded
-          ? node.children.map((child, index) => renderNode(child, depth + 1, index === node.children.length - 1))
-          : null}
+        {hasChildren && expanded ? (
+          <div className="nifi-tree-sub-group" role="group">
+            {node.children.map(renderNode)}
+          </div>
+        ) : null}
       </div>
     );
   };
@@ -2841,6 +2839,21 @@ function findTreeNode(
     }
   }
   return null;
+}
+
+function normalizeProcessGroupIdForTree(
+  groupId: string | null,
+  tree: NifiProcessGroupTreeNode | null,
+  fallbackRootForUnknown = false,
+) {
+  const value = groupId ?? "root";
+  if (value === "root" || tree?.id === value) {
+    return "root";
+  }
+  if (fallbackRootForUnknown && tree && !findTreeNode(tree, value)) {
+    return "root";
+  }
+  return value;
 }
 
 function normalizeProcessGroupName(value: string | null | undefined) {
@@ -4534,9 +4547,28 @@ export function ConsoleFramePage({
   processGroupIdRef.current = selectedRouteGroupId;
 
   useEffect(() => {
-    setSelectedProcessGroupId(selectedRouteGroupId);
-    setSelectedCanvasItem({ type: "processGroup", id: selectedRouteGroupId });
+    const normalizedGroupId = normalizeProcessGroupIdForTree(
+      selectedRouteGroupId,
+      processGroupTreeRef.current,
+      selectedRouteGroupId === "root",
+    );
+    setSelectedProcessGroupId(normalizedGroupId);
+    setSelectedCanvasItem({ type: "processGroup", id: normalizedGroupId });
   }, [selectedRouteGroupId]);
+
+  useEffect(() => {
+    if (selectedRouteGroupId !== "root") {
+      return;
+    }
+    const normalizedGroupId = normalizeProcessGroupIdForTree(selectedProcessGroupId, processGroupTree, true);
+    if (normalizedGroupId === selectedProcessGroupId) {
+      return;
+    }
+    setSelectedProcessGroupId(normalizedGroupId);
+    setSelectedCanvasItem((selection) => (
+      selection?.type === "processGroup" ? { type: "processGroup", id: normalizedGroupId } : selection
+    ));
+  }, [processGroupTree, selectedProcessGroupId, selectedRouteGroupId]);
 
   useEffect(() => {
     setFrameChromeReady(!showProcessGroupTree);
@@ -4620,14 +4652,25 @@ export function ConsoleFramePage({
   }, []);
 
   const selectCanvasItem = (selection: CanvasSelection) => {
-    setSelectedCanvasItem(selection);
     if (selection.type === "processGroup") {
-      setSelectedProcessGroupId(selection.id);
+      const normalizedGroupId = normalizeProcessGroupIdForTree(
+        selection.id,
+        processGroupTreeRef.current,
+        selectedRouteGroupId === "root",
+      );
+      setSelectedCanvasItem({ type: "processGroup", id: normalizedGroupId });
+      setSelectedProcessGroupId(normalizedGroupId);
+      return;
     }
+    setSelectedCanvasItem(selection);
   };
 
   const selectCanvasProcessGroupRoute = (groupId: string | null) => {
-    const normalizedGroupId = groupId ?? "root";
+    const normalizedGroupId = normalizeProcessGroupIdForTree(
+      groupId,
+      processGroupTreeRef.current,
+      selectedRouteGroupId === "root",
+    );
     setSelectedProcessGroupId(normalizedGroupId);
     setSelectedCanvasItem({ type: "processGroup", id: normalizedGroupId });
   };
