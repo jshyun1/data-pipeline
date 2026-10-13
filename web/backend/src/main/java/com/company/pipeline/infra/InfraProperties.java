@@ -20,10 +20,13 @@ import org.springframework.util.StringUtils;
  * compose 에서 읽기전용으로 개별 바인드한 경로만 넣는다.
  */
 @ConfigurationProperties(prefix = "infra")
-public record InfraProperties(String procPath, List<String> diskPaths, List<String> volumePaths) {
+public record InfraProperties(String procPath, String hostProcPath, List<String> diskPaths, List<String> volumePaths) {
 
     public InfraProperties {
         procPath = StringUtils.hasText(procPath) ? procPath : "/proc";
+        // 프로세스 «목록»은 컨테이너 /proc 에서 그 컨테이너 것만 보인다 - 호스트 /proc 을 읽기 전용으로 걸어 둔 자리.
+        // 없으면 HostProcessService 가 procPath 로 물러나고, 화면에 «컨테이너 안 기준»이라고 알린다.
+        hostProcPath = StringUtils.hasText(hostProcPath) ? hostProcPath : "/host/proc";
         diskPaths = diskPaths == null || diskPaths.isEmpty() ? List.of("/") : List.copyOf(diskPaths);
         volumePaths = volumePaths == null ? List.of() : List.copyOf(volumePaths);
     }

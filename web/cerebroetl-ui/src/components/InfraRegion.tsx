@@ -1,9 +1,12 @@
-import { Card, Tag, Tooltip } from "antd";
+import { Alert, Button, Card, Modal, Table, Tag, Tooltip } from "antd";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { ColumnsType } from "antd/es/table";
 import {
   getDiskBreakdown,
+  getHostProcesses,
   getMemoryBreakdown,
+  type HostProcess,
   type HostResourceResponse,
   type ProcessGroup,
 } from "../api/infra";
@@ -51,6 +54,8 @@ type ResourceKind = "cpu" | "memory" | "disk";
 
 interface ResourceMeterProps {
   title: string;
+  /** 제목 줄 오른쪽에 둘 단추(예: CPU 의 «상세»). 없으면 그리지 않는다. */
+  action?: React.ReactNode;
   /** 막대 색 계열(디자인 초안: CPU 파랑·메모리 초록·디스크 청록). 정상일 때만 쓰고 경고·위험은 상태색이 이긴다. */
   kind: ResourceKind;
   percent: number | null;
@@ -66,14 +71,17 @@ interface ResourceMeterProps {
  * <p>원본 5-3 요구 3가지를 여기서 채운다 — 임계 판정 배지, 스파크라인, 그리고 임계를 넘었을 때
  * 조치 대기열로 보내는 링크(원본 표현: "색상 + 배지 + 조치 대기열 연동").
  */
-function ResourceMeter({ title, kind, percent, headline, caption, loading }: ResourceMeterProps) {
+function ResourceMeter({ title, kind, percent, headline, caption, loading, action }: ResourceMeterProps) {
   const level: Level = percent === null ? "ok" : meterLevel(percent);
   const badge = percent === null ? null : LEVEL_BADGE[level];
   return (
     <Card className="infra-tile" loading={loading}>
       <div className="infra-tile-title">
         <span>{title}</span>
-        {badge ? <Tag color={badge.color}>{badge.text}</Tag> : null}
+        <span className="infra-tile-title-right">
+          {action}
+          {badge ? <Tag color={badge.color}>{badge.text}</Tag> : null}
+        </span>
       </div>
       {percent === null ? (
         <div className="infra-tile-unavailable">측정 불가</div>
@@ -219,6 +227,102 @@ function MemoryBreakdownList() {
   );
 }
 
+/**
+ * CPU 카드 «상세» 창 - 서버에서 도는 프로세스를 사용률 순으로 보여 준다(2026-10-12 요청).
+ *
+ * <p>열 때 한 번만 조회한다(서버가 0.3초 간격으로 두 번 읽어 사용률을 센다) - 자동 갱신은 하지 않고
+ * «다시 읽기»로 사용자가 부른다. 프로세스는 순간순간 바뀌므로 자동으로 흔들리면 오히려 읽기 어렵다.
+ */
+function CpuProcessModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const query = useQuery({
+    queryKey: ["host-processes"],
+    queryFn: () => getHostProcesses(50),
+    enabled: open,
+    refetchOnWindowFocus: false,
+    staleTime: 0,
+  });
+  const data = query.data;
+
+  const columns: ColumnsType<HostProcess> = [
+    { title: "PID", dataIndex: "pid", width: 90, sorter: (a, b) => a.pid - b.pid },
+    {
+      title: "이름",
+      dataIndex: "name",
+      width: 180,
+      sorter: (a, b) => a.name.localeCompare(b.name),
+      render: (name: string, row) => (
+        <Tooltip title={row.command || undefined}>
+          <span className="infra-process-name">{name}</span>
+        </Tooltip>
+      ),
+    },
+    {
+      title: "CPU",
+      dataIndex: "cpuPercent",
+      width: 100,
+      defaultSortOrder: "descend",
+      sorter: (a, b) => a.cpuPercent - b.cpuPercent,
+      render: (value: number) => `${value.toFixed(1)}%`,
+    },
+    {
+      title: "메모리",
+      dataIndex: "memoryBytes",
+      width: 140,
+      sorter: (a, b) => a.memoryBytes - b.memoryBytes,
+      render: (value: number, row) => `${formatBytes(value)} (${row.memoryPercent.toFixed(1)}%)`,
+    },
+    { title: "스레드", dataIndex: "threads", width: 80, sorter: (a, b) => a.threads - b.threads },
+    {
+      title: "상태",
+      dataIndex: "state",
+      width: 80,
+      render: (state: string) => PROCESS_STATE_LABEL[state] ?? state,
+    },
+    { title: "실행 명령", dataIndex: "command", ellipsis: true, render: (value: string) => value || "-" },
+  ];
+
+  return (
+    <Modal open={open} onCancel={onClose} footer={null} width={960}
+           title="CPU 상세 - 프로세스별 사용률"
+           rootClassName="cerebro-modal accent-modal">
+      <div className="infra-process-modal-head">
+        <span>
+          {data
+            ? `${data.cores} 코어 · 프로세스 ${data.total}개 중 사용률 상위 ${data.items.length}개`
+            : "프로세스 정보를 읽는 중입니다."}
+        </span>
+        <Button size="small" loading={query.isFetching} onClick={() => void query.refetch()}>다시 읽기</Button>
+      </div>
+      {data && !data.hostScope && (
+        <Alert type="warning" showIcon className="infra-process-modal-note"
+               message="서버 전체가 아니라 백엔드 컨테이너 안의 프로세스만 보입니다"
+               description="호스트 /proc 을 읽기 전용으로 걸어야 서버 전체가 나옵니다(docker-compose pipeline-api)." />
+      )}
+      {query.isError && <Alert type="error" showIcon message="프로세스 정보를 불러오지 못했습니다." />}
+      <Table<HostProcess>
+        rowKey="pid"
+        size="small"
+        className="std-full-table"
+        loading={query.isLoading}
+        dataSource={data?.items ?? []}
+        columns={columns}
+        pagination={false}
+        scroll={{ y: 420 }}
+      />
+    </Modal>
+  );
+}
+
+/** 커널이 적는 한 글자 상태를 읽을 수 있는 말로. 없는 글자는 그대로 보여 준다. */
+const PROCESS_STATE_LABEL: Record<string, string> = {
+  R: "실행",
+  S: "대기",
+  D: "I/O 대기",
+  T: "멈춤",
+  Z: "좀비",
+  I: "유휴",
+};
+
 /** 대시보드 오른쪽 인프라 열: 서버 리소스 3종 + CDC/NiFi/Airflow 주요 프로세스 현황. */
 export function InfraRegion({ resources, resourcesLoading, processes, processesLoading, dataFlow }: InfraRegionProps) {
   const cpu = resources?.cpu ?? null;
@@ -226,6 +330,8 @@ export function InfraRegion({ resources, resourcesLoading, processes, processesL
   const disk = resources?.disks?.[0] ?? null;
 
   const cpuHeadline = cpu ? `${cpu.cores} 코어` : "-";
+  // CPU 는 «무엇이 쓰고 있나»를 바로 보고 싶을 때가 많아 카드에서 창을 연다(2026-10-12 요청).
+  const [cpuDetailOpen, setCpuDetailOpen] = useState(false);
 
   return (
     <aside className="dashboard-infra-column">
@@ -236,7 +342,9 @@ export function InfraRegion({ resources, resourcesLoading, processes, processesL
         headline={cpuHeadline}
         caption="서버(호스트) 기준"
         loading={resourcesLoading}
+        action={<Button size="small" onClick={() => setCpuDetailOpen(true)}>상세</Button>}
       />
+      <CpuProcessModal open={cpuDetailOpen} onClose={() => setCpuDetailOpen(false)} />
       <Card className="infra-tile infra-tile--memory" loading={resourcesLoading}>
         <ResourceMeter
           title="메모리 사용률"

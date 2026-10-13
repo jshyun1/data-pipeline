@@ -16,12 +16,14 @@ public class InfraController {
     private final HostResourceService hostResourceService;
     private final ProcessHealthService processHealthService;
     private final DiskBreakdownService diskBreakdownService;
+    private final HostProcessService hostProcessService;
 
     public InfraController(HostResourceService hostResourceService, ProcessHealthService processHealthService,
-                           DiskBreakdownService diskBreakdownService) {
+                           DiskBreakdownService diskBreakdownService, HostProcessService hostProcessService) {
         this.hostResourceService = hostResourceService;
         this.processHealthService = processHealthService;
         this.diskBreakdownService = diskBreakdownService;
+        this.hostProcessService = hostProcessService;
     }
 
     @GetMapping("/resources")
@@ -47,6 +49,16 @@ public class InfraController {
      * 메모리 용도별 상세. 디스크와 달리 /proc/meminfo 한 번 읽는 비용이라 캐시 없이 즉시 계산한다.
      * 화면은 "상세 펼치기"를 눌렀을 때만 호출한다.
      */
+    /**
+     * CPU 카드 «상세» - 서버에서 도는 프로세스별 사용률(2026-10-12 요청).
+     * 화면에서 창을 열 때만 부른다 - 두 번 읽는 사이 0.3초가 들어 주기 조회로 쓰지 않는다.
+     */
+    @GetMapping("/resources/processes")
+    public ApiResponse<HostProcessService.Snapshot> hostProcesses(
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "30") int limit) {
+        return ApiResponse.success(hostProcessService.collect(limit));
+    }
+
     @GetMapping("/resources/memory-breakdown")
     public ApiResponse<java.util.List<java.util.Map<String, Object>>> memoryBreakdown() {
         return ApiResponse.success(hostResourceService.memoryBreakdown());

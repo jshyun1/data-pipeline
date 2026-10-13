@@ -145,3 +145,33 @@ export async function getMemoryBreakdown(): Promise<MemoryBreakdownEntry[]> {
   const res = await apiClient.get<ApiResponse<MemoryBreakdownEntry[]>>("/infra/resources/memory-breakdown");
   return unwrap(res.data);
 }
+
+/* -------------------------------------------------------------------------
+ * CPU 카드 «상세» — 서버에서 도는 프로세스별 사용률(2026-10-12 요청)
+ * ---------------------------------------------------------------------- */
+
+export interface HostProcess {
+  pid: number;
+  name: string;
+  command: string;
+  state: string;
+  cpuPercent: number;
+  memoryBytes: number;
+  memoryPercent: number;
+  threads: number;
+}
+
+export interface HostProcessSnapshot {
+  /** false 면 호스트 전체가 아니라 백엔드 컨테이너 안만 보인 것(마운트 없음) - 화면이 알린다. */
+  hostScope: boolean;
+  total: number;
+  cores: number;
+  memoryTotalBytes: number;
+  items: HostProcess[];
+}
+
+/** 창을 열 때만 부른다 - 서버가 0.3초 간격으로 두 번 읽어 사용률을 센다. */
+export async function getHostProcesses(limit = 30): Promise<HostProcessSnapshot> {
+  const res = await apiClient.get<ApiResponse<HostProcessSnapshot>>("/infra/resources/processes", { params: { limit } });
+  return unwrap(res.data);
+}

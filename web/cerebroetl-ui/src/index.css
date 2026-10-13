@@ -11039,3 +11039,26 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   font-size: 11px;
   line-height: 1.5;
 }
+
+/* 자원 카드 제목 줄 오른쪽(«상세» 단추 · 상태 배지, 2026-10-12 요청). */
+.infra-tile-title-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* CPU 상세 창 - 머리줄과 안내 */
+.infra-process-modal-head {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.infra-process-modal-note {
+  margin-bottom: 10px;
+}
+
