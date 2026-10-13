@@ -32,6 +32,11 @@ public class NotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
 
+    /** 실패 뒤 다시 보내기까지(메일 · 문자 · 카카오 발송 실패). */
+    private static final String RETRY_BACKOFF_FAILED = "INTERVAL '2' MINUTE";
+    /** 릴레이가 없을 때 다시 보기까지. */
+    private static final String RETRY_BACKOFF_NO_RELAY = "INTERVAL '5' MINUTE";
+
     private final JdbcTemplate jdbc;
     // JavaMailSender 는 spring.mail.host 가 있을 때만 존재한다(ObjectProvider 로 부재 허용).
     // 화면에서 메일 서버를 넣으면 그 값으로 발송기를 직접 만든다(아래 mailSenderFor).
@@ -265,6 +270,7 @@ public class NotificationService {
     @Scheduled(fixedRate = 5_000, initialDelay = 50_000, scheduler = "controlPlaneScheduler")
     public void dispatch() {
         releaseExpiredClaims();
+        expireStale();
         List<Map<String, Object>> batch;
         try {
             batch = jdbc.queryForList("""
@@ -347,6 +353,28 @@ public class NotificationService {
             }
         } catch (Exception ex) {
             log.warn("끊긴 발송 건 회수 실패: {}", ex.getMessage());
+        }
+    }
+
+    /**
+     * 유효 시간(만든 뒤 6시간, {@link #insertDelivery})이 지난 대기 · 재시도 건은 보내지 않고 포기(DEAD, EXPIRED)로 닫는다(2026-10-13).
+     *
+     * <p>예전에는 {@code expires_at} 을 아무도 보지 않았다. 채널이 오래 막혔다 풀리면(토큰 갱신 등) 몇 주 전 알림까지 한꺼번에 나갈 수 있었다.
+     * 화면 알림(IN_APP)은 외부로 나가지 않고 화면 목록에 남아야 하므로 빼 둔다.
+     */
+    private void expireStale() {
+        try {
+            int expired = jdbc.update("""
+                    UPDATE notification_delivery
+                       SET status='DEAD', failure_reason='EXPIRED', updated_at=now()
+                     WHERE status IN ('PENDING','RETRY') AND channel_type <> 'IN_APP'
+                       AND expires_at IS NOT NULL AND expires_at < now()
+                    """);
+            if (expired > 0) {
+                log.warn("유효 시간이 지난 알림 {}건을 보내지 않고 닫았다(EXPIRED).", expired);
+            }
+        } catch (Exception ex) {
+            log.warn("만료 알림 정리 실패: {}", ex.getMessage());
         }
     }
 
@@ -445,12 +473,7 @@ public class NotificationService {
             if (detail != null && detail.length() > 480) {
                 detail = detail.substring(0, 480);
             }
-            jdbc.update("UPDATE notification_delivery SET status='RETRY', attempt_count=attempt_count+1, "
-                    + "failure_reason='SMTP_ERROR', failure_detail=?, "
-                    + "next_attempt_at=now() + INTERVAL '2' MINUTE, updated_at=now() "
-                    + "WHERE id=? AND attempt_count+1 < max_attempts", detail, id);
-            jdbc.update("UPDATE notification_delivery SET status='DEAD', updated_at=now() "
-                    + "WHERE id=? AND attempt_count >= max_attempts", id);
+            recordFailure(id, "SMTP_ERROR", detail, RETRY_BACKOFF_FAILED);
             log.warn("EMAIL 발송 실패 id={}: {}", id, ex.getMessage());
         }
     }
@@ -561,12 +584,7 @@ public class NotificationService {
 
     private void gatewayFail(long id, String channel, String failureReason, String reason) {
         String detail = reason == null ? null : (reason.length() > 480 ? reason.substring(0, 480) : reason);
-        jdbc.update("UPDATE notification_delivery SET status='RETRY', attempt_count=attempt_count+1, "
-                + "failure_reason=?, failure_detail=?, "
-                + "next_attempt_at=now() + INTERVAL '2' MINUTE, updated_at=now() "
-                + "WHERE id=? AND attempt_count+1 < max_attempts", failureReason, detail, id);
-        jdbc.update("UPDATE notification_delivery SET status='DEAD', updated_at=now() "
-                + "WHERE id=? AND attempt_count >= max_attempts", id);
+        recordFailure(id, failureReason, detail, RETRY_BACKOFF_FAILED);
         log.warn("{} 발송 실패 id={}: {}", channel, id, reason);
     }
 
@@ -687,12 +705,24 @@ public class NotificationService {
      * 가짜 실패를 만든다(2026-09-20). 두 표기의 결과는 Postgres 에서 동일함을 확인했다.
      */
     private void markNoRelay(long id) {
-        jdbc.update("UPDATE notification_delivery SET status='RETRY', "
-                + "attempt_count=attempt_count+1, failure_reason='NO_RELAY', "
-                + "next_attempt_at=now() + INTERVAL '5' MINUTE, updated_at=now() "
-                + "WHERE id=? AND attempt_count+1 < max_attempts", id);
-        jdbc.update("UPDATE notification_delivery SET status='DEAD', updated_at=now() "
-                + "WHERE id=? AND attempt_count >= max_attempts", id);
+        recordFailure(id, "NO_RELAY", null, RETRY_BACKOFF_NO_RELAY);
+    }
+
+    /**
+     * 실패 한 번을 기록하고, 남은 시도가 있으면 재시도(RETRY) · 없으면 포기(DEAD)로 넘긴다(2026-10-13).
+     *
+     * <p>예전에는 «재시도»({@code attempt_count+1 < max_attempts})와 «포기»({@code attempt_count >= max_attempts})를 두 번에
+     * 나눠 갱신했다. 마지막 시도(attempt_count = max-1)가 실패하면 두 조건 어디에도 맞지 않아 {@code SENDING} 인 채로 남고,
+     * 5분 뒤 집기 회수가 RETRY 로 되돌려 끝없이 다시 보냈다 - 카카오 토큰이 만료되자 9/29 알림까지 62건이 5분마다 실패했다.
+     * 한 번의 갱신으로 정한다. status 를 attempt_count 보다 앞에 둬서, SET 을 왼쪽부터 계산하는 DB(H2)에서도 옛 값으로 판정한다.
+     *
+     * @param detail null 이면 예전 실패 상세를 그대로 둔다(릴레이 없음)
+     */
+    private void recordFailure(long id, String failureReason, String detail, String backoff) {
+        jdbc.update("UPDATE notification_delivery SET "
+                + "status=CASE WHEN attempt_count+1 >= max_attempts THEN 'DEAD' ELSE 'RETRY' END, "
+                + "attempt_count=attempt_count+1, failure_reason=?, failure_detail=COALESCE(?, failure_detail), "
+                + "next_attempt_at=now() + " + backoff + ", updated_at=now() WHERE id=?", failureReason, detail, id);
     }
 
     private int rank(String severity) {

@@ -168,14 +168,12 @@ function CdcLogDetailModal({ row, pipelineAlive, onClose }: {
   // 워크플로우 로그 · ETL 로그 창과 같은 모양(2026-10-02 요청): 맨 위 강조 띠, 제목은 파이프라인 이름,
   // 열자마자 GPT 해석, 그 아래 로그(워크플로우 창의 «실패 원인» 상자 모양). 구분 · 시각 줄은 뺐다.
   const gptEnabled = useGptEnabled();
-  const [analysisOpen, setAnalysisOpen] = useState(true);
   // 지운 파이프라인의 실패도 해석한다(2026-10-06) - 서버가 지울 때 남긴 이름 · 소스 · 타깃과 명령 이력, 오류 내용으로 해석한다.
   const analyzable = Boolean(row) && row?.status === "FAILED" && Boolean(row?.pipelineId);
   return (
     <Modal
       open={Boolean(row)}
       onCancel={onClose}
-      afterOpenChange={(open) => { if (open) setAnalysisOpen(true); }}
       footer={null}
       width={960}
       destroyOnHidden
@@ -184,18 +182,13 @@ function CdcLogDetailModal({ row, pipelineAlive, onClose }: {
     >
       {row && (
         <section className="failure-log-task">
-          {gptEnabled && analyzable && !analysisOpen && (
-            <div className="failure-log-task-head">
-              <Button size="small" className="gpt-analysis-open" onClick={() => setAnalysisOpen(true)}>GPT 해석</Button>
-            </div>
-          )}
-          {gptEnabled && analyzable && analysisOpen && (
+          {/* GPT 해석은 창을 열면 바로 시작하고 창이 열려 있는 동안 늘 보인다 - 안의 «닫기»를 뺐다(2026-10-13 요청). */}
+          {gptEnabled && analyzable && (
             <GptErrorAnalysis
               key={row.key}
               targetType="CDC_PIPELINE"
               target={{ pipelineId: String(row.pipelineId) }}
               errorText={screenErrorText(row)}
-              onClose={() => setAnalysisOpen(false)}
             />
           )}
           {gptEnabled && row.status === "FAILED" && !pipelineAlive && (

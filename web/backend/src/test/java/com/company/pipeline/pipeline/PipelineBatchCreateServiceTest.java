@@ -26,10 +26,10 @@ class PipelineBatchCreateServiceTest {
         var first = response(1L, "one"); var second = response(2L, "two");
         var service = new PipelineBatchCreateService(pipelineService, deployService);
         var request = new PipelineBatchCreateRequest(List.of(request("one"), request("two")));
-        when(pipelineService.createBatchDefinitions(request.pipelines())).thenReturn(List.of(first, second));
+        when(pipelineService.createBatchDefinitions(request.pipelines(), "kim")).thenReturn(List.of(first, second));
         when(deployService.deploy(1L)).thenReturn(first); when(deployService.deploy(2L)).thenReturn(second);
 
-        assertThat(service.create(request).createdCount()).isEqualTo(2);
+        assertThat(service.create(request, "kim").createdCount()).isEqualTo(2);
     }
 
     @Test
@@ -37,11 +37,11 @@ class PipelineBatchCreateServiceTest {
         var first = response(1L, "one"); var second = response(2L, "two");
         var service = new PipelineBatchCreateService(pipelineService, deployService);
         var request = new PipelineBatchCreateRequest(List.of(request("one"), request("two")));
-        when(pipelineService.createBatchDefinitions(request.pipelines())).thenReturn(List.of(first, second));
+        when(pipelineService.createBatchDefinitions(request.pipelines(), "kim")).thenReturn(List.of(first, second));
         when(deployService.deploy(1L)).thenReturn(first);
         when(deployService.deploy(2L)).thenThrow(new RuntimeException("boom"));
 
-        assertThatThrownBy(() -> service.create(request)).hasMessageContaining("모두 정리");
+        assertThatThrownBy(() -> service.create(request, "kim")).hasMessageContaining("모두 정리");
         InOrder order = inOrder(pipelineService);
         order.verify(pipelineService).delete(2L);
         order.verify(pipelineService).delete(1L);

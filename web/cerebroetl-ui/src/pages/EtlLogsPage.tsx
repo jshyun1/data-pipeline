@@ -118,7 +118,6 @@ function etlDetailText(row: UnifiedEtlLogRow) {
  */
 function LogDetailModal({ row, onClose }: { row: UnifiedEtlLogRow | null; onClose: () => void }) {
   const gptEnabled = useGptEnabled();
-  const [analysisOpen, setAnalysisOpen] = useState(true);
   const target: Record<string, string> = {};
   if (row?.jobId != null) target.jobId = String(row.jobId);
   if (row?.groupId) target.groupId = row.groupId;
@@ -130,24 +129,18 @@ function LogDetailModal({ row, onClose }: { row: UnifiedEtlLogRow | null; onClos
       footer={null}
       width={960}
       destroyOnHidden
-      afterOpenChange={(open) => { if (open) setAnalysisOpen(true); }}
       rootClassName="cerebro-modal accent-modal"
       onCancel={onClose}
     >
       {row ? (
         <section className="failure-log-task">
-          {canAnalyze && !analysisOpen && (
-            <div className="failure-log-task-head">
-              <Button size="small" className="gpt-analysis-open" onClick={() => setAnalysisOpen(true)}>GPT 해석</Button>
-            </div>
-          )}
-          {canAnalyze && analysisOpen && (
+          {/* GPT 해석은 창을 열면 바로 시작하고 창이 열려 있는 동안 늘 보인다 - 안의 «닫기»를 뺐다(2026-10-13 요청). */}
+          {canAnalyze && (
             <GptErrorAnalysis
               key={row.key}
               targetType="ETL_JOB"
               target={target}
               errorText={etlDetailText(row)}
-              onClose={() => setAnalysisOpen(false)}
             />
           )}
           <div className="failure-log-block">

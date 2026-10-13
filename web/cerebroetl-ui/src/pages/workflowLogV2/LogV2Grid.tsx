@@ -13,12 +13,12 @@ import {
   groupJobs,
   jobOutcome,
   jobProgress,
-  loadCountOf,
   runAt,
   runTypeLabel,
   isActiveState,
   selectionKey,
   stepName,
+  stepOutcome,
   type DashboardDag,
   type DetailTab,
   type JobGroup,
@@ -108,11 +108,12 @@ function rowsText(sum: RowsSum) {
  * 실행 한 건이 «자기 job 으로» 적재한 합계. 하위 워크플로우 호출은 여기서 세지 않는다(useRunRows 가 하위 실행 합계를 더한다).
  * job 로그를 다 받기 전에는 pending. 실행 중이면 끝난 job 의 건수에 도는 job 의 «지금까지 적재 건수»를 더하고 live 로 알린다(2026-10-06).
  */
-function ownRows(jobs: JobGroup[], logs?: Record<string, string>, progress?: Record<string, number>): RowsSum {
+function ownRows(jobs: JobGroup[], logs?: Record<string, string>, progress?: Record<string, number>,
+                 settled?: Record<string, number>): RowsSum {
   const doneJobs = jobs.filter((job) => job.kind === "job" && job.state === "success");
   const liveRows = jobs.map((job) => jobProgress(job, progress)).filter((rows): rows is number => rows != null);
   if (!doneJobs.length && !liveRows.length) return NO_ROWS;
-  const outcomes = doneJobs.map((job) => jobOutcome(job, logs, progress));
+  const outcomes = doneJobs.map((job) => jobOutcome(job, logs, progress, settled));
   if (!logs || outcomes.includes("…")) return PENDING_ROWS;
   let total = liveRows.reduce((sum, rows) => sum + rows, 0);
   let known = liveRows.length > 0;
@@ -139,7 +140,7 @@ function retryText(jobs?: JobGroup[]) {
  * 한다(DOM 은 만들지 않는다). 하위 실행을 아직 못 받았으면 합계도 «…»로 둔다 - 상위 건수만 먼저 보였다가 커지는 일이 없게.
  */
 function useRunRows(dagId: string, runId: string, runState: string | undefined, ctx: GridCtx, enabled: boolean) {
-  const { tasksQuery, jobs, logs, progress } = useRunTasks(dagId, runId, { enabled, refreshSeconds: ctx.refreshSeconds, runState });
+  const { tasksQuery, jobs, logs, progress, settled } = useRunTasks(dagId, runId, { enabled, refreshSeconds: ctx.refreshSeconds, runState });
   const [childSums, setChildSums] = useState<Record<string, RowsSum>>({});
   const report = useCallback((key: string, sum: RowsSum) => {
     setChildSums((previous) => {
@@ -153,7 +154,7 @@ function useRunRows(dagId: string, runId: string, runState: string | undefined, 
     const child = ctx.findChildRun(dagId, runId, job.key);
     return child?.dag_id ? [{ key: `${child.dag_id}|${child.dag_run_id}`, run: child, dagId: child.dag_id }] : [];
   });
-  const own = jobs ? ownRows(jobs, logs, progress) : enabled && tasksQuery.isLoading ? PENDING_ROWS : NO_ROWS;
+  const own = jobs ? ownRows(jobs, logs, progress, settled) : enabled && tasksQuery.isLoading ? PENDING_ROWS : NO_ROWS;
   const sum = children.reduce((total, child) => addRows(total, childSums[child.key] ?? (enabled ? PENDING_ROWS : NO_ROWS)), own);
   const probes = children.map((child) => (
     <RowsProbe key={child.key} probeKey={child.key} dagId={child.dagId} run={child.run} ctx={ctx} enabled={enabled} onRows={report} />
@@ -277,7 +278,7 @@ export function RunBody({ dagId, runId, runState, depth, ctx, scale }: {
   ctx: GridCtx;
   scale: number;
 }) {
-  const { tasksQuery, tasks, jobs, logs, progress } = useRunTasks(dagId, runId,
+  const { tasksQuery, tasks, jobs, logs, progress, settled } = useRunTasks(dagId, runId,
     { enabled: true, refreshSeconds: ctx.refreshSeconds, runState });
   const { busyKey, rerun } = useRerun(dagId, runId, tasks, () => tasksQuery.refetch());
   const nodeNames = useNodeNames(dagId, ctx);
@@ -293,14 +294,14 @@ export function RunBody({ dagId, runId, runState, depth, ctx, scale }: {
     <>
       {jobs.map((job, index) => (
         <JobRow key={job.key} dagId={dagId} runId={runId} job={job} name={nodeNames.get(job.key)} index={index} depth={depth} ctx={ctx}
-                logs={logs} progress={progress} scale={jobScale} busyKey={busyKey} rerun={rerun} />
+                logs={logs} progress={progress} settled={settled} scale={jobScale} busyKey={busyKey} rerun={rerun} />
       ))}
     </>
   );
 }
 
 function JobRow({
-  dagId, runId, job, name, index, depth, ctx, logs, progress, scale, busyKey, rerun,
+  dagId, runId, job, name, index, depth, ctx, logs, progress, settled, scale, busyKey, rerun,
 }: {
   dagId: string;
   runId: string;
@@ -312,6 +313,8 @@ function JobRow({
   ctx: GridCtx;
   logs?: Record<string, string>;
   progress?: Record<string, number>;
+  /** 끝난 job 의 원장 최종 건수(노드 키 → 건수). undefined 면 아직 받는 중. */
+  settled?: Record<string, number>;
   scale: number;
   busyKey?: string;
   rerun: (jobKey: string, taskIds: string[], withDownstream: boolean) => Promise<void>;
@@ -334,7 +337,7 @@ function JobRow({
     : job.kind === "cdc" ? "CDC 지시"
     : job.kind === "marker" ? "표시 노드"
     : "워크플로우 종단";
-  const outcome = jobOutcome(job, logs, progress);
+  const outcome = jobOutcome(job, logs, progress, settled);
   const inProgress = jobProgress(job, progress) != null;
   const logTarget: FailureLogTarget = {
     title: `${no} ${label}`,
@@ -390,8 +393,7 @@ function JobRow({
       {expanded && job.kind === "job" && job.steps.map((step) => {
         const stepSel: Selection = { kind: "step", dagId, runId, taskId: step.task_id };
         const stepKey = selectionKey(stepSel);
-        const stepOutcome = step.state === "success" ? (logs && step.task_id in logs ? loadCountOf(logs[step.task_id]) : "…")
-          : step.state === "upstream_failed" ? "선행 작업 실패로 미실행" : "-";
+        const stepResult = stepOutcome(step, logs, settled);
         return (
           <tr key={step.task_id} className={`lv2-r k-step f-${step.state ?? "none"}${ctx.selectedKey === stepKey ? " sel" : ""}`}
               onClick={() => ctx.select(stepSel)}>
@@ -409,7 +411,7 @@ function JobRow({
                           ctx.openLog({ title: `${label} · ${stepName(step.task_id)}`, dagId, runId,
                                         runLabel: ctx.runLabel?.(dagId, runId), tasks: [step] });
                         }}>로그</button>
-              ) : <span className={step.state === "upstream_failed" ? "lv2-muted" : "lv2-num"}>{stepOutcome}</span>}
+              ) : <span className={step.state === "upstream_failed" ? "lv2-muted" : "lv2-num"}>{stepResult}</span>}
             </td>
             <td className="lv2-num">{Math.max(0, (step.try_number ?? 1) - 1)}회</td>
             <td className="lv2-muted">-</td>

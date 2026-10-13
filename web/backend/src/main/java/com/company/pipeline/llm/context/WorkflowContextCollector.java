@@ -151,8 +151,9 @@ public class WorkflowContextCollector implements LlmContextCollector {
                 + " · 동시 실행 수: " + workflow.getMaxActiveRuns() + " · 밀린 실행(catchup): " + (workflow.isCatchup() ? "예" : "아니오"));
         lines.add("메모: " + ContextText.orDash(workflow.getMemo()));
         // 탭을 열자마자 나가는 요약이 «누가 · 언제»까지 말할 수 있게 한다(2026-09-27).
-        // 워크플로우에는 작성자 컬럼이 없다 - 게시자가 사람 정보의 전부다.
-        lines.add("등록 시각: " + ContextText.time(workflow.getCreatedAt())
+        // 등록자는 2026-10-13 부터 남는다(V81). 그 전에 만든 워크플로우는 비어 있다.
+        lines.add("등록자: " + ContextText.orDash(workflow.getCreatedBy())
+                + " · 등록 시각: " + ContextText.time(workflow.getCreatedAt())
                 + " · 최종 수정: " + ContextText.time(workflow.getUpdatedAt()));
         lines.add("Airflow DAG: " + ContextText.orDash(workflow.dagId()));
         return String.join("\n", lines);

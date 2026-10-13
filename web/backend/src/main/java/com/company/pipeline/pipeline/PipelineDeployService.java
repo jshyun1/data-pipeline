@@ -168,16 +168,89 @@ public class PipelineDeployService {
             deltaTargetTableService.ensureDeltaTable(pipeline, target);
         }
 
-        RenderedConnectorConfig sourceConfig = connectorConfigRenderer.renderSource(new SourceConnectorRequest(
+        prepareStoppedConnector(pipeline.getId(), "SOURCE", renderTableCdcSource(pipeline, source));
+
+        prepareStoppedConnector(pipeline.getId(), "SINK", renderTableCdcSink(pipeline, source, target));
+    }
+
+    /** CDC 테이블 파이프라인의 소스 설정. 준비(PREPARE)와 «미반영 설정» 비교가 같은 결과를 내도록 한 곳에서 만든다. */
+    private RenderedConnectorConfig renderTableCdcSource(PipelineDefinition pipeline, PipelineConnection source) {
+        return connectorConfigRenderer.renderSource(new SourceConnectorRequest(
                 pipeline.getId(), source.getDbType(), source.getHost(), source.getPort(),
                 source.getUsername(), passwordCryptoService.decrypt(source.getEncryptedPassword()),
                 source.getDatabaseName(), source.getServiceName(),
                 pipeline.getSourceSchema(), pipeline.getSourceTable(), pipeline.getTopicName(),
                 PipelineSnapshotMode.from(pipeline.getSnapshotMode()).name(), pipeline.getExcludedColumns(),
                 pipeline.getMaskedColumns()));
-        prepareStoppedConnector(pipeline.getId(), "SOURCE", sourceConfig);
+    }
 
-        prepareStoppedConnector(pipeline.getId(), "SINK", renderTableCdcSink(pipeline, source, target));
+    /**
+     * 화면에서 고칠 수 있는 정의 값이 바뀌는 커넥터 설정 키(2026-10-12, 파이프라인 수정). 이 밖의 키는 수정 화면이 잠가 둔다 -
+     * 커넥터 이름 · 토픽 · 읽던 위치(오프셋) · Postgres 슬롯이 묶인 값이라 바꾸면 새 파이프라인이 된다.
+     */
+    private static final java.util.Map<String, String> EDITABLE_SOURCE_KEYS = new java.util.LinkedHashMap<>();
+    private static final java.util.Map<String, String> EDITABLE_SINK_KEYS = new java.util.LinkedHashMap<>();
+
+    static {
+        // 순서는 수정 화면의 입력 순서(제외 → 마스킹 → DELETE)와 같게 둔다.
+        EDITABLE_SOURCE_KEYS.put("column.exclude.list", "제외 컬럼");
+        EDITABLE_SOURCE_KEYS.put("column.mask.with.8.chars", "마스킹 컬럼");
+        EDITABLE_SINK_KEYS.put("delete.enabled", "DELETE 반영");
+    }
+
+    /**
+     * 정의는 고쳤는데 아직 등록된 커넥터에 들어가지 않은 항목(«설정 변경 미반영»). 지금 정의로 만들 설정과 등록 때 저장해 둔 설정을
+     * 고칠 수 있는 키만 비교한다 - 추측(정의 값끼리 비교)이 아니라 배포와 같은 설정 생성 코드로 비교해서, 템플릿이 쓰지 않는 값
+     * (예: MySQL 소스는 제외 · 마스킹을 쓰지 않음)은 차이로 잡지 않는다. 다음 준비(배포)가 새 설정을 넣으면 사라진다.
+     *
+     * <p>아직 커넥터를 등록하지 않았거나 연결정보를 못 찾으면 빈 목록이다(다음 준비 때 지금 정의가 그대로 들어간다).
+     */
+    public List<String> pendingConfigItems(PipelineDefinition pipeline) {
+        if (!isTableCdc(pipeline)) {
+            return List.of();
+        }
+        try {
+            PipelineConnector sourceConnector = pipelineConnectorRepository
+                    .findByPipelineIdAndConnectorRole(pipeline.getId(), "SOURCE").orElse(null);
+            PipelineConnector sinkConnector = pipelineConnectorRepository
+                    .findByPipelineIdAndConnectorRole(pipeline.getId(), "SINK").orElse(null);
+            if (sourceConnector == null && sinkConnector == null) {
+                return List.of();
+            }
+            PipelineConnection source = connectionRepository.findById(pipeline.getSourceConnectionId()).orElse(null);
+            PipelineConnection target = connectionRepository.findById(pipeline.getTargetConnectionId()).orElse(null);
+            if (source == null || target == null) {
+                return List.of();
+            }
+            List<String> items = new ArrayList<>();
+            if (sourceConnector != null) {
+                collectDiff(renderTableCdcSource(pipeline, source).config(), sourceConnector, EDITABLE_SOURCE_KEYS, items);
+            }
+            if (sinkConnector != null) {
+                collectDiff(renderTableCdcSink(pipeline, source, target).config(), sinkConnector, EDITABLE_SINK_KEYS, items);
+            }
+            return items;
+        } catch (RuntimeException ex) {
+            log.debug("미반영 설정 비교 실패 pipelineId={}: {}", pipeline.getId(), ex.getMessage());
+            return List.of();
+        }
+    }
+
+    private void collectDiff(java.util.Map<String, Object> rendered, PipelineConnector connector,
+                             java.util.Map<String, String> keys, List<String> out) {
+        java.util.Map<?, ?> stored;
+        try {
+            stored = objectMapper.readValue(connector.getConnectorConfigJson(), java.util.Map.class);
+        } catch (JsonProcessingException | IllegalArgumentException ex) {
+            return;
+        }
+        keys.entrySet().forEach(entry -> {
+            String now = rendered.get(entry.getKey()) == null ? "" : String.valueOf(rendered.get(entry.getKey()));
+            String registered = stored.get(entry.getKey()) == null ? "" : String.valueOf(stored.get(entry.getKey()));
+            if (!now.equals(registered)) {
+                out.add(entry.getValue());
+            }
+        });
     }
 
     /** CDC 테이블 파이프라인의 싱크 설정. 준비(PREPARE)와 싱크 설정 재적용이 같은 결과를 내도록 한 곳에서 만든다. */
@@ -851,6 +924,11 @@ public class PipelineDeployService {
     }
 
     private PipelineResponse withPipelineLock(Long pipelineId, Supplier<PipelineResponse> action) {
+        return runLocked(pipelineId, action);
+    }
+
+    /** 파이프라인 하나의 잠금 안에서 실행한다 - 준비 · 시작 · 정지 · 정의 수정(PipelineEditService)이 서로 겹치지 않게. */
+    public <T> T runLocked(Long pipelineId, Supplier<T> action) {
         ReentrantLock lock = pipelineLocks.computeIfAbsent(pipelineId, ignored -> new ReentrantLock());
         lock.lock();
         try {

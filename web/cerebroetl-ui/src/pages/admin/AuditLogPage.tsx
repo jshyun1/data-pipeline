@@ -23,7 +23,6 @@ const AREA_BY_PREFIX: Record<string, { label: string; color: string }> = {
   AIRFLOW: { label: "워크플로우", color: "purple" },
   COMMON: { label: "공통", color: "default" },
   ADMIN: { label: "계정·권한", color: "gold" },
-  PORTAL: { label: "포털", color: "cyan" },
 };
 
 const ACCOUNT_ACTIONS = new Set([

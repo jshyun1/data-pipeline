@@ -23,9 +23,10 @@ import {
 import { StdPage } from "../components/StdPage";
 import { WfIcon } from "../components/WorkflowPageHeader";
 import { WizardStepStatus, WizardStepTitle, WizardTop, type WizardStepState } from "../components/StdWizard";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { checkCdcTableReadiness, listConnections, listConnectionColumns, listConnectionSchemas, listConnectionTables, testConnection } from "../api/connections";
-import { createLogFilePipeline, createPipeline, createPipelineBatch } from "../api/pipelines";
+import { createLogFilePipeline, createPipeline, createPipelineBatch, getPipeline } from "../api/pipelines";
+import { CdcEditWizard, LogEditWizard } from "./cdcEdit/CdcEditWizards";
 import { listPipelineGroups, type PipelineGroupResponse } from "../api/pipelineGroups";
 import type { ConnectionResponse } from "../types/connection";
 import type { LogPipelineCreateRequest, PipelineCreateRequest, PipelineResponse } from "../types/pipeline";
@@ -958,6 +959,30 @@ function LogCreateWizard({ modeSwitch }: { modeSwitch: ReactNode }) {
 
 export function CdcCreatePage() {
   const [activeTab, setActiveTab] = useState("cdc");
+  // 관리 화면 «수정»은 같은 위자드를 수정 모드로 연다(?edit=파이프라인 id, 2026-10-12). 생성 위자드 코드는 건드리지 않는다.
+  const [searchParams] = useSearchParams();
+  const editId = Number(searchParams.get("edit")) || null;
+  const editQuery = useQuery({
+    queryKey: ["pipeline", editId],
+    queryFn: () => getPipeline(editId!),
+    enabled: editId != null,
+  });
+  if (editId != null) {
+    const pipeline = editQuery.data;
+    return (
+      <StdPage menu="cdc" title="파이프라인 수정" icon="database" className="cdc-create-page">
+        {editQuery.isLoading ? (
+          <div className="std-card std-card-body"><Spin /> 파이프라인 정보를 불러오는 중입니다.</div>
+        ) : !pipeline ? (
+          <div className="std-card std-card-body"><Result status="warning" title="파이프라인을 찾을 수 없습니다" /></div>
+        ) : pipeline.pipelineType === "LOG_FILE" ? (
+          <LogEditWizard key={pipeline.id} pipeline={pipeline} />
+        ) : (
+          <CdcEditWizard key={pipeline.id} pipeline={pipeline} />
+        )}
+      </StdPage>
+    );
+  }
   // 디자인 작업물 cdc-create.html: 탭 대신 윗 카드 왼쪽의 모드 버튼으로 두 종류를 바꾼다
   // (이름은 하는 일로: «DB → DB 적재» · «로그파일 적재», 2026-10-08 요청).
   // 예전 탭(destroyInactiveTabPane)과 같이 바꾸면 다른 쪽 위저드는 내려가고 입력값도 비워진다.

@@ -9092,6 +9092,27 @@ dl.lv2-props dd { margin: 0; color: #0f172a; overflow-wrap: anywhere; }
   font-size: 12px;
 }
 
+/* 속성창 AI 어시스턴트 - 정확히 답할 수 없는 질문에 답 첫머리로 오는 «답변 범위» 안내(서버 AnswerScope, 2026-10-13). */
+.gpt-answer-scope {
+  margin: 2px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.gpt-answer-scope-label {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #dbeafe;
+  font-weight: 600;
+}
+
 .gpt-analysis-body {
   max-height: min(60vh, 720px);
   min-height: 72px;

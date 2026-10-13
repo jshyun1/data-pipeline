@@ -23,6 +23,7 @@ import _pipeline_svc_auth  # noqa: F401  # import 만으로 pipeline-api 서비�
 import logging
 from airflow import DAG
 from airflow.models import Variable
+from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.sdk import Asset, Param, TaskGroup
@@ -125,13 +126,11 @@ def _build_job_group(node: dict, spec: dict) -> TaskGroup:
             retries=_retries_of(node),
             retry_delay=NIFI_CALL_RETRY_DELAY,
         )
-        verify = PythonOperator(
-            task_id="verify",
-            python_callable=runtime.verify_landing,
-            op_kwargs={"node": node},
-            retries=_retries_of(node),
-            retry_delay=NIFI_CALL_RETRY_DELAY,
-        )
+        # «완료 대기가 성공해야 다음 노드로 간다»는 관문. 프로세스를 띄우지 않는 빈 단계라 스케줄러가 바로 성공 처리한다(2026-10-13).
+        # 예전에는 고정 연결(target_db_postgres)로 대상 테이블 전체 행 수를 셌다. 이번 실행 건수도 아니고 job 의 실제 대상
+        # DB 도 아니었으며(DZ 는 외부 DB 에 적재) 실패하지도 않았다 - 로컬에서는 매번 접속 실패(호스트 이름 못 찾음)로 4초를
+        # 쓰고 «검증 생략»이었다. 그 사이 다음 job 이 기다렸다(job 당 6.5초). 이번 실행 적재 건수는 완료 대기가 원장으로 남긴다.
+        verify = EmptyOperator(task_id="verify")
         # 정지는 성패와 무관하게 도는 «곁가지»다. 본줄기에 두면(… >> stop_pg >> verify)
         # await가 실패해도 all_done인 stop_pg가 성공하면서 그 뒤가 정상으로 이어지고,
         # 결국 workflow_done까지 성공해 DAG 전체가 성공으로 끝난다(실측 2026-08-31).

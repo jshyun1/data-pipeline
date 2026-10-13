@@ -29,6 +29,16 @@ public class EtlJobRunService {
      */
     static final long CALLBACK_TAIL_SECONDS = 45;
 
+    /**
+     * 워크플로우(Airflow)가 연 실행을 유휴 정리가 «버려진 실행»으로 닫기까지 기다리는 시간(2026-10-13).
+     *
+     * <p>워크플로우 실행은 NiFi 완료 감시(콜백)나 Airflow 완료 대기 · 정지 단계가 결과를 알고 닫는다. 유휴 정리가 45초 기준으로
+     * 닫으면 추출이 45초 넘게 걸리는 job 에서 적재 전에 «성공 0건»으로 닫혀 버렸다. 그 뒤 적재 · 진행 건수 · 완료 신호가 관측기가
+     * 새로 연 행으로 가서, 워크플로우는 신호를 못 받고 느린 예비 판정으로 42초 늦게 끝났고 화면 진행 건수도 비었다
+     * (DZ_POP003L, 원장 223 · 224). 이 시간은 Airflow 가 도중에 죽어 아무도 닫지 않을 때의 안전장치라 완료 대기 기본 제한(2시간)보다 길다.
+     */
+    static final long WORKFLOW_ABANDON_SECONDS = 3 * 60 * 60;
+
     private static final Logger log = LoggerFactory.getLogger(EtlJobRunService.class);
 
     private final EtlJobRunRepository runRepository;
@@ -113,18 +123,26 @@ public class EtlJobRunService {
      *
      * <p>스텝 구간이 모두 닫혔는지는 따로 보지 않는다 - 스텝 쪽 유휴 판정과 같은 기준을
      * 쓰므로, 스텝이 아직 열려 있다면 이 실행도 방금 활동을 본 것이라 닫히지 않는다.
+     *
+     * <p>워크플로우가 연 실행은 {@link #WORKFLOW_ABANDON_SECONDS} 동안 조용해야 «버려진 실행»(실패)으로 닫는다.
      */
     @Transactional
     public int closeIdleRuns(LocalDateTime now, long idleSeconds) {
         List<EtlJobRun> open = runRepository.findByEndedAtIsNull();
         int closed = 0;
         for (EtlJobRun run : open) {
-            if (run.getLastSeenAt().plusSeconds(idleSeconds).isAfter(now)) {
+            boolean byWorkflow = EtlJobRun.TRIGGER_WORKFLOW.equals(run.getTriggerSource());
+            long limit = byWorkflow ? Math.max(idleSeconds, WORKFLOW_ABANDON_SECONDS) : idleSeconds;
+            if (run.getLastSeenAt().plusSeconds(limit).isAfter(now)) {
                 continue;
             }
-            int failures = executionLogRepository.countErrorsForJobBetween(
-                    run.getJobId(), run.getStartedAt(), run.getLastSeenAt());
-            run.close(failures);
+            if (byWorkflow) {
+                run.abandon("워크플로우가 " + limit / 3600 + "시간 넘게 마감하지 않아 정리함(Airflow 중단 의심)");
+            } else {
+                int failures = executionLogRepository.countErrorsForJobBetween(
+                        run.getJobId(), run.getStartedAt(), run.getLastSeenAt());
+                run.close(failures);
+            }
             runRepository.save(run);
             closed++;
             String jobName = jobRepository.findById(run.getJobId())

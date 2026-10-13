@@ -9,7 +9,7 @@ interface LoginFormValues {
   password: string;
 }
 
-/** 통합 계정 테이블(ST_USER) 기반 자체 로그인 폼 (Keycloak 제거). */
+/** 자체 로그인 폼 (Keycloak 제거). 기본은 자체 계정(app_user), 설정에 따라 사내 ST_USER 로 확인한다. */
 export function LoginPage() {
   const { status, login } = useAuth();
   const [error, setError] = useState<string | null>(null);

@@ -241,8 +241,26 @@ def fail_if_errors(pg_name: str, errors: list) -> None:
     )
 
 
-def print_load_summary(pg_name: str, token: str, baseline: dict, processor_names: dict) -> int:
-    """이번 실행에서 프로세서별로 몇 행을 넣었는지 표로 남기고 합계를 돌려준다."""
+def processor_names_of(pg_id: str, token: str) -> dict:
+    """그룹(하위 그룹 포함) 안 프로세서 id → 이름. 적재 건수 표를 만들 때 쓴다."""
+    response = requests.get(
+        f"{base_url()}/nifi-api/flow/process-groups/{pg_id}/status",
+        params={"recursive": "true"},
+        headers=_headers(token),
+        verify=False,
+        timeout=15,
+    )
+    response.raise_for_status()
+    snapshot = response.json()["processGroupStatus"]["aggregateSnapshot"]
+    return {processor["id"]: processor["name"] for processor in _walk_processor_snapshots(snapshot)}
+
+
+def print_load_summary(pg_name: str, token: str, baseline: dict, processor_names: dict,
+                       quiet_when_empty: bool = False) -> int:
+    """이번 실행에서 프로세서별로 몇 행을 넣었는지 표로 남기고 합계를 돌려준다.
+
+    quiet_when_empty: 0행이면 «없음» 줄을 찍지 않는다 - 부른 쪽이 다른 근거(원장 건수)로 대신 적을 때.
+    """
     final = insert_counters_by_processor(token)
     rows = []
     for processor_id, name in processor_names.items():
@@ -255,7 +273,8 @@ def print_load_summary(pg_name: str, token: str, baseline: dict, processor_names
         if delta > 0:
             rows.append((name, delta))
     if not rows:
-        print(f"[{pg_name}] 이번 실행 적재 건수: 없음")
+        if not quiet_when_empty:
+            print(f"[{pg_name}] 이번 실행 적재 건수: 없음")
         return 0
     total = sum(delta for _, delta in rows)
     print(f"[{pg_name}] 이번 실행 적재 건수 (총 {total:,}행)")

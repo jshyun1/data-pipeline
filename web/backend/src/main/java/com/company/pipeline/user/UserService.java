@@ -15,9 +15,9 @@ public class UserService {
     }
 
     /**
-     * 통합 계정 테이블(ST_USER)로 인증된 사용자의 앱측 프로필을 반환한다. app_user에 행이
-     * 없으면(첫 로그인) 자동 프로비저닝한다 - app_user는 인증이 아니라 본부/직함/관리자여부
-     * 같은 "앱 프로필·권한"을 담는 저장소로만 쓴다.
+     * 로그인 인증(authz.provider - LOCAL=app_user · EXTERNAL=사내 ST_USER)을 통과한 사용자의 앱측 프로필을 반환한다.
+     * app_user에 행이 없으면(EXTERNAL 첫 로그인) 자동 프로비저닝한다 - 프로필(본부/직함/관리자여부)·권한을
+     * 담는 저장소다.
      *
      * Keycloak 제거 이후 realm role 같은 외부 권한 소스가 없어져서, admin_yn은 최초 생성
      * 시 기본값(N)만 주고 이후로는 여기서 건드리지 않는다 - 필요하면 DB에서 수동으로 부여.

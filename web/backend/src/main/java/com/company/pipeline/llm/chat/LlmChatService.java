@@ -276,10 +276,10 @@ public class LlmChatService {
     private List<LlmMessage> jobMessages(Prepared prepared, String apiKey, LlmChatListener listener) {
         LlmTargetType type = prepared.request().targetType();
         ConversationFitter.Normalized normalized = ConversationFitter.normalize(prepared.history(), false);
-        // 질문이 없으면 요약 요청이 대신 들어간다 - 길이 계산도 그 길이로 한다.
-        int askChars = prepared.question() == null || prepared.question().isBlank()
-                ? JobAnalysisAgent.summaryRequest(type).length() : prepared.question().length();
-        int fixed = JobAnalysisAgent.systemPrompt(type).length() + prepared.contextText().length() + askChars
+        // 질문이 없으면 요약 요청이 대신 들어간다 - 길이 계산도 그 길이로 한다. 질문이 있으면 범위 안내가 지시문에 붙는다.
+        boolean hasQuestion = prepared.question() != null && !prepared.question().isBlank();
+        int askChars = hasQuestion ? prepared.question().length() : JobAnalysisAgent.summaryRequest(type).length();
+        int fixed = JobAnalysisAgent.instructions(type, hasQuestion).length() + prepared.contextText().length() + askChars
                 + PROMPT_WRAPPER_CHARS;
         String summary = prepared.summary();
         int summaryChars = summary == null ? 0 : summary.length();

@@ -148,6 +148,17 @@ public class EtlJobRun {
     }
 
     /**
+     * 워크플로우가 연 실행을 아무도 마감하지 않은 채 오래 지났다 - Airflow 가 도중에 죽었거나 보고가 끊겼다.
+     * 결과를 아는 주체가 닫은 게 아니라서 completion_source 는 비워 둔다. 늦게라도 실제 판정이 오면 {@link #completeBy} 가 덮어쓴다.
+     */
+    public void abandon(String message) {
+        this.endedAt = this.lastSeenAt;
+        this.status = STATUS_FAILED;
+        this.errorMessage = message;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
      * Airflow가 이 실행을 지시했음을 표시한다(입양 포함).
      *
      * <p>관측기가 먼저 열어둔 run일 수도 있어서 새로 만들지 않고 표시만 덧붙인다 -

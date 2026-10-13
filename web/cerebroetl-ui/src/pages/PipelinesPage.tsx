@@ -54,6 +54,7 @@ import {
   listPipelineRuntimeStatuses,
   listPipelineConsistencyChecks,
   listPipelines,
+  listPendingConfig,
 } from "../api/pipelines";
 import type {
   PipelineCommandHistoryResponse,
@@ -99,6 +100,7 @@ const COMMAND_LABEL: Record<string, string> = {
   PREPARE: "사전 점검",
   DEPLOY: "배포",
   SINK_CONFIG_REFRESH: "싱크 설정 갱신",
+  DEFINITION_UPDATE: "정의 수정",
   RUNTIME_MONITOR: "자동 감시",
   SKIP_RECORD: "건너뛰기(손실)",
 };
@@ -147,6 +149,13 @@ export function PipelinesPage() {
     queryKey: ["pipelines"],
     queryFn: listPipelines,
   });
+  // 정의는 고쳤는데 아직 커넥터에 안 들어간 항목(2026-10-12, 파이프라인 수정). 다음 «배포» 때 반영되면 사라진다.
+  const { data: pendingConfig } = useQuery({
+    queryKey: ["pipeline-pending-config"],
+    queryFn: listPendingConfig,
+    refetchInterval: 30000,
+  });
+  const pendingOf = (pipelineId: number) => pendingConfig?.[String(pipelineId)] ?? [];
   const { data: groups } = useQuery({
     queryKey: ["pipeline-groups"],
     queryFn: listPipelineGroups,
@@ -592,7 +601,24 @@ export function PipelinesPage() {
           // 이름은 굵게 한 줄로(디자인). 공용 열 정의(cdcPipelineColumns)는 로그 화면도 쓰므로 여기서만 바꾼다.
           ...cdcPipelineColumns(runtimeByPipeline, metricByPipeline).map((column) =>
             column.title === "이름"
-              ? { ...column, width: 190, render: (value: string) => <strong className="cdc-manage-name">{value}</strong> }
+              ? {
+                  ...column,
+                  width: 190,
+                  render: (value: string, row: PipelineResponse) => {
+                    const pending = pendingOf(row.id);
+                    return (
+                      <>
+                        <strong className="cdc-manage-name">{value}</strong>
+                        {pending.length > 0 && (
+                          <Tag color="warning" style={{ marginLeft: 6 }}
+                               title={`${pending.join(" · ")} 수정이 아직 커넥터에 반영되지 않았습니다. 워크플로우에서 «배포»를 지시하면 반영됩니다.`}>
+                            설정 미반영
+                          </Tag>
+                        )}
+                      </>
+                    );
+                  },
+                }
               : column),
           {
             // 게시된 워크플로우 이름(누르면 워크플로우 로그에서 그 워크플로우를 연다 - 실행 설정이 거기 있다).
@@ -629,6 +655,15 @@ export function PipelinesPage() {
               <Space wrap>
                 <Button size="small" onClick={() => setDetailPipelineId(record.id)}>
                   상세
+                </Button>
+                {/* 생성 위자드를 수정 모드로 연다(2026-10-12). 저장은 정의 값만 바꾸고 실행 중인 커넥터는 건드리지 않는다. */}
+                <Button
+                  size="small"
+                  disabled={!canWrite || record.status === "DEPLOYING"}
+                  title={!canWrite ? "CDC 쓰기 권한이 없습니다" : record.status === "DEPLOYING" ? "준비(배포) 중에는 수정할 수 없습니다" : undefined}
+                  onClick={() => navigate(`/cdc/create?edit=${record.id}`)}
+                >
+                  수정
                 </Button>
                 <Popconfirm
                   title="이 파이프라인을 삭제할까요?"
@@ -681,6 +716,16 @@ export function PipelinesPage() {
                 key: "info",
                 label: "기본정보",
                 children: (
+                  <>
+                  {pendingOf(detailPipeline.id).length > 0 && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginBottom: 12 }}
+                      message={`설정 변경 미반영 · ${pendingOf(detailPipeline.id).join(" · ")}`}
+                      description="정의는 수정했지만 실행 중인 커넥터에는 아직 들어가지 않았습니다. 워크플로우에서 «배포»를 지시하면 반영되고, 그때까지는 예전 설정으로 계속 동작합니다."
+                    />
+                  )}
                   <Descriptions column={1} bordered size="small">
                     <Descriptions.Item label="이름">{detailPipeline.name}</Descriptions.Item>
                     {/* 트리 어디에 놓여 있는지. 최상단(전체 파이프라인)부터 순서대로 보여준다. */}
@@ -705,6 +750,16 @@ export function PipelinesPage() {
                         {loadModeLabel(detailPipeline.loadMode, detailPipeline.deltaOpColumn)}
                       </Descriptions.Item>
                     )}
+                    {/* 수정 화면에서 고칠 수 있는 값(2026-10-12) - 지금 정의 값을 그대로 보여 준다. */}
+                    {detailPipeline.pipelineType === "TABLE_CDC" && (
+                      <Descriptions.Item label="제외 컬럼">{detailPipeline.excludedColumns || "없음"}</Descriptions.Item>
+                    )}
+                    {detailPipeline.pipelineType === "TABLE_CDC" && (
+                      <Descriptions.Item label="마스킹 컬럼">{detailPipeline.maskedColumns || "없음"}</Descriptions.Item>
+                    )}
+                    {detailPipeline.pipelineType === "TABLE_CDC" && !detailPipeline.loadMode.startsWith("DELTA") && (
+                      <Descriptions.Item label="DELETE 반영">{detailPipeline.deleteEnabled ? "사용" : "사용 안 함"}</Descriptions.Item>
+                    )}
                     <Descriptions.Item label="상태">
                       {renderRuntimeStatus(detailPipeline, runtimeByPipeline.get(detailPipeline.id))}
                     </Descriptions.Item>
@@ -712,6 +767,7 @@ export function PipelinesPage() {
                     <Descriptions.Item label="생성 시각">{detailPipeline.createdAt}</Descriptions.Item>
                     <Descriptions.Item label="수정 시각">{detailPipeline.updatedAt}</Descriptions.Item>
                   </Descriptions>
+                  </>
                 ),
               },
               {

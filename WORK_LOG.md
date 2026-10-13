@@ -3751,3 +3751,386 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 - 화면은 그대로다(세 제목 모두 굵은 제목 목록에 있다).
 
 **확인(로컬)**: pipeline-api 재빌드 · 배포, 배포된 app.jar 에 새 형식 문구가 들어간 것을 확인했다. 실제 LLM 답변은 아직 보지 않았다.
+
+## 114. 통합 대시보드 카드 버튼 이름 «로그»로 통일 (2026-10-12)
+
+**요청**: 대시보드 CDC · ETL · Workflow 현황 카드 오른쪽 아래 버튼이 «로그 · ETL 로그 · 실행 이력»으로 제각각이다. 모두 «로그»로 통일한다.
+
+**변경**(`DashboardPage`): ETL 카드 «ETL 로그 →», Workflow 카드 «실행 이력 →»을 «로그 →»로 바꿨다. 가는 화면(ETL 로그 · 워크플로우 로그)은 그대로다. 실패 칩(«실패 N건», «실패 N건 보기»)도 그대로다.
+
+**확인(로컬, cerebroetl-ui 재빌드)**: `tsc -b` 오류 0, 배포 번들에 «ETL 로그 →» · «실행 이력 →» 0건.
+
+## 115. 통합 대시보드 ETL 카드 칸 - «실행 중 · 실패 · 성공 · 중지 · 대기 데이터» (2026-10-12)
+
+**요청**: ETL 현황 카드의 «실행 중 작업 · 대기 데이터 · 실행 · 중지»를 «실행 중 · 실패 · 성공 · 중지 · 대기 데이터» 순서로 바꾼다.
+
+**변경**(`DashboardPage`)
+- 실행 중 · 실패 · 성공은 ETL 로그 화면 상단 숫자와 같은 기준으로 센다.
+  - 실행 중: 아직 안 끝난 적재 실행 구간.
+  - 성공: 조회 기간에 끝난 구간.
+  - 실패: 조회 기간의 실패 이벤트. 아래 «실패 N건» 버튼과 같은 수다. 0 보다 크면 ⚠ 강조한다.
+- 실행 · 성공을 세려고 `/api/nifi/processor-runs`(ETL 로그와 같은 원본, 같은 기간, 30초 주기) 조회를 더했다.
+- 중지 · 대기 데이터는 예전 그대로다(지금 상태).
+- 예전 «실행 중 작업»(NiFi 활성 스레드 수)과 «실행»(RUNNING job 수) 칸은 뺐다.
+
+**확인(로컬, cerebroetl-ui 재빌드)**
+- `tsc -b` 오류 0 이다.
+- 가짜 응답 화면 시험(`qa-ui/dash_etl_mock.js`: 실행 구간 4 = 진행 1 + 완료 3, 실패 이벤트 2): «실행 중 1 · 실패 2⚠ · 성공 3 · 중지 0 · 대기 데이터 0», 버튼 «실패 2건».
+
+## 116. 통합 대시보드 CDC 카드 «미처리» → «미처리 건» (2026-10-12)
+
+**요청**: CDC 현황 카드의 «미처리» 칸 이름을 «미처리 건»으로 바꾼다.
+**변경**(`DashboardPage`): 라벨만 바꿨다. 값(CDC consumer lag 합계)과 설명은 그대로다.
+**확인(로컬, cerebroetl-ui 재빌드)**: `tsc -b` 오류 0, 배포 번들에 «미처리 건» 있음.
+
+## 117. CDC 파이프라인 수정 - 관리 화면 «수정» · 생성 위자드 수정 모드 (2026-10-12)
+
+**요청**: CDC 관리 «상세» 오른쪽에 «수정» 버튼을 둔다. 누르면 생성 위자드가 열려 값을 고칠 수 있다. 저장하면 값만 바뀐다. 수정이 운영 중인 파이프라인 기능에 영향을 주면 안 된다(설계안 확인 후 진행).
+
+**설계 근거(코드 확인)**
+- 소스 커넥터 이름은 `source-{id}-{DB}-{스키마}-{테이블}`(`ConnectorNaming`)이다. 소스 오프셋, Oracle 스키마 이력 토픽, Postgres 슬롯 · 발행 이름이 이 이름에 묶인다.
+- 토픽은 `{prefix}.{스키마}.{테이블}`이다.
+- 싱크 커넥터 이름은 `sink-{id}-{DB}-{스키마}-{테이블}`이고, 컨슈머 그룹 오프셋이 여기에 묶인다.
+- 그래서 이 값들을 바꾸면 처음부터 다시 적재하는 새 파이프라인이 된다.
+
+**값별 처리**
+- 바로 수정(실행 영향 없음): 이름 · 그룹 · 설명.
+- 수정 가능, 다음 «배포» 때 반영: 제외 컬럼 · 마스킹 컬럼 · DELETE 반영(델타 적재는 늘 끔).
+  - 커넥터 설정만 바뀌고 이름 · 오프셋은 그대로다.
+  - 이미 적재된 데이터는 바뀌지 않는다.
+- 잠금: 소스 · 타깃 연결, 소스/타깃 스키마 · 테이블, Topic Prefix, 적재 방식 · 구분컬럼, 스냅샷 모드(첫 시작에만 쓰임).
+- 로그 파이프라인은 이름 · 그룹 · 설명만 고친다.
+
+**백엔드**
+- `PUT /api/pipelines/{id}`(`PipelineEditController`, KAFKA WRITE) → `PipelineEditService.update`.
+  - 정의 값만 저장하고 커넥터는 건드리지 않는다.
+  - 배포 서비스와 같은 파이프라인 잠금(`runLocked`) 안에서 저장하고, 준비(배포) 중이면 거절한다.
+  - 잠긴 값을 보내면 지금 값과 같은지 확인하고, 다르면 거절한다. Topic Prefix 는 저장된 토픽 이름에서 되찾아 비교한다.
+  - 컬럼 규칙을 소스 DB 메타데이터로 서버에서도 확인한다: PK 제외 · 마스킹 금지, 마스킹 불가 형식, 제외 · 마스킹 겹침, 없는 컬럼. 이름 중복도 막는다.
+  - 명령 이력 `DEFINITION_UPDATE` 에 «무엇 → 무엇» 과 요청자를 남긴다.
+- «설정 변경 미반영»: `GET /api/pipelines/pending-config`, `GET /api/pipelines/{id}/pending-config`.
+  - `PipelineDeployService.pendingConfigItems` 가 판정한다. 배포와 같은 설정 생성 코드(`renderTableCdcSource` 를 따로 뺐다 · `renderTableCdcSink`)로 지금 정의의 설정을 만든다.
+  - 등록 때 저장한 `connector_config_json` 과, 고칠 수 있는 키(column.exclude.list · column.mask.with.8.chars · delete.enabled)만 비교한다.
+  - 템플릿이 쓰지 않는 값(MySQL 소스의 제외 · 마스킹)은 차이로 잡지 않는다.
+  - 다음 준비(배포)가 새 설정을 넣으면 사라진다. 별도 플래그 · 마이그레이션은 없다.
+- 시험: `PipelineEditServiceTest` 8건, `PipelinePendingConfigTest` 3건. pipeline 패키지 53건이 통과했다.
+
+**화면**
+- `PipelinesPage`
+  - 관리 열을 «상세 · 수정 · 삭제»로 했다(쓰기 권한 · 준비 중 막음).
+  - 이름 옆에 «설정 미반영» 태그를 둔다(30초 갱신).
+  - 상세 기본정보에 미반영 경고와 제외 · 마스킹 · DELETE 값을 보인다.
+  - 이력 이름에 «정의 수정»을 더했다.
+- `CdcCreatePage?edit={id}` → `cdcEdit/CdcEditWizards.tsx`
+  - 생성 위자드와 같은 단계 · 모양이다. 생성 코드는 건드리지 않았다.
+  - 잠긴 항목은 «수정 불가» 태그와 이유를 툴팁으로 보인다.
+  - 검토 단계에 «바뀐 항목 · 반영 시점(저장 즉시 / 다음 «배포» 때)»을 보인다.
+  - 로그 파이프라인은 «기본 정보 · 적재 대상(잠금) · 검토 및 저장» 3단계다.
+
+**확인(로컬, pipeline-api · cerebroetl-ui 재빌드)**
+- `tsc -b` 오류 0, oxlint 새 경고 0 이다.
+- 가짜 응답 화면 시험(`qa-ui/cdc_edit_mock.js`)
+  - 목록 줄에 «설정 미반영 · 상세 · 수정 · 삭제» 가 나온다.
+  - 수정 화면에 «수정 불가» 6개가 붙는다.
+  - 마스킹 후보에서 id(PK) · memo(제외 중) · amount(마스킹 불가)는 막히고 phone 만 고를 수 있다.
+  - 검토 표는 «설명 → 저장 즉시, 마스킹 · DELETE → 다음 배포 때» 다.
+  - PUT 본문은 고친 값과 잠긴 값(지금 값)을 담는다. 결과 화면에 «다음 배포 때 반영» 안내가 나온다.
+- 실제 계정 · 서버로 PUT 은 해 보지 않았다(로그인 필요). 서비스 규칙은 단위 시험으로 확인했다.
+
+## 119. 워크플로우 로그 적재 건수 0행 · 완료 판정 지연 - 실행 원장 조기 마감 · 콜백 경로 건수 · 화면 원장 건수 (2026-10-13)
+
+**요청**
+- TOTAL 실행에서 DZ_COM001M · DZ_COM002L 은 ETL 로그에 적재 건수가 있는데 워크플로우 로그는 0행.
+- 워크플로우는 2~3초마다 상태 · 건수를 받는다고 했는데 더 오래 걸린다. DZ_POP003L 은 워크플로우 4분 39초, ETL 로그 2분 59초로 1분 40초 차이.
+- 원인 보고 뒤 «추천 순서대로(③ 원장 조기 마감 → 1번 콜백 경로 건수 → 2번 화면 원장 건수)» 진행.
+
+**원인(실측, 실행 `manual__2026-10-13T04:11:51`)**
+- 0행: `await` 의 콜백 경로가 프로세서 이름 목록 없이 건수를 셌다. 이름은 유휴 판정용 NiFi 조회 때만 모이는데,
+  COM001M · 002L 은 5초 만에 끝나 첫 조회 전에 콜백이 원장을 닫았다 → «이번 실행 적재 건수: 없음» → 화면 0행.
+  원장(NAR)에는 43 · 4,598행이 맞게 있었다. AI 실행 요약은 원장을 읽어서 화면과 숫자가 달랐다.
+- ETL 로그 COM001M 129건 = 86 + 43. 86건은 이번 실행 몫이 아니다.
+  - 12:50 1차(예약분)가 `start_pg` 에서 실패했다(컨트롤러 서비스 꺼짐).
+  - 13:10~13:11 NiFi 화면에서 서비스를 켜자 1차가 남긴 시작 요청으로 05_INSERT 가 13:11:25 에 스스로 돌아 86건(원장 220, FAILED).
+  - ETL 로그는 15초 관측 · 45초 안에 이어진 활동을 한 구간으로 묶어서 2차 43건과 한 줄이 됐다(이번엔 안 고침).
+- POP003L 1분 40초 = 앞 68초 + 뒤 32초.
+  - 앞 68초: 166만 행 추출 시간. ETL 로그는 적재 프로세서 구간만 잰다(측정 기준 차이, 버그 아님).
+  - 뒤 32초: 원장 조기 마감. 워크플로우가 연 원장 223 을 ETL 로그 수집기의 «45초 조용하면 닫기»(`EtlJobRunService.closeIdleRuns`)가
+    추출 중(적재 프로세서가 조용) 13:14:04 에 «성공 0건»으로 닫았다. 13:14:19 적재가 시작되자 관측기가 새 행 224 를 열었고
+    NAR 진행 건수 · 완료 신호가 224 로 갔다. 224 에는 워크플로우 정보가 없어 화면 진행 건수가 실행 내내 비었고,
+    `await` 는 223 의 콜백을 못 받아 예비 판정(15초 NiFi 조회 · 연속 유휴)으로 NiFi 종료 42초 뒤에 끝났다.
+  - 같은 이유로 1차 COM001M 원장 219 는 시작 실패인데 «성공 0건»으로 남았다.
+- «2~3초»가 아닌 이유: job 하나가 Airflow 단계 5개(원장 열기 · 시작 · 완료 대기 · 정지 · 검증)이고 단계마다 프로세스 기동 · NiFi 로그인 ·
+  단계 사이 1~2초 대기가 있다. COM001M 은 NiFi 작업 5초, 화면 job 줄 22초(«성공»은 NiFi 종료 약 15초 뒤). 구조 비용이라 이번엔 안 고침.
+
+**③ 원장 조기 마감**(`web/backend/.../jobcatalog/`)
+- `EtlJobRunService.closeIdleRuns`: 워크플로우가 연 행(`trigger_source=WORKFLOW`)은 45초 유휴로 닫지 않는다.
+  NAR 콜백이나 Airflow `await` · 정지 단계가 결과를 알고 닫는다.
+  - 안전장치 `WORKFLOW_ABANDON_SECONDS` = 3시간(완료 대기 기본 제한 2시간보다 길게). 그동안 아무도 닫지 않으면 `EtlJobRun.abandon`
+    으로 FAILED · «워크플로우가 3시간 넘게 마감하지 않아 정리함(Airflow 중단 의심)». `completion_source` 는 비워 둬서 늦게 온 실제 판정이 덮어쓴다.
+- 짝 수정 - 시작 실패 행 마감(`airflow/dags/etl_job_runtime.py`)
+  - 시작이 실패하면 `await` 가 돌지 않아(upstream_failed) 아무도 원장을 닫지 않는다. 예전엔 유휴 정리가 «성공 0건»으로 닫았다.
+  - `stop_pg`(all_done)가 `_fail_if_never_awaited`: `await` 가 성공 표시(XCom `"done"`)를 남기지 않았으면 원장을 실패로 보고한다
+    («완료 대기 전에 중단됨 - NiFi 시작(start_pg) 단계 로그 확인»). `await` 가 실패한 경우는 그쪽 보고가 먼저라 원장이 바뀌지 않는다.
+  - `await_completion` 은 성공하면 `"done"` 을 돌려준다.
+- 테스트 2건(`EtlJobRunServiceTest`): 워크플로우 행은 120초 조용해도 안 닫힘 / 3시간 뒤 FAILED · 판정 비움 · 뒤늦은 콜백이 덮어씀.
+
+**1번 콜백 경로 적재 건수**(`airflow/dags/etl_job_runtime.py` · `etl_nifi_ops.py`)
+- `_print_callback_load_summary`: 이름 목록이 비었으면 `nifi.processor_names_of`(그룹 상태 1회 조회)로 채워 카운터 증가분을 센다.
+  그래도 0이면 원장 건수(NAR)로 «이번 실행 적재 건수 (총 N행) - NiFi 완료 감시 기준». 조회 실패는 건수 표시만 영향(태스크 성공 그대로).
+- `_callback_state` 가 원장 `rowsProcessed` 도 돌려준다. `print_load_summary(quiet_when_empty=)`.
+- 문구 모양은 그대로라 화면 두 곳(`loadCountOf`, 옛 `TaskRows`)의 읽기 규칙과 맞다.
+
+**2번 화면 원장 건수**(`web/cerebroetl-ui/src/pages/workflowLogV2/`)
+- `useRunTasks`: 원장(`by-dag-run`)을 끝난 실행도 받는다(실행 중 3초, 끝나면 화면 주기). `settled` = 닫힌 원장 행의 노드별 최종 건수.
+  원장 조회가 안 되면(권한 · 옛 백엔드) 빈 값으로 두어 예전처럼 로그에서 읽는다.
+- `jobOutcome`: 끝난 job 은 원장 최종 건수를 먼저, 없으면(완료 감시 이전 실행 · 카운터 없는 job) await 로그. 원장을 받는 중엔 «…»(0 → 43 으로 바뀌는 깜빡임 방지).
+- `stepOutcome`: 단계 줄의 await 도 같은 숫자.
+- 지난 실행도 바로 맞게 나온다(오늘 2차: 43 · 4,598 · 1,660,590). task 로그 받기는 그대로다(검증 단계 문구에 쓰임).
+
+**확인(로컬)**
+- 백엔드 테스트(HEAD + 이번 수정 사본): jobcatalog · workflow · monitoring 80건 통과(`EtlJobRunServiceTest` 10건 = 기존 8 + 새 2).
+  작업 폴더 사본(옆 세션의 미커밋 인프라 변경 포함): infra 전체 + `EtlJobRunServiceTest` 43건 통과.
+  - 사본에서는 원래 깨져 있던 `NifiJobMirrorServiceTest:221`(ConnectionEntity 인자)만 고쳐서 돌렸다(저장소는 그대로).
+- Airflow(가짜 원장 · NiFi 응답, 컨테이너 안 시험 7건): 이름 조회로 43행 / 조회 실패 → 원장 4,598행 «NiFi 완료 감시 기준» / 근거 없음 «없음» /
+  정지 단계 - 완료 대기 성공이면 보고 안 함, 시작 실패면 `observe-failed`, 원장 토큰 없으면 보고 안 함. 화면 읽기 규칙(`총 N행`)으로 읽힌다.
+- 화면 계산(오늘 2차 실행의 실제 Airflow 단계 · await 로그 · 원장으로 18건): 예전 방식 0 · 0행 재현, 새 방식 job 줄 · await 단계 줄 43 · 4,598 · 1,660,590행,
+  원장 받는 중 «…», 원장 조회 실패면 로그로 물러남, 열린 원장 행 · 건수 없는 행 제외, 재시도면 마지막 값.
+- 반영: pipeline-api(14:57) · cerebroetl-ui. Airflow 수정은 dags 폴더 마운트라 다음 태스크부터 적용(재기동 없음).
+  - `docker compose build pipeline-api` 가 두 번 gradle 의존성 받기에서 실패했다(BOM 버전이 비어 lombok · spring-boot 를 못 찾음, 호스트 부하 load 85~93 · 여유 메모리 0.4GB).
+    테스트용 gradle 캐시 볼륨으로 작업 폴더 사본에서 `bootJar` 를 만들고 Dockerfile 런타임 단계 그대로 `data-pipeline-pipeline-api:latest` 로 담아 `up --no-deps --no-build`.
+  - 이미지에는 옆 세션(대시보드 CPU 카드 «상세»)의 미커밋 백엔드 변경도 들어갔다 - 그 세션과 맞춰 작업 폴더 그대로 빌드(10/12 부터 떠 있던 상태와 같은 내용 + 테스트 정리분).
+- 실제 실행(사용자가 TOTAL 실행, 15:21): job 마다 원장 1행 · 전부 CALLBACK, await 모두 «완료(콜백 확정)»
+  - COM001M 43 · COM002L 4,598 · POP003L 1,660,590행이 await 로그 · 원장 · ETL 로그에서 같다.
+  - POP003L 원장 227 이 추출 동안 열려 있었고, NiFi 종료 → await 종료 7초(전: 42초), await 3분 17초(전: 4분 39초). COM 은 5 · 7초.
+  - 남은 차이(워크플로우 3분 17초 vs ETL 로그 2분 45초)는 ETL 로그가 적재 구간만 재는 측정 기준 차이다.
+
+**안 고친 것**
+- ETL 로그가 서로 다른 실행의 적재를 45초 안이면 한 줄로 묶는 문제(오늘 129 = 86 + 43).
+- job 하나당 Airflow 단계 5개의 고정 비용(약 15초).
+- 워크플로우 행이 Airflow 중단으로 3시간 안에 닫히지 않은 채 같은 job 이 다시 돌면 새 실행이 그 행을 입양한다(드문 경우, 예전과 같음).
+
+## 124. 워크플로우 job 마무리 단축 - 검증 단계를 빈 관문으로 · 원장 확인 1초 (2026-10-13)
+
+**요청**: §119 의 «안 고친 것» 중 job 하나당 고정 비용에서 «2-가 검증 단계 정리 · 2-나 원장 확인 3초 → 1초»를 진행.
+
+**원인(실측, 15:21 TOTAL 의 DZ_COM001M)**: NiFi 작업 4.5초인데 job 줄 20초.
+- 검증(verify) 6.5초: 단계 프로세스 기동 · DAG 파일 파싱 2초 + 고정 연결 `target_db_postgres` 접속 실패(호스트 이름 못 찾음) 4초 → «검증 생략».
+  - 접속이 돼도 이번 실행 건수가 아니라 테이블 전체 행 수였고, job 의 실제 대상 DB 도 아니었다(DZ 는 외부 DB 119.204.108.98). 실패하지도 않았다.
+  - 다음 job 은 그룹의 끝 단계(verify · stop_pg)를 다 기다리므로 verify 가 곧 다음 job 의 시작 지연이었다.
+- 완료 감지 약 7초 중 await 의 원장 확인 간격(3초)이 평균 1.5초 · 최대 3초.
+- 원장 확인 API(`GET /api/etl/job-runs/{token}` → `JobRunLedgerService.byToken`)가 원장 전체를 읽어(`findAll`) 걸렀다. 1초로 줄이면 도는 job 마다 매초 전체를 읽게 된다.
+
+**변경**
+- `airflow/dags/etl_workflows_dynamic.py`: `verify` 를 `EmptyOperator(task_id="verify")` 로. 이름 · 위치(await 바로 뒤)는 그대로라
+  «완료 대기가 성공해야 다음 노드로» 관문(실패 세탁 방지, 2026-08-31)은 유지된다. 프로세스를 띄우지 않아 스케줄러가 바로 성공 처리한다.
+  - 화면 단계 줄 · «이 작업만 실행» · AI 단계 설명은 task id 가 같아 그대로다. 단계 줄의 결과 칸은 «-»(예전 MSA 에서는 테이블 전체 행 수가 찍혔을 수 있다).
+- `airflow/dags/etl_job_runtime.py`: `verify_landing` 삭제(쓰는 곳 없음). `LEDGER_POLL_SECONDS` 3 → 1.
+- 백엔드: `EtlJobRunRepository.findByRunToken`(고유 인덱스 `uq_etl_job_run_token`), `byToken` 이 그것을 쓴다. 테스트 1건(`JobRunLedgerServiceTest` - findAll 을 부르지 않음).
+- 다음 job 은 이제 stop_pg(약 3초)만 기다린다 - 정지까지 기다리는 것은 그대로 둔다(같은 그룹을 연달아 쓰는 그림에서 앞 job 의 정지가 뒤 job 을 멈추지 않게).
+
+**확인(로컬)**
+- 백엔드 테스트(작업 폴더 사본): workflow · jobcatalog · monitoring 81건 통과(`JobRunLedgerServiceTest` 6건 = 기존 5 + 새 1).
+- DAG(`DagBag` 로 직접 읽음): import 오류 없음 · DAG 5개, `dz_com_dz_com001m.verify` = EmptyOperator(all_success, 위 = await),
+  다음 job `open_run` 의 위 = verify · stop_pg(그대로), stop_pg = all_done.
+- Airflow 컨테이너에서 실제 `_callback_state`(서비스 토큰 주입 포함)로 원장 227 조회: SUCCESS · 1,660,590, 10회 15~50ms(중간 20ms). 없는 토큰은 예전처럼 400 → «건너뜀».
+- 1초 간격 부담: 도는 job 하나당 초당 1건 · 고유 인덱스 단건 조회. 동시에 도는 job 은 많아야 4개(PARALLELISM=4)라 초당 4건.
+  백엔드가 멈추면 «원장 조회 실패» 줄이 3초 대신 1초마다 찍히는 정도다.
+- 반영: pipeline-api(16:06, §119 와 같은 방식 - gradle 캐시 bootJar + Dockerfile 런타임 단계). Airflow 는 dags 폴더 마운트라 다음 파싱 · 태스크부터.
+- 곁가지 관찰: gradle 빌드처럼 호스트 부하가 크면(load 50~93) Airflow 가 DAG 파일(`etl_workflows_dynamic.py`)을 30초 안에 못 읽어
+  import 오류(DAG 0개)가 잠깐 난다. 14:00~14:52 · 15:59~ 두 번 있었고 부하가 빠지면 1~4초로 돌아온다. 그 사이 새 실행 · 게시 반영은 늦어질 수 있다.
+
+## 126. CDC 파이프라인 · 워크플로우 등록자, CDC 제어 이력 요청자 (2026-10-13)
+
+**요청**: CDC 관리 화면 AI 어시스턴트가 등록자를 «확인되지 않음»이라 한다 - 등록자는 무조건 알 수 있어야 한다.
+진행: ① 앞으로 등록하는 CDC 파이프라인에 등록자 저장 ③ 제어 이력(준비 · 시작 · 정지 · 재시작 …) 요청자 ④ 워크플로우에도 등록자.
+② 이미 등록된 것은 지금 상태로 둔다(채우지 않음).
+
+**원인**
+- `PipelineService` 의 두 생성 경로(테이블 CDC · 로그 파일)가 `new PipelineDefinition(…, null)` - 등록자를 늘 null 로 저장했다.
+  생성 API 도 로그인 사용자를 받지 않았다. AI 문맥(`CdcPipelineContextCollector`)은 그 빈 값을 «-»로 넘겨 «확인되지 않음».
+- 제어 이력 `pipeline_command_history.requested_by` 도 «멈춘 건 건너뛰기»(§57) 말고는 넘기지 않아 로컬 2,919건 전부 비어 있었다.
+  이미 등록된 파이프라인의 등록자를 되찾을 기록은 어디에도 없다.
+- 워크플로우는 등록자 칸 자체가 없었다(게시자만).
+- 업무 API 는 아직 permitAll(인가 강제 off)이라 컨트롤러에 신원이 들어오지 않을 수 있다. 화면 요청은 JWT 로 사용자가 잡히고,
+  Airflow 는 서비스 토큰(`X-Service-Token`)으로 사용자 없이 통과한다.
+
+**변경**
+- `user/security/RequestActorResolver`(신규): 지금 요청의 주체 - 로그인 사용자 ID → 서비스 토큰이 맞으면 «airflow»(호출 DAG 가
+  `X-Requested-By` 로 밝히면 «airflow:DAG», 토큰이 맞을 때만 믿음) → 없으면 모름.
+  - `requireForRegistration`: 모르면 401 «로그인 정보가 없어 … 등록자를 알 수 없습니다. 다시 로그인한 뒤 등록해 주세요.» - 등록자 없는 등록은 받지 않는다.
+  - `currentForChange`: 변경 요청(POST · PUT · DELETE · PATCH)일 때만 - 조회 중 남는 기록에 «보던 사람»이 찍히지 않게.
+- CDC 등록: `PipelineController` 의 단건 · 일괄 · 로그 파일 등록이 등록자를 정해 `PipelineService.create / createBatchDefinitions / createLogFilePipeline`
+  (+ `PipelineBatchCreateService`)에 넘기고, 정의의 `created_by` 에 남는다.
+- 제어 이력: `PipelineCommandHistoryRecorder.record` 가 요청자를 안 받으면 지금 변경 요청의 주체로 채운다. 준비 · 시작 · 정지 · 일시정지 · 재시작 ·
+  싱크 설정 갱신 · 경고 닫기 등 모든 제어가 한 곳으로 지나서 한 번에 채워진다. 자동 감시(`RUNTIME_MONITOR`)와 요청 밖(스케줄러)은 비워 둔다.
+  CDC 관리 «상세 › 제어 이력»의 «요청자» 열(§58)에 그대로 보인다.
+- Airflow `cdc_runtime.apply`: CDC 제어 요청에 `X-Requested-By: <dag_id>` → 워크플로우가 보낸 시작 · 정지는 «airflow:etl_wf_…».
+- 워크플로우: `V81__etl_workflow_created_by.sql`(`etl_workflow.created_by VARCHAR(100)`), `EtlWorkflow.createdBy`,
+  `WorkflowService.create(request, createdBy)`, `WorkflowController` 가 등록자를 정한다. AI 문맥(`WorkflowContextCollector`)에 «등록자» 줄.
+- 기존 CDC 파이프라인 · 워크플로우의 등록자는 비워 둔다(요청) - AI 는 계속 «확인되지 않음».
+- 테스트: `RequestActorResolverTest` 5건, `PipelineCommandHistoryRecorderTest` 4건, `WorkflowServiceKeyTest` 등록자 1건,
+  `PipelineServiceTest` 등록자 확인 · 시그니처, `PipelineBatchCreateServiceTest` 시그니처.
+
+**주의 - MSA 포털**: 포털(app02 `/etls/pipelines`)이 pipeline-api 를 Cerebro 로그인 없이 서버 쪽에서 프록시한다(메모 2026-08-19).
+포털을 통해 CDC 파이프라인을 «등록»하는 경로가 있다면 이제 401 로 거절된다. Cerebro 화면(13001)에서 등록하는 것은 영향 없다.
+
+**확인(로컬)**
+- 백엔드 테스트(작업 폴더 사본): pipeline · workflow · user · llm · jobcatalog 180건 통과.
+- 반영: pipeline-api(16:56, gradle 캐시 bootJar + Dockerfile 런타임 단계). 기동 때 V81 적용 - `etl_workflow.created_by varchar(100)`.
+- 로그인 없이 워크플로우 · CDC 등록 요청 → 둘 다 401, 아무것도 만들어지지 않음.
+  - 로컬은 `AUTHZ_ENFORCEMENT_ENABLED=true` 라 권한 검사(`PermissionAspect`)가 먼저 막는다(문구 «인증이 필요합니다»).
+    강제가 꺼진 서버에서는 이번 확인이 «… 등록자를 알 수 없습니다» 로 막는다(단위 테스트로 확인).
+- 서비스 토큰 경로(«airflow:DAG»)는 실제 제어 이력을 남기게 되므로 단위 테스트로만 확인했다. 다음에 CDC 워크플로우가 돌면 제어 이력 요청자에 보인다.
+
+## 127. MSA 포털 연결 안 함 - 포털 토큰 교환 · nginx 포털 iframe 허용 제거, 포털 전제 주석 · 문서 정리 (2026-10-13)
+
+**요청**: MSA 포털에는 연결하지 않는다. 포털 때문에 프로젝트에 남은 단점을 확인하고(조사 4건), 그중 «2. nginx 포털 주소 iframe 허용»
+«4. 꺼져 있지만 남은 것»을 진행. «1. 인가 강제 기본 켜기» «3. ST_USER 로그인 방식 · 계정 DB 정리»는 나중에(MSA 설정 확인 뒤).
+
+**조사 결과(요약)**
+1. 인가 강제 기본 off - 주석이 «포털이 무인증 프록시하니 off» 라고 지시. off 면 로그인 없이 업무 API 전부(사용자 관리 포함) 호출 가능.
+   로컬은 `.env` 로 켜져 있다. `.env.example` 에 항목이 없어 새 설치는 off. **나중에** - MSA 의 서비스 토큰 · 역할 배정 확인 필요.
+2. nginx 가 Airflow 화면을 `localhost:5173` · `192.168.50.30:5173`(포털) 이 iframe 으로 넣도록 허용 - 로그인된 Airflow 화면 클릭재킹 여지.
+3. ST_USER 로그인(EXTERNAL) - 기본 LOCAL 이라 안 씀. compose 가 `ACCOUNT_DB_*` 를 기본값 없이 요구 · `.env.example` 이 사내 MySQL 접속 정보를 요구 ·
+   mysql 드라이버 · 로컬 `account-db-local` 컨테이너(안 씀). **나중에** - MSA 가 EXTERNAL 로 로그인하는지 확인 필요(그렇다면 지우면 로그인 불가).
+4. 꺼져 있지만 남은 것 - 포털 토큰 교환(`/api/authz/portal-exchange`, 공유 HMAC 키로 Cerebro JWT 발급), «로그인은 ST_USER» 낡은 주석, 인수인계 문서의 «P4.5 가장 시급».
+
+**변경**
+- 삭제: `authz/portal/PortalExchangeController` · `PortalTokenExchangeService` · `PortalTokenExchangeServiceTest`,
+  `application.yml` 의 `portal.integration.*`, `docker-compose.yml` 의 `PORTAL_*` 3줄, `.env.example` 의 `PORTAL_*`.
+- nginx(`web/cerebroetl-ui/nginx.conf`): Airflow 두 location 의 `frame-ancestors` 를 `'self'` 만. Cerebro 는 `/airflow/…` 같은 주소로
+  띄우고(Vite 개발 서버도 `/airflow` 를 프록시) 'self' 로 충분하다. 포털 언급 주석 2곳(평문 HTTP · Permissions-Policy)을 Cerebro 기준으로.
+- 감사 화면(`AuditLogPage`): «포털» 분류 삭제(로컬 감사 기록에 PORTAL_* 액션 0건 - 옛 기록이 있다면 «기타»로 보인다).
+- 주석: «인증원은 ST_USER» → «authz.provider 에 따름(기본 LOCAL=app_user, EXTERNAL=사내 ST_USER)»
+  (`SecurityConfig` · `UserService` · `api/auth.ts` · `LoginPage`), `PermissionAuditLog`(svc:portal), `ConsoleFramePage`(«통합 포털이 SSO 전담» → Cerebro).
+- 문서: `docs/2026-08-24-remaining-work-handoff.md` §1 P4.5 · `docs/2026-08-20-integration-verification.md` M2-9 에 «폐기(2026-10-13)».
+- 그대로 둔 것: 인가 강제를 «포털 때문에 off» 라고 설명하는 주석(`application.yml` · `PermissionAspect` · `PermissionAspectAuditTest` · `SecurityConfig`)은
+  1번을 할 때 함께 고친다. `V48__create_authz.sql` 의 `svc:portal` 주석은 마이그레이션 체크섬 때문에 손대지 않는다.
+  로컬 `.env` 의 `PORTAL_*` 값은 이제 아무도 읽지 않는다(로컬 파일이라 그대로).
+
+**확인(로컬)**
+- 백엔드 테스트(작업 폴더 사본): authz · user · pipeline · workflow 91건 통과. 포털 클래스를 쓰는 곳은 없었다(그 패키지 안에서만 쓰임).
+- 반영: pipeline-api(17:46, 컨테이너 환경에 `PORTAL_*` 0개) · cerebroetl-ui.
+- nginx: `/airflow/` · `/airflow/auth/…` 응답 헤더가 `Content-Security-Policy: frame-ancestors 'self'`.
+- 대시보드(가짜 세션 + 가짜 응답, qa-playwright): 요약 카드 CDC · ETL · Workflow, 차트 · Top 5 · 자원 카드까지 그려지고 화면 오류 0
+  (옆 세션의 미커밋 대시보드 변경이 같은 이미지에 들어가 그쪽 요청으로 확인).
+
+## 128. 알림 발송 - 마지막 실패가 «발송 중»에 갇혀 끝없이 재시도 · 만료 알림도 발송하던 문제 (2026-10-13)
+
+**요청**: 카카오 알림 발송 실패가 계속되는지 확인. 사용자가 카카오 «사용»을 끈 뒤 «1. 밀린 알림 정리 2. 버그 수정» 진행.
+토큰 갱신은 다음에 요청할 때 (가) 방식(사용자가 터미널에서 도우미 실행 → 설정 화면 API 키에 붙여 넣기)으로.
+
+**원인(실측)**
+- 카카오 액세스 토큰(6시간)이 만료돼 발송마다 «this access token does not exist»(401).
+- 9/29~10/13 14:20 에 만든 카카오 알림 62건이 `SENDING` · attempt 4/5 로 5분마다 다시 나갔다(마지막 성공 9/28).
+  - 실패 처리(`gatewayFail` · 메일 실패 · `markNoRelay`)가 «재시도»(`attempt_count+1 < max_attempts`)와 «포기»(`attempt_count >= max_attempts`)를
+    두 번에 나눠 갱신했다. 마지막 시도(4/5)가 실패하면 둘 다 안 맞아 `SENDING` 그대로 → 5분 뒤 집기 회수가 `RETRY` 로 → 무한 반복.
+  - `expires_at`(만든 뒤 6시간)을 아무도 보지 않아 2주 전 알림도 계속 다시 보냈다. 토큰을 그대로 갱신했다면 62건이 한꺼번에 나갔다.
+
+**정리(1번)**: 사용자가 17:41 카카오 «사용»을 끄자 다음 주기(17:42~17:45)에 62건이 모두 `DEAD`(CHANNEL_OFF)로 닫혔다.
+그 뒤 카카오 발송 실패 0건. 데이터는 따로 손대지 않았다.
+
+**고친 것(2번, `NotificationService`)**
+- `recordFailure`: 실패 한 번을 한 번의 UPDATE 로 - `status = CASE WHEN attempt_count+1 >= max_attempts THEN 'DEAD' ELSE 'RETRY' END`,
+  `attempt_count+1`. 메일 · 문자/카카오 · 릴레이 없음 세 곳이 이것을 쓴다. status 를 attempt_count 보다 앞에 둬서 SET 을 왼쪽부터 계산하는 H2 에서도 옛 값으로 판정.
+- `expireStale`(발송 주기 맨 앞, 집기 회수 다음): 유효 시간이 지난 `PENDING · RETRY` 는 보내지 않고 `DEAD`(EXPIRED). 화면 알림(IN_APP)은 뺀다.
+- 테스트(`NotificationGatewayTest`, H2 PostgreSQL 모드): 마지막 시도 실패 → DEAD · 5/5, 릴레이 없음 마지막 시도 → DEAD,
+  만료 알림은 게이트웨이에 안 나가고 EXPIRED · 화면 알림은 SENT. 테스트 표에 `expires_at` 추가.
+
+**확인(로컬)**: 알림 테스트 12건 통과(기존 9 + 새 3). pipeline-api 반영(17:55) 뒤 발송 주기가 오류 없이 돈다(만료 정리 · 발송 처리 실패 로그 0).
+카카오는 꺼진 채라 실제 발송은 하지 않았다 - 토큰 갱신 뒤 «사용»을 켜고 «테스트 발송»으로 확인한다.
+
+## 130. ETL 관리 NiFi 대화상자 - 창이 작으면 창에 맞춤(수정분 0005) (2026-10-13)
+
+**요청**: 전체 화면에서는 Edit Processor 창이 괜찮은데, 브라우저를 줄이면 창 크기가 그대로라 Apply 를 누를 수 없다 - 창 크기에 맞게 줄어야 한다.
+
+**원인**
+- NiFi 공식 화면은 대화상자 폭을 고정한다(`libs/shared/src/types/index.ts`): `XL_DIALOG`(Edit Processor 등) 최소 = 최대 1024px,
+  `LARGE_DIALOG` 760px, `MEDIUM_DIALOG` 470px, `SMALL_DIALOG` 320px~24rem. 높이 제한은 없고 탭 내용이 `height: 50vh` 다.
+- 창(iframe)이 그보다 좁으면 겹침 칸이 가운데 정렬된 채 양옆이 잘리고, 겹침 칸은 고정이라 스크롤도 안 된다.
+  사용자 화면(iframe 약 700 × 460)에서는 1024px 창이 양옆 162px 씩 잘려 Apply 가 밖으로 나갔다.
+
+**시험(고치기 전에)**: NiFi 번들에서 꺼낸 실제 CDK · Material 18 대화상자 CSS 로 만든 시험 페이지(qa-playwright).
+| 창 | 지금 | 고친 설정 |
+|---|---|---|
+| 1600 × 900 | 1024 폭 | 같음(1024) |
+| 700 × 460 | x = −162, Apply 안 보임 · 스크롤 불가 | 668 × 428, Apply 보임 |
+| 700 × 360 | 잘림 · 스크롤 불가 | 대화상자 안 스크롤로 Apply 닿음 |
+| 520 × 420 | x = −252 | 488 폭, Apply 보임 |
+
+**변경**: 수정분 `nifi/ui-custom/patches/0005-cerebro-responsive-dialogs.patch`(신규, `libs/shared/src/types/index.ts`)
+- 네 크기 모두 폭을 `min(원래 폭, calc(100vw - 32px))`(최소 · 최대 같게), `maxHeight: calc(100vh - 32px)`.
+  CDK 가 문자열 크기를 inline 스타일로 그대로 넣는다. 큰 창에서는 원래 폭 그대로다.
+- Material 18 대화상자는 겉 칸의 최대 높이를 안쪽 표면까지 물려받고(`max-height: inherit`) 표면이 `overflow-y: auto` 라, 넘치면 대화상자 안에서 스크롤한다.
+- 크기를 따로 주는 대화상자(365 · 600px, 상태 이력 unset)는 그대로. 모양 개선이라 Cerebro 안 · NiFi 직접 접속 모두 적용.
+- `nifi/ui-custom/README.md` 표에 0005.
+
+**반영(로컬, 사용자 승인)**
+- 첫 시도: nifi · kafka-connect 만 멈추고(가용 2.9GB) `docker compose build nifi` → 화면 빌드 중 메모리 압박 74%, Airflow 3종이 부하로 재시작, 빌드 중단.
+  (그 전에 한 번은 «error getting credentials … accept4 failed 110» - Docker Desktop 자격 증명 도우미 시간 초과로 바로 실패, 다시 돌림.)
+- 다시: 스택 전체 정지(가용 5.4GB) → 빌드 성공(수정분 0001~0005 적용, nx 빌드 112초) → 원래 켜져 있던 12개 + kafka-connect `start`, nifi 새 이미지.
+- 재기동 전 · 후 비교: NiFi 컨트롤러 서비스 ENABLED 13 · DISABLED 8 그대로, 완료 감시 RUNNING, CDC 커넥터 3개(source/sink-22 RUNNING, source-1 STOPPED) 같음,
+  Airflow DAG 5개 오류 0, 모든 서비스 healthy. 실행 중 워크플로우 0 · NiFi 실행 중 프로세서 0 을 확인한 뒤 멈췄다.
+- 내려받는 NiFi 화면 파일(chunk-XCPO2UNY.js)에 `min(…, calc(100vw - 32px))` · `calc(100vh - 32px)` 가 들어 있다.
+- 실제 Edit Processor 를 작은 창에서 여는 확인은 사용자 몫(로그인된 ETL 관리 화면).
+
+## 131. 속성창 AI 어시스턴트 - 정확히 답할 수 없는 질문에 «답변 범위»를 먼저 밝힌다 (2026-10-13)
+
+**요청**: AI 어시스턴트가 어느 정도까지 답할 수 있는지 수준을 알려야 한다. 도구를 쓸 때 · 안 쓸 때 범위가 다르니 그것까지 고려해서,
+정확히 답할 수 없는 질문(도구로 확인해도 안 되는 경우 포함)이면 첫 문구로 «이 AI 가 지금 대상에 대해 어느 기능 · 부분 · 정보까지 답할 수 있는지»를 보여 준다.
+
+**변경**
+- `llm/agent/AnswerScope`(신규): 대상 종류 8가지(ETL 관리 · ETL job · CDC · 워크플로우 · 노드 · 생성(초안) · 실패 작업 · 실행 차수)마다
+  답에 쓰는 이름 · 한 줄 범위 · 지시문용 상세. 수집기가 실제로 보내는 섹션 기준이다(최근 실행 20건 · 제어 명령 8건 · 직전 실행 5건 · 로그 끝 25줄 등).
+  - `guide(type)`: «받은 정보 / 질문에 이름이 나온 대상의 상세 / 받지 않은 것(실제 데이터 · DB 스키마 · 자원 · 로그 원문 · 비밀값 · 오래된 이력 ·
+    저장 안 한 변경(초안 제외)) / 조치는 안내만» + «범위 밖이거나 정확히 답할 수 없으면 답 맨 앞을
+    `[답변 범위] 이 AI 어시스턴트는 {대상}에 대해 {범위}까지 답할 수 있습니다. 이번 질문의 «…» 부분은 받은 정보로 확인할 수 없습니다.` 한 문단으로»
+    + «범위 안의 질문엔 쓰지 않는다».
+- `JobAnalysisAgent.instructions(type, hasQuestion)`: 질문이 있을 때만 범위 안내를 붙인다(탭을 열 때의 첫 요약은 형식이 정해져 있어 그대로).
+  `LlmChatService.jobMessages` 의 입력 길이 계산도 같은 것을 쓴다.
+- 도구 범위: `LlmToolLoop.TOOL_GUIDE` 에만 «도구로 이름으로 찾은 다른 ETL job · CDC · 워크플로우의 구성 · 단계 · 최근 실행 · 상태가 범위에 더해진다,
+  [답변 범위] 문단은 도구로 조회해도 확인되지 않을 때만, 범위에 이 조회도 적는다». 도구를 거절하는 모델이면 도구 안내 없이 다시 묻기 때문에
+  범위가 사실과 어긋나지 않는다.
+- 화면(`GptConversationView`): 답 줄이 `[답변 범위]` 로 시작하면(굵게 · 인용 · 목록 기호가 붙어도) 머리말을 떼고 파란 안내 상자(«답변 범위» 꼬리표)로 그린다.
+  `index.css` `.gpt-answer-scope` · `.gpt-answer-scope-label`.
+- 적용 범위: 속성창 AI 어시스턴트(JOB_ANALYSIS)의 질문. 로그 화면의 «GPT 해석»(ERROR_ANALYSIS) 형식은 그대로.
+
+**확인(로컬)**
+- 백엔드 테스트(작업 폴더 사본, gradle 컨테이너 메모리 2GB 제한): llm 전체 80건 통과. `JobAnalysisAgentTest` 새 3건 -
+  질문이면 지시문에 범위 · «[답변 범위] 이 AI 어시스턴트는 이 CDC 파이프라인에 대해 …»가 붙음 / 첫 요약엔 안 붙음 / 모든 대상 종류에 범위 정의 있음.
+  초안(WORKFLOW_DRAFT)은 «저장하지 않은 변경»을 «받지 않은 것»에서 뺀다.
+- 화면 렌더링(react-dom/server 로 GptTurns): «[답변 범위] …» 그대로 · `**[답변 범위]**` · `> [답변 범위]` 모두 안내 상자 1개, 머리말 글자는 본문에 안 남음,
+  보통 답은 상자 0개. 타입 검사 통과(린트 경고 3건은 고치기 전과 같음).
+- 반영: pipeline-api(jar 에 AnswerScope 포함) · cerebroetl-ui(번들에 gpt-answer-scope). 실제 모델(Qwen3) 답은 로그인한 화면에서 확인할 몫이다.
+
+## 132. 로그 GPT 해석 창 «닫기» 버튼 삭제 (2026-10-13)
+
+**요청**: 모든 로그의 GPT 해석 오른쪽 위 «닫기» 버튼을 지운다.
+
+**변경**
+- `components/gpt/GptErrorAnalysis`(모든 로그 GPT 해석이 같이 쓰는 부품): «닫기» 단추와 `onClose` 속성 삭제. 남은 단추는 «프롬프트 편집» · «MD 저장하기».
+  로그 창(모달)을 닫으면 이 창도 닫히고 흐르던 요청은 끊긴다(useGptConversation 정리) - 따로 닫을 방법이 없어도 된다.
+- 쓰는 곳 4군데에서 `onClose` 를 뺐다: ETL 로그 · CDC 로그 · 워크플로우 실패 로그(TaskFailureLogModal) · 대시보드 실패 상세(FailureDetailModal).
+- 닫을 수 없게 되면서 죽은 코드가 된 «GPT 해석» 다시 열기 단추 · 상태값을 걷어냈다: ETL 로그 · CDC 로그(`analysisOpen` · `afterOpenChange`),
+  워크플로우 실패 로그(`analyzing`, 쓰지 않게 된 `useState` · `Button` 가져오기). 대시보드 실패 상세는 그 파일을 고치던 옆 세션(data-pipeline-80)이 정리하기로 했다.
+
+**확인**: 타입 검사 · oxlint 통과(경고 0). 옆 세션 미커밋 변경을 뺀 스테이징본만으로도 `tsc -p tsconfig.app.json` 통과.
+화면 재빌드 · 재기동 후 번들의 GPT 해석 머리줄에 «닫기»가 없다. 죽은 코드 정리분은 동작이 같아 다시 빌드하지 않았다(다음 화면 빌드에 들어간다).
+
+## 133. 대시보드 실패 상세 팝업 - 맨 위 강조 띠 · 워크플로우 실패 줄의 «로그» 버튼 삭제 (2026-10-13)
+
+**요청**: 대시보드 CDC · ETL · Workflow 실패 건을 눌렀을 때 뜨는 팝업에도 로그 창들처럼 맨 위 붉은 강조 띠를 넣고,
+워크플로우 실패 팝업의 줄마다 오른쪽에 있는 «로그» 버튼은 지운다.
+
+**변경**
+- `components/FailureDetailModal`(세 실패 팝업이 같이 쓰는 창): `rootClassName` 에 `accent-modal` - 로그 창 셋과 같은 3px 띠.
+  줄마다 버튼을 붙이던 `rowAction` 속성 · 열을 지웠다(쓰던 곳은 워크플로우 «로그» 하나뿐).
+- `pages/DashboardPage`: 워크플로우 실패 팝업의 `rowAction`(«로그» → 시도별 로그 전용 창 TaskFailureLogModal)과 그것만 쓰던
+  `openWorkflowFailureLog` · 상태 2개 · 창 렌더 · import 를 지웠다. 줄을 펼치면 나오는 GPT 해석 · 실행 로그는 그대로.
+  전용 창은 워크플로우 로그 화면(AirflowDashboardPage · EtlRunsPane)과 WorkflowInfoSections 에서 그대로 열린다.
+- 두 파일 모두 옆 세션(data-pipeline-80)의 미커밋 작업이 많아, 그 세션이 편집을 멈춘 동안 필요한 줄만 바꿨고 커밋은 HEAD 에 내 변경만 얹었다
+  (HEAD 의 FailureDetailModal 에는 «GPT 해석» 다시 열기 단추가 아직 있어 `Button` import 는 남김).
+
+**확인**: 타입 검사 · oxlint 통과(경고 0), 스테이징본만으로도 `tsc -p tsconfig.app.json` 통과. 화면 재빌드 · 재기동.
+가짜 세션 + 가짜 응답(qa-playwright, 실패한 워크플로우 실행 1건 · ETL 실패 2건): 두 팝업 모두 `accent-modal` · 맨 위 3px 빨강 그라데이션,
+워크플로우 실패 팝업 열은 «대상 · 구분 · 시각», 줄 안 버튼은 펼침 단추뿐(«로그» 없음). 화면 오류 0.

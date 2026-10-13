@@ -15,6 +15,7 @@ import com.company.pipeline.pipeline.dto.PipelineBatchCreateRequest;
 import com.company.pipeline.pipeline.dto.PipelineBatchCreateResponse;
 import com.company.pipeline.pipeline.dto.StuckSinkResponse;
 import com.company.pipeline.user.AppUser;
+import com.company.pipeline.user.security.RequestActorResolver;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -41,6 +42,7 @@ public class PipelineController {
     private final PipelineConsistencyService pipelineConsistencyService;
     private final PipelineBatchCreateService pipelineBatchCreateService;
     private final SinkStuckRecordService sinkStuckRecordService;
+    private final RequestActorResolver actorResolver;
 
     public PipelineController(PipelineService pipelineService, PipelineDeployService pipelineDeployService,
             PipelineCommandHistoryRepository pipelineCommandHistoryRepository,
@@ -49,7 +51,8 @@ public class PipelineController {
             PipelineRuntimeStatusService pipelineRuntimeStatusService,
             PipelineConsistencyService pipelineConsistencyService,
             PipelineBatchCreateService pipelineBatchCreateService,
-            SinkStuckRecordService sinkStuckRecordService) {
+            SinkStuckRecordService sinkStuckRecordService,
+            RequestActorResolver actorResolver) {
         this.pipelineService = pipelineService;
         this.pipelineDeployService = pipelineDeployService;
         this.pipelineCommandHistoryRepository = pipelineCommandHistoryRepository;
@@ -59,23 +62,25 @@ public class PipelineController {
         this.pipelineConsistencyService = pipelineConsistencyService;
         this.pipelineBatchCreateService = pipelineBatchCreateService;
         this.sinkStuckRecordService = sinkStuckRecordService;
+        this.actorResolver = actorResolver;
     }
 
+    // 등록 세 곳은 등록자를 반드시 남긴다 - 모르면 401(다시 로그인). 예전에는 늘 null 이라 AI 가 «확인되지 않음»이라 답했다(2026-10-13).
     @PostMapping
     public ApiResponse<PipelineResponse> create(@Valid @RequestBody PipelineCreateRequest request) {
-        PipelineResponse created = pipelineService.create(request);
+        PipelineResponse created = pipelineService.create(request, actorResolver.requireForRegistration("CDC 파이프라인"));
         return ApiResponse.success(pipelineDeployService.deploy(created.id()));
     }
 
     @PostMapping("/batch")
     public ApiResponse<PipelineBatchCreateResponse> createBatch(
             @Valid @RequestBody PipelineBatchCreateRequest request) {
-        return ApiResponse.success(pipelineBatchCreateService.create(request));
+        return ApiResponse.success(pipelineBatchCreateService.create(request, actorResolver.requireForRegistration("CDC 파이프라인")));
     }
 
     @PostMapping("/log-file")
     public ApiResponse<PipelineResponse> createLogFilePipeline(@Valid @RequestBody LogPipelineCreateRequest request) {
-        return ApiResponse.success(pipelineService.createLogFilePipeline(request));
+        return ApiResponse.success(pipelineService.createLogFilePipeline(request, actorResolver.requireForRegistration("로그 파이프라인")));
     }
 
     @GetMapping

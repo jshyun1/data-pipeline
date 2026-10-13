@@ -1,6 +1,6 @@
 import { apiClient, unwrap, type ApiResponse } from "./client";
 
-// app_user 프로필. 인증 자체는 통합 계정 테이블(ST_USER)로 이 앱 자신이 검증한다(Keycloak 제거).
+// app_user 프로필. 인증은 이 앱 자신이 한다(Keycloak 제거) - 기본은 자체 계정(app_user), 설정에 따라 사내 ST_USER.
 export interface AppUser {
   userId: string;
   userNm: string;

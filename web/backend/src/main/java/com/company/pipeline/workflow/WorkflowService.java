@@ -125,8 +125,9 @@ public class WorkflowService {
                 isDirty(workflow), upstreamIds(workflow), parentsOf(id));
     }
 
+    /** @param createdBy 등록자(로그인 사용자 ID). 컨트롤러가 {@code RequestActorResolver} 로 정한다 - 모르면 만들지 않는다. */
     @Transactional
-    public WorkflowSummary create(CreateWorkflow request) {
+    public WorkflowSummary create(CreateWorkflow request, String createdBy) {
         String key = StringUtils.hasText(request.workflowKey())
                 ? request.workflowKey()
                 : generateKey(request.name());
@@ -140,7 +141,7 @@ public class WorkflowService {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR,
                     "삭제된 워크플로우가 쓰던 workflowKey입니다. 예전 실행 이력이 섞이므로 다른 키를 쓰세요: " + key);
         }
-        EtlWorkflow workflow = new EtlWorkflow(key, request.name());
+        EtlWorkflow workflow = new EtlWorkflow(key, request.name(), createdBy);
         workflow.updateSettings(request.name(), request.description(),
                 request.scheduleCron(), request.timezone(), request.catchup(),
                 request.maxActiveRuns(), request.suspendOnError());

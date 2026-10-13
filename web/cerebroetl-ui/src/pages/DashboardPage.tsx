@@ -24,6 +24,7 @@ import {
   listAllAirflowDagRuns,
   listKafkaConnectorsWithStatus,
   listNifiExecutionLogs,
+  listNifiProcessorRuns,
 } from "../api/platform";
 import type { AirflowDagRun } from "../api/platform";
 import { listPipelines } from "../api/pipelines";
@@ -33,7 +34,6 @@ import { listWorkflows } from "../api/workflows";
 import { collectNifiJobs, extractErrorGroupMessages } from "../utils/nifiJobs";
 import { summarizeKafkaConnectors } from "../utils/kafkaConnectors";
 import { FailureDetailModal, type FailureDetailItem } from "../components/FailureDetailModal";
-import { TaskFailureLogModal, type FailureLogTarget } from "../components/TaskFailureLogModal";
 import { categorizeDag, NIFI_METRICS_COLLECTOR_DAG_ID, resolveDagDisplayName, type DagCategory } from "../utils/dagHistory";
 import { HistoryModal, type HistoryEntry } from "../components/HistoryModal";
 import { InfraRegion } from "../components/InfraRegion";
@@ -342,9 +342,6 @@ export function DashboardPage() {
   const [airflowActiveTile, setAirflowActiveTile] = useState<AirflowTileKind | null>(null);
   const [nifiFailedOpen, setNifiFailedOpen] = useState(false);
   const [kafkaFailedOpen, setKafkaFailedOpen] = useState(false);
-  /** Airflow 실패 줄에서 연 실패 로그 창. 워크플로우 로그 화면과 <b>같은 창</b>을 쓴다(2026-09-21 요청). */
-  const [workflowFailure, setWorkflowFailure] = useState<FailureLogTarget | undefined>();
-  const [workflowFailureLoading, setWorkflowFailureLoading] = useState<string | null>(null);
 
   // NiFi/Kafka는 Airflow DAG 실행 이력을 거치지 않고 각자의 API를 직접 조회한다 -
   // 이게 실제 처리 상태(대기열, 오류)를 그대로 반영하는 값이라 짧은 주기로 새로고침한다.
@@ -455,6 +452,15 @@ export function DashboardPage() {
     placeholderData: (previousData) => previousData,
   });
 
+  // ETL 카드 «실행 중 · 성공» 칸 - ETL 로그 화면 상단과 같은 원본(적재 프로세서 실행 구간)을 같은 기간으로 센다(2026-10-12).
+  const nifiProcessorRunsQuery = useQuery({
+    queryKey: ["dashboard-nifi-processor-runs", appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD")],
+    queryFn: () =>
+      listNifiProcessorRuns(appliedRange[0].format("YYYY-MM-DD"), appliedRange[1].format("YYYY-MM-DD")),
+    refetchInterval: 30000,
+    placeholderData: (previousData) => previousData,
+  });
+
   // 서버 리소스/프로세스는 인프라 구역을 보고 있을 때만 폴링한다(통계만 보는 동안
   // 15초마다 NiFi/Kafka/Airflow를 헛되게 두드리지 않도록).
   const hostResourcesQuery = useQuery({
@@ -479,8 +485,11 @@ export function DashboardPage() {
   const airflowHistory = airflowHistoryQuery.data ?? EMPTY_AIRFLOW_HISTORY;
   const showAirflowInitialLoading = airflowHistoryQuery.isLoading && !airflowHistoryQuery.data;
 
-  const nifiRunning = nifiJobs.filter((job) => job.status === "RUNNING").length;
   const nifiStopped = nifiJobs.filter((job) => job.status === "STOPPED").length;
+  // ETL 로그 화면 상단 숫자와 같은 기준: 실행 중 = 아직 안 끝난 적재 실행 구간, 성공 = 끝난 구간, 실패 = 실패 이벤트(nifiFailedItems).
+  const nifiRuns = nifiProcessorRunsQuery.data ?? [];
+  const nifiRunsRunning = nifiRuns.filter((run) => run.status === "RUNNING").length;
+  const nifiRunsSucceeded = nifiRuns.length - nifiRunsRunning;
 
   // 카드에 쓰는 «장애 N건»은 조회 기간의 실패 건수다(아래 cdcFailedItems 와 같은 것).
   const kafkaPaused = kafkaConnectors.filter((job) => job.status === "PAUSED").length;
@@ -578,7 +587,8 @@ export function DashboardPage() {
 
   /**
    * 워크플로우 실패. ETL · CDC 와 같은 창(FailureDetailModal)에 같은 차례로 담는다(2026-09-28 요청).
-   * 줄을 펼치면 실행 로그가 보이고, [로그] 를 누르면 시도별 로그 · 하위 워크플로우까지 따라가는 전용 창이 열린다.
+   * 줄을 펼치면 GPT 해석 · 실행 로그가 보인다. 줄마다 있던 [로그](시도별 로그 전용 창)는 뺐다(2026-10-13 요청) -
+   * 그 창은 워크플로우 로그 화면에서 연다.
    */
   const workflowFailedItems: FailureDetailItem[] = useMemo(
     () => airflowHistory.failedEntries.map((entry) => {
@@ -599,36 +609,6 @@ export function DashboardPage() {
     }),
     [airflowHistory.failedEntries],
   );
-
-  /**
-   * 실패한 실행의 «로그» - 워크플로우 로그 화면과 같은 창(TaskFailureLogModal)을 띄운다.
-   * 그 창이 시도별 로그 · Airflow 기록 · 하위 워크플로우까지 따라가고 GPT 해석도 그 안에 있다.
-   */
-  const openWorkflowFailureLog = async (entry: HistoryEntry) => {
-    // id 는 `${dagId}:${runId}` 인데 run_id 안에도 콜론이 있다(manual__2026-09-21T06:35:27…) - 첫 콜론만 구분자다.
-    const splitAt = entry.id.indexOf(":");
-    const dagId = splitAt > 0 ? entry.id.slice(0, splitAt) : "";
-    const runId = splitAt > 0 ? entry.id.slice(splitAt + 1) : "";
-    if (!dagId || !runId) {
-      return;
-    }
-    setWorkflowFailureLoading(entry.id);
-    try {
-      const tasks = await listAirflowTaskInstances(dagId, runId);
-      const failed = tasks.filter((task) => task.state === "failed" || task.state === "upstream_failed");
-      setWorkflowFailure({
-        title: entry.basicContent,
-        dagId,
-        runId,
-        tasks: failed.length > 0 ? failed : tasks,
-      });
-    } catch {
-      // 창을 못 열면 기존처럼 줄을 펼쳐 원문을 볼 수 있다 - 여기서 더 막지 않는다.
-      setWorkflowFailure(undefined);
-    } finally {
-      setWorkflowFailureLoading(null);
-    }
-  };
 
   const airflowModalRows = useMemo(() => {
     switch (airflowActiveTile) {
@@ -787,7 +767,7 @@ export function DashboardPage() {
             <NowDivider />
             <div className="kpi-detail-list">
               <MetricRow
-                label="미처리"
+                label="미처리 건"
                 value={formatCompactCount(kafkaBacklog)}
                 warn={kafkaBacklog > 0}
                 hint="CDC consumer lag 합계 — 아직 타깃에 반영되지 않은 건수"
@@ -837,21 +817,32 @@ export function DashboardPage() {
             </div>
 
             <NowDivider />
-            {/* 원본 #9 용어 정리: 활성 스레드 → 실행 중 작업, 대기 FlowFiles → 대기 데이터 */}
+            {/* 칸 순서 «실행 중 · 실패 · 성공 · 중지 · 대기 데이터»(2026-10-12 요청 - 예전 «실행 중 작업(활성 스레드) · 대기 데이터 · 실행 · 중지»).
+                실행 중 · 실패 · 성공은 ETL 로그 화면 상단과 같은 숫자다. 중지 · 대기 데이터는 지금 상태다. */}
             <div className="kpi-detail-list">
               <MetricRow
-                label="실행 중 작업"
-                value={String(nifiActiveThreads)}
-                hint="ETL 활성 스레드 수 — 지금 실제로 돌고 있는 작업"
+                label="실행 중"
+                value={String(nifiRunsRunning)}
+                hint="지금 적재 중인 실행 - ETL 로그 «실행 중»과 같은 기준"
               />
+              <MetricRow
+                label="실패"
+                value={String(nifiFailedItems.length)}
+                warn={nifiFailedItems.length > 0}
+                hint="조회 기간의 실패 - ETL 로그 «실패»와 같은 기준"
+              />
+              <MetricRow
+                label="성공"
+                value={String(nifiRunsSucceeded)}
+                hint="조회 기간에 끝난 적재 실행 - ETL 로그 «성공»과 같은 기준"
+              />
+              <MetricRow label="중지" value={String(nifiStopped)} warn={nifiStopped > 0} />
               <MetricRow
                 label="대기 데이터"
                 value={formatCompactCount(nifiQueued)}
                 warn={nifiQueued > 0 && nifiActiveThreads === 0}
                 hint="처리를 기다리며 큐에 쌓인 데이터 건수(FlowFile)"
               />
-              <MetricRow label="실행" value={String(nifiRunning)} />
-              <MetricRow label="중지" value={String(nifiStopped)} warn={nifiStopped > 0} />
               {/* «설정 확인 필요» 칸은 뺐다(2026-10-11 요청). */}
             </div>
           </div>
@@ -863,8 +854,9 @@ export function DashboardPage() {
                   실패 {nifiFailedItems.length}건
                 </button>
               ) : null}
+              {/* 세 카드 버튼 이름을 «로그»로 통일했다(2026-10-12 요청 - CDC «로그» · ETL «ETL 로그» · Workflow «실행 이력»이 제각각이었다). */}
               <button type="button" className="btn-kpi-action" onClick={() => navigate("/etl/logs")}>
-                ETL 로그 →
+                로그 →
               </button>
             </div>
           </div>
@@ -913,7 +905,7 @@ export function DashboardPage() {
                 </button>
               ) : null}
               <button type="button" className="btn-kpi-action" onClick={() => navigate("/airflow/dashboard")}>
-                실행 이력 →
+                로그 →
               </button>
             </div>
           </div>
@@ -1012,16 +1004,6 @@ export function DashboardPage() {
         title={`워크플로우 실패 상세 · ${selectedPeriodLabel}`}
         loading={showAirflowInitialLoading}
         items={workflowFailedItems}
-        rowAction={{
-          label: "로그",
-          busyId: workflowFailureLoading ?? undefined,
-          onClick: (item) => {
-            const entry = airflowHistory.failedEntries.find((row) => row.id === item.id);
-            if (entry) {
-              void openWorkflowFailureLog(entry);
-            }
-          },
-        }}
       />
       <FailureDetailModal
         open={nifiFailedOpen}
@@ -1037,8 +1019,6 @@ export function DashboardPage() {
         loading={kafkaConnectorsQuery.isLoading && !kafkaConnectorsQuery.data}
         items={cdcFailedItems}
       />
-      {/* 워크플로우(Airflow) 실패는 로그 화면과 같은 창을 그대로 띄운다 - 시도별 로그 · 하위 워크플로우 · GPT 해석이 한 자리에 있다. */}
-      <TaskFailureLogModal target={workflowFailure} onClose={() => setWorkflowFailure(undefined)} />
     </div>
     </ConfigProvider>
   );
