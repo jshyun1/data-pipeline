@@ -1,0 +1,50 @@
+diff --git a/nifi-frontend/src/main/frontend/libs/shared/src/types/index.ts b/nifi-frontend/src/main/frontend/libs/shared/src/types/index.ts
+index 6defbab008f5c73dc1c60f3ea61a0b67dfc96796..00117d5e693554087ccfa2e8cfbe57fe88a31c4c 100644
+--- a/nifi-frontend/src/main/frontend/libs/shared/src/types/index.ts
++++ b/nifi-frontend/src/main/frontend/libs/shared/src/types/index.ts
+@@ -18,27 +18,37 @@
+ import { MatDialogConfig } from '@angular/material/dialog';
+ import { filter, Observable } from 'rxjs';
+ 
++// Cerebro(2026-10-13): 대화상자가 창(뷰포트)보다 크면 창에 맞춘다. 공식은 폭을 고정(최소 = 최대)해서, 좁은 창에서는
++// 가운데 정렬된 채 양옆이 잘리고 스크롤도 안 됐다(ETL 관리 iframe 을 줄이면 Edit Processor 의 Apply 를 누를 수 없었다).
++// 큰 창에서는 원래 폭 그대로다. 높이는 창 높이까지 - 넘치면 대화상자 안에서 스크롤한다.
++const fitWidth = (width: string): string => `min(${width}, calc(100vw - 32px))`;
++const FIT_HEIGHT = 'calc(100vh - 32px)';
++
+ export const SMALL_DIALOG: MatDialogConfig = {
+-    maxWidth: '24rem',
+-    minWidth: 320,
++    maxWidth: fitWidth('24rem'),
++    minWidth: fitWidth('320px'),
++    maxHeight: FIT_HEIGHT,
+     disableClose: true,
+     closeOnNavigation: false
+ };
+ export const MEDIUM_DIALOG: MatDialogConfig = {
+-    maxWidth: 470,
+-    minWidth: 470,
++    maxWidth: fitWidth('470px'),
++    minWidth: fitWidth('470px'),
++    maxHeight: FIT_HEIGHT,
+     disableClose: true,
+     closeOnNavigation: false
+ };
+ export const LARGE_DIALOG: MatDialogConfig = {
+-    maxWidth: 760,
+-    minWidth: 760,
++    maxWidth: fitWidth('760px'),
++    minWidth: fitWidth('760px'),
++    maxHeight: FIT_HEIGHT,
+     disableClose: true,
+     closeOnNavigation: false
+ };
+ export const XL_DIALOG: MatDialogConfig = {
+-    maxWidth: 1024,
+-    minWidth: 1024,
++    maxWidth: fitWidth('1024px'),
++    minWidth: fitWidth('1024px'),
++    maxHeight: FIT_HEIGHT,
+     disableClose: true,
+     closeOnNavigation: false
+ };

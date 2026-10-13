@@ -4039,3 +4039,37 @@ NiFi 가 그 뒤에 캔버스를 그리면 덧칠(MutationObserver · 1초 주�
 
 **확인(로컬)**: 알림 테스트 12건 통과(기존 9 + 새 3). pipeline-api 반영(17:55) 뒤 발송 주기가 오류 없이 돈다(만료 정리 · 발송 처리 실패 로그 0).
 카카오는 꺼진 채라 실제 발송은 하지 않았다 - 토큰 갱신 뒤 «사용»을 켜고 «테스트 발송»으로 확인한다.
+
+## 130. ETL 관리 NiFi 대화상자 - 창이 작으면 창에 맞춤(수정분 0005) (2026-10-13)
+
+**요청**: 전체 화면에서는 Edit Processor 창이 괜찮은데, 브라우저를 줄이면 창 크기가 그대로라 Apply 를 누를 수 없다 - 창 크기에 맞게 줄어야 한다.
+
+**원인**
+- NiFi 공식 화면은 대화상자 폭을 고정한다(`libs/shared/src/types/index.ts`): `XL_DIALOG`(Edit Processor 등) 최소 = 최대 1024px,
+  `LARGE_DIALOG` 760px, `MEDIUM_DIALOG` 470px, `SMALL_DIALOG` 320px~24rem. 높이 제한은 없고 탭 내용이 `height: 50vh` 다.
+- 창(iframe)이 그보다 좁으면 겹침 칸이 가운데 정렬된 채 양옆이 잘리고, 겹침 칸은 고정이라 스크롤도 안 된다.
+  사용자 화면(iframe 약 700 × 460)에서는 1024px 창이 양옆 162px 씩 잘려 Apply 가 밖으로 나갔다.
+
+**시험(고치기 전에)**: NiFi 번들에서 꺼낸 실제 CDK · Material 18 대화상자 CSS 로 만든 시험 페이지(qa-playwright).
+| 창 | 지금 | 고친 설정 |
+|---|---|---|
+| 1600 × 900 | 1024 폭 | 같음(1024) |
+| 700 × 460 | x = −162, Apply 안 보임 · 스크롤 불가 | 668 × 428, Apply 보임 |
+| 700 × 360 | 잘림 · 스크롤 불가 | 대화상자 안 스크롤로 Apply 닿음 |
+| 520 × 420 | x = −252 | 488 폭, Apply 보임 |
+
+**변경**: 수정분 `nifi/ui-custom/patches/0005-cerebro-responsive-dialogs.patch`(신규, `libs/shared/src/types/index.ts`)
+- 네 크기 모두 폭을 `min(원래 폭, calc(100vw - 32px))`(최소 · 최대 같게), `maxHeight: calc(100vh - 32px)`.
+  CDK 가 문자열 크기를 inline 스타일로 그대로 넣는다. 큰 창에서는 원래 폭 그대로다.
+- Material 18 대화상자는 겉 칸의 최대 높이를 안쪽 표면까지 물려받고(`max-height: inherit`) 표면이 `overflow-y: auto` 라, 넘치면 대화상자 안에서 스크롤한다.
+- 크기를 따로 주는 대화상자(365 · 600px, 상태 이력 unset)는 그대로. 모양 개선이라 Cerebro 안 · NiFi 직접 접속 모두 적용.
+- `nifi/ui-custom/README.md` 표에 0005.
+
+**반영(로컬, 사용자 승인)**
+- 첫 시도: nifi · kafka-connect 만 멈추고(가용 2.9GB) `docker compose build nifi` → 화면 빌드 중 메모리 압박 74%, Airflow 3종이 부하로 재시작, 빌드 중단.
+  (그 전에 한 번은 «error getting credentials … accept4 failed 110» - Docker Desktop 자격 증명 도우미 시간 초과로 바로 실패, 다시 돌림.)
+- 다시: 스택 전체 정지(가용 5.4GB) → 빌드 성공(수정분 0001~0005 적용, nx 빌드 112초) → 원래 켜져 있던 12개 + kafka-connect `start`, nifi 새 이미지.
+- 재기동 전 · 후 비교: NiFi 컨트롤러 서비스 ENABLED 13 · DISABLED 8 그대로, 완료 감시 RUNNING, CDC 커넥터 3개(source/sink-22 RUNNING, source-1 STOPPED) 같음,
+  Airflow DAG 5개 오류 0, 모든 서비스 healthy. 실행 중 워크플로우 0 · NiFi 실행 중 프로세서 0 을 확인한 뒤 멈췄다.
+- 내려받는 NiFi 화면 파일(chunk-XCPO2UNY.js)에 `min(…, calc(100vw - 32px))` · `calc(100vh - 32px)` 가 들어 있다.
+- 실제 Edit Processor 를 작은 창에서 여는 확인은 사용자 몫(로그인된 ETL 관리 화면).

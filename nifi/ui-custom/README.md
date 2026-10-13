@@ -29,6 +29,7 @@ NiFi 엔진은 공식 이미지를 그대로 쓰고, **화면(nifi-frontend)만*
 | 로고 · 사용자 이름 · 로딩 · 오류 화면 그림 | `apps/nifi/src/app/ui/common/navigation/navigation.component.*`, `app.component.scss`, `pages/{error,route-not-found,login,logout}/…scss` | 0001 |
 | 「Cerebro 안인가」 판정 | `apps/nifi/src/app/cerebro/cerebro-embed.ts` | 0001 |
 | 색(팔레트) · 글꼴 | `libs/shared/src/assets/themes/material.scss` | 0003 |
+| 대화상자 크기 - 창보다 크면 창에 맞춤(폭 «원래 폭 · 창 폭 − 32px 중 작은 값», 높이 «창 높이 − 32px» 까지), 어디서나 | `libs/shared/src/types/index.ts` (`SMALL/MEDIUM/LARGE/XL_DIALOG`) | 0005 |
 
 원칙: **기능을 줄이는 변경은 Cerebro 안(`html.cerebro-embedded`)에서만, 모양 변경(한글 · 색 · 글꼴)은 어디서나** -
 NiFi 에 직접 들어온 관리자는 깔때기 · 포트 등 원래 도구와 메뉴를 다 쓴다. 대화상자 안은 번역하지 않는다(편집 잠금이 «Apply» 글자를 읽는다).
@@ -75,7 +76,7 @@ CEREBRO_NIFI_UI=custom       # 기동 때 Cerebro 화면 사용 (official 이면
 
 | 파일 | 하는 일 |
 |---|---|
-| `patches/0001~0004` | 위 표의 수정분 |
+| `patches/0001~0005` | 위 표의 수정분 |
 | `build.sh` | (docker 빌드 안) 공식 소스(같은 버전 태그) 받기 → 수정분 적용 → Pretendard 넣기 → 빌드 → NAR 만들기 |
 | `repack_nar.py` | 공식 NAR 에서 화면 war 의 화면 파일만 바꿈(META-INF · WEB-INF 와 다른 항목은 그대로) |
 | `patch-tool.sh` | 수정분 받기(checkout) · 저장(save) |
