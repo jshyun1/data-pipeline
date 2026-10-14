@@ -2624,14 +2624,26 @@ function elementClassName(element: Element) {
   return typeof element.className === "string" ? element.className : element.getAttribute("class") ?? "";
 }
 
+function elementCanvasComponentRole(element: Element) {
+  return `${element.getAttribute("data-component-type") ?? ""} ${element.getAttribute("data-type") ?? ""}`.toLowerCase();
+}
+
+function isProcessGroupElement(element: Element) {
+  const className = elementClassName(element).toLowerCase();
+  const role = elementCanvasComponentRole(element);
+  return className.includes("process-group") || role.includes("process_group") || role.includes("process group");
+}
+
+function isProcessorElement(element: Element) {
+  const className = elementClassName(element).toLowerCase();
+  const role = elementCanvasComponentRole(element);
+  return !isProcessGroupElement(element) && (className.includes("processor") || /\bprocessor\b/.test(role));
+}
+
 function readProcessGroupIdFromElement(element: Element | null) {
   let current = element;
   while (current && current instanceof Element) {
-    const className = elementClassName(current).toLowerCase();
-    const role = `${current.getAttribute("data-component-type") ?? ""} ${current.getAttribute("data-type") ?? ""}`.toLowerCase();
-    const isProcessGroupElement = className.includes("process-group") || role.includes("process_group") || role.includes("process group");
-
-    if (isProcessGroupElement) {
+    if (isProcessGroupElement(current)) {
       const candidates = [
         current.getAttribute("data-id"),
         current.getAttribute("data-component-id"),
@@ -2670,12 +2682,7 @@ function readProcessGroupIdFromOperationPanel(doc: Document) {
 function readProcessorIdFromElement(element: Element | null) {
   let current = element;
   while (current && current instanceof Element) {
-    const className = elementClassName(current).toLowerCase();
-    const role = `${current.getAttribute("data-component-type") ?? ""} ${current.getAttribute("data-type") ?? ""}`.toLowerCase();
-    const isProcessorElement =
-      !className.includes("process-group") && (className.includes("processor") || /\bprocessor\b/.test(role));
-
-    if (isProcessorElement) {
+    if (isProcessorElement(current)) {
       const candidates = [
         current.getAttribute("data-id"),
         current.getAttribute("data-component-id"),
@@ -2693,6 +2700,39 @@ function readProcessorIdFromElement(element: Element | null) {
   return null;
 }
 
+function isProcessorCanvasTarget(element: Element | null) {
+  let current = element;
+  while (current && current instanceof Element) {
+    if (isProcessorElement(current)) {
+      return true;
+    }
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function isCanvasBackgroundTarget(element: Element | null) {
+  let current = element;
+  while (current && current instanceof Element) {
+    if (isProcessorElement(current) || isProcessGroupElement(current)) {
+      return false;
+    }
+    const className = elementClassName(current).toLowerCase();
+    const id = current.id.toLowerCase();
+    if (
+      id === "canvas" ||
+      id === "canvas-container" ||
+      className.includes("canvas-background") ||
+      className.includes("canvas-container") ||
+      className.includes("flow-canvas")
+    ) {
+      return true;
+    }
+    current = current.parentElement;
+  }
+  return false;
+}
+
 type CanvasSelection =
   | { type: "processGroup"; id: string }
   | { type: "processor"; id: string };
@@ -2708,11 +2748,11 @@ function readSelectionFromOperationPanel(doc: Document): CanvasSelection | null 
     if (!id) {
       continue;
     }
-    if (/Process\s+Group/i.test(text)) {
-      return { type: "processGroup", id };
-    }
     if (/\bProcessor\b/i.test(text)) {
       return { type: "processor", id };
+    }
+    if (/Process\s+Group/i.test(text)) {
+      return { type: "processGroup", id };
     }
   }
   const groupId = readProcessGroupIdFromOperationPanel(doc);
@@ -2735,9 +2775,12 @@ function installCanvasSelectionSync(
       return;
     }
 
+    if (isProcessorCanvasTarget(target)) {
+      return;
+    }
+
     const clickedProcessorId = readProcessorIdFromElement(target);
     if (clickedProcessorId) {
-      onSelectionChange({ type: "processor", id: clickedProcessorId });
       return;
     }
 
@@ -2753,10 +2796,17 @@ function installCanvasSelectionSync(
       return;
     }
 
+    if (isCanvasBackgroundTarget(target)) {
+      onSelectionChange({ type: "processGroup", id: readProcessGroupIdFromFrameRoute(frame) ?? "root" });
+      return;
+    }
+
     window.setTimeout(() => {
       const selected = readSelectionFromOperationPanel(doc);
       if (selected) {
-        onSelectionChange(selected);
+        if (selected.type === "processGroup") {
+          onSelectionChange(selected);
+        }
         return;
       }
       const delayedGroupId = resolveProcessGroupSelection?.(target);
@@ -5603,6 +5653,9 @@ export function ConsoleFramePage({
   }, []);
 
   const selectCanvasItem = (selection: CanvasSelection) => {
+    if (selection.type === "processor") {
+      return;
+    }
     if (selection.type === "processGroup") {
       const normalizedGroupId = normalizeProcessGroupIdForTree(
         selection.id,
@@ -5613,7 +5666,6 @@ export function ConsoleFramePage({
       setSelectedProcessGroupId(normalizedGroupId);
       return;
     }
-    setSelectedCanvasItem(selection);
   };
 
   const selectCanvasProcessGroupRoute = (groupId: string | null) => {
