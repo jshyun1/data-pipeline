@@ -15,7 +15,7 @@ import {
   DoubleLeftOutlined,
   DoubleRightOutlined,
   EditOutlined,
-  FileOutlined,
+  FileFilled,
   FolderFilled,
   FolderOutlined,
   ReloadOutlined,
@@ -3785,7 +3785,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
 
   const treeIcon = (node: NifiProcessGroupTreeNode) =>
     node.groupType === "JOB"
-      ? <FileOutlined className="nifi-tree-kind nifi-tree-kind--job" />
+      ? <FileFilled className="nifi-tree-kind nifi-tree-kind--job" />
       : <FolderFilled className="nifi-tree-kind nifi-tree-kind--group" />;
 
   const toggle = (groupId: string) => {
