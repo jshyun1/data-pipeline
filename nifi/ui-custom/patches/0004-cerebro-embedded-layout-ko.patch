@@ -1454,7 +1454,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00df17f161e
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
-@@ -0,0 +1,1134 @@
+@@ -0,0 +1,1163 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -1634,6 +1634,20 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    '[tooltipInputData] .fa-info-circle',
 +    '[ng-reflect-tooltip-input-data] .fa-info-circle'
 +].join(', ');
++const PROCESSOR_PROPERTY_HELP_TEXT: Record<string, string> = {
++    'Database Connection Pooling Service': 'The Controller Service that is used to obtain connection to database',
++    'SQL select query': 'The SQL select query to execute. The query can be empty, a constant value, or built from attributes using Expression Language. If this property is specified, it will be used regardless of the content of incoming flowfiles. If this property is empty, the content of the incoming flow file is expected to contain a valid SQL select query to be issued by the processor to the database. Note that Expression Language is not evaluated for flow file contents.',
++    'SQL Pre-Query': 'A SQL query to execute before executing the SQL select query.',
++    'SQL Post-Query': 'A SQL query to execute after executing the SQL select query.',
++    'Max Wait Time': 'The maximum amount of time allowed for a running SQL statement to complete before it is canceled.',
++    'Record Writer': 'Specifies the Controller Service to use for writing records.',
++    'Normalize Table/Column Names': 'Whether to normalize table and column names for the generated records.',
++    'Use Avro Logical Types': 'Whether to use Avro logical types for decimal, date, time, and timestamp fields.',
++    'Default Decimal Precision': 'The default precision to use when a decimal column does not provide precision.',
++    'Default Decimal Scale': 'The default scale to use when a decimal column does not provide scale.',
++    'Max Rows Per Flow File': 'The maximum number of result rows that will be included in a single FlowFile.',
++    'Output Batch Size': 'The number of FlowFiles to queue before committing the database transaction.'
++};
 +const LLM_ENABLED_ATTRIBUTE = 'data-cerebro-llm-enabled';
 +const LLM_PROVIDER_ATTRIBUTE = 'data-cerebro-llm-provider';
 +const SKIP_PARENTS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA']);
@@ -2291,6 +2305,19 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    return texts.sort((a, b) => b.length - a.length)[0];
 +}
 +
++function processorEnglishPropertyTitle(title: string): string {
++    const englishMatch = title.match(/\(([^()]+)\)\s*$/);
++    return (englishMatch?.[1] ?? title)
++        .replace(/\s+/g, ' ')
++        .replace(/\s*\*$/, '')
++        .trim();
++}
++
++function processorFallbackHelpText(title: string): string | undefined {
++    const englishTitle = processorEnglishPropertyTitle(title);
++    return PROCESSOR_PROPERTY_HELP_TEXT[englishTitle];
++}
++
 +function closestProcessorPropertyRow(element: Element): Element | null {
 +    const direct = element.closest("tr, [role='row'], .mat-mdc-row, .mat-row, .property-row, .editable-table-row");
 +    if (direct) {
@@ -2459,9 +2486,11 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +        event.stopPropagation();
 +        const title = target.getAttribute(PROCESSOR_HELP_TITLE_ATTRIBUTE) ?? 'Processor Property';
 +        const context = target.getAttribute(PROCESSOR_HELP_CONTEXT_ATTRIBUTE) ?? '';
++        const storedHelpText = target.getAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE)?.trim() ?? '';
 +        const helpText = processorTooltipOverlayText()
-+            ?? target.getAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE)
-+            ?? '';
++            || storedHelpText
++            || processorFallbackHelpText(title)
++            || '';
 +        openProcessorHelpModal(title, helpText || '이 항목의 상세 설명을 찾지 못했습니다.', context);
 +    }, true);
 +
