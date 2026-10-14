@@ -3015,9 +3015,11 @@ function applyCanvasGroupTypeStyling(frame: HTMLIFrameElement, tree: NifiProcess
 
   ensureCanvasGroupTypeStyle(doc);
   const groupTypes = collectProcessGroupTypes(tree);
+  const currentGroupId = readProcessGroupIdFromFrameRoute(frame);
   doc.querySelectorAll("svg g.process-group, svg g.component.process-group").forEach((element) => {
     const groupId = readProcessGroupIdFromElement(element);
-    const groupType = groupId ? groupTypes.get(groupId) : undefined;
+    const resolvedGroupId = groupId ?? resolveProcessGroupIdByCanvasText(element, currentGroupId, tree);
+    const groupType = resolvedGroupId ? groupTypes.get(resolvedGroupId) : undefined;
     if (groupType) {
       element.setAttribute(CANVAS_GROUP_TYPE_ATTRIBUTE, groupType);
     } else {

@@ -1295,7 +1295,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..67a1235388f82fc9f7ddc5af8538fa3ed51de67a
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-canvas.ts
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,197 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -1336,6 +1336,39 @@ index 0000000000000000000000000000000000000000..67a1235388f82fc9f7ddc5af8538fa3e
 +        return nifiWidth;
 +    }
 +    return nifiWidth - (kind === 'group' ? 26 : 12);
++}
++
++function arrayLength(value: unknown): number {
++    return Array.isArray(value) ? value.length : 0;
++}
++
++function directProcessGroupContents(d: any): any {
++    return d?.contents ?? d?.component?.contents ?? d?.processGroupFlow?.flow ?? d?.flow;
++}
++
++function hasDirectProcessors(d: any): boolean {
++    const contents = directProcessGroupContents(d);
++    return arrayLength(contents?.processors) > 0;
++}
++
++function hasDirectChildGroups(d: any): boolean {
++    const contents = directProcessGroupContents(d);
++    return arrayLength(contents?.processGroups) > 0;
++}
++
++export function cerebroProcessGroupType(d: any): 'JOB' | 'GROUPING' | 'EMPTY' {
++    if (hasDirectProcessors(d)) {
++        return 'JOB';
++    }
++    return hasDirectChildGroups(d) ? 'GROUPING' : 'EMPTY';
++}
++
++/** 백엔드 트리와 같은 기준: 직계 프로세서가 있으면 JOB, 없고 하위 그룹이 있으면 GROUPING, 둘 다 없으면 EMPTY. */
++export function markCerebroProcessGroupType(processGroup: any, d: any): void {
++    if (!isEmbeddedInCerebro()) {
++        return;
++    }
++    processGroup.attr('data-cerebro-canvas-group-type', cerebroProcessGroupType(d));
 +}
 +
 +/** 머리띠 아이콘 · 표시 · 아래 선. 상자를 처음 만들 때(renderProcessGroups · renderProcessors) 한 번. */
@@ -1411,6 +1444,7 @@ index 0000000000000000000000000000000000000000..67a1235388f82fc9f7ddc5af8538fa3e
 +    if (!isEmbeddedInCerebro()) {
 +        return;
 +    }
++    markCerebroProcessGroupType(processGroup, d);
 +    const details = processGroup.select('g.process-group-details');
 +    if (details.empty()) {
 +        return;
