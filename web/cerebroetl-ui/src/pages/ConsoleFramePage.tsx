@@ -56,6 +56,9 @@ import { getWorkflow, listWorkflows, type WorkflowDetail } from "../api/workflow
 const HIDE_TOOL_CHROME_STYLE_ID = "cerebro-hide-tool-chrome";
 const CANVAS_SELECTION_SYNC_ATTRIBUTE = "data-cerebro-canvas-selection-sync";
 const CANVAS_ROUTE_SYNC_ATTRIBUTE = "data-cerebro-canvas-route-sync";
+const CANVAS_GROUP_TYPE_STYLE_ID = "cerebro-canvas-group-type-style";
+const CANVAS_GROUP_TYPE_ATTRIBUTE = "data-cerebro-canvas-group-type";
+const CANVAS_GROUP_TYPE_OBSERVER_ATTRIBUTE = "data-cerebro-canvas-group-type-observer";
 const KOREAN_TOOLTIP_PATCH_ATTRIBUTE = "data-cerebro-korean-tooltip-patch";
 const KOREAN_TOOLTIP_INTERVAL_ATTRIBUTE = "data-cerebro-korean-tooltip-interval";
 const NIFI_PROCESSOR_HELP_POPUP_ATTRIBUTE = "data-cerebro-processor-help-popup";
@@ -188,6 +191,106 @@ const PROCESSOR_DIALOG_VIEWPORT_CSS = `
   html[${PROCESSOR_DIALOG_VIEWPORT_SCALED_ATTRIBUTE}="true"] .cdk-overlay-pane[${PROCESSOR_DIALOG_FIT_TARGET_ATTRIBUTE}="true"] .mat-dialog-actions {
     box-sizing: border-box !important;
     width: 100% !important;
+  }
+`;
+
+const CANVAS_COMPONENT_HEADER_COLOR_CSS = `
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] .component-header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] .header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] .process-group-header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] .process-group-header-background,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] .component-header-background,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] rect.process-group-banner,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] rect.component-header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] rect.header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] rect.process-group-header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] rect.process-group-header-background,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] rect.component-header-background,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] .component-header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] .header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] .process-group-header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] .process-group-header-background,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] .component-header-background,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] rect.process-group-banner,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] rect.component-header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] rect.header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] rect.process-group-header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] rect.process-group-header-background,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="GROUPING"] rect.component-header-background,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] .component-header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] .header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] .process-group-header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] .process-group-header-background,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] .component-header-background,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] rect.process-group-banner,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] rect.component-header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] rect.header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] rect.process-group-header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] rect.process-group-header-background,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] rect.component-header-background,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] .component-header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] .header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] .process-group-header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] .process-group-header-background,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] .component-header-background,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] rect.process-group-banner,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] rect.component-header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] rect.header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] rect.process-group-header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] rect.process-group-header-background,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="EMPTY"] rect.component-header-background {
+    fill: #102a56 !important;
+    stroke: #102a56 !important;
+  }
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] .component-header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] .header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] .process-group-header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] .process-group-header-background,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] .component-header-background,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] rect.process-group-banner,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] rect.component-header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] rect.header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] rect.process-group-header,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] rect.process-group-header-background,
+  svg g.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] rect.component-header-background,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] .component-header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] .header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] .process-group-header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] .process-group-header-background,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] .component-header-background,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] rect.process-group-banner,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] rect.component-header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] rect.header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] rect.process-group-header,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] rect.process-group-header-background,
+  svg g.component.process-group[${CANVAS_GROUP_TYPE_ATTRIBUTE}="JOB"] rect.component-header-background {
+    fill: #7db7ff !important;
+    stroke: #7db7ff !important;
+  }
+  svg g.processor .component-header,
+  svg g.processor .header,
+  svg g.processor .processor-header,
+  svg g.processor .processor-header-background,
+  svg g.processor .component-header-background,
+  svg g.processor rect.processor-banner,
+  svg g.processor rect.component-header,
+  svg g.processor rect.header,
+  svg g.processor rect.processor-header,
+  svg g.processor rect.processor-header-background,
+  svg g.processor rect.component-header-background,
+  svg g.component.processor .component-header,
+  svg g.component.processor .header,
+  svg g.component.processor .processor-header,
+  svg g.component.processor .processor-header-background,
+  svg g.component.processor .component-header-background,
+  svg g.component.processor rect.processor-banner,
+  svg g.component.processor rect.component-header,
+  svg g.component.processor rect.header,
+  svg g.component.processor rect.processor-header,
+  svg g.component.processor rect.processor-header-background,
+  svg g.component.processor rect.component-header-background {
+    fill: #2D9CAA !important;
+    stroke: #2D9CAA !important;
   }
 `;
 // NiFi/Airflow 각자의 로고를 감춰서 "따로 노는 느낌" 없이 하나의 Cerebro ETL처럼
@@ -688,9 +791,10 @@ const HIDE_TOOL_CHROME_CSS = `
   svg g.component.process-group rect.process-group-header,
   svg g.component.process-group rect.process-group-header-background,
   svg g.component.process-group rect.component-header-background {
-    fill: #34445a !important;
-    stroke: #34445a !important;
+    fill: #102a56 !important;
+    stroke: #102a56 !important;
   }
+  ${CANVAS_COMPONENT_HEADER_COLOR_CSS}
   svg g.process-group .name,
   svg g.process-group .process-group-name,
   svg g.process-group .component-name,
@@ -2877,6 +2981,85 @@ function readProcessorIdFromElement(element: Element | null) {
     current = current.parentElement;
   }
   return null;
+}
+
+function collectProcessGroupTypes(
+  node: NifiProcessGroupTreeNode | null,
+  target = new Map<string, NifiProcessGroupTreeNode["groupType"]>(),
+) {
+  if (!node) {
+    return target;
+  }
+  target.set(node.id, node.groupType);
+  node.children?.forEach((child) => collectProcessGroupTypes(child, target));
+  return target;
+}
+
+function ensureCanvasGroupTypeStyle(doc: Document) {
+  let style = doc.getElementById(CANVAS_GROUP_TYPE_STYLE_ID);
+  if (!style) {
+    style = doc.createElement("style");
+    style.id = CANVAS_GROUP_TYPE_STYLE_ID;
+    doc.head.appendChild(style);
+  }
+  if (style.textContent !== CANVAS_COMPONENT_HEADER_COLOR_CSS) {
+    style.textContent = CANVAS_COMPONENT_HEADER_COLOR_CSS;
+  }
+}
+
+function applyCanvasGroupTypeStyling(frame: HTMLIFrameElement, tree: NifiProcessGroupTreeNode | null) {
+  const doc = iframeDocument(frame);
+  if (!doc) {
+    return false;
+  }
+
+  ensureCanvasGroupTypeStyle(doc);
+  const groupTypes = collectProcessGroupTypes(tree);
+  doc.querySelectorAll("svg g.process-group, svg g.component.process-group").forEach((element) => {
+    const groupId = readProcessGroupIdFromElement(element);
+    const groupType = groupId ? groupTypes.get(groupId) : undefined;
+    if (groupType) {
+      element.setAttribute(CANVAS_GROUP_TYPE_ATTRIBUTE, groupType);
+    } else {
+      element.removeAttribute(CANVAS_GROUP_TYPE_ATTRIBUTE);
+    }
+  });
+  return true;
+}
+
+function installCanvasGroupTypeStyling(
+  frame: HTMLIFrameElement,
+  getTree: () => NifiProcessGroupTreeNode | null,
+) {
+  const doc = iframeDocument(frame);
+  const frameWindow = frame.contentWindow;
+  if (!doc || !frameWindow) {
+    return;
+  }
+
+  ensureCanvasGroupTypeStyle(doc);
+  applyCanvasGroupTypeStyling(frame, getTree());
+  if (doc.documentElement.getAttribute(CANVAS_GROUP_TYPE_OBSERVER_ATTRIBUTE) === "true") {
+    return;
+  }
+  doc.documentElement.setAttribute(CANVAS_GROUP_TYPE_OBSERVER_ATTRIBUTE, "true");
+
+  let scheduled = false;
+  const scheduleApply = () => {
+    if (scheduled) {
+      return;
+    }
+    scheduled = true;
+    frameWindow.requestAnimationFrame(() => {
+      scheduled = false;
+      applyCanvasGroupTypeStyling(frame, getTree());
+    });
+  };
+
+  const MutationObserverConstructor = (frameWindow as Window & typeof globalThis).MutationObserver;
+  const observer = new MutationObserverConstructor(scheduleApply);
+  observer.observe(doc.documentElement, { childList: true, subtree: true });
+  frameWindow.addEventListener("beforeunload", () => observer.disconnect(), { once: true });
 }
 
 function isProcessorCanvasTarget(element: Element | null) {
@@ -5757,6 +5940,13 @@ export function ConsoleFramePage({
   }, [frameLlmStatus]);
 
   useEffect(() => {
+    if (!showProcessGroupTree || !frameRef.current || !processGroupTree) {
+      return;
+    }
+    applyCanvasGroupTypeStyling(frameRef.current, processGroupTree);
+  }, [frameInstanceKey, processGroupTree, showProcessGroupTree]);
+
+  useEffect(() => {
     if (!showProcessGroupTree || frameChromeReady) {
       return;
     }
@@ -5886,6 +6076,7 @@ export function ConsoleFramePage({
     clickNifiMenuItem(frame, nifiAutoOpenMenuTitles);
     if (showProcessGroupTree) {
       installCanvasRouteSync(frame, selectCanvasProcessGroupRoute);
+      installCanvasGroupTypeStyling(frame, () => processGroupTreeRef.current);
       installCanvasSelectionSync(
         frame,
         selectCanvasItem,
