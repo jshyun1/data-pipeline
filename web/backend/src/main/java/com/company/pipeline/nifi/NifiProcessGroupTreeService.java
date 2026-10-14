@@ -142,7 +142,8 @@ public class NifiProcessGroupTreeService {
                                     : null;
                         })
                         .filter(node -> node != null)
-                        .sorted(Comparator.comparing(NifiProcessGroupTreeResponse::name, String.CASE_INSENSITIVE_ORDER))
+                        .sorted(Comparator.comparingInt(NifiProcessGroupTreeService::treeGroupPriority)
+                                .thenComparing(NifiProcessGroupTreeResponse::name, String.CASE_INSENSITIVE_ORDER))
                         .toList();
 
         DirectJobStatus directJob = DirectJobStatus.from(
@@ -212,6 +213,10 @@ public class NifiProcessGroupTreeService {
 
     private String displayName(String name, String fallback) {
         return StringUtils.hasText(name) ? name : fallback;
+    }
+
+    private static int treeGroupPriority(NifiProcessGroupTreeResponse node) {
+        return "JOB".equals(node.groupType()) ? 1 : 0;
     }
 
     private record CachedTree(NifiProcessGroupTreeResponse tree, long refreshedAtMillis) {

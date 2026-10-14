@@ -3685,9 +3685,7 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
             className={hasChildren ? "nifi-tree-toggle" : "nifi-tree-toggle empty"}
             aria-label={expanded ? `${node.name} 접기` : `${node.name} 펼치기`}
             onClick={() => hasChildren && toggle(node.id)}
-          >
-            {hasChildren ? (expanded ? "-" : "+") : ""}
-          </button>
+          />
           <button type="button" className="nifi-tree-label" title={node.name} onClick={() => openGroup(node.id)}>
             {treeIcon(node)}
             <span className="nifi-tree-name">{highlightedName(node.name)}</span>

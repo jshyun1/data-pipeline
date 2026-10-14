@@ -6340,11 +6340,11 @@ button.alert-compact-trigger.is-clear:hover {
   height: 17px;
   margin-right: 4px;
   padding: 0;
-  border: 1px solid #9aa5b1;
+  border: 0;
   border-radius: 2px;
-  background: #ffffff;
+  background: transparent;
   cursor: pointer;
-  color: #111827;
+  color: transparent;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 13px;
   font-weight: 700;
@@ -6411,20 +6411,20 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 .nifi-tree-kind--group {
-  color: #4f6f95;
+  color: #102a56;
 }
 
 .nifi-tree-kind--job {
-  color: #718096;
+  color: #7db7ff;
   font-size: 13px;
 }
 
 .nifi-tree-row.active .nifi-tree-kind--group {
-  color: #2563eb;
+  color: #102a56;
 }
 
 .nifi-tree-row.active .nifi-tree-kind--job {
-  color: #475569;
+  color: #7db7ff;
 }
 
 .nifi-tree-name {
