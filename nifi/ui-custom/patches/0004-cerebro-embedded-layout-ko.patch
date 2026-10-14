@@ -1454,7 +1454,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00df17f161e
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
-@@ -0,0 +1,1252 @@
+@@ -0,0 +1,1373 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -1621,6 +1621,7 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +const PROCESSOR_HELP_CONTEXT_ATTRIBUTE = 'data-cerebro-help-context';
 +const PROCESSOR_HELP_PROCESSOR_TYPE_ATTRIBUTE = 'data-cerebro-help-processor-type';
 +const PROCESSOR_HELP_VALUE_ATTRIBUTE = 'data-cerebro-help-value';
++const PROCESSOR_HELP_META_ATTRIBUTE = 'data-cerebro-help-meta';
 +const PROCESSOR_HELP_PROBE_ATTRIBUTE = 'data-cerebro-help-probe';
 +const PROCESSOR_HELP_READY_ATTRIBUTE = 'data-cerebro-processor-help-ready';
 +const PROCESSOR_HELP_MODAL_ID = 'cerebro-processor-help-modal';
@@ -2309,6 +2310,102 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +        : undefined;
 +}
 +
++type ProcessorHelpMeta = {
++    description?: string;
++    expressionLanguageScope?: string;
++    sensitive?: boolean;
++    required?: boolean;
++    identifiesControllerService?: boolean;
++    controllerService?: string;
++};
++
++function processorHelpMetadata(element: Element): ProcessorHelpMeta {
++    const seen = new WeakSet<object>();
++    const best: ProcessorHelpMeta = {};
++    const assignString = (key: string, value: string): void => {
++        const normalized = value.replace(/\s+/g, ' ').trim();
++        if (!normalized) {
++            return;
++        }
++        if (/description|toolTip|tooltip|message/i.test(key)) {
++            const text = processorHelpTooltipTextValue(normalized);
++            if (text && (!best.description || text.length > best.description.length)) {
++                best.description = text;
++            }
++        } else if (/expression.*language.*scope|expressionLanguageScope|elScope/i.test(key)) {
++            best.expressionLanguageScope = normalized;
++        } else if (/controller.*service|serviceApi|identifiesControllerService/i.test(key)) {
++            best.controllerService = normalized;
++        }
++    };
++    const scan = (value: unknown, depth = 0, keyHint = ''): void => {
++        if (typeof value === 'string') {
++            assignString(keyHint, value);
++            return;
++        }
++        if (typeof value === 'boolean') {
++            if (/sensitive/i.test(keyHint)) {
++                best.sensitive = value;
++            } else if (/required/i.test(keyHint)) {
++                best.required = value;
++            } else if (/identifiesControllerService|controllerService/i.test(keyHint)) {
++                best.identifiesControllerService = value;
++            }
++            return;
++        }
++        if (!value || typeof value !== 'object' || depth > 5 || seen.has(value)) {
++            return;
++        }
++        seen.add(value);
++        if (Array.isArray(value)) {
++            value.forEach((item) => scan(item, depth + 1, keyHint));
++            return;
++        }
++        const record = value as Record<string, unknown>;
++        Object.keys(record).slice(0, 160).forEach((key) => scan(record[key], depth + 1, key));
++    };
++    for (const target of [element, ...Array.from(element.children)]) {
++        const anyTarget = target as Element & Record<string, unknown>;
++        scan(anyTarget['tooltipInputData'], 0, 'tooltipInputData');
++        scan(anyTarget['ngReflectTooltipInputData'], 0, 'ngReflectTooltipInputData');
++        scan(anyTarget['__ngContext__'], 0, '__ngContext__');
++        for (const key of Object.getOwnPropertyNames(anyTarget)) {
++            if (key.includes('ng') || key.toLowerCase().includes('tooltip')) {
++                scan(anyTarget[key], 0, key);
++            }
++        }
++    }
++    return best;
++}
++
++function processorHelpTextFromMeta(meta: ProcessorHelpMeta, fallbackDescription = ''): string {
++    const lines: string[] = [];
++    const description = meta.description || fallbackDescription;
++    if (description) {
++        lines.push(description);
++    }
++    const details: string[] = [];
++    if (meta.expressionLanguageScope) {
++        details.push(`Expression language scope: ${meta.expressionLanguageScope}`);
++    }
++    if (typeof meta.sensitive === 'boolean') {
++        details.push(`Sensitive property: ${meta.sensitive}`);
++    }
++    if (typeof meta.required === 'boolean') {
++        details.push(`Required field: ${meta.required}`);
++    }
++    if (typeof meta.identifiesControllerService === 'boolean') {
++        details.push(`Identifies Controller Service: ${meta.identifiesControllerService}`);
++    }
++    if (meta.controllerService) {
++        details.push(`Requires Controller Service: ${meta.controllerService}`);
++    }
++    if (details.length > 0) {
++        lines.push('', ...details);
++    }
++    return lines.join('\n');
++}
++
 +function processorTooltipOverlayText(): string | undefined {
 +    const texts = Array.from(document.querySelectorAll('.cdk-overlay-pane'))
 +        .filter((element) => !isProcessorEditDialog(element))
@@ -2333,6 +2430,17 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +function processorFallbackHelpText(title: string): string | undefined {
 +    const englishTitle = processorEnglishPropertyTitle(title);
 +    return PROCESSOR_PROPERTY_HELP_TEXT[englishTitle];
++}
++
++function parseProcessorHelpMeta(value: string | null): ProcessorHelpMeta {
++    if (!value) {
++        return {};
++    }
++    try {
++        return JSON.parse(value) as ProcessorHelpMeta;
++    } catch {
++        return {};
++    }
 +}
 +
 +function processorPropertyValue(element: Element): string {
@@ -2369,6 +2477,9 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    propertyName: string;
 +    propertyValue: string;
 +    description: string;
++    expressionLanguageScope?: string;
++    sensitive?: boolean;
++    identifiesControllerService?: boolean;
 +}): void {
 +    if (!payload.description || payload.description === '이 항목의 상세 설명을 찾지 못했습니다.') {
 +        return;
@@ -2447,12 +2558,15 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    if (!helpText) {
 +        return;
 +    }
++    const meta = processorHelpMetadata(element);
++    const fullHelpText = processorHelpTextFromMeta(meta, helpText);
 +    const title = processorHelpTitle(element, helpText, processorType);
-+    element.setAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE, helpText);
++    element.setAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE, fullHelpText);
 +    element.setAttribute(PROCESSOR_HELP_TITLE_ATTRIBUTE, title);
 +    element.setAttribute(PROCESSOR_HELP_CONTEXT_ATTRIBUTE, processorHelpContext(dialog));
 +    element.setAttribute(PROCESSOR_HELP_PROCESSOR_TYPE_ATTRIBUTE, processorType ?? '');
 +    element.setAttribute(PROCESSOR_HELP_VALUE_ATTRIBUTE, processorPropertyValue(element));
++    element.setAttribute(PROCESSOR_HELP_META_ATTRIBUTE, JSON.stringify(meta));
 +    element.setAttribute('role', element.getAttribute('role') ?? 'button');
 +    element.setAttribute('tabindex', element.getAttribute('tabindex') ?? '0');
 +    element.setAttribute('aria-label', `도움말 보기: ${title}`);
@@ -2465,13 +2579,16 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    if (element.hasAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE)) {
 +        return;
 +    }
-+    const helpText = processorHelpTooltipText(element) ?? angularTooltipInputData(element) ?? '';
++    const meta = processorHelpMetadata(element);
++    const helpText = processorHelpTooltipText(element) ?? angularTooltipInputData(element) ?? meta.description ?? '';
++    const fullHelpText = processorHelpTextFromMeta(meta, helpText);
 +    const title = processorHelpTitle(element, helpText, processorType);
-+    element.setAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE, helpText);
++    element.setAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE, fullHelpText);
 +    element.setAttribute(PROCESSOR_HELP_TITLE_ATTRIBUTE, title);
 +    element.setAttribute(PROCESSOR_HELP_CONTEXT_ATTRIBUTE, processorHelpContext(dialog));
 +    element.setAttribute(PROCESSOR_HELP_PROCESSOR_TYPE_ATTRIBUTE, processorType ?? '');
 +    element.setAttribute(PROCESSOR_HELP_VALUE_ATTRIBUTE, processorPropertyValue(element));
++    element.setAttribute(PROCESSOR_HELP_META_ATTRIBUTE, JSON.stringify(meta));
 +    element.setAttribute('role', element.getAttribute('role') ?? 'button');
 +    element.setAttribute('tabindex', element.getAttribute('tabindex') ?? '0');
 +    element.setAttribute('aria-label', `도움말 보기: ${title}`);
@@ -2568,6 +2685,7 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +        const title = target.getAttribute(PROCESSOR_HELP_TITLE_ATTRIBUTE) ?? 'Processor Property';
 +        const processorType = target.getAttribute(PROCESSOR_HELP_PROCESSOR_TYPE_ATTRIBUTE) ?? '';
 +        const propertyValue = target.getAttribute(PROCESSOR_HELP_VALUE_ATTRIBUTE) ?? '';
++        const meta = parseProcessorHelpMeta(target.getAttribute(PROCESSOR_HELP_META_ATTRIBUTE));
 +        const storedHelpText = target.getAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE)?.trim() ?? '';
 +        const helpText = processorTooltipOverlayText()
 +            || storedHelpText
@@ -2579,7 +2697,10 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +            processorType,
 +            propertyName: processorEnglishPropertyTitle(title),
 +            propertyValue,
-+            description
++            description,
++            expressionLanguageScope: meta.expressionLanguageScope,
++            sensitive: meta.sensitive,
++            identifiesControllerService: meta.identifiesControllerService
 +        });
 +    }, true);
 +
