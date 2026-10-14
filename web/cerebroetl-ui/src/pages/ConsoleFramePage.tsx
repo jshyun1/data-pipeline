@@ -5353,14 +5353,14 @@ function ProcessGroupDetailPanel({ activeGroupId, tree, reloadKey }: ProcessGrou
                     keyword={logKeyword}
                     onNavigate={navigate}
                   />
-                  {displayNode?.wizardCreated ? (
-                    <div className="nifi-wizard-edit-actions">
-                      <Button icon={<EditOutlined />} size="small" onClick={openWizardEdit}>
-                        생성마법사 편집
-                      </Button>
-                    </div>
-                  ) : null}
                 </section>
+                {displayNode?.wizardCreated ? (
+                  <div className="nifi-wizard-edit-actions">
+                    <Button icon={<EditOutlined />} size="small" onClick={openWizardEdit}>
+                      생성마법사 수정
+                    </Button>
+                  </div>
+                ) : null}
               </>
             ) : null}
           </>

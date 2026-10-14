@@ -1454,7 +1454,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00df17f161e
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
-@@ -0,0 +1,1130 @@
+@@ -0,0 +1,1134 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -2144,7 +2144,7 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    const titleElement = modal.querySelector('.cerebro-help-title');
 +    const bodyElement = modal.querySelector("[data-cerebro-help-body='true']");
 +    if (titleElement) {
-+        titleElement.textContent = context ? `${context} | ${title}` : title;
++        titleElement.textContent = title;
 +    }
 +    if (bodyElement) {
 +        bodyElement.textContent = helpText || '도움말 내용을 불러오지 못했습니다.';
@@ -2231,10 +2231,12 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +            }
 +            return undefined;
 +        }
-+        for (const key of Object.keys(record)) {
-+            if (!/tooltip|tip|data|input/i.test(key)) {
-+                continue;
-+            }
++        const keys = Object.keys(record);
++        const prioritized = [
++            ...keys.filter((key) => /tooltip|tip|data|input|description|descriptor|text|message/i.test(key)),
++            ...keys.filter((key) => !/tooltip|tip|data|input|description|descriptor|text|message/i.test(key))
++        ];
++        for (const key of prioritized.slice(0, 120)) {
 +            const found = scan(record[key], depth + 1);
 +            if (found) {
 +                return found;
@@ -2457,7 +2459,9 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +        event.stopPropagation();
 +        const title = target.getAttribute(PROCESSOR_HELP_TITLE_ATTRIBUTE) ?? 'Processor Property';
 +        const context = target.getAttribute(PROCESSOR_HELP_CONTEXT_ATTRIBUTE) ?? '';
-+        const helpText = target.getAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE) ?? '';
++        const helpText = processorTooltipOverlayText()
++            ?? target.getAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE)
++            ?? '';
 +        openProcessorHelpModal(title, helpText || '이 항목의 상세 설명을 찾지 못했습니다.', context);
 +    }, true);
 +

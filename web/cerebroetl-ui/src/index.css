@@ -7060,7 +7060,7 @@ button.alert-compact-trigger.is-clear:hover {
 }
 
 .nifi-wizard-edit-actions {
-  margin-top: 10px;
+  padding: 8px 24px 10px;
 }
 
 .nifi-detail-section dd.nifi-detail-inline-value {
