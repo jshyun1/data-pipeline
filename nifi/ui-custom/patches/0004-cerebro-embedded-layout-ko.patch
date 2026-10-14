@@ -1295,7 +1295,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..67a1235388f82fc9f7ddc5af8538fa3ed51de67a
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-canvas.ts
-@@ -0,0 +1,197 @@
+@@ -0,0 +1,267 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -1330,6 +1330,10 @@ index 0000000000000000000000000000000000000000..67a1235388f82fc9f7ddc5af8538fa3e
 +    processor: { height: 30, tag: '프로세서' }
 +};
 +
++type CerebroProcessGroupType = 'JOB' | 'GROUPING' | 'EMPTY';
++
++const processGroupTypeCache = new Map<string, Promise<CerebroProcessGroupType>>();
++
 +// 이름이 오른쪽 «프로세스 그룹»/«프로세서» 표시 · 아이콘과 겹치지 않게 줄이는 폭(Cerebro 안에서만).
 +export function cerebroNameWidth(kind: CerebroBoxKind, nifiWidth: number): number {
 +    if (!isEmbeddedInCerebro()) {
@@ -1356,11 +1360,59 @@ index 0000000000000000000000000000000000000000..67a1235388f82fc9f7ddc5af8538fa3e
 +    return arrayLength(contents?.processGroups) > 0;
 +}
 +
-+export function cerebroProcessGroupType(d: any): 'JOB' | 'GROUPING' | 'EMPTY' {
++export function cerebroProcessGroupType(d: any): CerebroProcessGroupType {
 +    if (hasDirectProcessors(d)) {
 +        return 'JOB';
 +    }
 +    return hasDirectChildGroups(d) ? 'GROUPING' : 'EMPTY';
++}
++
++function processGroupId(d: any): string | undefined {
++    return d?.id ?? d?.component?.id ?? d?.processGroupFlow?.id;
++}
++
++function cleanProcessGroupDomId(value: string | null | undefined): string | undefined {
++    const cleaned = value?.replace(/^(id-|component-|process-group-|pg-)/i, '');
++    return cleaned && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleaned)
++        ? cleaned
++        : undefined;
++}
++
++function processGroupSelectionId(processGroup: any, d: any): string | undefined {
++    return (
++        processGroupId(d) ??
++        cleanProcessGroupDomId(processGroup.attr('data-id')) ??
++        cleanProcessGroupDomId(processGroup.attr('data-component-id')) ??
++        cleanProcessGroupDomId(processGroup.attr('id'))
++    );
++}
++
++async function fetchCerebroProcessGroupType(id: string): Promise<CerebroProcessGroupType> {
++    const response = await fetch(`/nifi-api/flow/process-groups/${encodeURIComponent(id)}`, {
++        credentials: 'same-origin',
++        cache: 'no-store'
++    });
++    if (!response.ok) {
++        throw new Error(`Failed to load process group ${id}: ${response.status}`);
++    }
++    const data = await response.json();
++    const contents = data?.processGroupFlow?.flow;
++    if (arrayLength(contents?.processors) > 0) {
++        return 'JOB';
++    }
++    return arrayLength(contents?.processGroups) > 0 ? 'GROUPING' : 'EMPTY';
++}
++
++function loadCerebroProcessGroupType(id: string): Promise<CerebroProcessGroupType> {
++    let cached = processGroupTypeCache.get(id);
++    if (!cached) {
++        cached = fetchCerebroProcessGroupType(id).catch((error) => {
++            processGroupTypeCache.delete(id);
++            throw error;
++        });
++        processGroupTypeCache.set(id, cached);
++    }
++    return cached;
 +}
 +
 +/** 백엔드 트리와 같은 기준: 직계 프로세서가 있으면 JOB, 없고 하위 그룹이 있으면 GROUPING, 둘 다 없으면 EMPTY. */
@@ -1368,7 +1420,25 @@ index 0000000000000000000000000000000000000000..67a1235388f82fc9f7ddc5af8538fa3e
 +    if (!isEmbeddedInCerebro()) {
 +        return;
 +    }
-+    processGroup.attr('data-cerebro-canvas-group-type', cerebroProcessGroupType(d));
++    const fallbackType = cerebroProcessGroupType(d);
++    processGroup.attr('data-cerebro-canvas-group-type', fallbackType);
++
++    const id = processGroupSelectionId(processGroup, d);
++    if (!id) {
++        return;
++    }
++    processGroup.attr('data-cerebro-process-group-id', id);
++    void loadCerebroProcessGroupType(id)
++        .then((type) => {
++            if (processGroup.attr('data-cerebro-process-group-id') === id) {
++                processGroup.attr('data-cerebro-canvas-group-type', type);
++            }
++        })
++        .catch(() => {
++            if (processGroup.attr('data-cerebro-process-group-id') === id) {
++                processGroup.attr('data-cerebro-canvas-group-type', fallbackType);
++            }
++        });
 +}
 +
 +/** 머리띠 아이콘 · 표시 · 아래 선. 상자를 처음 만들 때(renderProcessGroups · renderProcessors) 한 번. */
