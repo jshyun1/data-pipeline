@@ -1454,7 +1454,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00df17f161e
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
-@@ -0,0 +1,1093 @@
+@@ -0,0 +1,1130 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -1623,6 +1623,17 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +const PROCESSOR_HELP_READY_ATTRIBUTE = 'data-cerebro-processor-help-ready';
 +const PROCESSOR_HELP_MODAL_ID = 'cerebro-processor-help-modal';
 +const PROCESSOR_HELP_STYLE_ID = 'cerebro-processor-help-style';
++const PROCESSOR_HELP_REPLACED_ATTRIBUTE = 'data-cerebro-help-replaced';
++const PROCESSOR_HELP_ICON_SELECTOR = [
++    '.fa-info-circle.primary-color',
++    '.fa-info-circle',
++    '[nifiTooltip].fa',
++    '[tooltipInputData].fa',
++    '[ng-reflect-tooltip-input-data].fa',
++    '[nifiTooltip] .fa-info-circle',
++    '[tooltipInputData] .fa-info-circle',
++    '[ng-reflect-tooltip-input-data] .fa-info-circle'
++].join(', ');
 +const LLM_ENABLED_ATTRIBUTE = 'data-cerebro-llm-enabled';
 +const LLM_PROVIDER_ATTRIBUTE = 'data-cerebro-llm-provider';
 +const SKIP_PARENTS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA']);
@@ -1920,11 +1931,24 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +function isProcessorEditDialog(element: Element): boolean {
 +    const text = elementText(element);
 +    return Boolean(element.querySelector('.processor-configuration'))
-+        || (/(Edit\s+Processor|프로세서\s*편집|Processor\s*\|)/i.test(text) && /\bApply\b|적용/.test(text));
++        || (/(Edit\s+Processor|프로세서\s*편집|Processor\s*\|)/i.test(text) && /\bApply\b|적용/.test(text))
++        || (
++            /필수\s*항목|Required\s+field/i.test(text)
++            && /검증|Verification/i.test(text)
++            && /속성|Property/i.test(text)
++            && /값|Value/i.test(text)
++            && /\b[A-Za-z][\w]*(?:Record|File|Attribute|Database|HTTP|SQL|JSON|Avro|CSV)\b/i.test(text)
++        );
 +}
 +
 +function findProcessorEditDialogs(): Element[] {
-+    return Array.from(document.querySelectorAll(DIALOG_SELECTOR)).filter(isProcessorEditDialog);
++    const dialogs = Array.from(document.querySelectorAll(DIALOG_SELECTOR)).filter(isProcessorEditDialog);
++    if (dialogs.length > 0) {
++        return dialogs;
++    }
++    return Array.from(document.querySelectorAll('.cdk-overlay-pane, .mat-mdc-dialog-container, .mat-dialog-container'))
++        .filter((element) => element.querySelector(PROCESSOR_HELP_ICON_SELECTOR))
++        .filter((element) => /필수\s*항목|Required\s+field|검증|Verification|속성|Property|값|Value/i.test(elementText(element)));
 +}
 +
 +function ensureProcessorHelpStyle(): void {
@@ -2346,6 +2370,18 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    });
 +}
 +
++function replaceProcessorHelpIconTarget(element: Element, dialog: Element, processorType?: string): Element {
++    if (element.hasAttribute(PROCESSOR_HELP_REPLACED_ATTRIBUTE)) {
++        prepareProcessorHelpIconTarget(element, dialog, processorType);
++        return element;
++    }
++    prepareProcessorHelpIconTarget(element, dialog, processorType);
++    const clone = element.cloneNode(true) as Element;
++    clone.setAttribute(PROCESSOR_HELP_REPLACED_ATTRIBUTE, 'true');
++    element.replaceWith(clone);
++    return clone;
++}
++
 +function isProcessorHelpHoverTarget(target: EventTarget | null): boolean {
 +    if (!(target instanceof Element)) {
 +        return false;
@@ -2353,6 +2389,7 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    return Boolean(target.closest(
 +        [
 +            `[${PROCESSOR_HELP_TEXT_ATTRIBUTE}]`,
++            PROCESSOR_HELP_ICON_SELECTOR,
 +            '.processor-configuration .fa-info-circle',
 +            '.processor-configuration [nifiTooltip]',
 +            '.processor-configuration [tooltipInputData]',
@@ -2375,9 +2412,9 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +            .map((name) => `[${name}]`)
 +            .join(', ');
 +        dialog.querySelectorAll(selector).forEach((element) => prepareProcessorHelpTarget(element, dialog, processorType));
-+        dialog.querySelectorAll('.fa-info-circle.primary-color, .fa-info-circle').forEach((element) => (
-+            prepareProcessorHelpIconTarget(element, dialog, processorType)
-+        ));
++        dialog.querySelectorAll(PROCESSOR_HELP_ICON_SELECTOR).forEach((element) => {
++            replaceProcessorHelpIconTarget(element, dialog, processorType);
++        });
 +    });
 +
 +    if (document.documentElement.getAttribute(PROCESSOR_HELP_READY_ATTRIBUTE) === 'true') {
