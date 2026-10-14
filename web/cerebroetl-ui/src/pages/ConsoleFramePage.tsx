@@ -2363,21 +2363,30 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
 
   const closeRawPanel = (panel: "navigation" | "operation") => {
     const raw = rawPanel(panel);
-    if (!raw?.querySelector(":scope > div.w-72")) {
-      return;
+    if (!raw) {
+      return false;
     }
-    (raw.querySelector<HTMLElement>(".navigation-control-expansion, .operation-control-expansion") ?? raw).click();
+    const toggleButton = raw.querySelector<HTMLElement>(".navigation-control-expansion, .operation-control-expansion");
+    if (!toggleButton && !raw.querySelector(":scope > div.w-72")) {
+      return false;
+    }
+    if (raw.querySelector(":scope > div.w-72")) {
+      (toggleButton ?? raw).click();
+    }
+    return true;
   };
 
   const collapsePanelsOnInitialLayout = () => {
     if (doc.documentElement.getAttribute(NIFI_PANEL_INITIAL_COLLAPSE_ATTRIBUTE) === "true") {
       return;
     }
-    doc.documentElement.setAttribute(NIFI_PANEL_INITIAL_COLLAPSE_ATTRIBUTE, "true");
-    closeRawPanel("navigation");
-    closeRawPanel("operation");
+    const navigationReady = closeRawPanel("navigation");
+    const operationReady = closeRawPanel("operation");
     setPanelOpen("navigation", false);
     setPanelOpen("operation", false);
+    if (navigationReady && operationReady) {
+      doc.documentElement.setAttribute(NIFI_PANEL_INITIAL_COLLAPSE_ATTRIBUTE, "true");
+    }
   };
 
   const installRecentPanelToggle = () => {
