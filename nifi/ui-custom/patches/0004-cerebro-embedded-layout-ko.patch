@@ -1454,7 +1454,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00df17f161e
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
-@@ -0,0 +1,1163 @@
+@@ -0,0 +1,1252 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -1619,6 +1619,8 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +const PROCESSOR_HELP_TEXT_ATTRIBUTE = 'data-cerebro-help-text';
 +const PROCESSOR_HELP_TITLE_ATTRIBUTE = 'data-cerebro-help-title';
 +const PROCESSOR_HELP_CONTEXT_ATTRIBUTE = 'data-cerebro-help-context';
++const PROCESSOR_HELP_PROCESSOR_TYPE_ATTRIBUTE = 'data-cerebro-help-processor-type';
++const PROCESSOR_HELP_VALUE_ATTRIBUTE = 'data-cerebro-help-value';
 +const PROCESSOR_HELP_PROBE_ATTRIBUTE = 'data-cerebro-help-probe';
 +const PROCESSOR_HELP_READY_ATTRIBUTE = 'data-cerebro-processor-help-ready';
 +const PROCESSOR_HELP_MODAL_ID = 'cerebro-processor-help-modal';
@@ -2152,7 +2154,7 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    modal.setAttribute('aria-hidden', 'true');
 +}
 +
-+function openProcessorHelpModal(title: string, helpText: string, context: string): void {
++function openProcessorHelpModal(title: string, helpText: string, interpretation: string): void {
 +    ensureProcessorHelpStyle();
 +    const modal = ensureProcessorHelpModal();
 +    const titleElement = modal.querySelector('.cerebro-help-title');
@@ -2165,10 +2167,9 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    }
 +
 +    const helpSection = modal.querySelector("[data-cerebro-help-section='true']");
-+    const llmEnabled = document.documentElement.getAttribute(LLM_ENABLED_ATTRIBUTE) === 'true';
 +    const providerName = document.documentElement.getAttribute(LLM_PROVIDER_ATTRIBUTE) ?? '';
 +    modal.querySelector('.cerebro-help-gpt')?.remove();
-+    if (llmEnabled && helpSection?.parentElement) {
++    if (helpSection?.parentElement) {
 +        const gptSection = document.createElement('div');
 +        gptSection.className = 'cerebro-help-section cerebro-help-gpt';
 +        const sectionTitle = document.createElement('div');
@@ -2182,7 +2183,8 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +        }
 +        const sectionBody = document.createElement('div');
 +        sectionBody.className = 'cerebro-help-text';
-+        sectionBody.textContent = `${title} 속성의 NiFi descriptor 설명을 기준으로 값을 확인하세요. 필요하면 설정값과 현재 플로우 맥락을 함께 검토해 조정할 수 있습니다.`;
++        sectionBody.setAttribute('data-cerebro-help-gpt-body', 'true');
++        sectionBody.textContent = interpretation;
 +        gptSection.append(sectionTitle, sectionBody);
 +        helpSection.parentElement.insertBefore(gptSection, helpSection);
 +    }
@@ -2190,6 +2192,21 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    modal.setAttribute('data-open', 'true');
 +    modal.setAttribute('aria-hidden', 'false');
 +    (modal.querySelector("[data-cerebro-help-close='true']") as HTMLElement | null)?.focus();
++}
++
++function updateProcessorHelpInterpretation(text: string, providerName?: string): void {
++    const modal = document.getElementById(PROCESSOR_HELP_MODAL_ID);
++    const body = modal?.querySelector("[data-cerebro-help-gpt-body='true']");
++    if (body) {
++        body.textContent = text;
++    }
++    const title = modal?.querySelector('.cerebro-help-gpt .cerebro-help-section-title');
++    if (title && providerName && !title.querySelector('.cerebro-help-provider')) {
++        const provider = document.createElement('span');
++        provider.className = 'cerebro-help-provider';
++        provider.textContent = providerName;
++        title.appendChild(provider);
++    }
 +}
 +
 +function processorHelpContext(dialog: Element): string {
@@ -2318,6 +2335,66 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    return PROCESSOR_PROPERTY_HELP_TEXT[englishTitle];
 +}
 +
++function processorPropertyValue(element: Element): string {
++    const row = closestProcessorPropertyRow(element);
++    const cells = row ? Array.from(row.querySelectorAll("td, [role='cell'], .mat-mdc-cell, .mat-cell")) : [];
++    const valueCell = cells.length >= 2 ? cells[1] : undefined;
++    const value = elementText(valueCell ?? row ?? element)
++        .replace(elementText(cells[0] ?? element), '')
++        .replace(/\s+/g, ' ')
++        .trim();
++    return /^(No value set|값 없음)$/i.test(value) ? '' : value;
++}
++
++function processorRuleBasedInterpretation(title: string, helpText: string, value: string): string {
++    const propertyName = processorEnglishPropertyTitle(title);
++    const currentValue = value ? ` 현재 값은 "${value}"입니다.` : '';
++    if (/Connection Pooling Service/i.test(propertyName)) {
++        return `이 속성은 Processor가 데이터베이스에 연결할 때 사용할 연결 풀 서비스를 지정합니다.${currentValue} 연결 정보, 드라이버, 계정은 선택한 Controller Service에서 관리됩니다.`;
++    }
++    if (/SQL/i.test(propertyName)) {
++        return `이 속성은 실행할 SQL 또는 SQL 실행 전후 처리를 정의합니다.${currentValue} FlowFile 내용과 Expression Language 사용 여부가 원문 설명과 맞는지 확인하세요.`;
++    }
++    if (/Record Writer/i.test(propertyName)) {
++        return `이 속성은 조회 결과를 어떤 레코드 형식으로 쓸지 결정합니다.${currentValue} 후속 Processor가 읽을 수 있는 Writer를 선택해야 합니다.`;
++    }
++    if (/Wait Time|Timeout/i.test(propertyName)) {
++        return `이 속성은 작업이 완료되기를 기다리는 최대 시간을 정합니다.${currentValue} 값이 너무 짧으면 느린 DB 작업이 실패할 수 있습니다.`;
++    }
++    return `${title} 속성은 NiFi descriptor 원문에 따라 동작합니다.${currentValue} 핵심은 다음 설명입니다: ${helpText}`;
++}
++
++function requestProcessorHelpInterpretation(payload: {
++    processorType: string;
++    propertyName: string;
++    propertyValue: string;
++    description: string;
++}): void {
++    if (!payload.description || payload.description === '이 항목의 상세 설명을 찾지 못했습니다.') {
++        return;
++    }
++    const token = window.localStorage.getItem('cerebro_token');
++    fetch('/api/llm/nifi/property-help', {
++        method: 'POST',
++        credentials: 'same-origin',
++        headers: {
++            'Content-Type': 'application/json',
++            ...(token ? { Authorization: `Bearer ${token}` } : {})
++        },
++        body: JSON.stringify(payload)
++    })
++        .then((response) => response.ok ? response.json() : Promise.reject(new Error(String(response.status))))
++        .then((json) => {
++            const data = json?.data;
++            if (data?.interpretation) {
++                updateProcessorHelpInterpretation(data.interpretation, data.providerName);
++            }
++        })
++        .catch(() => {
++            // 로그인 만료, LLM 미설정, 네트워크 오류 때는 이미 표시한 규칙 기반 해석을 유지한다.
++        });
++}
++
 +function closestProcessorPropertyRow(element: Element): Element | null {
 +    const direct = element.closest("tr, [role='row'], .mat-mdc-row, .mat-row, .property-row, .editable-table-row");
 +    if (direct) {
@@ -2374,6 +2451,8 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    element.setAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE, helpText);
 +    element.setAttribute(PROCESSOR_HELP_TITLE_ATTRIBUTE, title);
 +    element.setAttribute(PROCESSOR_HELP_CONTEXT_ATTRIBUTE, processorHelpContext(dialog));
++    element.setAttribute(PROCESSOR_HELP_PROCESSOR_TYPE_ATTRIBUTE, processorType ?? '');
++    element.setAttribute(PROCESSOR_HELP_VALUE_ATTRIBUTE, processorPropertyValue(element));
 +    element.setAttribute('role', element.getAttribute('role') ?? 'button');
 +    element.setAttribute('tabindex', element.getAttribute('tabindex') ?? '0');
 +    element.setAttribute('aria-label', `도움말 보기: ${title}`);
@@ -2391,6 +2470,8 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    element.setAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE, helpText);
 +    element.setAttribute(PROCESSOR_HELP_TITLE_ATTRIBUTE, title);
 +    element.setAttribute(PROCESSOR_HELP_CONTEXT_ATTRIBUTE, processorHelpContext(dialog));
++    element.setAttribute(PROCESSOR_HELP_PROCESSOR_TYPE_ATTRIBUTE, processorType ?? '');
++    element.setAttribute(PROCESSOR_HELP_VALUE_ATTRIBUTE, processorPropertyValue(element));
 +    element.setAttribute('role', element.getAttribute('role') ?? 'button');
 +    element.setAttribute('tabindex', element.getAttribute('tabindex') ?? '0');
 +    element.setAttribute('aria-label', `도움말 보기: ${title}`);
@@ -2485,13 +2566,21 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +        event.preventDefault();
 +        event.stopPropagation();
 +        const title = target.getAttribute(PROCESSOR_HELP_TITLE_ATTRIBUTE) ?? 'Processor Property';
-+        const context = target.getAttribute(PROCESSOR_HELP_CONTEXT_ATTRIBUTE) ?? '';
++        const processorType = target.getAttribute(PROCESSOR_HELP_PROCESSOR_TYPE_ATTRIBUTE) ?? '';
++        const propertyValue = target.getAttribute(PROCESSOR_HELP_VALUE_ATTRIBUTE) ?? '';
 +        const storedHelpText = target.getAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE)?.trim() ?? '';
 +        const helpText = processorTooltipOverlayText()
 +            || storedHelpText
 +            || processorFallbackHelpText(title)
 +            || '';
-+        openProcessorHelpModal(title, helpText || '이 항목의 상세 설명을 찾지 못했습니다.', context);
++        const description = helpText || '이 항목의 상세 설명을 찾지 못했습니다.';
++        openProcessorHelpModal(title, description, processorRuleBasedInterpretation(title, description, propertyValue));
++        requestProcessorHelpInterpretation({
++            processorType,
++            propertyName: processorEnglishPropertyTitle(title),
++            propertyValue,
++            description
++        });
 +    }, true);
 +
 +    document.addEventListener('keydown', (event) => {
