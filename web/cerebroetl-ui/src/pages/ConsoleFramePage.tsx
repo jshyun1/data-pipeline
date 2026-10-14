@@ -69,6 +69,7 @@ const NIFI_LLM_PROVIDER_ATTRIBUTE = "data-cerebro-llm-provider";
 const NIFI_STATUS_HIDDEN_ATTRIBUTE = "data-cerebro-status-hidden";
 const NIFI_STATUS_BAR_HIDDEN_ATTRIBUTE = "data-cerebro-status-bar-hidden";
 const NIFI_PANEL_LAYOUT_ATTRIBUTE = "data-cerebro-nifi-panel-layout";
+const NIFI_PANEL_INITIAL_COLLAPSE_ATTRIBUTE = "data-cerebro-nifi-panel-initial-collapse";
 const NIFI_PANEL_ATTRIBUTE = "data-cerebro-nifi-panel";
 const NIFI_PANEL_EXPANDED_ATTRIBUTE = "data-cerebro-nifi-panel-expanded";
 const NIFI_PANEL_BOUND_ATTRIBUTE = "data-cerebro-nifi-panel-bound";
@@ -2359,6 +2360,25 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
       ?.getAttribute(NIFI_PANEL_EXPANDED_ATTRIBUTE) === "true";
   };
 
+  const closeRawPanel = (panel: "navigation" | "operation") => {
+    const raw = rawPanel(panel);
+    if (!raw?.querySelector(":scope > div.w-72")) {
+      return;
+    }
+    (raw.querySelector<HTMLElement>(".navigation-control-expansion, .operation-control-expansion") ?? raw).click();
+  };
+
+  const collapsePanelsOnInitialLayout = () => {
+    if (doc.documentElement.getAttribute(NIFI_PANEL_INITIAL_COLLAPSE_ATTRIBUTE) === "true") {
+      return;
+    }
+    doc.documentElement.setAttribute(NIFI_PANEL_INITIAL_COLLAPSE_ATTRIBUTE, "true");
+    closeRawPanel("navigation");
+    closeRawPanel("operation");
+    setPanelOpen("navigation", false);
+    setPanelOpen("operation", false);
+  };
+
   const installRecentPanelToggle = () => {
     if (doc.getElementById(NIFI_RECENT_PANEL_TOGGLE_ID)) {
       return;
@@ -2512,6 +2532,7 @@ function installNifiPanelLayout(frame: HTMLIFrameElement) {
     installRecentPanelToggle();
     markPanel("navigation");
     markPanel("operation");
+    collapsePanelsOnInitialLayout();
   };
 
   applyLayout();
@@ -3675,6 +3696,12 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
     const searching = searchQuery.trim().length > 0;
     const expanded = searching || expandedIds.has(node.id);
     const active = activeGroupId === node.id || (!activeGroupId && node.id === "root");
+    const handleLabelClick = () => {
+      if (hasChildren && !searching) {
+        toggle(node.id);
+      }
+      openGroup(node.id);
+    };
     return (
       <div key={node.id} className={`nifi-tree-node${expanded ? " expanded" : ""}`}>
         <div
@@ -3682,11 +3709,11 @@ function ProcessGroupTreePanel({ activeGroupId, onTreeChange, onCatalogSynced }:
         >
           <button
             type="button"
-            className={hasChildren ? "nifi-tree-toggle" : "nifi-tree-toggle empty"}
-            aria-label={expanded ? `${node.name} 접기` : `${node.name} 펼치기`}
-            onClick={() => hasChildren && toggle(node.id)}
-          />
-          <button type="button" className="nifi-tree-label" title={node.name} onClick={() => openGroup(node.id)}>
+            className="nifi-tree-label"
+            title={node.name}
+            aria-expanded={hasChildren ? expanded : undefined}
+            onClick={handleLabelClick}
+          >
             {treeIcon(node)}
             <span className="nifi-tree-name">{highlightedName(node.name)}</span>
           </button>
