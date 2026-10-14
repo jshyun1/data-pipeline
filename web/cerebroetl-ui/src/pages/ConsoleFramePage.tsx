@@ -2305,6 +2305,123 @@ function setNifiFrameLlmStatus(frame: HTMLIFrameElement, status: Pick<LlmStatus,
   }
 }
 
+type NifiFloatingPanel = "navigation" | "operation";
+
+function nifiFloatingPanel(doc: Document, panel: NifiFloatingPanel) {
+  return doc.querySelector<HTMLElement>(panel === "navigation" ? ".navigation-control" : ".operation-control");
+}
+
+function nifiFloatingPanelToggle(control: HTMLElement, panel: NifiFloatingPanel) {
+  return control.querySelector<HTMLElement>(
+    panel === "navigation" ? ".navigation-control-expansion" : ".operation-control-expansion",
+  );
+}
+
+function isNifiFloatingPanelReady(doc: Document, panel: NifiFloatingPanel) {
+  const control = nifiFloatingPanel(doc, panel);
+  if (!control) {
+    return false;
+  }
+  return Boolean(
+    nifiFloatingPanelToggle(control, panel)
+    || control.querySelector(":scope > div.w-72")
+    || control.querySelector(".fa-plus-square-o, .fa-minus-square-o"),
+  );
+}
+
+function isNifiFloatingPanelOpen(doc: Document, panel: NifiFloatingPanel) {
+  const control = nifiFloatingPanel(doc, panel);
+  if (!control) {
+    return false;
+  }
+  if (control.querySelector(".fa-plus-square-o")) {
+    return false;
+  }
+  return Boolean(control.querySelector(":scope > div.w-72") || control.querySelector(".fa-minus-square-o"));
+}
+
+function closeNifiFloatingPanel(doc: Document, panel: NifiFloatingPanel) {
+  const control = nifiFloatingPanel(doc, panel);
+  if (!control || !isNifiFloatingPanelReady(doc, panel)) {
+    return false;
+  }
+  if (isNifiFloatingPanelOpen(doc, panel)) {
+    (nifiFloatingPanelToggle(control, panel) ?? control).click();
+  }
+  return true;
+}
+
+function installNifiInitialPanelCollapse(frame: HTMLIFrameElement) {
+  const doc = iframeDocument(frame);
+  if (!doc || doc.documentElement.getAttribute(NIFI_PANEL_INITIAL_COLLAPSE_ATTRIBUTE) === "true") {
+    return;
+  }
+  const frameWindow = doc.defaultView;
+  if (!frameWindow) {
+    return;
+  }
+  const win = frameWindow;
+
+  let disposed = false;
+  let frameId: number | null = null;
+  let retryId: number | null = null;
+  let attempts = 0;
+  const observer = new (win.MutationObserver ?? MutationObserver)(() => schedule());
+
+  const cleanup = () => {
+    disposed = true;
+    if (frameId !== null) {
+      win.cancelAnimationFrame(frameId);
+      frameId = null;
+    }
+    if (retryId !== null) {
+      win.clearTimeout(retryId);
+      retryId = null;
+    }
+    observer.disconnect();
+  };
+
+  const tryCollapse = () => {
+    frameId = null;
+    if (disposed || doc.documentElement.getAttribute(NIFI_PANEL_INITIAL_COLLAPSE_ATTRIBUTE) === "true") {
+      cleanup();
+      return;
+    }
+
+    const navigationReady = closeNifiFloatingPanel(doc, "navigation");
+    const operationReady = closeNifiFloatingPanel(doc, "operation");
+    const collapsed = navigationReady
+      && operationReady
+      && !isNifiFloatingPanelOpen(doc, "navigation")
+      && !isNifiFloatingPanelOpen(doc, "operation");
+
+    if (collapsed) {
+      doc.documentElement.setAttribute(NIFI_PANEL_INITIAL_COLLAPSE_ATTRIBUTE, "true");
+      cleanup();
+      return;
+    }
+
+    if (attempts < 60 && retryId === null) {
+      attempts += 1;
+      retryId = win.setTimeout(() => {
+        retryId = null;
+        schedule();
+      }, 100);
+    }
+  };
+
+  function schedule() {
+    if (disposed || frameId !== null) {
+      return;
+    }
+    frameId = win.requestAnimationFrame(tryCollapse);
+  }
+
+  observer.observe(doc.documentElement, { attributes: true, childList: true, subtree: true });
+  win.addEventListener("beforeunload", cleanup, { once: true });
+  schedule();
+}
+
 function installNifiPanelLayout(frame: HTMLIFrameElement) {
   const doc = iframeDocument(frame);
   if (!doc) {
@@ -5617,6 +5734,9 @@ export function ConsoleFramePage({
       const frame = frameRef.current;
       // 아직 다 안 읽힌 문서(빈 about:blank, 읽는 중인 NiFi)면 Cerebro 판인지 알 수 없다 - 덧칠은 onLoad(handleFrameLoad)에 맡긴다.
       // 여기서 걸면 Cerebro 판 화면에도 덧칠(1초 주기 훑기)이 붙는다(2026-10-05 확인).
+      if (frame && isFrameDocumentLoaded(frame)) {
+        installNifiInitialPanelCollapse(frame);
+      }
       if (frame && isFrameDocumentLoaded(frame) && !isCerebroNifiUi(frame)) {
         setNifiFrameLlmStatus(frame, frameLlmStatus);
         hideToolChrome(frame);
@@ -5720,6 +5840,9 @@ export function ConsoleFramePage({
     // Cerebro 판 NiFi 화면이면 배치 · 한글을 NiFi 가 이미 처리했다 - 덧칠은 건너뛰고 연동(잠금 · 선택 · 경로)만 건다.
     const cerebroNifiUi = isCerebroNifiUi(frame);
     let chromeHidden = true;
+    if (showProcessGroupTree) {
+      installNifiInitialPanelCollapse(frame);
+    }
     if (!cerebroNifiUi) {
       cleanupLegacyNifiMiniCreateToolbars(frame);
       chromeHidden = hideToolChrome(frame);
