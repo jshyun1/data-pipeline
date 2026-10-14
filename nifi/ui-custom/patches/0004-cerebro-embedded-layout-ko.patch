@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..563080750d46759b8f4e31fdaff264398ba11315
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/_cerebro-embedded.scss
-@@ -0,0 +1,1276 @@
+@@ -0,0 +1,1286 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -21,9 +21,10 @@ index 0000000000000000000000000000000000000000..563080750d46759b8f4e31fdaff26439
 + * 예전(①)에는 ConsoleFramePage 가 iframe 밖에서 비슷한 일을 했다(HIDE_TOOL_CHROME_CSS) - 그때 모양(왼쪽 아래 세로 막대)은 이 디자인으로 바뀌었다.
 + */
 +$cerebro-red: #ff3b30;
-+// 제목띠: 그룹은 디자인의 딥 슬레이트(.nifi-card-header), 프로세서는 같은 계열의 청회색 - 한눈에 구분되면서 어울리게(2026-10-10 요청).
-+$cerebro-group-banner: #334155;
-+$cerebro-processor-banner: #36537d;
++// 제목띠: 트리의 폴더/파일 색과 맞춘다. 프로세서는 트리에 없으므로 별도 청록색을 쓴다(2026-10-14 요청).
++$cerebro-group-banner: #102a56;
++$cerebro-job-group-banner: #7db7ff;
++$cerebro-processor-banner: #2D9CAA;
 +
 +html.cerebro-embedded {
 +    .splash {
@@ -923,6 +924,15 @@ index 0000000000000000000000000000000000000000..563080750d46759b8f4e31fdaff26439
 +        // 프로세스 그룹(디자인 .nifi-card-header / .nifi-status-bar / .nifi-metrics-table / .nifi-card-footer)
 +        rect.process-group-banner,
 +        rect.remote-process-group-banner {
++            fill: $cerebro-group-banner !important;
++        }
++
++        g.process-group[data-cerebro-canvas-group-type='JOB'] rect.process-group-banner {
++            fill: $cerebro-job-group-banner !important;
++        }
++
++        g.process-group[data-cerebro-canvas-group-type='GROUPING'] rect.process-group-banner,
++        g.process-group[data-cerebro-canvas-group-type='EMPTY'] rect.process-group-banner {
 +            fill: $cerebro-group-banner !important;
 +        }
 +
