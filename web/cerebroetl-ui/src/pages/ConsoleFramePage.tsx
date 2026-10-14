@@ -2351,6 +2351,34 @@ function closeNifiFloatingPanel(doc: Document, panel: NifiFloatingPanel) {
   return true;
 }
 
+function isNifiTopToolbarOpen(doc: Document) {
+  const root = doc.documentElement;
+  if (root.hasAttribute("data-cerebro-nifi-ui")) {
+    return root.classList.contains("cerebro-submenu-open");
+  }
+  return doc
+    .querySelector<HTMLElement>(`[${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"]`)
+    ?.getAttribute(NIFI_TOP_TOOLBAR_EXPANDED_ATTRIBUTE) === "true";
+}
+
+function closeNifiTopToolbar(doc: Document) {
+  const root = doc.documentElement;
+  if (root.hasAttribute("data-cerebro-nifi-ui")) {
+    root.classList.remove("cerebro-submenu-open");
+    if (root.dataset["cerebroRecentPanel"] === "submenu") {
+      root.dataset["cerebroRecentPanel"] = "navigation";
+    }
+    return true;
+  }
+
+  const toolbar = doc.querySelector<HTMLElement>(`[${NIFI_TOP_TOOLBAR_ATTRIBUTE}="true"]`);
+  if (!toolbar) {
+    return false;
+  }
+  toolbar.setAttribute(NIFI_TOP_TOOLBAR_EXPANDED_ATTRIBUTE, "false");
+  return true;
+}
+
 function installNifiInitialPanelCollapse(frame: HTMLIFrameElement) {
   const doc = iframeDocument(frame);
   if (!doc || doc.documentElement.getAttribute(NIFI_PANEL_INITIAL_COLLAPSE_ATTRIBUTE) === "true") {
@@ -2388,10 +2416,13 @@ function installNifiInitialPanelCollapse(frame: HTMLIFrameElement) {
       return;
     }
 
+    const topToolbarReady = closeNifiTopToolbar(doc);
     const navigationReady = closeNifiFloatingPanel(doc, "navigation");
     const operationReady = closeNifiFloatingPanel(doc, "operation");
-    const collapsed = navigationReady
+    const collapsed = topToolbarReady
+      && navigationReady
       && operationReady
+      && !isNifiTopToolbarOpen(doc)
       && !isNifiFloatingPanelOpen(doc, "navigation")
       && !isNifiFloatingPanelOpen(doc, "operation");
 
