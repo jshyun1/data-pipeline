@@ -1454,7 +1454,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00df17f161e
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
-@@ -0,0 +1,1021 @@
+@@ -0,0 +1,1093 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -1878,6 +1878,11 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    return Boolean(element?.closest(DIALOG_SELECTOR));
 +}
 +
++function inMenuOverlay(node: Node): boolean {
++    const element = node instanceof Element ? node : node.parentElement;
++    return Boolean(element?.closest('[role="menu"], .mat-mdc-menu-panel, .mat-menu-panel, .context-menu'));
++}
++
 +function elementText(element: Element): string {
 +    return (element.textContent ?? '').replace(/\s+/g, ' ').trim();
 +}
@@ -2177,6 +2182,76 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    return useful.sort((a, b) => b.length - a.length)[0];
 +}
 +
++function angularTooltipInputData(element: Element): string | undefined {
++    const seen = new WeakSet<object>();
++    const scan = (value: unknown, depth = 0): string | undefined => {
++        if (typeof value === 'string') {
++            const normalized = value.replace(/\s+/g, ' ').trim();
++            return processorHelpTooltipTextValue(normalized);
++        }
++        if (!value || typeof value !== 'object' || depth > 4 || seen.has(value)) {
++            return undefined;
++        }
++        seen.add(value);
++        const record = value as Record<string, unknown>;
++        const direct = scan(record['tooltipInputData'], depth + 1) ?? scan(record['ngReflectTooltipInputData'], depth + 1);
++        if (direct) {
++            return direct;
++        }
++        if (Array.isArray(value)) {
++            for (const item of value) {
++                const found = scan(item, depth + 1);
++                if (found) {
++                    return found;
++                }
++            }
++            return undefined;
++        }
++        for (const key of Object.keys(record)) {
++            if (!/tooltip|tip|data|input/i.test(key)) {
++                continue;
++            }
++            const found = scan(record[key], depth + 1);
++            if (found) {
++                return found;
++            }
++        }
++        return undefined;
++    };
++    for (const target of [element, ...Array.from(element.children)]) {
++        const anyTarget = target as Element & Record<string, unknown>;
++        const found = scan(anyTarget['tooltipInputData'])
++            ?? scan(anyTarget['ngReflectTooltipInputData'])
++            ?? scan(anyTarget['__ngContext__']);
++        if (found) {
++            return found;
++        }
++        for (const key of Object.getOwnPropertyNames(anyTarget)) {
++            if (!key.includes('ng') && !key.toLowerCase().includes('tooltip')) {
++                continue;
++            }
++            const value = anyTarget[key];
++            const foundFromProperty = scan(value);
++            if (foundFromProperty) {
++                return foundFromProperty;
++            }
++        }
++    }
++    return undefined;
++}
++
++function processorHelpTooltipTextValue(value: string): string | undefined {
++    if (value.length < 24 || value.length > 3000) {
++        return undefined;
++    }
++    if (/^(Information|Info|Help|도움말|정보)$/i.test(value) || /^도움말\s*보기:/i.test(value)) {
++        return undefined;
++    }
++    return /[.!?。:]|FlowFile|Expression|property|attribute|processor|component|scope|Sensitive|Regular|Controller|Record|Schema/i.test(value)
++        ? value
++        : undefined;
++}
++
 +function processorTooltipOverlayText(): string | undefined {
 +    const texts = Array.from(document.querySelectorAll('.cdk-overlay-pane'))
 +        .filter((element) => !isProcessorEditDialog(element))
@@ -2258,13 +2333,17 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    if (element.hasAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE)) {
 +        return;
 +    }
-+    const title = processorHelpTitle(element, '', processorType);
-+    element.setAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE, '');
++    const helpText = processorHelpTooltipText(element) ?? angularTooltipInputData(element) ?? '';
++    const title = processorHelpTitle(element, helpText, processorType);
++    element.setAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE, helpText);
 +    element.setAttribute(PROCESSOR_HELP_TITLE_ATTRIBUTE, title);
 +    element.setAttribute(PROCESSOR_HELP_CONTEXT_ATTRIBUTE, processorHelpContext(dialog));
 +    element.setAttribute('role', element.getAttribute('role') ?? 'button');
 +    element.setAttribute('tabindex', element.getAttribute('tabindex') ?? '0');
 +    element.setAttribute('aria-label', `도움말 보기: ${title}`);
++    ['title', 'data-tooltip', 'matTooltip', 'mattooltip', 'ng-reflect-message', 'data-mat-tooltip', 'data-original-title', 'tooltipInputData', 'ng-reflect-tooltip-input-data', 'tooltip'].forEach((name) => {
++        element.removeAttribute(name);
++    });
 +}
 +
 +function isProcessorHelpHoverTarget(target: EventTarget | null): boolean {
@@ -2319,7 +2398,10 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    };
 +    document.addEventListener('mouseover', suppressOriginalTooltip, true);
 +    document.addEventListener('mouseenter', suppressOriginalTooltip, true);
++    document.addEventListener('mousemove', suppressOriginalTooltip, true);
++    document.addEventListener('pointerover', suppressOriginalTooltip, true);
 +    document.addEventListener('pointerenter', suppressOriginalTooltip, true);
++    document.addEventListener('focusin', suppressOriginalTooltip, true);
 +
 +    document.addEventListener('click', (event) => {
 +        const closeTarget = event.target instanceof Element ? event.target.closest("[data-cerebro-help-close='true']") : null;
@@ -2339,21 +2421,7 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +        const title = target.getAttribute(PROCESSOR_HELP_TITLE_ATTRIBUTE) ?? 'Processor Property';
 +        const context = target.getAttribute(PROCESSOR_HELP_CONTEXT_ATTRIBUTE) ?? '';
 +        const helpText = target.getAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE) ?? '';
-+        if (helpText) {
-+            openProcessorHelpModal(title, helpText, context);
-+            return;
-+        }
-+        target.setAttribute(PROCESSOR_HELP_PROBE_ATTRIBUTE, 'true');
-+        ['mouseenter', 'mouseover'].forEach((type) => {
-+            target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
-+        });
-+        window.setTimeout(() => {
-+            const resolvedHelpText = processorTooltipOverlayText() ?? '';
-+            target.setAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE, resolvedHelpText);
-+            target.removeAttribute(PROCESSOR_HELP_PROBE_ATTRIBUTE);
-+            closeProcessorHelpModal();
-+            openProcessorHelpModal(title, resolvedHelpText, context);
-+        }, 80);
++        openProcessorHelpModal(title, helpText || '이 항목의 상세 설명을 찾지 못했습니다.', context);
 +    }, true);
 +
 +    document.addEventListener('keydown', (event) => {
@@ -2384,7 +2452,9 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    if (!parent || SKIP_PARENTS.has(parent.tagName)) {
 +        return;
 +    }
-+    const translated = inDialog(node)
++    const translated = inMenuOverlay(node)
++        ? translateNifiText(trimmed)
++        : inDialog(node)
 +        ? translateProcessorEditText(
 +            trimmed,
 +            allowsDialogFieldTranslation(parent) || isProcessorEditTabLabel(parent),
@@ -2401,7 +2471,9 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    for (const name of ATTRIBUTES) {
 +        const value = element.getAttribute(name);
 +        const translated = value
-+            ? (inDialog(element)
++            ? (inMenuOverlay(element)
++                ? translateNifiText(value)
++                : inDialog(element)
 +                ? translateProcessorEditText(
 +                    value,
 +                    allowsDialogFieldTranslation(element) || isProcessorEditTabLabel(element),
