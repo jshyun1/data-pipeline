@@ -1454,7 +1454,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00df17f161e
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-ko.ts
-@@ -0,0 +1,1379 @@
+@@ -0,0 +1,1438 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -1623,6 +1623,7 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +const PROCESSOR_HELP_VALUE_ATTRIBUTE = 'data-cerebro-help-value';
 +const PROCESSOR_HELP_META_ATTRIBUTE = 'data-cerebro-help-meta';
 +const PROCESSOR_HELP_PROBE_ATTRIBUTE = 'data-cerebro-help-probe';
++const PROCESSOR_HELP_PROBING_ATTRIBUTE = 'data-cerebro-help-probing';
 +const PROCESSOR_HELP_READY_ATTRIBUTE = 'data-cerebro-processor-help-ready';
 +const PROCESSOR_HELP_MODAL_ID = 'cerebro-processor-help-modal';
 +const PROCESSOR_HELP_STYLE_ID = 'cerebro-processor-help-style';
@@ -2298,11 +2299,22 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    return undefined;
 +}
 +
++function isProcessorHelpMetadataOnlyText(value: string): boolean {
++    const lines = value
++        .split(/\n|(?:\s{2,})/)
++        .map((line) => line.trim())
++        .filter(Boolean);
++    return lines.length > 0 && lines.every((line) => /^(Expression language scope|Sensitive property|Required field|Identifies Controller Service|Requires Controller Service|History)\s*:/i.test(line));
++}
++
 +function processorHelpTooltipTextValue(value: string): string | undefined {
 +    if (value.length < 24 || value.length > 3000) {
 +        return undefined;
 +    }
 +    if (/^(Information|Info|Help|도움말|정보)$/i.test(value) || /^도움말\s*보기:/i.test(value)) {
++        return undefined;
++    }
++    if (isProcessorHelpMetadataOnlyText(value)) {
 +        return undefined;
 +    }
 +    return /[.!?。:]|FlowFile|Expression|property|attribute|processor|component|scope|Sensitive|Regular|Controller|Record|Schema/i.test(value)
@@ -2327,6 +2339,10 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +        const normalized = value.replace(/\s+/g, ' ').trim();
 +        if (!normalized) {
 +            return;
++        }
++        const possibleDescription = processorHelpTooltipTextValue(normalized);
++        if (possibleDescription && (!best.description || possibleDescription.length > best.description.length)) {
++            best.description = possibleDescription;
 +        }
 +        if (/expression.*language.*scope|expressionLanguageScope|elScope/i.test(key)) {
 +            best.expressionLanguageScope = normalized;
@@ -2392,8 +2408,12 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +        lines.push(description);
 +    }
 +    const details: string[] = [];
-+    details.push(`Expression language scope: ${meta.expressionLanguageScope || 'Not Supported'}`);
-+    details.push(`Sensitive property: ${typeof meta.sensitive === 'boolean' ? meta.sensitive : false}`);
++    if (meta.expressionLanguageScope) {
++        details.push(`Expression language scope: ${meta.expressionLanguageScope}`);
++    }
++    if (typeof meta.sensitive === 'boolean') {
++        details.push(`Sensitive property: ${meta.sensitive}`);
++    }
 +    if (typeof meta.required === 'boolean') {
 +        details.push(`Required field: ${meta.required}`);
 +    }
@@ -2598,9 +2618,6 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +    element.setAttribute('role', element.getAttribute('role') ?? 'button');
 +    element.setAttribute('tabindex', element.getAttribute('tabindex') ?? '0');
 +    element.setAttribute('aria-label', `도움말 보기: ${title}`);
-+    ['title', 'data-tooltip', 'matTooltip', 'mattooltip', 'ng-reflect-message', 'data-mat-tooltip', 'data-original-title', 'tooltipInputData', 'ng-reflect-tooltip-input-data', 'tooltip'].forEach((name) => {
-+        element.removeAttribute(name);
-+    });
 +}
 +
 +function replaceProcessorHelpIconTarget(element: Element, dialog: Element, processorType?: string): Element {
@@ -2608,11 +2625,53 @@ index 0000000000000000000000000000000000000000..5c8b1efaa00fc3715adae8c272aac00d
 +        prepareProcessorHelpIconTarget(element, dialog, processorType);
 +        return element;
 +    }
++    if (element.getAttribute(PROCESSOR_HELP_PROBING_ATTRIBUTE) === 'true') {
++        return element;
++    }
 +    prepareProcessorHelpIconTarget(element, dialog, processorType);
-+    const clone = element.cloneNode(true) as Element;
-+    clone.setAttribute(PROCESSOR_HELP_REPLACED_ATTRIBUTE, 'true');
-+    element.replaceWith(clone);
-+    return clone;
++    element.setAttribute(PROCESSOR_HELP_PROBING_ATTRIBUTE, 'true');
++    element.setAttribute(PROCESSOR_HELP_PROBE_ATTRIBUTE, 'true');
++    const dispatchProbeEvent = (type: string): void => {
++        element.dispatchEvent(new MouseEvent(type, {
++            bubbles: type !== 'mouseenter' && type !== 'mouseleave',
++            cancelable: true,
++            view: window
++        }));
++    };
++    dispatchProbeEvent('mouseover');
++    dispatchProbeEvent('mouseenter');
++    dispatchProbeEvent('mousemove');
++    element.dispatchEvent(new FocusEvent('focusin', { bubbles: true, cancelable: true }));
++    const captureOverlayHelpText = (): void => {
++        const overlayHelpText = processorTooltipOverlayText();
++        if (overlayHelpText && overlayHelpText.length > (element.getAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE)?.length ?? 0)) {
++            const meta = processorHelpMetadata(element);
++            const fullHelpText = processorHelpTextFromMeta(meta, overlayHelpText);
++            element.setAttribute(PROCESSOR_HELP_TEXT_ATTRIBUTE, fullHelpText || overlayHelpText);
++            element.setAttribute(PROCESSOR_HELP_META_ATTRIBUTE, JSON.stringify(meta));
++        }
++    };
++    [120, 320].forEach((delay) => window.setTimeout(captureOverlayHelpText, delay));
++    window.setTimeout(() => {
++        captureOverlayHelpText();
++        dispatchProbeEvent('mouseleave');
++        dispatchProbeEvent('mouseout');
++        element.dispatchEvent(new FocusEvent('focusout', { bubbles: true, cancelable: true }));
++        element.removeAttribute(PROCESSOR_HELP_PROBE_ATTRIBUTE);
++        element.removeAttribute(PROCESSOR_HELP_PROBING_ATTRIBUTE);
++        if (!element.isConnected || element.hasAttribute(PROCESSOR_HELP_REPLACED_ATTRIBUTE)) {
++            return;
++        }
++        const clone = element.cloneNode(true) as Element;
++        clone.setAttribute(PROCESSOR_HELP_REPLACED_ATTRIBUTE, 'true');
++        clone.removeAttribute(PROCESSOR_HELP_PROBE_ATTRIBUTE);
++        clone.removeAttribute(PROCESSOR_HELP_PROBING_ATTRIBUTE);
++        ['title', 'data-tooltip', 'matTooltip', 'mattooltip', 'ng-reflect-message', 'data-mat-tooltip', 'data-original-title', 'tooltipInputData', 'ng-reflect-tooltip-input-data', 'tooltip'].forEach((name) => {
++            clone.removeAttribute(name);
++        });
++        element.replaceWith(clone);
++    }, 520);
++    return element;
 +}
 +
 +function isProcessorHelpHoverTarget(target: EventTarget | null): boolean {
