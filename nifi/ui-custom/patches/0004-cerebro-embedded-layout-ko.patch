@@ -1295,7 +1295,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..67a1235388f82fc9f7ddc5af8538fa3ed51de67a
 --- /dev/null
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/cerebro/cerebro-canvas.ts
-@@ -0,0 +1,267 @@
+@@ -0,0 +1,296 @@
 +/*
 + * Cerebro 맞춤 (Cerebro 저장소 nifi/ui-custom/patches 로 관리한다 - NiFi 원본 소스에는 없는 파일).
 + *
@@ -1371,16 +1371,45 @@ index 0000000000000000000000000000000000000000..67a1235388f82fc9f7ddc5af8538fa3e
 +    return d?.id ?? d?.component?.id ?? d?.processGroupFlow?.id;
 +}
 +
++function looksLikeProcessGroupId(value: unknown): value is string {
++    return (
++        typeof value === 'string' &&
++        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
++    );
++}
++
++function firstProcessGroupIdInObject(value: unknown, depth = 0, visited = new Set<unknown>()): string | undefined {
++    if (looksLikeProcessGroupId(value)) {
++        return value;
++    }
++    if (!value || typeof value !== 'object' || depth > 4 || visited.has(value)) {
++        return undefined;
++    }
++    visited.add(value);
++    const entries = Object.entries(value as Record<string, unknown>);
++    for (const [key, entry] of entries) {
++        if (/^(id|groupId|processGroupId)$/i.test(key) && looksLikeProcessGroupId(entry)) {
++            return entry;
++        }
++    }
++    for (const [, entry] of entries) {
++        const found = firstProcessGroupIdInObject(entry, depth + 1, visited);
++        if (found) {
++            return found;
++        }
++    }
++    return undefined;
++}
++
 +function cleanProcessGroupDomId(value: string | null | undefined): string | undefined {
 +    const cleaned = value?.replace(/^(id-|component-|process-group-|pg-)/i, '');
-+    return cleaned && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleaned)
-+        ? cleaned
-+        : undefined;
++    return looksLikeProcessGroupId(cleaned) ? cleaned : undefined;
 +}
 +
 +function processGroupSelectionId(processGroup: any, d: any): string | undefined {
 +    return (
 +        processGroupId(d) ??
++        firstProcessGroupIdInObject(d) ??
 +        cleanProcessGroupDomId(processGroup.attr('data-id')) ??
 +        cleanProcessGroupDomId(processGroup.attr('data-component-id')) ??
 +        cleanProcessGroupDomId(processGroup.attr('id'))

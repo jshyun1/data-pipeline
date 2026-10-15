@@ -2427,7 +2427,9 @@ function isNifiFloatingPanelReady(doc: Document, panel: NifiFloatingPanel) {
     return false;
   }
   return Boolean(
-    nifiFloatingPanelToggle(control, panel)
+    // 두 패널이 모두 접히면 NiFi는 펼침 아이콘과 본문을 제거하고 클릭 가능한 헤더만 남긴다.
+    control.querySelector(panel === "navigation" ? ".navigation-control-header" : ".operation-control-header")
+    || nifiFloatingPanelToggle(control, panel)
     || control.querySelector(":scope > div.w-72")
     || control.querySelector(".fa-plus-square-o, .fa-minus-square-o"),
   );
@@ -2536,7 +2538,13 @@ function installNifiInitialPanelCollapse(frame: HTMLIFrameElement) {
       return;
     }
 
-    if (attempts < 60 && retryId === null) {
+    // 초기화가 끝나지 않아도 재시도 한도를 넘기면 이후 사용자 조작을 계속 접지 않는다.
+    if (attempts >= 60) {
+      cleanup();
+      return;
+    }
+
+    if (retryId === null) {
       attempts += 1;
       retryId = win.setTimeout(() => {
         retryId = null;
@@ -4175,6 +4183,13 @@ function processGroupTextCandidates(element: Element | null) {
         values.push(value);
       }
     });
+    current.querySelectorAll("text.process-group-name, text.component-name, .process-group-name, .component-name")
+      .forEach((nameElement) => {
+        const value = nameElement.textContent?.trim();
+        if (value) {
+          values.push(value);
+        }
+      });
     if (cardSized && current.textContent?.trim()) {
       values.push(current.textContent);
     }
