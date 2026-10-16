@@ -194,7 +194,7 @@ diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-design
 index 7c320341e38fc19bd4657d4e23d52d94751b99a7..bbb23d09963ffb9f1d28fd5b7a984c3bbe917b04 100644
 --- a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html
 +++ b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.html
-@@ -17,55 +17,76 @@
+@@ -17,55 +17,83 @@
  
  <header class="nifi-header">
      <navigation>
@@ -277,6 +277,13 @@ index 7c320341e38fc19bd4657d4e23d52d94751b99a7..bbb23d09963ffb9f1d28fd5b7a984c3b
 -                tooltip="Label"></new-canvas-item>
 +                tooltip="라벨"></new-canvas-item>
          }
++        @if (embedded) {
++            <button type="button" class="cerebro-toolbar-close" tooltip="도구 패널 닫기" aria-label="도구 패널 닫기">
++                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
++                    <path d="M6 6l12 12M18 6L6 18"></path>
++                </svg>
++            </button>
++        }
      </navigation>
      <flow-status
 diff --git a/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts b/nifi-frontend/src/main/frontend/apps/nifi/src/app/pages/flow-designer/ui/canvas/header/header.component.ts
